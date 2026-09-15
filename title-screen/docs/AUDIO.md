@@ -1,7 +1,9 @@
 # US 1.2 title music
 
-The active path is `build_title_audio.py` → `TITLE_PCM.RAW`,
-`TITLE_LEVELS.RAW`, `title_score.h` → `title_player.c`.
+The active pipeline is `tools/build_title_audio.py` -> `assets/TITLE_PCM.RAW`,
+`assets/TITLE_LEVELS.RAW`, `assets/generated/title_score.h` ->
+`src/audio/title_player.c`. Paths here are relative to `title-screen/` unless
+a command explicitly starts at the repository root.
 It plays individual notes live on the Saturn SCSP. The WAV preview is a
 diagnostic output, not a recording used by the game.
 
@@ -11,7 +13,7 @@ The input ROM is the verified compressed US 1.2 image with MD5
 `57a9719ad547c516342e1a15d5c28c3d`. A fresh ZeldaRET extraction is under
 `build/audio-source/extracted/`. No US 1.1 extraction or fan MIDI is an input.
 The MIDI in `../audio-comparison/` remains an informal comparison reference.
-`audio_manifest.json` records sample/sequence hashes, tempo changes, sample
+`assets/generated/audio_manifest.json` records sample/sequence hashes, tempo changes, sample
 tuning, memory usage, and omitted opcodes.
 
 Relevant original implementation:
@@ -31,7 +33,7 @@ python title-screen/tools/extract_title_source.py --oot-root D:/Workspace-Claude
 wsl -e bash -lc 'cd /mnt/d/Workspace-Claude/game-decomps/n64/oot && PYTHONDONTWRITEBYTECODE=1 .venv/bin/python3 tools/extract_audio.py -v ntsc-1.2 -b /mnt/d/Workspace-Claude/saturn-homebrew/dosei-legend/title-screen/build/audio-source/segments -o /mnt/d/Workspace-Claude/saturn-homebrew/dosei-legend/title-screen/build/audio-source/extracted --read-xml'
 python title-screen/tools/build_title_audio.py --preview audio-comparison/title-us12-rebuild.wav
 & C:/msys64/usr/bin/bash.exe -lc 'source ~/.yaul.env && cd /d/Workspace-Claude/saturn-homebrew/dosei-legend/title-screen && make'
-python title-screen/tools/test_title_audio.py
+python title-screen/tests/test_title_audio.py
 ```
 
 The extraction writes only within this project's build directory. The first
@@ -81,6 +83,6 @@ no capture WAV or OpenAL log was produced. The helper
 not a microphone, and keeps its settings in `build/emulator-audio-test/`.
 Its failure here is not evidence of either correct or incorrect game audio.
 
-Legacy `make_title_samples.py`, `make_title_sequence.py`, `title_samples.h`,
-`title_sequence.h`, and Ponesound files remain for historical comparison but
-are outside the active build. Older audio notes describe that retired path.
+The retired Ponesound driver, converters, and assets were removed during the
+textured scene cleanup. Git history preserves them. Older notes describe that
+retired path.

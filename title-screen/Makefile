@@ -12,19 +12,23 @@ BUILTIN_ASSETS+= \
 	assets/TITLE.TGA;asset_title_tga \
 	assets/FOREST_BG.TGA;asset_forest_bg_tga \
 	assets/PRESS_START.RAW;asset_press_start_raw \
-	assets/KOKIRI_VERTS.RAW;asset_kokiri_verts_raw \
-	assets/KOKIRI_EDGES.RAW;asset_kokiri_edges_raw \
 	assets/TITLE_PCM.RAW;asset_title_pcm \
 	assets/TITLE_LEVELS.RAW;asset_title_levels
 
 SH_PROGRAM:= title-screen
 SH_SRCS:= \
-	main.c \
-	kokiri_wireframe.c \
-	title_music.c \
-	title_player.c
+	src/main.c \
+	src/debug/frame_probe.c \
+	src/debug/crash_probe.c \
+	src/debug/crash_vectors.sx \
+	src/scene/kokiri_scene.c \
+	src/scene/kokiri_collision.c \
+	src/scene/kokiri_camera.c \
+	src/scene/kokiri_clip.c \
+	src/audio/title_music.c \
+	src/audio/title_player.c
 
-SH_CFLAGS+= -Os -I. $(TGA_CFLAGS)
+SH_CFLAGS+= -Os -Isrc/audio -Isrc/scene -Isrc/debug -Iassets/generated $(TGA_CFLAGS)
 SH_LDFLAGS+= $(TGA_LDFLAGS)
 
 IP_VERSION:= V1.000

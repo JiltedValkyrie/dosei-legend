@@ -3,6 +3,8 @@ import math
 import struct
 import unittest
 from pathlib import Path
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
 
 import build_title_audio as audio
 
@@ -47,7 +49,7 @@ class AudioTests(unittest.TestCase):
 
     def test_sample_memory_and_loop_guards(self):
         import json
-        manifest = json.loads((audio.ROOT / 'audio_manifest.json').read_text())
+        manifest = json.loads((audio.ROOT / 'assets/generated/audio_manifest.json').read_text())
         blob = (audio.ROOT / 'assets/TITLE_PCM.RAW').read_bytes()
         self.assertLess(len(blob) + audio.SAMPLE_BASE, 512 * 1024)
         for s in manifest['samples']:

@@ -16,8 +16,27 @@
 
 #include <assert.h>
 
-#include "kokiri_wireframe.h"
+#include "kokiri_scene.h"
 #include "title_music.h"
+#include "frame_probe.h"
+#include "crash_probe.h"
+
+static volatile bool input_enabled;
+static volatile uint16_t input_buttons, input_rising;
+
+static bool __attribute__((noinline))
+title_input_update(uint16_t rising)
+{
+        static bool visible = true;
+        if (rising & PERIPHERAL_DIGITAL_START) {
+                visible = !visible;
+                const vdp2_scrn_disp_t layers = visible
+                    ? VDP2_SCRN_DISPTP_NBG0 | VDP2_SCRN_DISPTP_NBG1
+                    : VDP2_SCRN_DISPTP_NBG1;
+                vdp2_scrn_display_set(layers);
+        }
+        return visible;
+}
 
 extern uint8_t asset_title_tga[];
 extern uint8_t asset_press_start_raw[];
@@ -46,6 +65,16 @@ extern uint8_t asset_forest_bg_tga[];
 static void
 _vblank_out_handler(void *work __unused)
 {
+        if (!input_enabled) return;
+        /* Consume the previous collection before requesting another. VBlank
+         * out masks the lower-priority SMPC interrupt during the SDK parse;
+         * the slow renderer must never parse that shared buffer itself. */
+        smpc_peripheral_process();
+        smpc_peripheral_digital_t pad = { 0 };
+        smpc_peripheral_digital_port(1, &pad);
+        uint16_t buttons = pad.connected ? pad.pressed.raw : 0;
+        input_rising |= buttons & (uint16_t)~input_buttons;
+        input_buttons = buttons;
         smpc_peripheral_intback_issue();
 }
 
@@ -69,14 +98,12 @@ press_start_blit(bool visible)
         }
 }
 
-/*
- * Runs before main(). The Ponesound driver load drives the SMPC directly
- * (SNDOFF/SNDON), and the working libyaul example brings up the peripheral
- * machinery alongside it, so mirror that here.
- */
+/* Initialize CD access and controller polling before main. */
 void
 user_init(void)
 {
+        crash_probe_init();
+        cd_block_init();
         smpc_peripheral_init();
 
         vdp_sync_vblank_out_set(_vblank_out_handler, NULL);
@@ -98,7 +125,7 @@ main(void)
 
         /*
          * NBG1 carries the Kokiri Forest backdrop (tools/make_forest_backdrop.py)
-         * as the backmost layer - below the wireframe/room geometry (VDP1
+         * as the backmost layer - below the room geometry (VDP1
          * priority 3) and below NBG0's logo (priority 7). A 512x256 16bpp
          * bitmap is 256KB, i.e. two full VRAM banks: NBG0's own bitmap
          * already fills banks 0+1, so this one goes in banks 2+3. It's
@@ -173,7 +200,7 @@ main(void)
         assert(ret == TGA_FILE_OK);
 
         /* Key the bitmap's black background out to hardware-transparent
-         * (RGB555 0x0000) so the Kokiri Forest wireframe, drawn on VDP1 at a
+         * (RGB555 0x0000) so the Kokiri Forest scene, drawn on VDP1 at a
          * lower sprite priority than this NBG0 layer, shows through behind
          * the logo/text instead of being fully occluded by an opaque black
          * background.
@@ -197,8 +224,10 @@ main(void)
             VDP2_TVMD_VERT_240);
         vdp2_tvmd_display_set();
 
-        kokiri_wireframe_init();
+        kokiri_scene_init();
         title_music_init();
+        /* Sound bootstrap also uses SMPC commands; begin polling afterward. */
+        input_enabled = true;
 
         vdp2_sync();
         vdp2_sync_wait();
@@ -207,15 +236,28 @@ main(void)
         bool press_start_visible = true;
 
         while (true) {
+                frame_probe_stage(0x10);
+                smpc_peripheral_digital_t pad = { 0 };
+                const uint8_t interrupt_mask = cpu_intc_mask_get();
+                cpu_intc_mask_set(15);
+                pad.pressed.raw = input_buttons;
+                const uint16_t rising = input_rising;
+                input_rising = 0;
+                cpu_intc_mask_set(interrupt_mask);
+                const bool title_visible = title_input_update(rising);
                 if ((frame % PRESS_START_BLINK_FRAMES) == 0) {
                         press_start_visible = !press_start_visible;
                         press_start_blit(press_start_visible);
                 }
 
-                kokiri_wireframe_update_and_draw();
+                frame_probe_stage(0x20);
+                kokiri_scene_camera_update(&pad, title_visible);
+                kokiri_scene_update_and_draw();
 
+                frame_probe_stage(0x80);
                 vdp2_sync();
                 vdp2_sync_wait();
+                frame_probe_complete();
 
                 frame++;
         }
