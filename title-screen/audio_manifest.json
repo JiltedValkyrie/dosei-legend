@@ -1,0 +1,161 @@
+{
+  "version": "ntsc-1.2 US",
+  "rom_md5": "57a9719ad547c516342e1a15d5c28c3d",
+  "sequence_sha256": "49f89bd58d781f1daef52d550c2225a26b4c990b8805f33e4e37b288434bd171",
+  "sample_sha256": {
+    "Sample115.wav": "01a011badafd95097b823a9e72052cb9727724d20cebf81477f479e41c3db90f",
+    "Sample356.wav": "f6fda113b79df0b8852168f0eda399ab66fda4831b5ed4007fa08c3b31d8ab22",
+    "Sample357.wav": "6e244030019eabae88a3f505f4d1ae27209116f5121571d30c3c33eb814c03ee",
+    "Sample358.wav": "4aa07514a05352023bd617cd6920a0210211aea9d20b84b9a9960a0c05187bed",
+    "Sample372.wav": "ccf458b1c949c77834a11d754359a1ddadb990b1164cd5bd2ebd4b23be828b3a",
+    "Sample373.wav": "9d7b05adda232916a9dfeb83fe909c606026d59284a6e92553ce122407be4441",
+    "Sample374.wav": "4111326fd81b5e53f5cdfa03d99f04e268039b9e411f2811977515c06b6ec20a"
+  },
+  "notes": 221,
+  "triggers": 219,
+  "tempo_changes": [
+    [
+      0,
+      100
+    ],
+    [
+      192,
+      70
+    ],
+    [
+      384,
+      59
+    ],
+    [
+      624,
+      73
+    ],
+    [
+      816,
+      65
+    ],
+    [
+      912,
+      57
+    ],
+    [
+      1008,
+      74
+    ],
+    [
+      1584,
+      65
+    ],
+    [
+      1680,
+      70
+    ],
+    [
+      1776,
+      74
+    ],
+    [
+      2352,
+      65
+    ],
+    [
+      2448,
+      57
+    ],
+    [
+      2544,
+      74
+    ],
+    [
+      3936,
+      69
+    ],
+    [
+      3984,
+      66
+    ],
+    [
+      4032,
+      60
+    ],
+    [
+      4080,
+      74
+    ]
+  ],
+  "intro_seconds": 10.913317191283245,
+  "total_seconds": 77.9023775786394,
+  "pcm_bytes": 480046,
+  "levels_bytes": 112176,
+  "omitted_opcodes": [
+    "filter",
+    "freefilter",
+    "initchan",
+    "ldfilter",
+    "mutebhv",
+    "mutescale",
+    "noshort",
+    "notepri",
+    "reverb",
+    "vibdepth"
+  ],
+  "samples": [
+    {
+      "name": "SAMPLE_0_115",
+      "offset": 0,
+      "loop_start": 12417,
+      "loop_end": 18912,
+      "rate": 26372,
+      "unity": 68
+    },
+    {
+      "name": "SAMPLE_0_356",
+      "offset": 37832,
+      "loop_start": 39091,
+      "loop_end": 45651,
+      "rate": 18172,
+      "unity": 39
+    },
+    {
+      "name": "SAMPLE_0_357",
+      "offset": 129142,
+      "loop_start": 41313,
+      "loop_end": 56873,
+      "rate": 26372,
+      "unity": 60
+    },
+    {
+      "name": "SAMPLE_0_358",
+      "offset": 242896,
+      "loop_start": 34575,
+      "loop_end": 39217,
+      "rate": 13186,
+      "unity": 60
+    },
+    {
+      "name": "SAMPLE_0_372",
+      "offset": 321338,
+      "loop_start": 13912,
+      "loop_end": 30026,
+      "rate": 26372,
+      "unity": 36
+    },
+    {
+      "name": "SAMPLE_0_373",
+      "offset": 381398,
+      "loop_start": 8196,
+      "loop_end": 26494,
+      "rate": 26372,
+      "unity": 56
+    },
+    {
+      "name": "SAMPLE_0_374",
+      "offset": 434394,
+      "loop_start": 7979,
+      "loop_end": 22822,
+      "rate": 26372,
+      "unity": 68
+    }
+  ],
+  "preview_peak": 0.41635199583910076
+}

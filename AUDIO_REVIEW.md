@@ -1,5 +1,8 @@
 # Title music review — 2026-09-15
 
+Historical review of the pre-rebuild Ponesound path. The replacement is
+documented in [title-screen/AUDIO.md](title-screen/AUDIO.md).
+
 Scope: investigate the reported piano turning into crashing-wave noise after
 the first chord. Production source and disc image were not changed. Playback
 has not been reproduced or heard by Codex; the cause of the early noise is

@@ -18,7 +18,6 @@
 
 #include "kokiri_wireframe.h"
 #include "title_music.h"
-#include "title_player.h"
 
 extern uint8_t asset_title_tga[];
 extern uint8_t asset_press_start_raw[];
@@ -214,7 +213,6 @@ main(void)
                 }
 
                 kokiri_wireframe_update_and_draw();
-                title_player_update();
 
                 vdp2_sync();
                 vdp2_sync_wait();

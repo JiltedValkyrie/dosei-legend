@@ -9,6 +9,13 @@ folder) — that doc covers MSYS2, WSL, the SH2 cross-toolchain, libyaul, and
 Kronos, since those are reused across every project in that folder, not just
 this one. This file covers only what's specific to the Kokiri Forest port.
 
+## Title-screen audio (US 1.2 rebuild)
+
+The current music pipeline and regeneration commands are documented in
+[title-screen/AUDIO.md](title-screen/AUDIO.md). It uses a fresh US 1.2 audio
+extraction and direct SCSP playback. The older audio notes describe the
+previous Ponesound implementation.
+
 ## Division of labor
 
 - **Claude**: fixed-point math core, libyaul render/room code, host-side asset

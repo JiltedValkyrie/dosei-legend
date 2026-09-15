@@ -14,14 +14,13 @@ BUILTIN_ASSETS+= \
 	assets/PRESS_START.RAW;asset_press_start_raw \
 	assets/KOKIRI_VERTS.RAW;asset_kokiri_verts_raw \
 	assets/KOKIRI_EDGES.RAW;asset_kokiri_edges_raw \
-	assets/SDRV.BIN;asset_sound_driver \
-	assets/TITLE_SMP.RAW;asset_title_samples
+	assets/TITLE_PCM.RAW;asset_title_pcm \
+	assets/TITLE_LEVELS.RAW;asset_title_levels
 
 SH_PROGRAM:= title-screen
 SH_SRCS:= \
 	main.c \
 	kokiri_wireframe.c \
-	ponesound.c \
 	title_music.c \
 	title_player.c
 

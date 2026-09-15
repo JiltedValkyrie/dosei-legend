@@ -1,43 +1,59 @@
-/*
- * Boots the Ponesound driver on the SCSP and hands off to title_player for
- * the actual note-by-note sequencing of NA_BGM_TITLE (see title_player.c).
- */
-
+/* Sound CPU bootstrap and video-clock scheduler for the live SCSP score. */
+#include <yaul.h>
+#include <smpc/smc.h>
 #include "title_music.h"
-#include "ponesound.h"
 #include "title_player.h"
 
-extern uint8_t asset_sound_driver[];
-extern uint8_t asset_sound_driver_end[];
+static unsigned _phase;
+static unsigned _refresh;
 
-/* Frames to let the sound CPU boot before issuing driver commands. Boot-time
- * only, so erring generous costs nothing. */
-#define PONESOUND_BOOT_FRAMES 30
+static void
+_audio_vblank(void *work __unused)
+{
+        _phase += 60;
+        while (_phase >= _refresh) {
+                _phase -= _refresh;
+                title_player_update();
+        }
+}
 
 void
 title_music_init(void)
 {
-        ponesound_load_driver(asset_sound_driver,
-            asset_sound_driver_end - asset_sound_driver, ADX_MASTER_768);
+        smpc_smc_call(SMPC_SMC_SNDOFF);
+        smpc_smc_wait(0);
 
-        /*
-         * The sound CPU needs time to boot after SNDON before we touch its
-         * command table. m68k_com->pcmCtrl is a POINTER that the M68K driver
-         * fills in from its own side, so writing pcmCtrl[n] too early
-         * scribbles through an uninitialised pointer: the driver then
-         * accepts nothing, and playback is silent apart from a single
-         * chunk's worth of pop. The stock libyaul example gets away without
-         * this wait; we do not, so don't remove it.
-         */
-        for (uint32_t i = 0; i < PONESOUND_BOOT_FRAMES; i++) {
-                vdp2_sync();
-                vdp2_sync_wait();
+        volatile uint16_t *regs = (volatile uint16_t *)0x25B00000UL;
+        regs[0x400 / 2] = 0x0200; /* 512 KiB mode, muted */
+        regs[0x41E / 2] = 0;      /* no sound-CPU interrupts */
+        regs[0x42A / 2] = 0;      /* no main-CPU interrupts */
+        for (unsigned i = 0; i < 0x400 / 2; i++) {
+                regs[i] = 0;
         }
+        for (unsigned i = 0; i < 32; i++) {
+                regs[i * 16 + 6] = 255;
+                regs[i * 16 + 5] = 31;
+        }
+        regs[0] = 0x1000;         /* execute key-off for all 32 slots */
 
-        ponesound_set_master_volume(0xF);
-
-        /* The driver's scheduler is pumped from vblank-in. */
-        vdp_sync_vblank_in_set(ponesound_vblank_rq, NULL);
+        volatile uint16_t *ram = (volatile uint16_t *)0x25A00000UL;
+        /* All exception vectors point to the same idle routine. The stack
+         * stays below the sample area, and interrupts remain masked.
+         * Restart promptly: SEGA bulletin 51 limits SNDOFF to 0.5 seconds. */
+        for (unsigned i = 0; i < 0x400 / 2; i += 2) {
+                ram[i] = 0;
+                ram[i + 1] = 0x0400;
+        }
+        ram[1] = 0x0FF0;          /* reset stack pointer = 0x00000FF0 */
+        ram[0x400 / 2] = 0x46FC;  /* move.w #0x2700,sr */
+        ram[0x402 / 2] = 0x2700;
+        ram[0x404 / 2] = 0x60FE;  /* bra.s . */
+        smpc_smc_call(SMPC_SMC_SNDON);
+        smpc_smc_wait(0);
 
         title_player_init();
+        _phase = 0;
+        _refresh = (vdp2_tvmd_tv_standard_get() == VDP2_TVMD_TV_STANDARD_PAL) ? 50 : 60;
+        regs[0x400 / 2] = 0x020F;
+        vdp_sync_vblank_in_set(_audio_vblank, NULL);
 }
