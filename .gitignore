@@ -1,0 +1,22 @@
+# Build output
+build/
+*.iso
+*.cue
+*.bin
+*.elf
+*.map
+
+# Required prebuilt sound driver
+!title-screen/assets/SDRV.BIN
+
+# Local settings and Python cache
+.claude/settings.local.json
+__pycache__/
+*.pyc
+
+# libyaul env
+.yaul.env
+
+# OS cruft
+.DS_Store
+Thumbs.db
