@@ -20,6 +20,7 @@
 #include "title_music.h"
 #include "frame_probe.h"
 #include "crash_probe.h"
+#include "perf_bench.h"
 
 static volatile bool input_enabled;
 static volatile uint16_t input_buttons, input_rising;
@@ -78,7 +79,7 @@ _vblank_out_handler(void *work __unused)
         smpc_peripheral_intback_issue();
 }
 
-static void
+static void __unused
 press_start_blit(bool visible)
 {
         uint16_t * const vram = (uint16_t *)VDP2_VRAM_ADDR(0, 0x00000);
@@ -103,6 +104,8 @@ void
 user_init(void)
 {
         crash_probe_init();
+        frame_probe_time_init();
+        PERF_BENCH_INIT();
         cd_block_init();
         smpc_peripheral_init();
 
@@ -233,7 +236,7 @@ main(void)
         vdp2_sync_wait();
 
         uint32_t frame = 0;
-        bool press_start_visible = true;
+        bool press_start_visible __unused = true;
 
         while (true) {
                 frame_probe_stage(0x10);
@@ -245,19 +248,32 @@ main(void)
                 input_rising = 0;
                 cpu_intc_mask_set(interrupt_mask);
                 const bool title_visible = title_input_update(rising);
+#ifndef PERF_BENCH
                 if ((frame % PRESS_START_BLINK_FRAMES) == 0) {
                         press_start_visible = !press_start_visible;
                         press_start_blit(press_start_visible);
                 }
+#endif
 
                 frame_probe_stage(0x20);
+                /* PERF_BENCH holds a fixed pose: the camera keeps the
+                 * collision-validated spawn position with yaw and pitch at
+                 * zero, and automatic rotation never runs. Every measured
+                 * frame therefore renders identical geometry, which is what
+                 * makes before/after comparison meaningful. The blink above
+                 * is also suppressed so no frame carries an extra blit. */
+#ifndef PERF_BENCH
                 kokiri_scene_camera_update(&pad, title_visible);
+#else
+                (void)pad; (void)title_visible;
+#endif
                 kokiri_scene_update_and_draw();
 
                 frame_probe_stage(0x80);
                 vdp2_sync();
                 vdp2_sync_wait();
                 frame_probe_complete();
+                PERF_FRAME_END();
 
                 frame++;
         }

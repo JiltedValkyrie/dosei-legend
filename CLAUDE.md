@@ -2,6 +2,21 @@
 
 ## Read first
 
+Use basic, short language. No long explanations. Keep token usage SHORT for what was done. Caveman-like, even.
+
+### User directive: stop breaking working behavior
+
+- Review the current diff and trace the reported failure before changing code.
+- Keep fixes focused. Do not change controls or scene behavior to fit an unproven diagnosis.
+- Never put required work inside `assert()`. Before changing DEBUG, audit assertion
+  expressions for side effects and verify initialization in the release build.
+- For performance changes, compare the same camera position and angle. Check
+  floor visibility, movement, turning, and height controls after each change.
+- A successful build or host test is not proof that a Kronos bug is fixed.
+  State exactly what was verified and what still needs runtime confirmation.
+- Take user reports seriously. The previous floor/camera diagnoses were wrong;
+  do not dismiss a continuing failure because isolated tests passed.
+
 This is a Sega Saturn/libyaul Kokiri Forest vertical slice. The source tree was
 reorganized; old IDE tabs pointing directly into `title-screen/*.c` are stale.
 See [README.md](README.md) for the directory map and build command.
@@ -15,6 +30,12 @@ or a solved issue.
 
 ## Current implementation
 
+- Latest regression: disabling DEBUG removed `assert(kokiri_collision_spawn(&camera))`
+  entirely, leaving the camera at `(0,0,0)` inside ground collision. Spawn now
+  runs unconditionally with an explicit failure check. The compiled-init test
+  catches the omission; floor/movement still need confirmation in Kronos.
+  Earlier claims that distance culling or title visibility fully explained the
+  reported regression were incorrect.
 - US 1.2 geometry: three Kokiri rooms, 1,268 positions, 2,060 triangles,
   1,692 collision triangles. Native world scale, 320x240 viewport.
 - Triangle textures use VDP1 A/B/C/C sprites. Shared projection, early culling,
@@ -22,7 +43,8 @@ or a solved issue.
   flat-color clipping fallback is gone. Quad conversion has not been done;
   it may help but has not been shown to explain the low frame rate.
 - Collision and manual camera movement were confirmed working by the user.
-  Start toggles title/automatic rotation. D-pad moves, L/R turns, X/Z raises/
+  Start toggles the title. Idle automatic rotation runs while it is visible,
+  but manual controls are never locked by title visibility. D-pad moves, L/R turns, X/Z raises/
   lowers, Y + Up/Down pitches, C levels. Edit `src/scene/kokiri_camera.h` under
   `title-screen`: manual move 16, diagonal 12, yaw 360, pitch 240 per rendered
   frame. Automatic yaw remains 90. The previous L/R same-direction report is

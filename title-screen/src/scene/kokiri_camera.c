@@ -3,10 +3,14 @@
 void kokiri_camera_update(camera_position_t *position, uint16_t *yaw,
     int32_t *pitch, uint16_t buttons, bool title_visible)
 {
-        if (title_visible) { *yaw += CAMERA_AUTO_TURN_SPEED; return; }
         const uint16_t controls = CAMERA_L | CAMERA_R | CAMERA_X | CAMERA_Z |
             CAMERA_Y | CAMERA_C | CAMERA_UP | CAMERA_DOWN | CAMERA_LEFT | CAMERA_RIGHT;
-        if (!(buttons & controls)) return; /* Start alone and idle must be no-ops. */
+        /* Keep the title's idle rotation, but never lock manual camera input
+         * merely because the logo layer is still visible. */
+        if (!(buttons & controls)) {
+                if (title_visible) *yaw += CAMERA_AUTO_TURN_SPEED;
+                return;
+        }
 
         /* Unsigned angle wraps at one revolution. Opposite buttons cancel. */
         if (buttons & CAMERA_L) *yaw = (uint16_t)(*yaw - CAMERA_TURN_SPEED);

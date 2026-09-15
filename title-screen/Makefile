@@ -2,6 +2,19 @@ ifeq ($(strip $(YAUL_INSTALL_ROOT)),)
   $(error Undefined YAUL_INSTALL_ROOT (install root directory))
 endif
 
+# PERF_BENCH=1 builds the fixed-pose profiler configuration. It is deliberately
+# independent of DEBUG (which gates libyaul assertions) and redirects BOTH the
+# object directory and the disc image, so the two configurations can never
+# share objects or clobber each other's image. build/ already contains objects
+# from retired configurations, so this separation is not hypothetical.
+ifeq ($(strip $(PERF_BENCH)),)
+  SH_BUILD_DIR:= build
+  SH_OUTPUT_DIR:= .
+else
+  SH_BUILD_DIR:= build-perf
+  SH_OUTPUT_DIR:= build-perf
+endif
+
 include $(YAUL_INSTALL_ROOT)/share/build.pre.mk
 
 # Required for TGA loading (tga_read/tga_image_decode)
@@ -20,6 +33,7 @@ SH_SRCS:= \
 	src/main.c \
 	src/debug/frame_probe.c \
 	src/debug/crash_probe.c \
+	src/debug/perf_bench.c \
 	src/debug/crash_vectors.sx \
 	src/scene/kokiri_scene.c \
 	src/scene/kokiri_collision.c \
@@ -29,6 +43,9 @@ SH_SRCS:= \
 	src/audio/title_player.c
 
 SH_CFLAGS+= -Os -Isrc/audio -Isrc/scene -Isrc/debug -Iassets/generated $(TGA_CFLAGS)
+ifneq ($(strip $(PERF_BENCH)),)
+  SH_CFLAGS+= -DPERF_BENCH=1
+endif
 SH_LDFLAGS+= $(TGA_LDFLAGS)
 
 IP_VERSION:= V1.000

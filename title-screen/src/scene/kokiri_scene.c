@@ -1,8 +1,5 @@
 /* US 1.2 visual room mesh. CD data stays in low RAM; textures live in VDP1. */
-/* libyaul gates assertions on DEBUG, including file/VRAM bounds checks. */
-#ifndef DEBUG
-#define DEBUG 1
-#endif
+/* DEBUG is optional. Required initialization must run without assertions. */
 #include <yaul.h>
 #include <assert.h>
 #include <stdlib.h>
@@ -12,6 +9,7 @@
 #include "kokiri_clip.h"
 #include "kokiri_camera.h"
 #include "frame_probe.h"
+#include "perf_bench.h"
 
 typedef struct {
         uint32_t magic, version, vertices, faces, vertex_offset, face_offset;
@@ -44,6 +42,12 @@ static order_t *order;
 static vdp1_cmdt_list_t *commands;
 static vdp1_vram_t texture_base;
 static angle_t angle;
+/* Draw distance. Keep triangles that cross into the near field: large floor
+ * polygons can have a far average depth while still reaching the camera.
+ * Only triangles wholly beyond a threshold are culled or mesh-faded. */
+static int32_t far_z, fade_z;
+/* Capacity refusals since boot. Displayed by frame_probe on row 0. */
+static uint16_t overflow_commands, overflow_tiles;
 
 static void sort_faces(uint32_t visible_count)
 {
@@ -84,6 +88,8 @@ void kokiri_scene_init(void)
         scene = (const header_t *)data;
         assert(scene->magic == 0x4B465231 && scene->version == 2 && scene->total_bytes == bytes);
         assert(scene->vertices < 65536 && scene->faces < 10000 && scene->radius > 0 && scene->radius < 16000);
+        far_z = (int32_t)scene->radius * 6 / 10;
+        fade_z = far_z - far_z / 4;
         assert(scene->vertex_offset == 64 && scene->face_offset >= 64 + scene->vertices * sizeof(vertex_t));
         assert(scene->texture_offset >= scene->face_offset + scene->faces * sizeof(face_t));
         assert(scene->texture_offset <= bytes && scene->texture_bytes == bytes - scene->texture_offset);
@@ -94,7 +100,9 @@ void kokiri_scene_init(void)
         assert(scene->collision_count > 0 && scene->collision_count < 10000);
         assert(scene->collision_offset + scene->collision_count*sizeof(collision_triangle_t) <= scene->texture_offset);
         kokiri_collision_init((const collision_triangle_t *)(data+scene->collision_offset), scene->collision_count);
-        assert(kokiri_collision_spawn(&camera));
+        /* assert() removes its expression entirely in the release SDK.
+         * Always spawn, and stop if no safe starting position exists. */
+        if (!kokiri_collision_spawn(&camera)) abort();
         view = malloc(scene->vertices * sizeof(*view));
         projected = malloc(scene->vertices * sizeof(*projected));
         depths = malloc(scene->vertices * sizeof(*depths));
@@ -109,7 +117,7 @@ void kokiri_scene_init(void)
         for (uint32_t i = 0; i < scene->faces; i++) {
                 for (int j = 0; j < 4; j++) assert(faces[i].vertices[j] < scene->vertices);
                 assert(faces[i].size == 0x0210 || faces[i].size == 0x0420);
-                uint32_t width = ((faces[i].size >> 8) & 63) * 8;
+                uint32_t width __unused = ((faces[i].size >> 8) & 63) * 8;
                 assert(faces[i].texture + width * (faces[i].size & 255) / 2 <= scene->texture_bytes);
                 assert(faces[i].clut + 32 <= scene->texture_bytes);
         }
@@ -148,6 +156,7 @@ void kokiri_scene_camera_update(const smpc_peripheral_digital_t *pad, bool title
 void kokiri_scene_update_and_draw(void)
 {
         frame_probe_stage(0x30);
+        PERF_SPAN_BEGIN(PERF_SPAN_VERTEX);
         fix16_mat33_t rotation;
         fix16_mat33_y_rotation_create(angle, &rotation);
         fix16_t ps, pc;
@@ -177,19 +186,33 @@ void kokiri_scene_update_and_draw(void)
                                 projected[i].p.y = sy;
                                 projected[i].safe = true;
                         }
+                        PERF_COUNT_ADD(PERF_COUNT_PROJECTED, 1);
                 }
         }
+        PERF_SPAN_END(PERF_SPAN_VERTEX);
 
+        PERF_SPAN_BEGIN(PERF_SPAN_FACECULL);
         uint32_t visible_count = 0;
         for (uint32_t i = 0; i < scene->faces; i++) {
                 const face_t *face = &faces[i];
                 if (projected[face->vertices[0]].outcode & projected[face->vertices[1]].outcode &
                     projected[face->vertices[2]].outcode) continue;
+                const int32_t depth0 = depths[face->vertices[0]];
+                const int32_t depth1 = depths[face->vertices[1]];
+                const int32_t depth2 = depths[face->vertices[2]];
+                if (depth0 > far_z && depth1 > far_z && depth2 > far_z) continue;
+                int32_t depth_sum = depth0 + depth1 + depth2;
                 order[visible_count].index = i;
-                order[visible_count++].depth = depths[face->vertices[0]] + depths[face->vertices[1]] + depths[face->vertices[2]];
+                order[visible_count++].depth = depth_sum;
         }
+        PERF_SPAN_END(PERF_SPAN_FACECULL);
+        PERF_COUNT_ADD(PERF_COUNT_VISIBLE, visible_count);
         frame_probe_stage(0x40);
+        PERF_SPAN_BEGIN(PERF_SPAN_SORT);
         sort_faces(visible_count);
+        PERF_SPAN_END(PERF_SPAN_SORT);
+        frame_probe_stage(0x48);
+        PERF_SPAN_BEGIN(PERF_SPAN_CLIPEMIT);
         uint32_t count = 2, clip_tiles = 0;
         for (uint32_t i = 0; i < visible_count; i++) {
                 const face_t *face = &faces[order[i].index];
@@ -202,7 +225,12 @@ void kokiri_scene_update_and_draw(void)
                 if (safe) {
                         memcpy(polygon, input, sizeof(input));
                         n = 3;
-                } else n = kokiri_clip_frustum(input, polygon, &changed);
+                } else {
+                        PERF_SPAN_BEGIN(PERF_SPAN_FRUSTUM);
+                        n = kokiri_clip_frustum(input, polygon, &changed);
+                        PERF_SPAN_END(PERF_SPAN_FRUSTUM);
+                        PERF_COUNT_ADD(PERF_COUNT_FRUSTUM_CALLS, 1);
+                }
                 if (n < 3) continue;
                 /* A fan of quads covers clipped polygons without dropping corners. */
                 for (int first = 1; first < n-1; first += 2) {
@@ -210,7 +238,7 @@ void kokiri_scene_update_and_draw(void)
                             polygon[first+2 < n ? first+2 : first+1]};
                         int16_vec2_t p[4];
                         for (int j = 0; j < 4; j++) {
-                                if (safe) p[j] = projected[face->vertices[j]].p;
+                                if (safe) p[j] = projected[face->vertices[j < 3 ? j : 2]].p;
                                 else {
                                         p[j].x = 160 + kokiri_project_offset(clipped[j].x, clipped[j].z);
                                         p[j].y = 120 - kokiri_project_offset(clipped[j].y, clipped[j].z);
@@ -219,21 +247,40 @@ void kokiri_scene_update_and_draw(void)
                         int32_t area = 0;
                         for (int j = 0; j < 4; j++) area += p[j].x*p[(j+1)%4].y-p[j].y*p[(j+1)%4].x;
                         if (!area || ((face->flags & 2) && area <= 0)) continue;
-                        assert(count < COMMAND_CAPACITY-1);
+                        /* Checked before allocation, not asserted: with DEBUG
+                         * off an assert here compiles away and the write runs
+                         * off the end of the command list. Counted and
+                         * reported so dropped geometry is never silent. */
+                        if (count >= COMMAND_CAPACITY-1) {
+                                overflow_commands++;
+                                PERF_COUNT_ADD(PERF_COUNT_OVF_COMMANDS, 1);
+                                goto emit_done;
+                        }
                         vdp1_cmdt_t *cmd = &commands->cmdts[count++];
                         memset(cmd, 0, sizeof(*cmd));
                         vdp1_cmdt_distorted_sprite_set(cmd);
                         vdp1_cmdt_draw_mode_t mode = { .raw = 0 };
                         mode.end_code_disable = true;
                         mode.pre_clipping_disable = true;
-                        mode.mesh_enable = (face->flags & 1) != 0;
+                        mode.mesh_enable = (face->flags & 1) != 0 ||
+                            (depths[face->vertices[0]] > fade_z &&
+                             depths[face->vertices[1]] > fade_z &&
+                             depths[face->vertices[2]] > fade_z);
                         vdp1_cmdt_draw_mode_set(cmd, mode);
                         vdp1_cmdt_color_mode1_set(cmd, texture_base + face->clut);
+                        if (changed && clip_tiles >= CLIP_TILES) {
+                                /* Out of scratch tiles: draw the unclipped
+                                 * tile instead of writing past the partition. */
+                                overflow_tiles++;
+                                PERF_COUNT_ADD(PERF_COUNT_OVF_TILES, 1);
+                                changed = false;
+                        }
                         if (changed) {
-                                assert(clip_tiles < CLIP_TILES);
                                 uint8_t tile[CLIP_TILE_BYTES] __aligned(4);
                                 const uint8_t *source = (const uint8_t *)scene + scene->texture_offset + face->texture;
+                                PERF_SPAN_BEGIN(PERF_SPAN_TEXTURE);
                                 kokiri_clip_texture(source, face->size & 255, clipped, tile);
+                                PERF_SPAN_END(PERF_SPAN_TEXTURE);
                                 vdp1_vram_t dest = texture_base + scene->texture_bytes + clip_tiles++*CLIP_TILE_BYTES;
                                 memcpy((void *)dest, tile, sizeof(tile));
                                 vdp1_cmdt_char_base_set(cmd, dest);
@@ -245,15 +292,27 @@ void kokiri_scene_update_and_draw(void)
                         vdp1_cmdt_vtx_set(cmd, p);
                 }
         }
+emit_done:
+        PERF_SPAN_END(PERF_SPAN_CLIPEMIT);
+        PERF_COUNT_ADD(PERF_COUNT_COMMANDS, count);
+        PERF_COUNT_ADD(PERF_COUNT_TILES, clip_tiles);
+        frame_probe_overflow(overflow_commands, overflow_tiles);
 
         memset(&commands->cmdts[count], 0, sizeof(vdp1_cmdt_t));
         vdp1_cmdt_end_set(&commands->cmdts[count]);
         commands->count = count + 1;
         frame_probe_stage(0x50);
+        PERF_SPAN_BEGIN(PERF_SPAN_UPLOAD);
         vdp1_sync_cmdt_list_put(commands, 0);
+        PERF_SPAN_END(PERF_SPAN_UPLOAD);
         frame_probe_stage(0x60);
+        PERF_SPAN_BEGIN(PERF_SPAN_RENDER);
         vdp1_sync_render();
+        PERF_SPAN_END(PERF_SPAN_RENDER);
         frame_probe_stage(0x70);
+        PERF_SPAN_BEGIN(PERF_SPAN_VDP1WAIT);
         vdp1_sync();
         vdp1_sync_wait();
+        PERF_SPAN_END(PERF_SPAN_VDP1WAIT);
+        frame_probe_stage(0x78);
 }

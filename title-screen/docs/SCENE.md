@@ -2,6 +2,13 @@
 
 ## Status
 
+The missing-floor/stuck-camera regression was traced to camera spawn being
+inside an assertion: disabling DEBUG omitted the call and left the camera at
+`(0,0,0)`. Initialization now calls spawn regardless of DEBUG and stops on
+failure. A target-object test checks that the call survives compilation. The
+host collision test reproduces blocked movement at zero. Kronos confirmation
+of the rebuilt image is still required, including the reported turning issue.
+
 The renderer reached 7 FPS and raised an SH-2 invalid opcode while rotating
 without input. The user subsequently reported **no crash on the last run of the
 reorganized build**. The underlying intermittent failure remains unexplained;
@@ -23,8 +30,9 @@ button snapshot. Audio runs independently in VBlank-in.
 
 ## Controls
 
-Start toggles the title. Visible title: automatic yaw, 90 angle units per rendered
-frame. Hidden title:
+Start toggles the title. With no manual input, a visible title automatically
+yaws 90 angle units per rendered frame. Camera controls work whether the title
+is visible or hidden:
 
 | Input | Action |
 | --- | --- |

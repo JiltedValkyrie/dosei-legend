@@ -117,7 +117,16 @@ class CameraTests(unittest.TestCase):
         self.assertEqual((p.x,p.z),(-284,16))
         update(0x0200); self.assertEqual(pitch.value,0)
         update(0x1040,True)
-        self.assertEqual((p.x,p.y,p.z,yaw.value),(-284,91,16,90))
+        self.assertEqual((p.x,p.y,p.z,yaw.value),(-284,107,32,0))
+
+    def test_title_visible_allows_manual_camera_control(self):
+        p=Position(-300,91,0); yaw=C.c_uint16(0); pitch=C.c_int32(0)
+        LIB.kokiri_camera_update(C.byref(p),C.byref(yaw),C.byref(pitch),0x80,True)
+        self.assertEqual(yaw.value,360)
+        LIB.kokiri_camera_update(C.byref(p),C.byref(yaw),C.byref(pitch),0x40,True)
+        self.assertEqual(p.y,107)
+        LIB.kokiri_camera_update(C.byref(p),C.byref(yaw),C.byref(pitch),0,True)
+        self.assertEqual(yaw.value,450)
 
     def test_shoulders_turn_oppositely_through_wraparound(self):
         for start in (0,100,32768,65400):
@@ -143,9 +152,31 @@ class CameraTests(unittest.TestCase):
         self.assertTrue(LIB.kokiri_collision_spawn(C.byref(p)))
         self.assertTrue(LIB.kokiri_collision_clear(p))
         self.assertEqual((p.x,p.y,p.z),(-300,91,0))
+        LIB.kokiri_collision_move(C.byref(p),0,160,0)
+        self.assertEqual(p.y,251)
+        self.assertTrue(LIB.kokiri_collision_clear(p))
         LIB.kokiri_collision_move(C.byref(p),0,-1000,0)
         self.assertEqual(p.y,91)
         print('Collision-validated spawn:',p.x,p.y,p.z)
+
+    def test_zero_initialized_camera_reproduces_stuck_movement(self):
+        # Release initialization used to omit spawn because it was in assert().
+        p = Position()
+        self.assertFalse(LIB.kokiri_collision_clear(p))
+        for dx,dy,dz in ((16,0,0),(-16,0,0),(0,16,0),(0,-16,0),(0,0,16),(0,0,-16)):
+            LIB.kokiri_collision_move(C.byref(p),dx,dy,dz)
+            self.assertEqual((p.x,p.y,p.z),(0,0,0))
+
+    def test_target_scene_initialization_calls_spawn(self):
+        # Check the actual Saturn object: calling spawn directly in host tests
+        # cannot catch release assert() removing it from scene initialization.
+        objects = list((ROOT/'build').glob('*@src@scene@kokiri_scene.o'))
+        self.assertEqual(len(objects),1,'Build the Saturn target before tests')
+        objdump = ROOT.parents[1]/'sh2eb-elf/bin/sh2eb-elf-objdump.exe'
+        result = subprocess.run([str(objdump),'-dr','--disassemble=_kokiri_scene_init',
+                                 str(objects[0])],check=True,capture_output=True,text=True)
+        self.assertIn('R_SH_DIR32\t_kokiri_collision_spawn',result.stdout,
+                      'Scene initialization must call spawn with DEBUG disabled')
 
     def test_swept_wall_and_edge_collision(self):
         wall = synthetic([(0,-1000,-1000),(0,1000,-1000),(0,0,1000)],(16384,0,0))
