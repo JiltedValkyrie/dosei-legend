@@ -1,7 +1,10 @@
 # Title music review — 2026-09-15
 
-Historical review of the pre-rebuild Ponesound path. The replacement is
-documented in [title-screen/AUDIO.md](title-screen/AUDIO.md).
+**Archived pre-rebuild investigation; not current implementation guidance.**
+The user approved the replacement US 1.2 direct SCSP music as "PERFECT".
+Current audio documentation is [../AUDIO.md](../AUDIO.md); current project
+status is in [../DEBUGGING.md](../DEBUGGING.md). File paths, line numbers,
+no-commit observations, and next steps below describe the old snapshot only.
 
 Scope: investigate the reported piano turning into crashing-wave noise after
 the first chord. Production source and disc image were not changed. Playback

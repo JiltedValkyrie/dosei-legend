@@ -3,6 +3,7 @@
 #include <smpc/smc.h>
 #include "title_music.h"
 #include "title_player.h"
+#include "frame_probe.h"
 
 static unsigned _phase;
 static unsigned _refresh;
@@ -10,6 +11,7 @@ static unsigned _refresh;
 static void
 _audio_vblank(void *work __unused)
 {
+        frame_probe_tick();
         _phase += 60;
         while (_phase >= _refresh) {
                 _phase -= _refresh;

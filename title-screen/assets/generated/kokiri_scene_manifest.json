@@ -1,0 +1,22 @@
+{
+  "source": "ntsc-1.2",
+  "segments": {
+    "spot04_scene": "a27478914327c0339d9d3748b602111f891e388123a71fc43bb5f2fbb775b36f",
+    "spot04_room_0": "7b9dd5957248c6d7a5df4f11294b7f6213b4d36ad9738166c6dc9b6a91c849f3",
+    "spot04_room_1": "f3f3885ee6a72607f32898070fc9fc183bbc1b24b8f91e49786a40b73af1d291",
+    "spot04_room_2": "8be93b23c4c9eaa33f645036c0f4cb64c69a2bed2bda8493196f67031b1bac3d"
+  },
+  "vertices": 1268,
+  "triangles": 2060,
+  "unique_tiles": 1801,
+  "texture_bytes": 378400,
+  "command_bytes": 66016,
+  "file_bytes": 488184,
+  "center": [
+    1857,
+    862,
+    -317
+  ],
+  "radius": 4367,
+  "collision_triangles": 1692
+}

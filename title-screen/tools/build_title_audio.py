@@ -400,7 +400,8 @@ def main():
     header += ['};', 'static const title_trigger_t title_triggers[] = {']
     header += ['    { %d, %d, %d, %d, %d },' % t for t in triggers]
     header += ['};', '#endif', '']
-    (ROOT / 'title_score.h').write_text('\n'.join(header))
+    (ROOT / 'assets/generated').mkdir(parents=True, exist_ok=True)
+    (ROOT / 'assets/generated/title_score.h').write_text('\n'.join(header))
     manifest = dict(version='ntsc-1.2 US', rom_md5='57a9719ad547c516342e1a15d5c28c3d',
                     sequence_sha256=hashlib.sha256(seq.read_bytes()).hexdigest(),
                     sample_sha256=hashes, notes=len(notes), triggers=len(triggers), tempo_changes=tempo,
@@ -409,7 +410,7 @@ def main():
                     samples=[{k:v for k,v in s.items() if k!='pcm'} for s in samples])
     if args.preview:
         manifest['preview_peak'] = preview(args.preview, args.preview_seconds, frames, levels, cooked, samples)
-    (ROOT / 'audio_manifest.json').write_text(json.dumps(manifest, indent=2) + '\n')
+    (ROOT / 'assets/generated/audio_manifest.json').write_text(json.dumps(manifest, indent=2) + '\n')
     print(json.dumps({k:v for k,v in manifest.items() if k not in ('sample_sha256','samples','tempo_changes')}, indent=2))
 
 
