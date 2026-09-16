@@ -42,10 +42,10 @@ rebuild was needed:
 - **Face records are 20 bytes** (`>4HIIHH`), not 16.
 
 Attribute fields mirror `jo_3d_set_mesh_polygon_texture()` in
-`../../joengine/jo_engine/3d.c`, with `CL16Bnk` in place of Jo's `CL256Bnk`
-because these tiles are 4bpp, and `colno` patched at load time to the uploaded
-CLUT address. `UseNearClip` hands the near plane to SGL rather than reusing the
-libyaul build's CPU clipper.
+`../../joengine/jo_engine/3d.c`, with `CL16Look` because the 4bpp tiles use
+per-texture lookup tables in VDP1 VRAM (not CRAM colour banks), and `colno`
+patched at load time to the uploaded CLUT address. `UseNearClip` hands the near
+plane to SGL rather than reusing the libyaul build's CPU clipper.
 
 ## Budgets (measured, not estimated)
 
@@ -75,14 +75,24 @@ The baseline's own test suite prints the same `-300 91 0`.
 
 Facing is `+Z`, with `+Y` up, taken from the baseline's view transform
 (`kokiri_scene.c`), where yaw 0 leaves the Y-rotation as identity and rotated
-`z` is used as depth. The viewer has no collision yet, so the pose is fixed.
+`z` is used as depth. At this zero-yaw/pitch pose the viewer applies the exact
+view transform `(x - eye.x, eye.y - y, z - eye.z)` directly, converting source
+Y-up to SGL Y-down, and sets SGL's screen distance to the baseline's
+240-pixel focal distance. The
+viewer has no collision yet, so the pose is fixed.
 
 ## Status
 
-Built and host-tested only. **Not yet run in Kronos**, so nothing is known about
-what it draws or how fast. Whether SGL agrees with the baseline on handedness,
-winding, texture orientation and near clipping is unverified -- confirming the
-view (floor included) is the next step, before any performance comparison.
+Built and visually checked in Kronos on 2026-09-15. The fixed view now renders
+upright, with textured ground, canopy and the central tree structure. The scene
+is submitted as two 1030-face lists sharing the original point table; the initial
+single 2060-face submission produced a black viewport.
+
+The final screenshot showed VDP1 58 FPS and VDP2 58/60 FPS. This is an emulator
+overlay observation, not a controlled renderer benchmark. Full submission
+acceptance, winding/culling, transparency and clipping fidelity still need
+verification. See [Claude handoff](CLAUDE_HANDOFF.md) for evidence, known policy
+mismatches and next steps. Local screenshot: `generated/upright-check.png`.
 
 ## Build-system caveats
 

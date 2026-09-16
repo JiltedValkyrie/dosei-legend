@@ -103,17 +103,18 @@ def emit(head, verts, faces, tiles, out_dir):
     # this SGL build expects a textured polygon to be described:
     #   sort = SORT_CEN | ((sprNoflip >> 16) & 0x1c) | No_Option
     #   atrb = (colour mode | No_Gouraud) | ((sprNoflip >> 24) & 0xc0)
-    # and colour-bank modes additionally set UsePalette in sort.
+    # and paletted modes additionally set UsePalette in sort.
     #
-    # These tiles are 4bpp, so CL16Bnk replaces Jo's CL256Bnk and colno holds
-    # the per-tile CLUT address, patched in at load time (the address is not
-    # known until the CLUTs are uploaded to VRAM).  CL_Trans marks the faces
-    # KFR1 flagged transparent.  UseNearClip hands the near plane to SGL
-    # instead of the libyaul build's CPU clipper.
+    # These tiles carry 16-colour lookup tables in VDP1 VRAM, so CL16Look is
+    # required. CL16Bnk would interpret colno as a CRAM colour-bank selector.
+    # colno holds the per-tile lookup-table address, patched in at load time
+    # (the address is not known until the CLUTs are uploaded to VRAM).
+    # CL_Trans marks the faces KFR1 flagged transparent. UseNearClip hands the
+    # near plane to SGL instead of the libyaul build's CPU clipper.
     lines.append('static ATTR kokiri_attributes[KOKIRI_POLYGON_COUNT] = {')
     for face in faces:
         plane = 'Dual_Plane' if face['two_sided'] else 'Single_Plane'
-        atrb = 'CL16Bnk | No_Gouraud'
+        atrb = 'CL16Look | No_Gouraud'
         if face['transparent']:
             atrb += ' | CL_Trans'
         lines.append('    ATTRIBUTE(%s, SORT_CEN | UsePalette | UseNearClip, %d, '

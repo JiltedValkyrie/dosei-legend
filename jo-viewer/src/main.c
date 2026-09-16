@@ -26,20 +26,13 @@
 **
 ** Facing: at yaw 0 the baseline's Y-rotation matrix is identity and it uses
 ** the rotated z as depth (kokiri_scene.c:160-171), so yaw 0 looks along +Z.
-** Its projection is sy = 120 - offset(py), so +Y is up. The SGL target is
-** therefore the viewpoint pushed along +Z.
-**
-** Whether SGL agrees on handedness is NOT assumed -- confirming the view
-** matches the baseline, floor included, is what the first Kronos run is for.
+** Its projection is sy = 120 - offset(py), so +Y is up. SGL projects +Y
+** downward: the fixed view must be (x-CAM_X, CAM_Y-y, z-CAM_Z).
 */
 #define CAM_X               (-300)
 #define CAM_Y               (91)
 #define CAM_Z               (0)
-#define CAM_TARGET_X        (CAM_X)
-#define CAM_TARGET_Y        (CAM_Y)
-#define CAM_TARGET_Z        (CAM_Z + 100)
-
-static jo_camera    cam;
+#define SCREEN_DISTANCE     (240)
 static bool         scene_ready;
 
 static void         viewer_draw(void)
@@ -50,7 +43,8 @@ static void         viewer_draw(void)
         return ;
     }
 
-    jo_3d_camera_look_at(&cam);
+    jo_3d_translate_matrix(-CAM_X, CAM_Y, -CAM_Z);
+    slScale(toFIXED(1), toFIXED(-1), toFIXED(1));
     kokiri_scene_draw();
 }
 
@@ -67,10 +61,7 @@ static void         viewer_hud(void)
 void                jo_main(void)
 {
     jo_core_init(JO_COLOR_Black);
-
-    jo_3d_camera_init(&cam);
-    jo_3d_camera_set_viewpoint(&cam, CAM_X, CAM_Y, CAM_Z);
-    jo_3d_camera_set_target(&cam, CAM_TARGET_X, CAM_TARGET_Y, CAM_TARGET_Z);
+    slSetScreenDist(toFIXED(SCREEN_DISTANCE));
 
     scene_ready = kokiri_scene_load();
 

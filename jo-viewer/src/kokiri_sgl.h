@@ -12,7 +12,7 @@ bool            kokiri_scene_load(void);
 /** @brief VDP1 bytes consumed by the scene, valid after kokiri_scene_load(). */
 unsigned int    kokiri_scene_vram_used(void);
 
-/** @brief Submit the whole scene as one SGL polygon list. */
+/** @brief Submit the whole scene in SGL-sized polygon lists. */
 void            kokiri_scene_draw(void);
 
 #endif /* !__KOKIRI_SGL_H__ */

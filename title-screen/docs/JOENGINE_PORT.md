@@ -1,5 +1,10 @@
 # Jo Engine / SGL port plan
 
+Current progress (2026-09-15): the isolated viewer exists and has rendered an
+upright textured view in Kronos. Step 4 remains partially complete; visual policy
+parity and a controlled performance comparison are still outstanding. Read the
+[Claude runtime handoff](../../jo-viewer/CLAUDE_HANDOFF.md) before continuing.
+
 ## Branch and objective
 
 User requested a fresh port branch from the regular integration branch, main.
@@ -81,8 +86,8 @@ do not clean or delete the user's mesh workspace.
   do not independently establish milliseconds without verified field frequency.
 - Cache-toggle test reportedly gave no improvement. Do not repeat it as a fix.
 - Flat/wireframe ablations do not prove a universally CPU-only bottleneck.
-- No Jo Engine build, performance measurement or port implementation has been
-  performed for this branch setup. There is no promised FPS target yet.
+- At the time this plan was written there was no Jo implementation or measurement.
+  The runtime handoff above records subsequent progress; no FPS target is promised.
 
 ## References
 

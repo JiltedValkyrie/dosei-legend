@@ -108,13 +108,14 @@ class GeneratedOutputTest(unittest.TestCase):
     def test_pixel_blob_length_matches_header(self):
         self.assertEqual(len(self.pixels), self._define('KOKIRI_PIXEL_BYTES'))
 
-    def test_attributes_use_four_bit_colour_bank_with_palette(self):
-        """4bpp tiles need CL16Bnk, and colour-bank modes need UsePalette."""
+    def test_attributes_use_four_bit_lookup_tables(self):
+        """The source CLUTs live in VDP1 VRAM, not CRAM colour banks."""
         for line in self.scene_c.splitlines():
             if 'ATTRIBUTE(' not in line:
                 continue
-            self.assertIn('CL16Bnk', line)
+            self.assertIn('CL16Look', line)
             self.assertIn('UsePalette', line)
+            self.assertNotIn('CL16Bnk', line)
             self.assertNotIn('CL256Bnk', line)
 
     def test_near_clipping_is_left_to_sgl(self):

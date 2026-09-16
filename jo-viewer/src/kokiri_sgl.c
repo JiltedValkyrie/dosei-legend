@@ -20,10 +20,12 @@
 /* Pixel blob is staged on the CD rather than compiled in: as a C array it
 ** would add ~313 KB to the ELF. */
 #define KOKIRI_PIXEL_FILE   "KOKIRI.TEX"
+#define KOKIRI_SUBMISSION_COUNT  2
 
 static void         *kokiri_pixel_vram;
 static void         *kokiri_clut_vram;
 static unsigned int  kokiri_vram_used;
+static PDATA         kokiri_submissions[KOKIRI_SUBMISSION_COUNT];
 
 /* SGL addresses sprite character data in 8-byte units. */
 #define VRAM_UNITS(bytes)   ((bytes) >> 3)
@@ -99,6 +101,22 @@ bool                kokiri_scene_load(void)
         attr->texno = (unsigned short)(tile + 1);
         attr->colno = (unsigned short)VRAM_UNITS(clut - JO_VDP1_VRAM);
     }
+
+    /* SGL 3.02j's fixed work area accepts at most 1800 polygons in one input
+    ** list. The scene has 2060, so preserve every face by presenting two
+    ** persistent views over the shared point/polygon/attribute tables. */
+    for (i = 0; i < KOKIRI_SUBMISSION_COUNT; ++i)
+    {
+        unsigned int first = i * ((KOKIRI_POLYGON_COUNT + 1) / 2);
+        unsigned int count = KOKIRI_POLYGON_COUNT - first;
+
+        if (count > (KOKIRI_POLYGON_COUNT + 1) / 2)
+            count = (KOKIRI_POLYGON_COUNT + 1) / 2;
+        kokiri_submissions[i] = kokiri_pdata;
+        kokiri_submissions[i].pltbl += first;
+        kokiri_submissions[i].attbl += first;
+        kokiri_submissions[i].nbPolygon = count;
+    }
     return (true);
 }
 
@@ -109,7 +127,10 @@ unsigned int        kokiri_scene_vram_used(void)
 
 void                kokiri_scene_draw(void)
 {
-    slPutPolygon(&kokiri_pdata);
+    unsigned int    i;
+
+    for (i = 0; i < KOKIRI_SUBMISSION_COUNT; ++i)
+        slPutPolygon(&kokiri_submissions[i]);
 }
 
 /*
