@@ -25,9 +25,12 @@ The Link converter consumes `assets/dynamic/link/source.json`. Generated actor
 meshes live in `build/generated/`. Shared title UI/audio and reusable libraries
 live in `../shared/`; game-specific bank selection stays in `src/music_banks.c`.
 
-Start switches title/gameplay, D-pad runs, L recenters behind Link, R turns the
-camera right, and A toggles diagnostics. L is recenter only, not enemy lock-on.
-B/C/X/Y/Z currently have no active gameplay action. Current Link/follow behavior
+Current build: Start switches title/gameplay, D-pad runs, L recenters behind Link,
+and L+R toggles diagnostics. R alone never moves the camera. L is recenter only,
+not enemy lock-on. A/B/C/X/Y/Z currently have no active gameplay action.
+The settled replacement layout (including shield, pause and walk) and pending
+OoT camera work are documented at the top of docs/OPUS_HANDOFF.md.
+Current Link/follow behavior
 is in `src/demo.c`. These controls require only the standard digital Saturn pad.
 
 Child outdoor running uses 165 native world units/second (5.5 per 30 Hz step),

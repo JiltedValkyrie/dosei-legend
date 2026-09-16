@@ -1,4 +1,82 @@
-# Link movement animation: done. Next is one NPC conversation.
+# Current directive: OoT gameplay camera and standard Saturn pad controls
+
+## Input latency investigation - host checks, not end-to-end measurement
+
+Human reports sluggish input despite high-50s VDP2 FPS. Testing only requested;
+no gameplay timing or camera fixes made in this investigation.
+
+- Kronos `yabause/src/ctrl/src/yabause.c:772` maintains separate VDP2 and VDP1
+  FPS counters. VDP2 near 60 does not establish fresh game draws/input response.
+- Jo copies SGL peripheral data at VBlank (`jo_engine/input.c:103`); the game
+  consumes it inside `demo_update`, called by `viewer_draw`. That callback
+  also handles simulation, skinning, music service, and polygon submission
+  before returning to Jo's `slSynch`. Slow callbacks delay the next input read.
+- Movement is gated to 30 Hz by elapsed/2 even when display refresh is 60.
+  Modeled maximum wait until an eligible callback: 33.3 ms at 60/30 callbacks/s,
+  50 ms at 20/s, 66.7 ms at 15/s. These exclude all hardware/emulator/render
+  latency and are NOT measurements of the user's setup.
+- Ran the ACTUAL current `follow_approach` C function on the host: a 100-unit
+  target change reaches 90% after 9 callbacks. Thus 150/300/450/600 ms at
+  60/30/20/15 callbacks/s. This is camera settling, NOT initial input latency.
+  The callback-dependent easing is a concrete source of variable camera feel.
+- Reproduce with `python game/tools/check_input_timing.py`. It compiles the
+  existing function unchanged; no game image or controls were modified.
+
+No running Kronos instance was found during inspection. No live gameplay or
+controller-to-photon measurement performed, no desktop capture/global keys.
+Next runtime evidence needed: simultaneous VDP1 counter and gameplay callback
+timing while moving at the reported location. For actual end-to-end latency,
+timestamp input receipt and the first changed presented frame (physical button
+to visible response additionally requires a high-speed external recording).
+Do not report VDP2 FPS or these host calculations as measured input latency.
+
+## Executive control decision - supersedes earlier proposals/demo bindings
+
+The human explicitly retired temporary viewer controls. R MUST NOT rotate the
+camera. Astra removed R from the gameplay movement mask and blocked both
+shoulder orbit bits in actor-mode movement. Free-camera diagnostics are not a
+gameplay design reference. Do not restore orbit to solve a follow-camera bug.
+
+Settled layout for the standard DIGITAL pad (no 3D pad assumed):
+
+| Input | Gameplay assignment |
+| --- | --- |
+| D-pad | Camera-relative movement; run by default |
+| Hold C + D-pad | Walk, replacing low analog-stick magnitude |
+| A | OoT context action: talk/interact/roll as appropriate |
+| B | Sword |
+| X / Y / Z | Three equipped items (C-left/down/right roles) |
+| L | OoT Z-target/recenter behavior |
+| R | Shield only; never orbit or first-person look |
+| Start | Start from title; pause/menu during gameplay, not return-to-title |
+| L+C, initially stationary | First-person look; D-pad aims, release L exits |
+| L+R | Development diagnostics only; not a shipping gameplay action |
+
+First-person chord takes priority over C walking and L recentering. It is the
+necessary digital-pad adaptation for C-up, not a claim of identical physical
+N64 button placement. Do not combine look with shield. Preserve targeting and
+shielding together in normal play; diagnostics must ultimately be gated by an
+explicit development option. Pending diagnostics chord input must not leak
+standalone actions if a no-side-effect chord guarantee is retained.
+
+Claude: use the LOCAL OoT camera implementation and Kokiri settings as the
+behavioral reference: `src/code/z_camera.c` (Normal/Parallel/KeepOn/subjective
+modes), camera data/settings, and the player's mode requests. Implement the
+actual normal follow, recenter/target, terrain/obstacle response and digital
+input adaptation, not an invented fixed-orbit approximation. Preserve title
+cinematics separately. No claim of exact parity until gameplay is compared.
+
+Current implementation is deliberately distinguished from this settled target:
+D-pad run, L recenter, L+R diagnostics work; R now does nothing by itself.
+A/B/C/X/Y/Z actions, shield, full targeting, first-person and pause remain to
+implement. The current follow camera is still an approximation, NOT the exact
+N64 camera. Do not mark this work complete merely because R orbit is removed.
+The user is the communication relay. Return a paste-ready update to Astra.
+
+Validation for removal: 87 host tests pass, including actual C checks that
+either shoulder cannot change actor camera yaw, even during movement.
+Standard and hi-res images rebuilt successfully. Runtime camera parity is not
+verified; no foreground emulator input was used.
 
 ## Latest human request: speed, playback, digital-pad controls
 

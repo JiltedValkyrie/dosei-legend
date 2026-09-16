@@ -14,6 +14,13 @@ remaining work clear so the agents can continue each other's work safely.
 
 ## Active project: Jo Engine vertical slice
 
+Latest human directive: retire temporary demo controls. R is shield, NEVER
+camera orbit. Follow OoT's real gameplay camera behavior, not the viewer's
+manual controls. The settled standard digital Saturn pad layout and precise
+implemented-vs-pending status are at the TOP of game/docs/OPUS_HANDOFF.md;
+that section supersedes older proposals and task headings below. Address
+handoff replies directly to the other agent; the human copies them between us.
+
 The Jo directory reorganization is integrated into `main`; `performance` retains
 its merge checkpoint. Check the actual branch before editing. `game/` is the only active game. Shared libraries/assets
 live in `shared/`; root `tools/` holds the GUI launcher and mesh workshop.

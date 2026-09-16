@@ -1,5 +1,13 @@
 # Vertical slice progress
 
+## Gameplay controls supersede the viewer
+
+- Removed R orbit from gameplay; actor-mode controller ignores both shoulder
+  orbit bits. 87 host tests pass, including shoulder yaw invariance.
+- Settled digital-pad layout and real OoT camera implementation assignment
+  recorded for Claude at the top of OPUS_HANDOFF.md. Only orbit removal landed
+  in this change; the remaining actions/camera parity are explicitly pending.
+
 ## Digital-pad speed and camera follow-up
 
 - Child outdoor run speed corrected to 165 native world units/s, including

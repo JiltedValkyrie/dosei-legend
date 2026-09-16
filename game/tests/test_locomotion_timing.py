@@ -89,3 +89,15 @@ class LocomotionTiming(unittest.TestCase):
         self.assertNotIn('CAMERA_L', mask.replace('CAMERA_LEFT', ''))
         self.assertIn('recenter = jo_is_pad1_key_down(JO_KEY_L)', text)
         self.assertIn('demo_yaw = demo_link_yaw', text)
+
+    def test_r_does_not_reach_gameplay_orbit(self):
+        text = (ROOT / 'src/demo.c').read_text()
+        mask = text.split('uint16_t walk = buttons &', 1)[1].split(';', 1)[0]
+        self.assertNotIn('CAMERA_R', mask.replace('CAMERA_RIGHT', ''))
+
+    def test_shoulders_never_orbit_actor_camera(self):
+        for buttons in (0x0008, 0x0080, 0x0088, 0x1080):
+            p, angle, pitch = Position(), ctypes.c_uint16(1234), ctypes.c_int32()
+            self.lib.kokiri_camera_update(ctypes.byref(p), ctypes.byref(angle),
+                ctypes.byref(pitch), buttons, False, True)
+            self.assertEqual(angle.value, 1234)

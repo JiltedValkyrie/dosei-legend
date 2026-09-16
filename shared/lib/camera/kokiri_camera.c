@@ -10,6 +10,10 @@ void kokiri_camera_reset_actor_motion(void)
 void kokiri_camera_update(camera_position_t *position, uint16_t *yaw,
     int32_t *pitch, uint16_t buttons, bool title_visible, bool actor_collision)
 {
+        /* Shoulder orbit belongs to the free-camera diagnostic only. Never
+         * turn the gameplay camera as a side effect of targeting/shielding. */
+        if (actor_collision)
+                buttons &= (uint16_t)~(CAMERA_L | CAMERA_R);
         const uint16_t controls = CAMERA_L | CAMERA_R | CAMERA_X | CAMERA_Z |
             CAMERA_Y | CAMERA_C | CAMERA_UP | CAMERA_DOWN | CAMERA_LEFT | CAMERA_RIGHT;
         /* Keep the title's idle rotation, but never lock manual camera input

@@ -284,16 +284,15 @@ void demo_update(void)
          * the time gameplay reaches this branch. */
         title_showcase_camera(now);
     } else if (demo_link_active) {
-        /* Drive Link with the baseline movement code, then follow him. Only
-         * the walk/turn buttons reach it: the free camera's raise/lower and
-         * pitch keys would move a character who must stay on the floor.
+        /* Only movement reaches the legacy viewer controller. Its shoulder
+         * orbit and raise/lower/pitch controls are not gameplay controls.
          *
-         * The yaw handed to kokiri_camera_update is the CAMERA's. R turns
-         * the view, L recenters, and the D-pad walks relative to it. Link's facing
+         * The yaw handed to kokiri_camera_update is the CAMERA's. L recenters,
+         * R is reserved for shield, and D-pad movement is camera-relative. Facing
          * is not steered by the camera -- it follows wherever he actually
          * moved, which is what keeps turning the view from spinning him. */
         uint16_t walk = buttons & (CAMERA_UP | CAMERA_DOWN | CAMERA_LEFT |
-                                   CAMERA_RIGHT | CAMERA_R);
+                                   CAMERA_RIGHT);
         int32_t unused_pitch = 0, sine, cosine, tx, tz, ty;
         int32_t was_x = demo_link.x, was_z = demo_link.z;
         bool recovered = false;
