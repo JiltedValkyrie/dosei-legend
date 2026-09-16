@@ -23,7 +23,7 @@
 /* Thresholds in this file are world units per 30 Hz step, matching the
 ** movement constants in kokiri_camera.h rather than OoT's own speeds. */
 #define WALK_SPEED_MIN      1       /* below this he is standing still */
-#define RUN_SPEED_MIN       10      /* digital d-pad: full tilt is a run */
+#define RUN_SPEED_MIN       4       /* 5.5 units/step, allowing integer rounding */
 
 /* Fall distances, straight from OoT.
 **
@@ -40,6 +40,7 @@
 
 static link_state_t     state = LINK_STATE_IDLE;
 static unsigned int     frame;
+static unsigned int     phase_ninths;
 static bool             was_grounded = true;
 /* Diagnostics only; see the declarations in link_anim_state.h. */
 static int32_t          last_fall;
@@ -74,12 +75,27 @@ static bool             is_one_shot(link_state_t s)
     return s == LINK_STATE_LANDING || s == LINK_STATE_ROLL;
 }
 
+/* Deliberately slower slice cadence: 20 source frames/s at 30 Hz.
+ * Fall stores every third source frame, so advance it one third as fast.
+ * This is a presentation tuning, not OoT's action-specific playback model. */
+static void             advance(void)
+{
+    unsigned int length = clip_length(clip_for_state(state));
+    phase_ninths += state == LINK_STATE_FALL ? 2 : 6;
+    if (state == LINK_STATE_FALL && phase_ninths >= (length - 1) * 9)
+        phase_ninths = (length - 1) * 9;
+    else if (!is_one_shot(state) && phase_ninths >= length * 9)
+        phase_ninths %= length * 9;
+    frame = phase_ninths / 9;
+}
+
 static void             enter(link_state_t next)
 {
     if (state == next)
         return;
     state = next;
     frame = 0;
+    phase_ninths = 0;
 }
 
 void                    link_anim_update(int32_t speed, bool grounded,
@@ -99,11 +115,13 @@ void                    link_anim_update(int32_t speed, bool grounded,
     ** leaves the ground again, which is what makes rolling off a ledge fall. */
     if (is_one_shot(state) && grounded)
     {
-        if (++frame < clip_length(clip_for_state(state)))
+        advance();
+        if (frame < clip_length(clip_for_state(state)))
             return;
         /* Finished: fall through and pick a locomotion state this step. */
         state = LINK_STATE_IDLE;
         frame = 0;
+        phase_ninths = 0;
     }
 
     /* kokiri_collision_move_actor() snaps y onto the floor plane when it
@@ -112,7 +130,7 @@ void                    link_anim_update(int32_t speed, bool grounded,
     if (!grounded)
     {
         enter(LINK_STATE_FALL);
-        ++frame;
+        advance();
         return;
     }
 
@@ -147,7 +165,7 @@ void                    link_anim_update(int32_t speed, bool grounded,
     else
         enter(LINK_STATE_IDLE);
 
-    ++frame;
+    advance();
 }
 
 link_state_t            link_anim_state(void)
@@ -165,6 +183,11 @@ unsigned int            link_anim_frame(void)
     return frame;
 }
 
+unsigned int            link_anim_fraction(void)
+{
+    return (phase_ninths % 9) * 256 / 9;
+}
+
 /* Reset the locomotion state, not just the posed frame.
 **
 ** link_anim_reset() in link_anim.c only clears the cached POINT table. Without
@@ -176,6 +199,7 @@ void                    link_anim_reset_state(void)
 {
     state = LINK_STATE_IDLE;
     frame = 0;
+    phase_ninths = 0;
     last_fall = 0;
     landings = 0;
     /* Spawning is a fall onto the floor; that first contact is a real landing

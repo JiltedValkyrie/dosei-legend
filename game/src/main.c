@@ -111,7 +111,12 @@ static void         viewer_draw(void)
 
 static void         viewer_hud(void)
 {
-    if (jo_is_pad1_available() && jo_is_pad1_key_down(JO_KEY_A)) {
+    /* L+R, latched in demo_update() so the chord is read with the rest of the
+    ** input and consumes both buttons. A is deliberately not used here: it is
+    ** reserved for the action button, and the g/L/d readout below is the only
+    ** evidence for the unexplained rolling, so it has to stay reachable. */
+    if (demo_diagnostics_toggled) {
+        demo_diagnostics_toggled = false;
         debug_visible = !debug_visible;
         jo_clear_screen();
     }
@@ -147,10 +152,21 @@ static void         viewer_hud(void)
             jo_printf(0, 2, "heap %d%%  anim %d f%d    ",
                       jo_memory_usage_percent(), (int)pose,
                       (int)link_anim_frame());
-            /* g=grounded now, L=landings seen, d=the fall distance the last
-            ** landing decided on. If Link rolls without input, L climbing on
-            ** flat ground is the evidence, and d says which gate selected it. */
-            jo_printf(0, 3, "g%d L%d d%d        ",
+            /* One line, because the question is whether the visible rolling
+            ** and the state machine agree -- reading that across two rows is
+            ** exactly how a wrong answer gets recorded.
+            **
+            ** s = current state (0 idle, 1 walk, 2 run, 3 fall, 4 landing,
+            ** 5 roll), g = grounded now, L = landings seen, d = the fall
+            ** distance the last landing decided on.
+            **
+            ** If Link looks like he is rolling while s is NOT 5, the pose is
+            ** wrong and the landing logic is innocent -- that is the corrupted
+            ** -frame case, not a state bug. If s is 5 and L is climbing on flat
+            ** ground, a real grounded transition is firing and d names the gate
+            ** that chose the roll. */
+            jo_printf(0, 3, "s%d g%d L%d d%d      ",
+                      (int)pose,
                       link_anim_last_grounded() ? 1 : 0,
                       (int)link_anim_landings(),
                       (int)link_anim_last_fall());

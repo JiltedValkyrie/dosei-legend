@@ -1,5 +1,43 @@
 # Animation and platforming parity — for Astra to check against the decomp/ROM
 
+## Astra speed/timing follow-up
+
+Native outdoor child run cap is 5.5, from PLAYER_BOOTS_KOKIRI_CHILD in
+`z_player_lib.c`. `Actor_UpdatePos` multiplies velocity by R_UPDATE_RATE*0.5,
+which is 1.5 at NTSC gameplay's 20 Hz. Thus 165 world units/s, or 5.5 per
+30 Hz step in this port. Actor movement now preserves fractions and normalizes
+diagonals. Free camera retains its previous speed.
+
+Animation now uses a slower tuned 20-source-frame/s phase and interpolated
+poses. This is intentionally NOT labeled exact N64 cadence: Link's original
+animation update has the same *0.5 timing factor plus speed/action-dependent
+playback. A blanket "OoT 20 Hz therefore 20 animation fps" is not valid.
+The decimated fall advances at one third of that stored-frame rate and holds
+the final pose. Run selection was adjusted for the corrected movement speed.
+
+L camera reset is implemented; full targeting is not. See OPUS_HANDOFF.md for
+the current vs proposed digital-pad layout and remaining control decisions.
+
+## Astra fix: corrupted animation frame decoding
+
+Following the user's continued blinking/tumbling report, found a concrete
+importer defect independent of landing gates and skinning performance:
+Link animation records are 134 bytes (22 Vec3s plus a two-byte face field),
+but both Python readers advanced by 132. Frame zero worked; every subsequent
+frame progressively misread root translation and limb rotations. The original
+bind-pose test only exercised frame zero and could not detect this.
+
+Evidence: local OoT `z_skelanime.c:900-901` loads each player frame using
+`sizeof(Vec3s) * limbCount + 2` for both offset and size. Player initializes
+22 entries with flags 9 (root plus 21 skeleton limbs).
+
+Fixed `read_animation()` stride and made `read_animation_frames()` share that
+reader. Added independent packed-fixture tests for nonzero and decimated
+frames, including a sentinel face word. This corrects corrupted pose data;
+it does not establish that all flicker is solved or playback has full parity.
+No state-machine, collision, controls, or rendering changes in this fix.
+Kronos gameplay verification still required; do not call it visually confirmed.
+
 ## Astra review: correction to the scale premise
 
 The scale explanation in item 1 below is incorrect. In the local OoT
@@ -136,11 +174,38 @@ inputs on row 3:
 g<grounded>  L<landings seen>  d<fall distance at the last landing>
 ```
 
-If Link rolls on flat ground with no input, `L` climbing is the proof that a
-real grounded transition is happening, and `d` says which gate selected the
-roll. If `L` does **not** climb while he rolls, the fault is in clip selection
-or the skinner, not in the landing logic at all. That measurement is the next
+Read `s` first. If Link **looks** like he is rolling while `s` is not 5, the
+pose is wrong and the landing logic is innocent -- that is the corrupted-frame
+case, and the frame-stride bug found in `read_animation()` (134-byte stride,
+not 132) is a strong candidate for having caused exactly that appearance. If
+`s` is 5 and `L` climbs on flat ground, a real grounded transition is firing
+and `d` names the gate that chose the roll. That measurement is the next
 step, and it needs a Kronos run.
+
+### 5b. Pad layout — decided, proposed, and open
+
+**IMPLEMENTED.** Diagnostics moved from A to a held **L+R** chord. The chord
+consumes both buttons, so requesting diagnostics never also recenters (L) or
+triggers whatever R becomes. The edge is detected in `demo_update()` with the
+rest of the input rather than sampled again in `main.c`, so the two cannot
+disagree on the frame one button arrives first. A is now free for the action
+button. Start was not used for this: it would risk the title transition.
+
+**IMPLEMENTED.** The overlay prints state and landing evidence on one line:
+`s<state> g<grounded> L<landings> d<fall distance>`. They were on separate
+rows, which is precisely how the corrupted-pose case gets misrecorded as a
+state bug. See item 5 for how to read it.
+
+**PROPOSED, NOT IMPLEMENTED.** A = action/roll/talk, B = sword, C = hold to
+walk, X/Y/Z = three equipped items, R = shield, Start = pause/menu. C-to-walk
+is the strongest of these for a digital pad: walk/run already keys off the
+distance actually moved, so C only has to clamp movement speed and the existing
+threshold picks the clip with no state-machine change. B = sword additionally
+needs a clip baked into `CLIPS`; none exists yet.
+
+**OPEN — first-person look has no home.** R + D-pad was suggested and
+withdrawn: it consumes directional input while shielding, and shield stance and
+look mode need an explicit distinction before sharing a button. Unresolved.
 
 ### 6. Manual ground roll is unbound
 

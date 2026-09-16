@@ -52,6 +52,11 @@ static unsigned int phase, refresh, previous_tick;
  * table at B1+0x1f000, clear of the fixed SGL font and map storage. */
 extern void slBackColTable(void *table);
 static int last_blink = -1;
+/* Diagnostics chord state. demo_diagnostics_toggled is a one-shot the HUD
+ * clears, so the chord edge is detected with the rest of the input rather than
+ * sampled a second time in main.c. */
+static bool diagnostics_chord_held;
+bool demo_diagnostics_toggled;
 
 /* Move one axis a fraction of the way to its target. The >> alone stalls a few
  * units short, because a difference under (1<<FOLLOW_LAG) shifts to zero and
@@ -199,6 +204,7 @@ bool demo_init(void)
 void demo_update(void)
 {
     uint16_t buttons = 0;
+    bool recenter = false;
     unsigned int now = ticks, elapsed = now - previous_tick, steps;
     jo_img patch;
     if (jo_is_pad1_available()) {
@@ -206,6 +212,22 @@ void demo_update(void)
         MAP(L); MAP(R); MAP(X); MAP(Y); MAP(Z); MAP(C);
         MAP(UP); MAP(DOWN); MAP(LEFT); MAP(RIGHT);
 #undef MAP
+        /* L+R held is the diagnostics chord, and it CONSUMES both buttons:
+         * the recenter and the R camera bit are cleared, so asking for
+         * diagnostics never also recenters the view or triggers whatever R
+         * eventually becomes. A is left free for the action button.
+         *
+         * Held rather than pressed, and edge-detected here, because the pad is
+         * sampled once per update and a chord read independently in two files
+         * would drift apart on the frame one button arrives before the other. */
+        if ((buttons & CAMERA_L) && (buttons & CAMERA_R)) {
+            buttons &= (uint16_t)~(CAMERA_L | CAMERA_R);
+            if (!diagnostics_chord_held) demo_diagnostics_toggled = true;
+            diagnostics_chord_held = true;
+        } else {
+            diagnostics_chord_held = false;
+            recenter = jo_is_pad1_key_down(JO_KEY_L);
+        }
         /* Ignore Start while a score switch is running: music_fade_to() would
          * refuse it anyway, and toggling the title regardless would leave the
          * artwork and the music disagreeing about which state we are in. */
@@ -235,6 +257,7 @@ void demo_update(void)
                      * other the locomotion state that selects it. */
                     link_anim_reset();
                     link_anim_reset_state();
+                    kokiri_camera_reset_actor_motion();
                 }
             }
             if (!title_visible && demo_link_active) {
@@ -250,7 +273,7 @@ void demo_update(void)
             }
         }
     }
-    /* 30 Hz gameplay; preserve baseline per-update movement constants.
+    /* 30 Hz gameplay; movement uses time-scaled native world units.
      * Cap catch-up so a slow frame cannot create a long input stall. */
     steps = elapsed / 2;
     if (steps > 4) { steps = 4; previous_tick = now - now % 2; }
@@ -265,15 +288,19 @@ void demo_update(void)
          * the walk/turn buttons reach it: the free camera's raise/lower and
          * pitch keys would move a character who must stay on the floor.
          *
-         * The yaw handed to kokiri_camera_update is the CAMERA's, so L/R turn
-         * the view and the D-pad walks him relative to it. Link's own facing
+         * The yaw handed to kokiri_camera_update is the CAMERA's. R turns
+         * the view, L recenters, and the D-pad walks relative to it. Link's facing
          * is not steered by the camera -- it follows wherever he actually
          * moved, which is what keeps turning the view from spinning him. */
         uint16_t walk = buttons & (CAMERA_UP | CAMERA_DOWN | CAMERA_LEFT |
-                                   CAMERA_RIGHT | CAMERA_L | CAMERA_R);
+                                   CAMERA_RIGHT | CAMERA_R);
         int32_t unused_pitch = 0, sine, cosine, tx, tz, ty;
         int32_t was_x = demo_link.x, was_z = demo_link.z;
         bool recovered = false;
+        if (recenter) {
+            demo_yaw = demo_link_yaw;
+            demo_pitch = 0;
+        }
         while (steps--) {
             bool grounded;
             int32_t step_x = demo_link.x, step_z = demo_link.z;
@@ -282,15 +309,15 @@ void demo_update(void)
                                  false, true);
             grounded = kokiri_collision_fall(&demo_link, &link_velocity_y_q8,
                                               &link_fall_remainder_q8);
-            /* Drive the pose from the motion collision actually allowed, so
-             * walking into a wall idles instead of running on the spot. The
-             * Chebyshev distance is close enough to the true length for a
-             * walk/run threshold and costs no multiply on the SH-2. */
+            /* Actual travel length, not the largest axis: diagonal running
+             * must select the same clip and cadence as straight running. */
             dx = demo_link.x - step_x;
             if (dx < 0) dx = -dx;
             dz = demo_link.z - step_z;
             if (dz < 0) dz = -dz;
-            moved = dz > dx ? dz : dx;
+            moved = 0;
+            while ((moved + 1) * (moved + 1) <= dx * dx + dz * dz)
+                ++moved;
 
             if (grounded) {
                 /* The peak still holds the height he left the ground from, so
@@ -316,7 +343,7 @@ void demo_update(void)
          * final state -- not inside the loop, and not in the draw callback.
          * Skinning is the most expensive thing Link costs, so it runs once per
          * frame at most, and only when the clip frame actually changed. */
-        link_anim_pose(link_anim_clip(), link_anim_frame());
+        link_anim_pose(link_anim_clip(), link_anim_frame(), link_anim_fraction());
         if (demo_link.x != was_x || demo_link.z != was_z)
             demo_link_yaw = kokiri_camera_facing(demo_link.x - was_x,
                                                  demo_link.z - was_z);
@@ -326,7 +353,7 @@ void demo_update(void)
         tx = demo_link.x - (int32_t)(((int64_t)sine * FOLLOW_DISTANCE) >> 16);
         tz = demo_link.z - (int32_t)(((int64_t)cosine * FOLLOW_DISTANCE) >> 16);
         ty = demo_link.y + FOLLOW_HEIGHT;
-        if (recovered) {
+        if (recovered || recenter) {
             /* Keep the recovered player visible immediately; easing from a
              * camera left down in the void would briefly show empty space. */
             demo_camera.x = tx;

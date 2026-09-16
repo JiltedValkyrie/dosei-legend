@@ -25,8 +25,15 @@ The Link converter consumes `assets/dynamic/link/source.json`. Generated actor
 meshes live in `build/generated/`. Shared title UI/audio and reusable libraries
 live in `../shared/`; game-specific bank selection stays in `src/music_banks.c`.
 
-Start switches title/gameplay, D-pad moves, L/R turns the camera, A toggles
-diagnostics. Current Link/follow behavior is in `src/demo.c`.
+Start switches title/gameplay, D-pad runs, L recenters behind Link, R turns the
+camera right, and A toggles diagnostics. L is recenter only, not enemy lock-on.
+B/C/X/Y/Z currently have no active gameplay action. Current Link/follow behavior
+is in `src/demo.c`. These controls require only the standard digital Saturn pad.
+
+Child outdoor running uses 165 native world units/second (5.5 per 30 Hz step),
+with fractional movement retained on both axes. Animation playback is tuned to
+20 source frames/second with interpolated poses, not a claim of full OoT
+action-specific animation timing. Falling accounts for its 3:1 sample stride.
 
 Link is animated. `tools/build_link_model.py --animate` bakes idle, walk, run,
 fall, landing and roll out of the US 1.2 animation data into

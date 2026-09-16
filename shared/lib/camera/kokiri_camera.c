@@ -1,5 +1,12 @@
 #include "kokiri_camera.h"
 
+static int32_t actor_remainder_x, actor_remainder_z;
+
+void kokiri_camera_reset_actor_motion(void)
+{
+        actor_remainder_x = actor_remainder_z = 0;
+}
+
 void kokiri_camera_update(camera_position_t *position, uint16_t *yaw,
     int32_t *pitch, uint16_t buttons, bool title_visible, bool actor_collision)
 {
@@ -30,6 +37,16 @@ void kokiri_camera_update(camera_position_t *position, uint16_t *yaw,
                 /* |sin|,|cos| <= 65536 and axes are -1/0/1: fits int32_t. */
                 dx = (horizontal*cosine + vertical*sine)*speed/65536;
                 dz = (vertical*cosine - horizontal*sine)*speed/65536;
+                if (actor_collision) {
+                        const int32_t rate = horizontal && vertical
+                            ? LINK_RUN_SPEED_Q8 * 181 / 256 : LINK_RUN_SPEED_Q8;
+                        actor_remainder_x += (horizontal*cosine + vertical*sine)*rate/256;
+                        actor_remainder_z += (vertical*cosine - horizontal*sine)*rate/256;
+                        dx = actor_remainder_x / 65536;
+                        dz = actor_remainder_z / 65536;
+                        actor_remainder_x -= dx * 65536;
+                        actor_remainder_z -= dz * 65536;
+                }
         }
         if (buttons & CAMERA_C) *pitch = 0;
         if (dx || dy || dz) {

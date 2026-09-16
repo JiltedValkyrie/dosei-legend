@@ -18,7 +18,8 @@ typedef enum
 
 /* Pose link_points for one frame of a clip. Cheap to call with an unchanged
 ** frame: the posed table is kept and the call returns immediately. */
-void                link_anim_pose(unsigned int clip, unsigned int frame);
+void                link_anim_pose(unsigned int clip, unsigned int frame,
+                                   unsigned int fraction);
 void                link_anim_reset(void);
 /* Clears the locomotion state itself; link_anim_reset() only clears the
 ** cached pose. Call both when Link (re-)enters gameplay. */
@@ -37,6 +38,7 @@ void                link_anim_update(int32_t speed, bool grounded,
 link_state_t        link_anim_state(void);
 unsigned int        link_anim_clip(void);
 unsigned int        link_anim_frame(void);
+unsigned int        link_anim_fraction(void); /* Q8 fraction toward next frame */
 
 /* Root-motion-free: the slice drives translation from collision, so the clips
 ** are used for pose only. Exposed for tests and diagnostics. */

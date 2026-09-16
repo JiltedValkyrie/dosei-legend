@@ -10,6 +10,7 @@ the one invariant tying the Python pipeline and the C skinner together.
 
 import pathlib
 import re
+import struct
 import sys
 import unittest
 
@@ -19,6 +20,37 @@ sys.path.insert(0, str(ROOT / 'tools'))
 import build_link_model as blm  # noqa: E402
 
 GENERATED = ROOT / 'build' / 'generated'
+
+
+class PlayerFrameLayout(unittest.TestCase):
+    """Independent packed fixtures include the trailing player face word.
+
+    Frame-zero round trips cannot detect an incorrect frame stride.
+    """
+
+    def setUp(self):
+        self.expected = []
+        chunks = []
+        words = (blm.LIMB_COUNT + 1) * 3
+        for frame in range(8):
+            values = tuple(frame * 100 + i for i in range(words))
+            self.expected.append((values[:3], [values[i:i + 3]
+                                 for i in range(3, words, 3)]))
+            chunks.append(struct.pack('>%dhH' % words, *values, 0xABCD))
+        self.data = b''.join(chunks)
+        self.header = struct.pack('>hhI', 8, 0, 0x07000000)
+
+    def test_nonzero_frames_skip_face_word(self):
+        for frame in range(8):
+            with self.subTest(frame=frame):
+                _, root, rotations = blm.read_animation(
+                    self.header, self.data, 0, frame, blm.LIMB_COUNT)
+                self.assertEqual((root, rotations), self.expected[frame])
+
+    def test_decimated_frames_skip_face_word(self):
+        _, frames = blm.read_animation_frames(
+            self.header, self.data, 0, 1, 3, 3, blm.LIMB_COUNT)
+        self.assertEqual(frames, [self.expected[i] for i in (1, 4, 7)])
 
 
 def rom_available():
@@ -288,3 +320,40 @@ class LandingRules(unittest.TestCase):
         short = self.source.index('SHORT_LANDING_FALL')
         roll = self.source.index('ROLL_LANDING_FALL')
         self.assertLess(short, roll)
+
+
+class DiagnosticsChord(unittest.TestCase):
+    """The L+R chord must consume both buttons and leave A alone.
+
+    A is reserved for the action button, and the g/L/d readout is the only
+    evidence for the unexplained rolling, so losing the toggle to a conflict
+    would cost the one measurement that can settle it.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.demo = (ROOT / 'src' / 'demo.c').read_text()
+        cls.main = (ROOT / 'src' / 'main.c').read_text()
+
+    def test_chord_clears_both_buttons(self):
+        self.assertIn('buttons &= (uint16_t)~(CAMERA_L | CAMERA_R);', self.demo,
+                      'the chord must consume L and R, not just read them')
+
+    def test_recenter_is_skipped_while_the_chord_is_held(self):
+        """Otherwise asking for diagnostics also recenters the camera."""
+        chord = self.demo.index('if ((buttons & CAMERA_L) && (buttons & CAMERA_R))')
+        recenter = self.demo.index('recenter = jo_is_pad1_key_down(JO_KEY_L);')
+        self.assertGreater(recenter, chord,
+                           'recenter must sit in the chord-not-held branch')
+
+    def test_a_no_longer_toggles_diagnostics(self):
+        self.assertNotIn('jo_is_pad1_key_down(JO_KEY_A)', self.main,
+                         'A is reserved for the action button')
+
+    def test_state_and_evidence_share_one_line(self):
+        """Corrupted poses can look like a roll without the state being ROLL.
+
+        Reading the state and the landing evidence off separate rows is how
+        that distinction gets recorded wrongly, so they print together.
+        """
+        self.assertIn('"s%d g%d L%d d%d', self.main)

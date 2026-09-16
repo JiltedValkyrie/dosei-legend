@@ -1,0 +1,91 @@
+"""Execute the actual C movement/state code; no emulator input required."""
+import ctypes
+import math
+import os
+import pathlib
+import subprocess
+import tempfile
+import unittest
+
+ROOT = pathlib.Path(__file__).resolve().parents[1]
+GCC = pathlib.Path('C:/msys64/mingw64/bin/gcc.exe')
+
+
+class Position(ctypes.Structure):
+    _fields_ = [(axis, ctypes.c_int32) for axis in ('x', 'y', 'z')]
+
+
+@unittest.skipUnless(GCC.is_file() and (ROOT / 'build/generated/link_clips.c').is_file(),
+                     'host compiler and generated clips required')
+class LocomotionTiming(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
+        output = pathlib.Path(cls.tmp.name) / 'locomotion.dll'
+        camera = ROOT.parent / 'shared/lib/camera'
+        env = dict(os.environ)
+        env['PATH'] = str(GCC.parent) + os.pathsep + env.get('PATH', '')
+        subprocess.run([str(GCC), '-shared', '-O2', '-o', str(output),
+                        '-I' + str(camera),
+                        '-I' + str(ROOT.parent / 'shared/lib/collision'),
+                        '-I' + str(ROOT / 'build/generated'),
+                        str(camera / 'kokiri_camera.c'),
+                        str(ROOT / 'src/link_anim_state.c'),
+                        str(ROOT / 'build/generated/link_clips.c'),
+                        str(ROOT / 'tests/fixtures/locomotion_host.c'), '-lm'],
+                       check=True, env=env)
+        cls.lib = ctypes.CDLL(str(output))
+        cls.lib.kokiri_camera_update.argtypes = [ctypes.POINTER(Position),
+            ctypes.POINTER(ctypes.c_uint16), ctypes.POINTER(ctypes.c_int32),
+            ctypes.c_uint16, ctypes.c_bool, ctypes.c_bool]
+        cls.lib.link_anim_update.argtypes = [ctypes.c_int32, ctypes.c_bool,
+                                             ctypes.c_int32, ctypes.c_bool]
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.tmp.cleanup()
+
+    def travel(self, buttons, yaw=0):
+        self.lib.kokiri_camera_reset_actor_motion()
+        p, angle, pitch = Position(), ctypes.c_uint16(yaw), ctypes.c_int32()
+        for _ in range(300):
+            self.lib.kokiri_camera_update(ctypes.byref(p), ctypes.byref(angle),
+                ctypes.byref(pitch), buttons, False, True)
+        return math.hypot(p.x, p.z)
+
+    def test_native_child_run_speed_over_ten_seconds(self):
+        self.assertEqual(self.travel(0x1000), 1650)
+
+    def test_diagonal_and_rotated_speed_match(self):
+        for buttons, yaw in ((0x9000, 0), (0x1000, 8192), (0x9000, 5000)):
+            self.assertAlmostEqual(self.travel(buttons, yaw), 1650, delta=4)
+
+    def test_run_clip_slower_than_old_30_fps(self):
+        self.lib.link_anim_reset_state()
+        # Resolve spawn landing before measuring the run cycle.
+        for _ in range(50):
+            self.lib.link_anim_update(5, True, 0, False)
+        start = self.lib.link_anim_frame()
+        for _ in range(15):
+            self.lib.link_anim_update(5, True, 0, False)
+        self.assertEqual(self.lib.link_anim_state(), 2)  # run
+        self.assertEqual((self.lib.link_anim_frame() - start) % 20, 10)
+
+    def test_fall_decimation_preserves_source_cadence(self):
+        self.lib.link_anim_reset_state()
+        for _ in range(9):
+            self.lib.link_anim_update(5, False, 0, False)
+        self.assertEqual(self.lib.link_anim_frame(), 2)  # six source frames
+
+    def test_fractional_pose_available(self):
+        self.lib.link_anim_reset_state()
+        self.lib.link_anim_update(5, False, 0, False)
+        self.assertGreater(self.lib.link_anim_fraction(), 0)
+        self.assertLess(self.lib.link_anim_fraction(), 256)
+
+    def test_l_does_not_reach_gameplay_orbit(self):
+        text = (ROOT / 'src/demo.c').read_text()
+        mask = text.split('uint16_t walk = buttons &', 1)[1].split(';', 1)[0]
+        self.assertNotIn('CAMERA_L', mask.replace('CAMERA_LEFT', ''))
+        self.assertIn('recenter = jo_is_pad1_key_down(JO_KEY_L)', text)
+        self.assertIn('demo_yaw = demo_link_yaw', text)

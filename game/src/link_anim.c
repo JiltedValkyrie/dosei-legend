@@ -48,6 +48,7 @@ static limb_matrix_t limb_matrices[LINK_LIMB_COUNT];
 /* The frame currently resident in link_points, so an unchanged frame costs
 ** nothing. -1 forces the first pose. */
 static int      posed_frame = -1;
+static unsigned int posed_fraction;
 
 /* SGL's own fixed multiply. The SH-2 has a 32x32->64 instruction and slMulFX
 ** uses it; an int64_t expression here compiles to a libgcc call instead, which
@@ -237,10 +238,13 @@ static void     skin_vertices(void)
     }
 }
 
-void            link_anim_pose(unsigned int clip, unsigned int frame)
+void            link_anim_pose(unsigned int clip, unsigned int frame,
+                               unsigned int fraction)
 {
     const link_clip_t   *entry;
     unsigned int        absolute;
+    unsigned int        next, i;
+    int16_t             root[3], rotations[LINK_LIMB_COUNT * 3];
 
     if (clip >= LINK_CLIP_COUNT)
         clip = LINK_CLIP_IDLE;
@@ -248,10 +252,25 @@ void            link_anim_pose(unsigned int clip, unsigned int frame)
     if (entry->count == 0)
         return;
     absolute = entry->first + (frame % entry->count);
-    if ((int)absolute == posed_frame)
+    fraction &= 255;
+    if ((int)absolute == posed_frame && fraction == posed_fraction)
         return;                     /* already resident; skinning is the cost */
     posed_frame = (int)absolute;
-    pose_skeleton(link_root[absolute], link_rotations[absolute]);
+    posed_fraction = fraction;
+    next = absolute + 1;
+    if (next >= entry->first + entry->count)
+        next = (clip == LINK_CLIP_FALL || clip == LINK_CLIP_LANDING ||
+                clip == LINK_CLIP_ROLL) ? absolute : entry->first;
+    for (i = 0; i < 3; ++i)
+        root[i] = link_root[absolute][i] +
+            (link_root[next][i] - link_root[absolute][i]) * (int)fraction / 256;
+    for (i = 0; i < LINK_LIMB_COUNT * 3; ++i) {
+        /* Interpolate across the short side of the 16-bit angle wrap. */
+        int32_t delta = (uint16_t)(link_rotations[next][i] - link_rotations[absolute][i]);
+        if (delta > 32767) delta -= 65536;
+        rotations[i] = (int16_t)(link_rotations[absolute][i] + delta * (int)fraction / 256);
+    }
+    pose_skeleton(root, rotations);
     skin_vertices();
 }
 

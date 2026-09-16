@@ -19,4 +19,7 @@ extern bool demo_link_active;
 #define DEMO_LINK_EYE_HEIGHT 90
 uint16_t kokiri_camera_facing(int32_t dx, int32_t dz);
 extern bool demo_collision_indexed;
+/* Set for one frame when the L+R diagnostics chord is newly held. The HUD
+ * clears it. Both buttons are consumed, so the chord cannot also recenter. */
+extern bool demo_diagnostics_toggled;
 #endif

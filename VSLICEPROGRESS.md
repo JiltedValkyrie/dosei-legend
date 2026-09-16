@@ -1,5 +1,25 @@
 # Vertical slice progress
 
+## Digital-pad speed and camera follow-up
+
+- Child outdoor run speed corrected to 165 native world units/s, including
+  fractional travel and normalized diagonals; free camera unchanged.
+- Animation slowed to a tuned 20 source frames/s with pose interpolation and
+  decimated-fall timing corrected. Exact N64 action-specific cadence remains
+  outside this change; gameplay feel still needs confirmation.
+- L recenters behind Link; full targeting is not implemented. Remaining pad
+  remap is a proposal in OPUS_HANDOFF.md, not silently applied.
+- Standard and hi-res images rebuilt; 81 host tests pass. No claim of runtime
+  visual verification; user's desktop/game focus was not touched.
+
+## Animation frame decoder correction
+
+- Fixed player animation record stride: 134 bytes, not 132. The missing
+  trailing face word corrupted every nonzero frame's root and limb data.
+- Added independent nonzero/decimated-frame regression fixtures; 75 tests pass.
+- Rebuilt standard and hi-res images. Runtime blinking/tumbling and smoothness
+  still need gameplay confirmation; no controls or physics changed.
+
 Scope: [VERTICALSLICE.md](VERTICALSLICE.md). Update this file as work changes;
 older handoff snapshots are not the current checklist.
 

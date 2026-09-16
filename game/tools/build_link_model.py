@@ -90,14 +90,16 @@ def read_animation(keep, animetion, offset, frame, limb_count):
 
     LinkAnimationHeader at `offset` in gameplay_keep is { s16 frameCount; s16
     pad; void* segment; }. The segment points into link_animetion, where each
-    frame is a flat Vec3s[1 + limbCount]: entry 0 is the root translation and
-    entry i+1 is limb i's rotation, in binang (0x10000 == 360 degrees).
+    frame is Vec3s[1 + limbCount] followed by a two-byte player face field:
+    entry 0 is root translation and entry i+1 is limb i's rotation, in binang
+    (0x10000 == 360 degrees). z_skelanime.c's AnimationContext_SetLoadFrame
+    includes that trailing field in the DMA stride, even when not using it.
     """
     frames, _, segment = struct.unpack_from('>hhI', keep, offset)
     if frame >= frames:
         sys.exit('frame %d beyond animation length %d' % (frame, frames))
     stride = (limb_count + 1) * 3
-    base = (segment & 0xFFFFFF) + frame * stride * 2
+    base = (segment & 0xFFFFFF) + frame * (stride * 2 + 2)
     values = struct.unpack_from('>%dh' % stride, animetion, base)
     root = values[0:3]
     rotations = [tuple(values[3 + i * 3:6 + i * 3]) for i in range(limb_count)]
@@ -482,15 +484,13 @@ def read_animation_frames(keep, animetion, offset, first, count, stride,
     frame is the root translation and entry i+1 is limb i's rotation in binang.
     Sampling past the clip wraps, so a decimated loop still closes on itself.
     """
-    frames, _, segment = struct.unpack_from('>hhI', keep, offset)
-    stride_words = (limb_count + 1) * 3
+    frames, _, _ = struct.unpack_from('>hhI', keep, offset)
     out = []
     for step in range(count):
         frame = (first + step * stride) % frames
-        base = (segment & 0xFFFFFF) + frame * stride_words * 2
-        values = struct.unpack_from('>%dh' % stride_words, animetion, base)
-        out.append((values[0:3],
-                    [tuple(values[3 + i * 3:6 + i * 3]) for i in range(limb_count)]))
+        _, root, rotations = read_animation(keep, animetion, offset, frame,
+                                             limb_count)
+        out.append((root, rotations))
     return frames, out
 
 

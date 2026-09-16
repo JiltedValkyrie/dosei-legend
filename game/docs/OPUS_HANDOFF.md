@@ -1,5 +1,45 @@
 # Link movement animation: done. Next is one NPC conversation.
 
+## Latest human request: speed, playback, digital-pad controls
+
+Astra owns these changes; do not overwrite while implementing other features.
+Preserve the 134-byte player-frame decoder fix described below.
+
+- Child outdoor run cap corrected from 16 units/30 Hz step (480/s) to 5.5
+  (165/s), with fractional-axis accumulation and normalized diagonals. Original
+  `z_player_lib.c` CHILD boot row has R_RUN_SPEED_LIMIT=550. OoT's position
+  update uses R_UPDATE_RATE*0.5 = 1.5 at 20 Hz, not one speed unit/update.
+- Actor movement only changed; free-camera speed retained. Actual movement
+  length now selects locomotion, with a run threshold suited to the new speed.
+- Slower animation cadence is a deliberate slice tuning: 20 source frames/s,
+  interpolated root/shortest-angle rotations. It is NOT derived merely from
+  OoT rendering at 20 Hz; original Link animation uses updateRate*0.5 and
+  action/speed-specific rates. Fall's every-third-frame sampling is accounted
+  for, and fall/one-shot interpolation never wraps back to the first pose.
+- L press snaps the camera behind Link and resets pitch. L no longer orbits
+  left during gameplay. This is camera recentering, not implemented Z-targeting
+  combat or strafing. R still orbits right; other controls were not remapped.
+- Host execution tests cover 10-second cardinal/diagonal/rotated travel,
+  cadence, decimation, and fractional phase; runtime feel needs user checking.
+  81 tests pass. Standard and hi-res images rebuilt successfully; no Kronos
+  gameplay confirmation or foreground input was performed.
+
+Proposed standard DIGITAL Saturn pad layout (not yet implemented/approved):
+D-pad run; hold C + D-pad walk; A context action/roll/talk; B sword;
+X/Y/Z three equipped items; L recenter/target; R shield; Start pause/menu.
+Move the current A diagnostics function to a development-only chord when
+implementing A. Full targeting, shield, sword, items, walk modifier and pause
+are proposals, not completed functionality. C-up/look still needs a policy;
+Navi can be a contextual A action. Do not silently implement the rest.
+
+## Astra animation decoder fix
+
+User still reported Link blinking/tumbling. Found 132-byte frame strides in
+both Python animation readers; OoT requires 134 (root/limbs plus face word).
+Fixed the decoder and added nonzero-frame and decimation fixture tests.
+See ANIM_PARITY_NOTES.md for source evidence. Do not tune landing gates to
+compensate for corrupted poses. Runtime visual confirmation is still pending.
+
 ## Astra review of animation fixes
 
 See the correction at the top of ANIM_PARITY_NOTES.md. OoT fall distance is
