@@ -1,0 +1,14 @@
+# Build output. The shared SDK is never written to; objects land here instead.
+obj/
+game.raw
+
+# Generated from ../title-screen/cd/FOREST.BIN by tools/build_sgl_scene.py.
+# Derived data, not source: run build.sh (or the converter) to recreate it.
+generated/
+
+# Texture blob staged onto the CD image by build.sh.
+cd/KOKIRI.TEX
+cd/0.bin
+
+# Stray objects from a misconfigured build (see makefile).
+*.o
