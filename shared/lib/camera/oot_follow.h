@@ -56,14 +56,23 @@ typedef struct
     int32_t     swing_timer;
 }               oot_follow_t;
 
-/* CAM_GLOBAL_50 + CAM_GLOBAL_51 is 40 updates at OoT's 20 Hz. The swing itself
-** is the CAM_GLOBAL_51 portion, 20 updates, which is 30 at our 30 Hz step --
-** about one second. */
-#define OOT_CAM_SWING_STEPS     30
+/*
+** Z-recenter turn length, in 30 Hz gameplay steps.
+**
+** This is Camera_Parallel1's animTimer, NOT Normal1's idle swing. An earlier
+** revision used Normal1's startSwingTimer (CAM_GLOBAL_50 + CAM_GLOBAL_51),
+** which is the camera drifting back behind a player who has STOPPED -- a
+** different behaviour that happens to involve a turn.
+**
+** sSetNormal0ModeZParallelData sets PARALLEL1_FLAG_3 | PARALLEL1_FLAG_1 and
+** not PARALLEL1_FLAG_2, so animTimer takes CAM_DEFAULT_ANIM_TIME = 4, at
+** OoT's 20 Hz. Four updates at 20 Hz is 0.2 s, which is 6 steps at our 30 Hz.
+*/
+#define OOT_CAM_SWING_STEPS     6
 
-/* Begin a recenter swing: the camera turns behind the player over
+/* Begin a Z-recenter turn: the camera rotates behind the player over
 ** OOT_CAM_SWING_STEPS instead of cutting there. Does not reset yaw -- the
-** swing starts from wherever the camera currently is. */
+** turn starts from wherever the camera currently is. */
 void    oot_follow_recenter(oot_follow_t *camera);
 
 /* Place the camera behind `facing` immediately, with no easing. Used on spawn

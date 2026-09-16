@@ -179,24 +179,52 @@ class OotFollowCamera(unittest.TestCase):
         return seen
 
     def test_recenter_does_not_cut_on_the_first_step(self):
-        """A snap would arrive immediately; the swing must not."""
+        """A snap would arrive immediately; the turn must not."""
         self.assertNotEqual(self.swing(0x4000, 1)[0], 0x4000,
-                            'recenter cut instead of swinging')
+                            'recenter cut instead of turning')
 
-    def test_recenter_swing_completes(self):
-        self.assertEqual(self.swing(0x4000, 60)[-1], 0x4000,
-                         'swing never finished')
+    def test_recenter_uses_parallel1_timing_not_normal1(self):
+        """Z-recenter is Camera_Parallel1, not Normal1's idle swing.
 
-    def test_recenter_swing_does_not_overshoot(self):
-        """Dividing the remainder by a countdown must approach monotonically."""
-        seen = self.swing(0x4000, 40)
+        sSetNormal0ModeZParallelData sets PARALLEL1_FLAG_3 | PARALLEL1_FLAG_1
+        and not FLAG_2, so animTimer is CAM_DEFAULT_ANIM_TIME = 4 at OoT's
+        20 Hz -- 0.2 s, which is 6 steps at our 30 Hz. Normal1's
+        CAM_GLOBAL_50 + CAM_GLOBAL_51 is the camera drifting back behind a
+        player who has STOPPED: a different behaviour entirely.
+        """
+        header = (ROOT.parent / 'shared/lib/camera/oot_follow.h').read_text()
+        self.assertIn('OOT_CAM_SWING_STEPS     6', header)
+
+    def test_recenter_completes_within_the_parallel1_window(self):
+        """Six steps, not thirty: the turn must be finished by then."""
+        self.assertEqual(self.swing(0x4000, 6)[-1], 0x4000,
+                         'turn did not finish inside animTimer')
+
+    def test_recenter_eases_out(self):
+        """Each step must cover LESS than the previous one.
+
+        Camera_Parallel1 divides by the triangular number of the remaining
+        steps and multiplies by the countdown, so the steps shrink. A plain
+        diff/remaining -- which this used to do -- is a constant share of a
+        shrinking remainder, i.e. a linear turn with no ease at all.
+        """
+        seen = self.swing(0x4000, 6)
+        deltas = [seen[0]] + [b - a for a, b in zip(seen, seen[1:])]
+        moving = [d for d in deltas if d > 0]
+        self.assertGreater(len(moving), 2, 'turn finished too fast to judge')
+        for previous, current in zip(moving, moving[1:]):
+            self.assertLess(current, previous,
+                            'steps did not shrink: %s' % (deltas,))
+
+    def test_recenter_does_not_overshoot(self):
+        seen = self.swing(0x4000, 8)
         for previous, current in zip(seen, seen[1:]):
             self.assertGreaterEqual(current, previous)
             self.assertLessEqual(current, 0x4000)
 
-    def test_recenter_swings_while_standing_still(self):
-        """Ordinary yaw follow is gated on movement; the swing is not."""
-        self.assertEqual(self.swing(0x4000, 60)[-1], 0x4000)
+    def test_recenter_turns_while_standing_still(self):
+        """Ordinary yaw follow is gated on movement; the recenter is not."""
+        self.assertEqual(self.swing(0x4000, 8)[-1], 0x4000)
 
     def test_snap_is_immediate(self):
         """Recenter and void recovery must not ease; both call snap."""
@@ -265,3 +293,45 @@ class FrameTimerWrapping(unittest.TestCase):
         self.assertIn('frame_timer_other', self.source)
 
 
+
+
+class CameraStepTiming(unittest.TestCase):
+    """The camera must advance per fixed step, not per draw.
+
+    OoT's easing rates are defined per update. Driving the camera from the
+    draw callback makes every rate frame-rate dependent: a 6-step turn is
+    0.2 s at 30 Hz but 0.75 s at 8 FPS. Skinning is the opposite case --
+    it is expensive and purely visual, so it stays outside the loop and runs
+    at most once per frame.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.source = (ROOT / 'src' / 'demo.c').read_text()
+
+    def step_loop(self):
+        body = self.source.split('while (steps--) {', 1)[1]
+        depth, end = 0, None
+        for index, character in enumerate(body):
+            if character == '{':
+                depth += 1
+            elif character == '}':
+                if depth == 0:
+                    end = index
+                    break
+                depth -= 1
+        self.assertIsNotNone(end, 'could not find the end of the step loop')
+        return body[:end]
+
+    def test_camera_updates_inside_the_step_loop(self):
+        self.assertIn('oot_follow_update', self.step_loop(),
+                      'camera easing would be frame-rate dependent')
+
+    def test_camera_updates_only_inside_the_step_loop(self):
+        """A second call per draw would double-advance the easing."""
+        self.assertEqual(self.source.count('oot_follow_update('), 2,
+                         'expected exactly the spawn snap and the step call')
+
+    def test_skinning_stays_outside_the_step_loop(self):
+        self.assertNotIn('link_anim_pose', self.step_loop(),
+                         'skinning must not run once per catch-up step')

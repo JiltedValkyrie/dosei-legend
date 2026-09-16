@@ -285,10 +285,9 @@ void demo_update(void)
         uint16_t walk = buttons & (CAMERA_UP | CAMERA_DOWN | CAMERA_LEFT |
                                    CAMERA_RIGHT);
         int32_t unused_pitch = 0;
-        int32_t was_x = demo_link.x, was_z = demo_link.z;
         bool recovered = false;
         if (recenter) {
-            /* Swing behind him over ~1 second, the way OoT's Normal1 does,
+            /* Camera_Parallel1's Z-recenter turn: about 0.2 s, eased out,
              * rather than cutting the view there in one frame. */
             oot_follow_recenter(&link_follow);
         }
@@ -329,6 +328,25 @@ void demo_update(void)
              * which is what makes the landing drop the full fall. */
             if (grounded)
                 link_fall_peak_y = demo_link.y;
+
+            /* The camera advances per FIXED STEP, not per draw.
+             *
+             * Driving it from the draw callback made every easing rate depend
+             * on the frame rate: a 6-step turn takes 0.2 s at 30 Hz but 0.75 s
+             * at 8 FPS, and OoT's rates are defined per update. Facing is
+             * recomputed here so the camera follows the step it just took. */
+            if (demo_link.x != step_x || demo_link.z != step_z)
+                demo_link_yaw = kokiri_camera_facing(demo_link.x - step_x,
+                                                     demo_link.z - step_z);
+            if (recovered) {
+                /* Recovery must not ease: a camera left down in the void
+                 * would show empty space on the way back. */
+                oot_follow_snap(&link_follow, &demo_link, demo_link_yaw);
+                recovered = false;
+            }
+            oot_follow_update(&link_follow, &demo_link, demo_link_yaw,
+                              demo_link.x != step_x || demo_link.z != step_z,
+                              &demo_camera, &demo_yaw, &demo_pitch);
         }
         /* Pose once for the frame, after the catch-up steps have settled on a
          * final state -- not inside the loop, and not in the draw callback.
@@ -337,21 +355,7 @@ void demo_update(void)
         frame_timer_begin(FRAME_PHASE_SKINNING);
         link_anim_pose(link_anim_clip(), link_anim_frame(), link_anim_fraction());
         frame_timer_end(FRAME_PHASE_SKINNING);
-        if (demo_link.x != was_x || demo_link.z != was_z)
-            demo_link_yaw = kokiri_camera_facing(demo_link.x - was_x,
-                                                 demo_link.z - was_z);
-        /* OoT's Normal1 follow, with the real CAM_SET_NORMAL0 parameters.
-         * The camera keeps its own spherical state and writes the eye, so the
-         * previous per-axis easing toward a fixed 260-unit offset is gone --
-         * that was a viewer approximation, not the original's behaviour. */
-        if (recovered) {
-            /* Recovery must not ease: a camera left down in the void would
-             * show empty space on the way back. Recenter swings instead. */
-            oot_follow_snap(&link_follow, &demo_link, demo_link_yaw);
-        }
-        oot_follow_update(&link_follow, &demo_link, demo_link_yaw,
-                          demo_link.x != was_x || demo_link.z != was_z,
-                          &demo_camera, &demo_yaw, &demo_pitch);
+
     } else {
         while (steps--) kokiri_camera_update(&demo_camera, &demo_yaw,
                                              &demo_pitch, buttons, false,

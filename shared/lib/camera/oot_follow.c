@@ -166,12 +166,31 @@ void            oot_follow_update(oot_follow_t *camera,
     ** keeps the view from drifting on its own. */
     if (camera->swing_timer > 0)
     {
-        /* Camera_Normal1's swing: divide what is left by the countdown, so
-        ** each step covers a larger share and the turn eases out, arriving
-        ** exactly as the timer expires. Movement does not interrupt it --
-        ** in OoT the swing is what puts the camera back behind the player. */
-        camera->yaw = angle_approach(camera->yaw, player_facing,
-                                     camera->swing_timer);
+        /*
+        ** Camera_Parallel1's turn, z_camera.c:2277:
+        **
+        **   tangle = ((animTimer + 1) * animTimer) / 2
+        **   yaw   += ((target - yaw) / tangle) * animTimer
+        **
+        ** The denominator is the triangular number of the remaining steps, and
+        ** the step is multiplied by the countdown, so each step covers a
+        ** SMALLER share than the last and the turn eases out, arriving exactly
+        ** as the timer expires.
+        **
+        ** A plain diff/remaining -- which this used to do -- gives a constant
+        ** share of a shrinking remainder, which is a linear turn, not an ease.
+        */
+        int32_t n = camera->swing_timer;
+        int32_t tangle = ((n + 1) * n) / 2;
+        int16_t diff = (int16_t)(player_facing - camera->yaw);
+        int32_t step = ((int32_t)diff / tangle) * n;
+
+        /* Integer division truncates toward zero, so a small remaining angle
+        ** would freeze short of the target. Finish the turn instead. */
+        if (step == 0)
+            camera->yaw = player_facing;
+        else
+            camera->yaw = (uint16_t)(camera->yaw + (int16_t)step);
         --camera->swing_timer;
     }
     else if (moving)
