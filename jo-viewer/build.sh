@@ -20,7 +20,10 @@ export PATH="$compiler/Other Utilities:$compiler/bin:$PATH"
 # on the CD image. Both are cheap and keep game.iso consistent with FOREST.BIN.
 python "$here/tools/build_sgl_area.py"
 python "$here/tools/build_sgl_scene.py"
+python "$here/tools/build_demo_assets.py"
 cp "$here/generated/kokiri_pixels.bin" "$here/cd/KOKIRI.TEX"
+cp "$here/../title-screen/assets/TITLE_PCM.RAW" "$here/cd/TITLE.PCM"
+cp "$here/../title-screen/assets/TITLE_LEVELS.RAW" "$here/cd/TITLE.LVL"
 
 cd "$here"
 make "$@"

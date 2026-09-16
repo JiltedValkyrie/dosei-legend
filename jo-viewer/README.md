@@ -1,10 +1,54 @@
 # Jo Engine / SGL Kokiri viewer
 
 Isolated port target for [docs/JOENGINE_PORT.md](../title-screen/docs/JOENGINE_PORT.md).
-Renders one fixed, textured Kokiri Forest view through Jo Engine's SGL path so
-it can be compared against the unchanged libyaul build in `../title-screen/`.
+Renders the textured Kokiri Forest through Jo Engine's SGL path, with the
+baseline title artwork, blinking PRESS START, SCSP score, automatic yaw,
+manual camera controls and source-space collision.
 
-The libyaul build is untouched. This project only reads its `cd/FOREST.BIN`.
+The libyaul build is untouched. This project reads its `cd/FOREST.BIN`, score
+header and existing PCM/envelope assets.
+
+## Vertical-slice controls
+
+- Start: toggle title artwork and idle panning (music continues).
+- D-pad: forward/back and strafe; L/R: turn.
+- X/Z: raise/lower the camera, collision constrained.
+- Hold Y + Up/Down: look up/down; C: level the view.
+- A: toggle the diagnostic HUD. Submission refusals are accumulated even
+  when the HUD is hidden; failures remain visible.
+
+Current local Kronos keyboard mapping: WASD = D-pad, Space = Start,
+Shift/Enter = L/R, U/I/O = X/Y/Z, L = C, J = A.
+
+The collision-derived spawn is raised 24 units to `(-300,115,0)`.
+Movement runs at 30 updates/second with bounded catch-up; idle pan and prompt
+blink use a separate 60 Hz clock and do not depend on music initialization.
+The baseline collision behavior is retained (free camera with swept movement,
+wall sliding and floor/ceiling constraints, not a new gravity/player controller).
+Collision (60,912 bytes), envelopes (112,176 bytes) and prompt (2,352 bytes) live
+in the existing heap. Title RGB555 rows stream through a 1 KB staging buffer
+to Jo's NBG1 bitmap; black keys transparent. No new VDP1 sprite slots are used.
+
+Kronos has shown the title over the forest at the raised spawn, and subsequently
+the title hidden with a moved camera and zero accumulated refusals. Captures:
+`generated/demo-title.png`, `generated/demo-movement.png`. These are smoke
+checks, not exhaustive moving-camera/work-area verification. 33 viewer tests
+and 24 baseline tests pass. Foreground warping is deliberately deferred.
+
+## Earlier verification (music/pan bring-up)
+
+Kronos window capture `generated/music-pan-window.png` shows music ON at tick
+614, yaw 55260, 2060 submissions, zero current/accumulated refusals and VDP1
+29 FPS. This is a short rotation observation, not a work-area safety proof.
+Severe foreground texture stretching remains visible and unresolved; successful
+submission does not establish correct clipping or texture mapping.
+
+The test launch redirected OpenAL to `generated/title-audio.wav`, so it did not
+play through the speakers. The 20–55 second interval is non-silent (mean
+-25.5 dB, peak -10.1 dB); this is signal evidence, not a listening or loop-quality
+check. Kronos was subsequently reopened without the capture environment.
+For normal playback, do not set `ALSOFT_DRIVERS=wave` or point `ALSOFT_CONF` at
+the generated capture configuration. The normal batch launcher sets neither.
 
 ## Build and run
 

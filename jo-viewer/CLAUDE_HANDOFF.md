@@ -1,5 +1,65 @@
 # Claude handoff: first Kronos verification
 
+## Latest update - vertical-slice restoration (Astra, uncommitted)
+
+Human explicitly parked warping and requested a slightly higher camera plus
+the baseline functionality. No renderer/clipping changes were made.
+
+- Spawn comes from the existing collision search, then a collision-constrained
+  +24 Y move: observed `(-300,115,0)` in Kronos.
+- Existing title bitmap is converted to keyed big-endian RGB555 and streamed
+  row-by-row into Jo's NBG1. Existing PRESS START patch blinks every 30 ticks.
+- Start toggles title/idle pan; manual controls match the baseline; A toggles
+  diagnostics, hidden by default. Music keeps playing during gameplay.
+- `demo_camera.c` and `demo_collision.c` compile the unchanged portable baseline
+  C sources into local objects. Jo input is explicitly mapped to normalized
+  camera bits; SGL sin/cos supplies movement trig. Positions/collision stay in
+  source space. Rendering applies pitch/yaw and translation, no Y reflection.
+- Collision is 60,912 heap bytes, not static BSS. Title upload uses 1 KB staging;
+  prompt is 2,352 resident bytes. Audio envelopes remain 112,176 heap bytes.
+- Demo has its own PAL/NTSC 60 Hz clock, independent of audio success. Gameplay
+  ticks at 30 Hz with a four-step catch-up cap; idle pan stays 90 units/60 Hz tick.
+
+Final build passed with `.bss` end `0x0609ECE0`, 91,776 bytes below the SGL area.
+33 viewer tests and 24 baseline tests pass; the latter exercise the actual reused
+collision/movement sources. Window captures show the title at raised spawn
+(`generated/demo-title.png`), then hidden title/moved camera with total refusals
+zero (`generated/demo-movement.png`). Start plus a brief forward input was sent
+to Kronos; the human may also have been interacting, so do not attribute the
+entire coordinate change to that injected input. No exhaustive wall/ceiling/
+edge traversal acceptance has been claimed. Audio listening/loop quality remains
+unconfirmed by the agent. NPC is not implemented. All changes remain uncommitted.
+
+Run and keyboard/pad mappings are in README. Earlier incomplete-status notes
+below are historical and superseded by this section.
+
+## Latest update - music/pan bring-up (Astra, uncommitted above `1bf8a66`)
+
+Human priority is title music and camera panning first. Added `title_music.c`
+using the existing baseline score, envelope and sample bank; stock Jo audio
+stays disabled. Samples upload through a 2 KB heap staging buffer into sound
+RAM, envelopes remain on the heap, and a vblank accumulator advances the score
+at 60 ticks per second (including on PAL). Camera yaw uses that clock, 90 angle
+units per tick. No runtime Y reflection was reintroduced. If music initialization
+fails, the current shared clock also stops the pan; this coupling remains.
+
+Build and 31 existing viewer tests passed. New playback does not yet have host
+tests. `.bss` ends at `0x0609DA20`, leaving 96,576 bytes below the work area.
+Kronos window-only capture `generated/music-pan-window.png` shows tick 614,
+pan 55260, subm 2060, rej 0, mask 1 and total refusals 0. It also confirms the
+human's report of severe foreground texture stretching. Near clipping/texture
+mapping needs investigation; no cause or fix has been established.
+
+The human heard no music during the capture launch: that run explicitly used
+OpenAL's WAV backend, not speakers. The resulting 76.81-second WAV has sustained
+non-silent output at 20–55 seconds (mean -25.5 dB, peak -10.1 dB). This is not an
+audible-quality or loop verification. Reopened Kronos without the capture
+environment for normal output. No persistent emulator audio setting was edited.
+
+Title artwork is still absent, not an asset-loading regression: it has not been
+ported. Controls/collision/NPC remain deferred. The historical fixed-view results
+below predate these changes and are not the current demo's completion status.
+
 ## Current update - submission capacity resolved (Opus)
 
 HEAD is still `01f2b15` on `joengine-port`; everything below remains

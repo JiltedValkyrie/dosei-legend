@@ -26,7 +26,7 @@ JO_MAX_SPRITE = 1802
 # and title data are intended to come out of what remains.
 JO_GLOBAL_MEMORY_SIZE_FOR_MALLOC = 262144
 
-SRCS = src/main.c src/kokiri_sgl.c generated/kokiri_scene.c generated/kokiri_textures.c
+SRCS = src/main.c src/kokiri_sgl.c src/title_music.c src/demo.c src/demo_camera.c src/demo_collision.c generated/kokiri_scene.c generated/kokiri_textures.c
 
 JO_ENGINE_SRC_DIR = ../../joengine/jo_engine
 COMPILER_DIR = ../../joengine/Compiler
@@ -44,7 +44,7 @@ include $(COMPILER_DIR)/COMMON/jo_engine_makefile
 SYSOBJS = generated/sglarea.o
 
 # The converter writes kokiri_scene.h into generated/.
-_CCFLAGS += -Igenerated -Isrc
+_CCFLAGS += -Igenerated -Isrc -I../title-screen/assets/generated -I../title-screen/src/scene
 
 # --- keep build products inside this project -------------------------------
 # The stock makefile derives OBJS as $(SRCS:.c=.o) and compiles via a .c.o
@@ -65,6 +65,9 @@ $(foreach s,$(SRCS),$(eval $(s:.c=.o): obj/$(notdir $(s:.c=.o))))
 
 obj/%.o: src/%.c | obj
 	$(CC) $< $(DFLAGS) $(CCFLAGS) $(_CCFLAGS) -o $@
+
+obj/demo_camera.o: ../title-screen/src/scene/kokiri_camera.c ../title-screen/src/scene/kokiri_camera.h ../title-screen/src/scene/kokiri_collision.h
+obj/demo_collision.o: ../title-screen/src/scene/kokiri_collision.c ../title-screen/src/scene/kokiri_collision.h
 
 obj/%.o: generated/%.c | obj
 	$(CC) $< $(DFLAGS) $(CCFLAGS) $(_CCFLAGS) -o $@

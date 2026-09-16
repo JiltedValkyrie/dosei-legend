@@ -9,6 +9,11 @@ generated/
 # Texture blob staged onto the CD image by build.sh.
 cd/KOKIRI.TEX
 cd/0.bin
+cd/TITLE.PCM
+cd/TITLE.LVL
+cd/TITLE.RGB
+cd/START.RGB
+cd/FOREST.COL
 
 # Stray objects from a misconfigured build (see makefile).
 *.o
