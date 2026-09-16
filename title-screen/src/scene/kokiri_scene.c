@@ -48,6 +48,70 @@ static angle_t angle;
 static int32_t far_z, fade_z;
 /* Capacity refusals since boot. Displayed by frame_probe on row 0. */
 static uint16_t overflow_commands, overflow_tiles;
+/* Texture staging experiment. The scene blob lives in LWRAM; statics land in
+ * HWRAM (linker script: ram ORIGIN 0x06004000). The resampler reads scattered
+ * texels with reuse, so each source tile is copied here once immediately
+ * before resampling and read from HWRAM thereafter. 512 bytes covers the
+ * largest source tile (32x32 at 4bpp); 16x16 tiles use 128 of it. The copy is
+ * inside the measured texture span because it is part of this strategy's
+ * cost, not an artifact of measuring it. */
+#define TEXTURE_STAGE_BYTES 512
+/* Control switch for the staging experiment. Build with
+ * -DTEXTURE_STAGE_DISABLE=1 to read sources straight from LWRAM again, so the
+ * staged and unstaged builds can be compared under the SAME profiler. */
+/* Default OFF. Measured against a same-profiler control: no frame-time gain,
+ * and its texture/clip means were worse (texture 191E vs 187A control,
+ * clip/emit 2ACC vs 2A32). Build -DTEXTURE_STAGE_DISABLE=0 to re-enable. */
+/* Ablation switches. Both deliberately change behaviour and must never be
+ * enabled in a shipping build; they answer "what is the frame made of". */
+#ifndef ABLATE_TEXTURE
+#define ABLATE_TEXTURE 0
+#endif
+/* Wireframe ablation: polyline instead of polygon. Same command count, same
+ * four vertices, same CPU path - only VDP1 fill is removed. Comparing it
+ * against the flat-polygon build isolates fill cost from everything else.
+ * Implies ABLATE_TEXTURE. */
+#ifndef ABLATE_WIREFRAME
+#define ABLATE_WIREFRAME 0
+#endif
+#if ABLATE_WIREFRAME
+#undef ABLATE_TEXTURE
+#define ABLATE_TEXTURE 1
+#endif
+#ifndef TEXTURE_STAGE_DISABLE
+#define TEXTURE_STAGE_DISABLE 1
+#endif
+/* Early-cull experiment: reject faces by conservative object-space bounds
+ * against the existing view frustum BEFORE the vertex loop, then transform
+ * only the vertices those survivors reference.
+ *
+ * MEASURED AND REJECTED (fixed pose, same profiler, acceptance passed):
+ *   frame 6616 -> 6616 (no change), vertex 1908 -> 1B2E (worse),
+ *   facecull 032C -> 017F, sort 042C -> 017F, clip/emit 2A32 -> 2A1D.
+ *   Projected vertices 024E -> 0178 (590 -> 376, ~36% fewer).
+ * Fewer transformed vertices, but overall CPU roughly flat: the sphere test
+ * runs over 2,060 faces to save work on 1,268 vertices, and there are more
+ * faces than vertices. Command counts also differed slightly (00F8 vs
+ * 00F7/00F9), so visual equivalence was NOT established - the profiler
+ * verdict checks measurement validity, not drawn output.
+ * Kept behind a default-off flag as a recorded negative result. */
+#ifndef EARLY_CULL
+#define EARLY_CULL 0
+#endif
+static uint8_t texture_stage[TEXTURE_STAGE_BYTES] __aligned(4) __unused;
+#if EARLY_CULL
+/* Per-face bounding SPHERE in object space, built once at init. A sphere is
+ * rotation invariant, so the camera-space test needs only the transformed
+ * centre plus the original radius - no per-face corner transforms. An AABB
+ * would stop being axis-aligned once rotated, and transforming 8 corners per
+ * face would cost more than the vertex work it saves. */
+typedef struct { int16_t centre[3]; int32_t radius; } face_sphere_t;
+static face_sphere_t *face_spheres;
+/* Marks for vertices referenced by surviving faces, and the survivor list. */
+static uint8_t *vertex_needed;
+static uint16_t *survivors;
+static uint32_t survivor_count;
+#endif
 
 static void sort_faces(uint32_t visible_count)
 {
@@ -121,6 +185,42 @@ void kokiri_scene_init(void)
                 assert(faces[i].texture + width * (faces[i].size & 255) / 2 <= scene->texture_bytes);
                 assert(faces[i].clut + 32 <= scene->texture_bytes);
         }
+#if EARLY_CULL
+        face_spheres = malloc(scene->faces * sizeof(*face_spheres));
+        vertex_needed = malloc(scene->vertices * sizeof(*vertex_needed));
+        survivors = malloc(scene->faces * sizeof(*survivors));
+        assert(face_spheres && vertex_needed && survivors);
+        for (uint32_t i = 0; i < scene->faces; i++) {
+                int32_t lo[3], hi[3];
+                for (int k = 0; k < 3; k++) { lo[k] = 32767; hi[k] = -32768; }
+                for (int j = 0; j < 3; j++) {
+                        const vertex_t *v = &vertices[faces[i].vertices[j]];
+                        const int32_t c[3] = { v->x, v->y, v->z };
+                        for (int k = 0; k < 3; k++) {
+                                if (c[k] < lo[k]) lo[k] = c[k];
+                                if (c[k] > hi[k]) hi[k] = c[k];
+                        }
+                }
+                int32_t centre[3];
+                for (int k = 0; k < 3; k++) centre[k] = (lo[k] + hi[k]) / 2;
+                /* Radius: max distance from centre to any vertex. Use the
+                 * Manhattan bound, which is >= Euclidean, keeping the sphere
+                 * conservative without a square root at init. */
+                int32_t radius = 0;
+                for (int j = 0; j < 3; j++) {
+                        const vertex_t *v = &vertices[faces[i].vertices[j]];
+                        const int32_t c[3] = { v->x, v->y, v->z };
+                        int32_t d = 0;
+                        for (int k = 0; k < 3; k++) {
+                                int32_t e = c[k] - centre[k];
+                                d += e < 0 ? -e : e;
+                        }
+                        if (d > radius) radius = d;
+                }
+                for (int k = 0; k < 3; k++) face_spheres[i].centre[k] = (int16_t)centre[k];
+                face_spheres[i].radius = radius;
+        }
+#endif
         vdp2_sprite_priority_set(0, 3);
         vdp1_env_t env;
         vdp1_env_default_init(&env);
@@ -161,8 +261,48 @@ void kokiri_scene_update_and_draw(void)
         fix16_mat33_y_rotation_create(angle, &rotation);
         fix16_t ps, pc;
         fix16_sincos((angle_t)pitch, &ps, &pc);
+#if EARLY_CULL
+        /* Pass 1: reject faces whose bounding sphere lies wholly outside a
+         * frustum plane, and mark the vertices the survivors reference. The
+         * cost of this pass and of marking is inside PERF_SPAN_VERTEX, so it
+         * is charged against the saving it is meant to produce. */
+        memset(vertex_needed, 0, scene->vertices);
+        survivor_count = 0;
+        for (uint32_t i = 0; i < scene->faces; i++) {
+                const face_sphere_t *sp = &face_spheres[i];
+                fix16_vec3_t lc, rc;
+                lc.x = fix16_int32_from(sp->centre[0] - camera.x);
+                lc.y = fix16_int32_from(sp->centre[1] - camera.y);
+                lc.z = fix16_int32_from(sp->centre[2] - camera.z);
+                fix16_mat33_vec3_mul(&rotation, &lc, &rc);
+                const int32_t cx = fix16_int32_to(rc.x);
+                const int32_t cy0 = fix16_int32_to(rc.y);
+                const int32_t cz0 = fix16_int32_to(rc.z);
+                const int32_t cy = (int32_t)(((int64_t)cy0*pc - (int64_t)cz0*ps)/65536);
+                const int32_t cz = (int32_t)(((int64_t)cz0*pc + (int64_t)cy0*ps)/65536);
+                const int32_t r = sp->radius;
+                /* Conservative plane tests. Each plane is linear, so shifting
+                 * the centre distance by the radius scaled by the plane's
+                 * coefficient magnitude bounds the whole sphere. Reject only
+                 * when the entire sphere is on the outside. */
+                bool outside = (cz + r < NEAR_Z);
+                if (!outside) outside = (cx*240 + cz*160 + r*400 < 0);
+                if (!outside) outside = (cz*159 - cx*240 + r*399 < 0);
+                if (!outside) outside = (cz*120 - cy*240 + r*360 < 0);
+                if (!outside) outside = (cz*119 + cy*240 + r*359 < 0);
+                if (outside) continue;
+                survivors[survivor_count++] = (uint16_t)i;
+                vertex_needed[faces[i].vertices[0]] = 1;
+                vertex_needed[faces[i].vertices[1]] = 1;
+                vertex_needed[faces[i].vertices[2]] = 1;
+        }
+        for (uint32_t i = 0; i < scene->vertices; i++) {
+                if (!vertex_needed[i]) { projected[i].outcode = 0x1F; projected[i].safe = false; continue; }
+                fix16_vec3_t local, rotated;
+#else
         for (uint32_t i = 0; i < scene->vertices; i++) {
                 fix16_vec3_t local, rotated;
+#endif
                 local.x = fix16_int32_from(vertices[i].x - camera.x);
                 local.y = fix16_int32_from(vertices[i].y - camera.y);
                 local.z = fix16_int32_from(vertices[i].z - camera.z);
@@ -193,8 +333,14 @@ void kokiri_scene_update_and_draw(void)
 
         PERF_SPAN_BEGIN(PERF_SPAN_FACECULL);
         uint32_t visible_count = 0;
+#if EARLY_CULL
+        for (uint32_t s = 0; s < survivor_count; s++) {
+                const uint32_t i = survivors[s];
+                const face_t *face = &faces[i];
+#else
         for (uint32_t i = 0; i < scene->faces; i++) {
                 const face_t *face = &faces[i];
+#endif
                 if (projected[face->vertices[0]].outcode & projected[face->vertices[1]].outcode &
                     projected[face->vertices[2]].outcode) continue;
                 const int32_t depth0 = depths[face->vertices[0]];
@@ -258,8 +404,24 @@ void kokiri_scene_update_and_draw(void)
                         }
                         vdp1_cmdt_t *cmd = &commands->cmdts[count++];
                         memset(cmd, 0, sizeof(*cmd));
+#if ABLATE_TEXTURE
+                        /* Ablation: flat-shaded polygon. A polygon primitive
+                         * carries a solid colour and reads no character data
+                         * at all, so both the resampler and all texture
+                         * fetching are removed. Rendered output is untextured
+                         * by design; never ship this. Note this also changes
+                         * VDP1's work, so a frame-time delta is NOT a pure CPU
+                         * measurement. */
+#if ABLATE_WIREFRAME
+                        vdp1_cmdt_polyline_set(cmd);
+#else
+                        vdp1_cmdt_polygon_set(cmd);
+#endif
+                        vdp1_cmdt_draw_mode_t mode = { .raw = 0 };
+#else
                         vdp1_cmdt_distorted_sprite_set(cmd);
                         vdp1_cmdt_draw_mode_t mode = { .raw = 0 };
+#endif
                         mode.end_code_disable = true;
                         mode.pre_clipping_disable = true;
                         mode.mesh_enable = (face->flags & 1) != 0 ||
@@ -267,19 +429,47 @@ void kokiri_scene_update_and_draw(void)
                              depths[face->vertices[1]] > fade_z &&
                              depths[face->vertices[2]] > fade_z);
                         vdp1_cmdt_draw_mode_set(cmd, mode);
+#if ABLATE_TEXTURE
+                        /* Vary colour per face so geometry stays legible. */
+                        vdp1_cmdt_color_set(cmd,
+                            RGB1555(1, (order[i].index * 7) & 31,
+                                       (order[i].index * 13) & 31,
+                                       (order[i].index * 3) & 31));
+#else
                         vdp1_cmdt_color_mode1_set(cmd, texture_base + face->clut);
+#endif
+                        /* Per-quad decision. `changed` is per-face, so
+                         * clearing it here would also suppress resampling -
+                         * and the counter - for this face's remaining fan
+                         * pieces. Every affected command is counted instead. */
+                        bool use_scratch = changed;
                         if (changed && clip_tiles >= CLIP_TILES) {
                                 /* Out of scratch tiles: draw the unclipped
-                                 * tile instead of writing past the partition. */
+                                 * tile rather than write past the partition.
+                                 * This maps the original triangle tile onto
+                                 * clipped vertices, so the UVs are wrong - a
+                                 * visible artifact, counted, and it fails a
+                                 * benchmark run. */
                                 overflow_tiles++;
                                 PERF_COUNT_ADD(PERF_COUNT_OVF_TILES, 1);
-                                changed = false;
+                                use_scratch = false;
                         }
-                        if (changed) {
+#if ABLATE_TEXTURE
+                        (void)use_scratch;
+#else
+                        if (use_scratch) {
                                 uint8_t tile[CLIP_TILE_BYTES] __aligned(4);
                                 const uint8_t *source = (const uint8_t *)scene + scene->texture_offset + face->texture;
+                                const unsigned source_size = face->size & 255;
+                                /* 4bpp: size*size texels, two per byte. */
+                                const unsigned source_bytes = source_size * source_size / 2;
                                 PERF_SPAN_BEGIN(PERF_SPAN_TEXTURE);
-                                kokiri_clip_texture(source, face->size & 255, clipped, tile);
+                                if (!TEXTURE_STAGE_DISABLE &&
+                                    source_bytes <= TEXTURE_STAGE_BYTES) {
+                                        memcpy(texture_stage, source, source_bytes);
+                                        source = texture_stage;
+                                }
+                                kokiri_clip_texture(source, source_size, clipped, tile);
                                 PERF_SPAN_END(PERF_SPAN_TEXTURE);
                                 vdp1_vram_t dest = texture_base + scene->texture_bytes + clip_tiles++*CLIP_TILE_BYTES;
                                 memcpy((void *)dest, tile, sizeof(tile));
@@ -289,12 +479,13 @@ void kokiri_scene_update_and_draw(void)
                                 vdp1_cmdt_char_base_set(cmd, texture_base + face->texture);
                                 vdp1_cmdt_char_size_set(cmd, ((face->size >> 8) & 63) * 8, face->size & 255);
                         }
+#endif
                         vdp1_cmdt_vtx_set(cmd, p);
                 }
         }
 emit_done:
         PERF_SPAN_END(PERF_SPAN_CLIPEMIT);
-        PERF_COUNT_ADD(PERF_COUNT_COMMANDS, count);
+        PERF_COUNT_ADD(PERF_COUNT_COMMANDS, count - 2);
         PERF_COUNT_ADD(PERF_COUNT_TILES, clip_tiles);
         frame_probe_overflow(overflow_commands, overflow_tiles);
 

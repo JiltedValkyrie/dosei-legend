@@ -7,10 +7,36 @@ endif
 # object directory and the disc image, so the two configurations can never
 # share objects or clobber each other's image. build/ already contains objects
 # from retired configurations, so this separation is not hypothetical.
-ifeq ($(strip $(PERF_BENCH)),)
+ifeq ($(filter 1 yes on,$(strip $(PERF_BENCH))),)
+  # Normal shipping build.
   SH_BUILD_DIR:= build
   SH_OUTPUT_DIR:= .
+else ifneq ($(filter 1 yes on,$(strip $(EARLY_CULL))),)
+  # Experiment: conservative early face rejection before the vertex loop.
+  SH_BUILD_DIR:= build-perf-early
+  SH_OUTPUT_DIR:= build-perf-early
+else ifneq ($(filter 1 yes on,$(strip $(ABLATE_WIREFRAME))),)
+  # Ablation: wireframe. Fill removed, CPU path unchanged.
+  SH_BUILD_DIR:= build-perf-wire
+  SH_OUTPUT_DIR:= build-perf-wire
+else ifneq ($(filter 1 yes on,$(strip $(ABLATE_TEXTURE))),)
+  # Ablation: resampler skipped. Output is deliberately wrong.
+  SH_BUILD_DIR:= build-perf-notex
+  SH_OUTPUT_DIR:= build-perf-notex
+else ifneq ($(filter 1 yes on,$(strip $(ABLATE_COLLISION))),)
+  # Ablation: collision response removed from camera movement.
+  SH_BUILD_DIR:= build-perf-nocol
+  SH_OUTPUT_DIR:= build-perf-nocol
+else ifneq ($(filter 1 yes on,$(strip $(ABLATE_MUSIC))),)
+  # Ablation: score advancement skipped in the VBlank callback.
+  SH_BUILD_DIR:= build-perf-nomus
+  SH_OUTPUT_DIR:= build-perf-nomus
+else ifneq ($(filter 0 no off,$(strip $(TEXTURE_STAGE_DISABLE))),)
+  # Staging explicitly re-enabled for comparison.
+  SH_BUILD_DIR:= build-perf-staged
+  SH_OUTPUT_DIR:= build-perf-staged
 else
+  # Default benchmark build: staging off, nothing ablated.
   SH_BUILD_DIR:= build-perf
   SH_OUTPUT_DIR:= build-perf
 endif
@@ -43,8 +69,26 @@ SH_SRCS:= \
 	src/audio/title_player.c
 
 SH_CFLAGS+= -Os -Isrc/audio -Isrc/scene -Isrc/debug -Iassets/generated $(TGA_CFLAGS)
-ifneq ($(strip $(PERF_BENCH)),)
+ifneq ($(filter 1 yes on,$(strip $(PERF_BENCH))),)
   SH_CFLAGS+= -DPERF_BENCH=1
+endif
+ifneq ($(strip $(TEXTURE_STAGE_DISABLE)),)
+  SH_CFLAGS+= -DTEXTURE_STAGE_DISABLE=$(strip $(TEXTURE_STAGE_DISABLE))
+endif
+ifneq ($(filter 1 yes on,$(strip $(ABLATE_TEXTURE))),)
+  SH_CFLAGS+= -DABLATE_TEXTURE=1
+endif
+ifneq ($(filter 1 yes on,$(strip $(ABLATE_WIREFRAME))),)
+  SH_CFLAGS+= -DABLATE_WIREFRAME=1
+endif
+ifneq ($(filter 1 yes on,$(strip $(ABLATE_MUSIC))),)
+  SH_CFLAGS+= -DABLATE_MUSIC=1
+endif
+ifneq ($(filter 1 yes on,$(strip $(ABLATE_COLLISION))),)
+  SH_CFLAGS+= -DABLATE_COLLISION=1
+endif
+ifneq ($(filter 1 yes on,$(strip $(EARLY_CULL))),)
+  SH_CFLAGS+= -DEARLY_CULL=1
 endif
 SH_LDFLAGS+= $(TGA_LDFLAGS)
 

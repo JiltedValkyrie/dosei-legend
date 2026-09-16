@@ -1,0 +1,72 @@
+# Sega Saturn Development Documentation
+https://segaxtreme.net/threads/saturn-documentation.16403/
+
+Snapshot of web page above:
+
+Saturn Programming Manual vol. 1 (Adobe Acrobat Format)
+
+Saturn Introduction Manual - Short description of the development environment
+Sega of America Introduction to Saturn Game Development - Basic overview of the Saturn
+Saturn Overview Manual (temporary version 1) - So temporary they were still handing it out in 1997
+SCU User's Manual - Third Version
+SCU Final Specifications - Precautions
+SMPC User's Manual - Info on the SMPC, a central piece of the Saturn
+Saturn SCSP User's Manual - All about the sound system. No real info on the DSP, though
+Sega Saturn Dual CPU User's Guide - How to make the two CPUs work together
+
+Saturn Programming Manual vol. 2 (Adobe Acrobat Format)
+
+VDP1 UserÃ¯Â¿Â½s Manual - VDP1 UserÃ¯Â¿Â½s Manual
+VDP1 UserÃ¯Â¿Â½s Manual Supplement - VDP1 UserÃ¯Â¿Â½s Manual Supplement
+VDP2 UserÃ¯Â¿Â½s Manual - VDP2 UserÃ¯Â¿Â½s Manual
+
+Saturn Graphic Library (SGL)
+
+SGL Developer's Manual Tutorial
+SGL Developer's Manual Reference
+
+Takashi Saturn SGL Tutorial (Adobe Acrobat Format)
+
+The main objective of these tutorials is to give you an inside vision into developing C based games using the GNU C Saturn crosscompiller, and the leaked SGL Game Library. This tutorial does not teach you C. This tutorial is meant to help persons giving the first steps in Saturn development.
+Part 1
+Part 2
+
+Charles MacDonald Misc Saturn Text Files
+
+Description of the EMS Action Replay Plus 4-in-1 cartridge
+Misc Saturn hardware notes
+
+Other Saturn Development Tools Manual
+
+Is what it says, standards for Sat programs.
+Boot Rom Users Manual
+Disc Format Standards Specification Sheet
+Backup System Production Standard
+Saturn Demo-Demo File Loader Specifications
+SCU DSP Assembler User's Manual
+SCU DSP Assembler User's Manual Addendum
+SCU DSP Simulator User's Manual
+SCU DSP Assembler User's Manual Addendum
+CD Development Tool Description File
+Virtual CD System User's Manual
+Virtual CD Supplementary Manual
+Virtual CD System (Release 3) Limitations
+Write-Once CD-R System User's Manual
+
+Saturn Sounds Tools Manual
+
+Sound Development Manual Ver 1.1
+Saturn Sound Simulator Manual
+Wave Editor User's Manual
+SCSP Waveform Editor Technical Specifications
+Tone Editor User's Manual
+Tone Editor User's Manual Addendum: File Format
+SCSP/DSP Effect Module Specifications
+DSP Linker User's Manual
+dAsms User's Manual
+Parameter Editor User's Manual
+Saturn Sound Driver Implementation Manual
+Saturn Sound Driver System Interface Version 3.03
+Standard MIDI File: Converter Specifications
+Sound Programming Debugger's User Manual (Mac-based debugger for the sound CPU)
+Microcomputer Developing Int. Environment for Macintosh

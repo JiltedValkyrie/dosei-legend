@@ -29,6 +29,11 @@ static bool __attribute__((noinline))
 title_input_update(uint16_t rising)
 {
         static bool visible = true;
+#ifdef PERF_BENCH
+        /* Start toggles NBG0, which carries the report bitmap. Ignore it in
+         * the benchmark configuration so the report cannot be hidden. */
+        (void)rising;
+#else
         if (rising & PERIPHERAL_DIGITAL_START) {
                 visible = !visible;
                 const vdp2_scrn_disp_t layers = visible
@@ -36,6 +41,7 @@ title_input_update(uint16_t rising)
                     : VDP2_SCRN_DISPTP_NBG1;
                 vdp2_scrn_display_set(layers);
         }
+#endif
         return visible;
 }
 
@@ -270,8 +276,10 @@ main(void)
                 kokiri_scene_update_and_draw();
 
                 frame_probe_stage(0x80);
+                PERF_SPAN_BEGIN(PERF_SPAN_VBLANK);
                 vdp2_sync();
                 vdp2_sync_wait();
+                PERF_SPAN_END(PERF_SPAN_VBLANK);
                 frame_probe_complete();
                 PERF_FRAME_END();
 

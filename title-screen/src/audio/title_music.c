@@ -5,6 +5,13 @@
 #include "title_player.h"
 #include "frame_probe.h"
 
+/* Ablation: skip per-VBlank score advancement to measure what the audio
+ * callback costs the render loop. The field tick above still runs, so field
+ * measurement is unaffected. Never enable in a shipping build. */
+#ifndef ABLATE_MUSIC
+#define ABLATE_MUSIC 0
+#endif
+
 static unsigned _phase;
 static unsigned _refresh;
 
@@ -12,11 +19,13 @@ static void
 _audio_vblank(void *work __unused)
 {
         frame_probe_tick();
+#if !ABLATE_MUSIC
         _phase += 60;
         while (_phase >= _refresh) {
                 _phase -= _refresh;
                 title_player_update();
         }
+#endif
 }
 
 void

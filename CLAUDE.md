@@ -59,6 +59,11 @@ or a solved issue.
 
 ## Next work and evidence
 
+Quad mesh integration handoff: [QUAD_HANDOFF.md](title-screen/docs/perf/QUAD_HANDOFF.md).
+User imported 333 quads + 1,187 triangles through Mesh Workshop. The saved
+prefer-quads setting is NOT wired into builds yet. Claude/Opus should implement
+an isolated textured quad-test ISO per that handoff, preserving the baseline.
+
 1. Establish sustained stability and capture any new failure with its matching
    ELF. [DEBUGGING.md](title-screen/docs/DEBUGGING.md) records the prior dump:
    PC `06006114`, PR `060061EA`, in the renderer after clipping. The old ELF

@@ -1,5 +1,9 @@
 #include "kokiri_camera.h"
 
+#ifndef ABLATE_COLLISION
+#define ABLATE_COLLISION 0
+#endif
+
 void kokiri_camera_update(camera_position_t *position, uint16_t *yaw,
     int32_t *pitch, uint16_t buttons, bool title_visible)
 {
@@ -32,5 +36,13 @@ void kokiri_camera_update(camera_position_t *position, uint16_t *yaw,
                 dz = (vertical*cosine - horizontal*sine)*speed/65536;
         }
         if (buttons & CAMERA_C) *pitch = 0;
+#if ABLATE_COLLISION
+        /* Ablation: move freely, no collision test. Camera will pass through
+         * geometry; never ship. Note this is only reachable when the camera
+         * updates at all - PERF_BENCH holds a fixed pose, so in that build
+         * per-frame collision is already absent and this changes nothing. */
+        position->x += dx; position->y += dy; position->z += dz;
+#else
         if (dx || dy || dz) kokiri_collision_move(position, dx, dy, dz);
+#endif
 }

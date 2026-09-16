@@ -2,6 +2,7 @@
 import ctypes as C
 import math
 import os
+import random
 import struct
 import subprocess
 import unittest
@@ -35,7 +36,8 @@ subprocess.run(['C:/msys64/mingw64/bin/gcc.exe', '-c', '-O2', '-Wall', '-Wextra'
                 '-o', str(collision_object)], check=True)
 subprocess.run(['C:/msys64/mingw64/bin/gcc.exe', '-shared', '-O2', '-Wall', '-Wextra', '-Werror',
                 '-I'+str(SCENE), str(collision_object), str(SCENE/'kokiri_clip.c'),
-                str(SCENE/'kokiri_camera.c'), str(adapter), '-o', str(DLL)], check=True)
+                str(SCENE/'kokiri_camera.c'), str(adapter),
+                str(ROOT/'tests/native/texture_reference.c'), '-o', str(DLL)], check=True)
 LIB = C.CDLL(str(DLL))
 
 class Position(C.Structure):
@@ -55,6 +57,7 @@ LIB.kokiri_clip_frustum.argtypes = [C.POINTER(ClipVertex),C.POINTER(ClipVertex),
 LIB.kokiri_clip_frustum.restype = C.c_int
 LIB.kokiri_clip_texture.argtypes = [C.POINTER(C.c_uint8), C.c_uint,
     C.POINTER(ClipVertex), C.POINTER(C.c_uint8)]
+LIB.reference_clip_texture.argtypes = LIB.kokiri_clip_texture.argtypes
 LIB.kokiri_project_offset.argtypes = [C.c_int32, C.c_int32]
 LIB.kokiri_project_offset.restype = C.c_int32
 LIB.kokiri_camera_update.argtypes = [C.POINTER(Position), C.POINTER(C.c_uint16),
@@ -262,6 +265,28 @@ class CameraTests(unittest.TestCase):
                                    for xx in range(max(0,sx-1),min(size,sx+2))}
                         self.assertIn(actual,neighbors)
 
+    def assert_exact_texture(self, source, size, quad):
+        guarded = (C.c_uint8*132)(*([0xA5]*132))
+        output = C.cast(C.byref(guarded,2), C.POINTER(C.c_uint8))
+        expected = (C.c_uint8*128)()
+        vertices = (ClipVertex*4)(*quad)
+        LIB.reference_clip_texture(source,size,vertices,expected)
+        LIB.kokiri_clip_texture(source,size,vertices,output)
+        self.assertEqual(bytes(guarded)[2:130],bytes(expected))
+        self.assertEqual(bytes(guarded)[:2]+bytes(guarded)[130:],b'\xa5'*4)
+
+    def test_resampler_byte_exact_random_and_boundary_uvs(self):
+        rng = random.Random(0x5A7)
+        edges = [-2,-1,0,1,14,15,16,32767,32768,65535,65536,65537,65538]
+        for size in (16,32):
+            source = (C.c_uint8*(size*size//2))(*rng.randbytes(size*size//2))
+            for i in range(2000):
+                coords = [(rng.choice(edges),rng.choice(edges)) if i < 1000
+                          else (rng.randrange(-2,65539),rng.randrange(-2,65539))
+                          for _ in range(4)]
+                quad = [ClipVertex(0,0,20,b,c) for b,c in coords]
+                self.assert_exact_texture(source,size,quad)
+
     def test_full_camera_sweep_command_and_texture_budgets(self):
         max_commands = max_clipped = 0
         total_fast = total_clipped = total_rejected = 0
@@ -295,6 +320,12 @@ class CameraTests(unittest.TestCase):
                             p = [(160+int(v.x*240/v.z),120-int(v.y*240/v.z)) for v in quad]
                             area = sum(p[i][0]*p[(i+1)%4][1]-p[i][1]*p[(i+1)%4][0] for i in range(4))
                             if area == 0 or (face[7]&2 and area <= 0):continue
+                            if changed:
+                                size = face[6]&255
+                                start = H[6]+face[4]
+                                source = (C.c_uint8*(size*size//2)).from_buffer_copy(
+                                    DATA[start:start+size*size//2])
+                                self.assert_exact_texture(source,size,quad)
                             commands += 1
                             clipped += changed
                             total_fast += not changed

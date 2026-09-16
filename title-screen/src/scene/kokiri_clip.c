@@ -50,6 +50,32 @@ unsigned kokiri_clip_outcode(clip_vertex_t p)
         return code;
 }
 
+/* Exact start + trunc((end-start)*x/15), including negative differences.
+ * Divide once per row, then distribute the remainder with integer additions.
+ * A negative difference needs ceiling of the positive remainder contribution
+ * after normalizing the step to floor division: initial error 14 supplies it. */
+static void interpolate_row(int32_t start, int32_t end, int32_t values[16])
+{
+        const int32_t delta = end - start;
+        int32_t step = delta / 15;
+        int32_t remainder = delta - step * 15;
+        int32_t error = 0;
+        if (remainder < 0) {
+                step--;
+                remainder += 15;
+                error = 14;
+        }
+        for (unsigned x = 0; x < 16; x++) {
+                values[x] = start;
+                start += step;
+                error += remainder;
+                if (error >= 15) {
+                        start++;
+                        error -= 15;
+                }
+        }
+}
+
 void kokiri_clip_texture(const uint8_t *source, unsigned size,
     const clip_vertex_t quad[4], uint8_t tile[128])
 {
@@ -58,9 +84,12 @@ void kokiri_clip_texture(const uint8_t *source, unsigned size,
                 const int32_t lc = quad[0].c + (quad[3].c-quad[0].c)*y/15;
                 const int32_t rb = quad[1].b + (quad[2].b-quad[1].b)*y/15;
                 const int32_t rc = quad[1].c + (quad[2].c-quad[1].c)*y/15;
+                int32_t row_b[16], row_c[16];
+                interpolate_row(lb, rb, row_b);
+                interpolate_row(lc, rc, row_c);
                 for (int x = 0; x < 16; x++) {
-                        int32_t b = lb + (rb-lb)*x/15;
-                        int32_t c = lc + (rc-lc)*x/15;
+                        int32_t b = row_b[x];
+                        int32_t c = row_c[x];
                         if (c < 0) c = 0;
                         if (c > 65536) c = 65536;
                         if (b < 0) b = 0;
@@ -72,7 +101,9 @@ void kokiri_clip_texture(const uint8_t *source, unsigned size,
                             (unsigned)divide(b*(int32_t)(size-1)+(65536-c)/2,65536-c);
                         unsigned v = (c*(size-1)+32768)/65536;
                         unsigned texel = v*size+u;
-                        unsigned index = (source[texel/2] >> ((texel&1) ? 0 : 4)) & 15;
+                        unsigned packed = source[texel/2];
+                        /* Variable shifts call a libgcc helper on SH-2. */
+                        unsigned index = (texel & 1) ? packed & 15 : packed >> 4;
                         unsigned dest = y*8+x/2;
                         if (x&1) tile[dest] |= index;
                         else tile[dest] = index << 4;

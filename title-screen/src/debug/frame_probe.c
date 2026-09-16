@@ -16,6 +16,7 @@
 #include <yaul.h>
 #include <cpu/frt.h>
 #include "frame_probe.h"
+#include "perf_bench.h"
 
 static uint8_t frames __unused, ticks __unused;
 static const uint16_t glyphs[16] = {
@@ -92,7 +93,11 @@ void frame_probe_time_init(void) { }
 #ifdef PERF_BENCH
 void frame_probe_stage(uint8_t stage __unused) { }
 void frame_probe_complete(void) { }
-void frame_probe_tick(void) { }
+/* Draws nothing under PERF_BENCH, but still forwards the VBlank-in edge to
+ * the field profiler. Audio retains ownership of the callback; this only
+ * samples the clock, and stays first so the sample is taken before the audio
+ * work rather than after a variable amount of it. */
+void frame_probe_tick(void) { PERF_FIELD_TICK(); }
 void frame_probe_overflow(uint16_t commands __unused, uint16_t tiles __unused) { }
 #else
 void frame_probe_stage(uint8_t stage) { frame_probe_hex(stage,4,2,0); frame_probe_time_mark(stage); }
@@ -106,6 +111,13 @@ void frame_probe_tick(void)
 }
 void frame_probe_overflow(uint16_t commands, uint16_t tiles)
 {
+        /* Called every frame, but these are sticky counters that only move on
+         * an actual refusal. Redraw only on change so the normal build pays
+         * two compares per frame rather than eight glyph blits. */
+        static uint16_t last_commands = 0xFFFF, last_tiles = 0xFFFF;
+        if (commands == last_commands && tiles == last_tiles) return;
+        last_commands = commands;
+        last_tiles = tiles;
         frame_probe_hex(commands,140,4,0);
         frame_probe_hex(tiles,176,4,0);
 }

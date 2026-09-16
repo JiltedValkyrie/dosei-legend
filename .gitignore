@@ -1,6 +1,9 @@
 # Build output
 build/
 build-perf/
+build-perf-*/
+build-nocol/
+title-screen/mesh-workspace/
 *.iso
 *.cue
 *.bin

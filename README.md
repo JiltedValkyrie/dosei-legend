@@ -27,7 +27,7 @@ title-screen/
   docs/history/      Superseded investigation notes
   build/             Ignored binaries, previews, extracted sources
   Makefile           Saturn build
-  run-kronos.bat      Normal emulator launcher
+  run-kronos.bat      Windows variant launcher GUI
 ```
 
 ## Current build
@@ -42,6 +42,15 @@ title-screen/
 Launch `title-screen/run-kronos.bat`, or load `title-screen/title-screen.cue`
 after building. This workspace uses the sibling `../sh2eb-elf` toolchain and
 MSYS2 configuration in `~/.yaul.env`; these local dependencies are not in this repo.
+
+The GUI selects normal play, the performance baseline, texture/music ablations,
+staging, or the debug interpreter. Individual BAT shortcuts now live in
+[`title-screen/tools/launchers/`](title-screen/tools/launchers/README.md).
+
+For Blender OBJ export and storage of edited quad candidates, open
+[`tools/mesh-workshop/open-mesh-workshop.bat`](title-screen/tools/mesh-workshop/open-mesh-workshop.bat).
+The workshop keeps edits separate. Its saved **Prefer quads** setting awaits
+runtime quad support and does not change current ISO builds.
 
 ## Build
 
