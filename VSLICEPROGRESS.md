@@ -5,7 +5,8 @@ older handoff snapshots are not the current checklist.
 
 ## Snapshot — 2026-09-16
 
-Layout update: active Jo project is now `game/` on `performance` with main merged.
+Layout update: active Jo project is now `game/`; the performance reorganization
+is integrated into main. See [Opus's next task](game/docs/OPUS_HANDOFF.md).
 Shared code/assets are under `shared/`; launcher and tri/quad workshop recovered
 under root `tools/`. Legacy libyaul work is archived and excluded from active
 builds. Standard/hi-res builds and 39 game plus 10 workshop tests pass after moves.

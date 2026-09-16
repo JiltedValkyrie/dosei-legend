@@ -2,8 +2,8 @@
 
 ## Active project: Jo Engine vertical slice
 
-Current working branch: `performance`, brought up to date with `main` and
-reorganized for Jo. `game/` is the only active game. Shared libraries/assets
+The Jo directory reorganization is integrated into `main`; `performance` retains
+its merge checkpoint. Check the actual branch before editing. `game/` is the only active game. Shared libraries/assets
 live in `shared/`; root `tools/` holds the GUI launcher and mesh workshop.
 Put level-specific files in `game/levels/<level>/assets/`, static environment
 content under `static/`, and actor recipes under `game/assets/dynamic/`.
@@ -11,6 +11,7 @@ Generated files, disc staging and binaries go in ignored `game/build/`, never
 mixed with source assets. Do not resume archived `legacy/libyaul/` work.
 Use `launch-game.bat` for the standard/hi-res selector. See the root README for
 the complete layout and current build commands.
+Current next-task handoff: [near-camera warping](game/docs/OPUS_HANDOFF.md).
 
 Work in `game/`, using local `../joengine`. The Jo port has been merged into
 `main`; do not restart the port or treat it as an unimplemented plan. Preserve
