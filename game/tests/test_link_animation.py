@@ -336,8 +336,11 @@ class DiagnosticsChord(unittest.TestCase):
         cls.main = (ROOT / 'src' / 'main.c').read_text()
 
     def test_chord_clears_both_buttons(self):
-        self.assertIn('buttons &= (uint16_t)~(CAMERA_L | CAMERA_R);', self.demo,
-                      'the chord must consume L and R, not just read them')
+        """Both shoulder bits must be masked off inside the chord branch."""
+        mask = re.search(r'buttons &= \(uint16_t\)~\(([^)]*)\);', self.demo)
+        self.assertIsNotNone(mask, 'the chord must consume its buttons')
+        self.assertIn('CAMERA_L', mask[1])
+        self.assertIn('CAMERA_R', mask[1])
 
     def test_recenter_is_skipped_while_the_chord_is_held(self):
         """Otherwise asking for diagnostics also recenters the camera."""

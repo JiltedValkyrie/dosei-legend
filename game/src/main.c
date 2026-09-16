@@ -17,6 +17,8 @@
 #include "music_banks.h"
 #include "demo.h"
 #include "link_anim_state.h"
+#include "frame_timer.h"
+#include "oot_follow.h"
 
 /*
 ** Baseline camera, in the scene's native source space.
@@ -84,7 +86,9 @@ static void         viewer_draw(void)
     /* Source yaw rotates (x,z) to (cx-sz,sx+cz). Use a proper rotation
     ** in baked-Y space; no runtime reflection. The demo's 60 Hz clock keeps
     ** the original 90 angle units/tick pan independent of render rate. */
+    frame_timer_begin(FRAME_PHASE_MOVEMENT);
     demo_update();
+    frame_timer_end(FRAME_PHASE_MOVEMENT);
     slSetScreenDist(toFIXED(demo_title_is_visible() ? 180 : SCREEN_DISTANCE));
     music_service();
 #ifdef DOSEI_TEXTURE_PROBE
@@ -97,14 +101,19 @@ static void         viewer_draw(void)
     slRotX((ANGLE)(0u-demo_pitch));
     slRotY((ANGLE)(0u-demo_yaw));
     jo_3d_translate_matrix(-demo_camera.x, demo_camera.y, -demo_camera.z);
+    frame_timer_begin(FRAME_PHASE_SCENE);
     kokiri_scene_draw();
     kokiri_fairies_draw(demo_clock());
+    frame_timer_end(FRAME_PHASE_SCENE);
     /* Link is submitted after the forest so the per-frame counters, which
     ** kokiri_scene_draw() resets, cover both lists. His model origin is at his
     ** feet, EYE_HEIGHT below the collision position. */
-    if (demo_link_active && !demo_title_is_visible())
+    if (demo_link_active && !demo_title_is_visible()) {
+        frame_timer_begin(FRAME_PHASE_LINK);
         kokiri_link_draw(demo_link.x, demo_link.y - DEMO_LINK_EYE_HEIGHT,
                          demo_link.z, demo_link_yaw);
+        frame_timer_end(FRAME_PHASE_LINK);
+    }
     rejected_total += kokiri_scene_rejected();
     viewer_hud();
 }
@@ -165,6 +174,16 @@ static void         viewer_hud(void)
             ** -frame case, not a state bug. If s is 5 and L is climbing on flat
             ** ground, a real grounded transition is firing and d names the gate
             ** that chose the roll. */
+            /* Raw FRT counts, comparable only to each other: mv=movement,
+            ** sk=skinning, sc=forest submit, lk=Link submit. Whichever
+            ** dominates is where the VDP1 rate is going. */
+            jo_printf(0, 4, "mv%u sk%u sc%u lk%u    ",
+                      frame_timer_cost(FRAME_PHASE_MOVEMENT),
+                      frame_timer_cost(FRAME_PHASE_SKINNING),
+                      frame_timer_cost(FRAME_PHASE_SCENE),
+                      frame_timer_cost(FRAME_PHASE_LINK));
+            jo_printf(0, 5, "cam %s  L+R+Up swaps   ",
+                      oot_follow_legacy() ? "LEGACY 260" : "OoT 125-188");
             jo_printf(0, 3, "s%d g%d L%d d%d      ",
                       (int)pose,
                       link_anim_last_grounded() ? 1 : 0,

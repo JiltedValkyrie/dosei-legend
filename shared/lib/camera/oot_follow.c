@@ -4,14 +4,18 @@
 ** Derivation of the constants in the header, from Camera_Normal1() and
 ** sSetNormal0ModeNormalData:
 **
-**   playerHeight            44      (child Link, Player_GetHeight)
+**   playerHeight            62      (OUR baked Link, in world units)
 **   CAM_YOFFSET_NORM        -0.1
-**   yNormal = 1 + (-0.1) - (-0.1 * (68/44))            = 1.05454
-**   scale   = yNormal * (44 * 0.01)                    = 0.46400
+**   yNormal = 1 + (-0.1) - (-0.1 * (68/62))            = 1.00968
+**   scale   = yNormal * (62 * 0.01)                    = 0.62600
 **
-**   yOffset  -20 * 0.464 =  -9.28  ->  -9
-**   distMin  200 * 0.464 =  92.80  ->  93
-**   distMax  300 * 0.464 = 139.20  -> 139
+**   yOffset  -20 * 0.626 = -12.52  -> -12
+**   distMin  200 * 0.626 = 125.20  -> 125
+**   distMax  300 * 0.626 = 187.80  -> 188
+**
+** Scaling to 44 (OoT's child height in ITS units) was wrong: Camera_Normal1
+** scales to whatever the player actually measures, and it framed Link with his
+** feet below the bottom of the screen.
 **
 ** The previous viewer camera sat 260 units back with no pitch, so this is a
 ** substantially closer and slightly downward-looking view. That is what the
@@ -78,11 +82,38 @@ static uint16_t angle_approach(uint16_t current, uint16_t target, int32_t rate)
 #define XZ_RATE     15      /* xzUpdateRateTarget  10 */
 #define PITCH_RATE  18
 
+/* Retired viewer follow: fixed 260 units back, 40 below the eye, no pitch.
+** Kept only so the new camera can be compared against it in place. */
+#define LEGACY_DISTANCE     260
+#define LEGACY_HEIGHT       (-40)
+static bool     legacy_camera;
+
+void            oot_follow_set_legacy(bool legacy)
+{
+    legacy_camera = legacy;
+}
+
+bool            oot_follow_legacy(void)
+{
+    return legacy_camera;
+}
+
 static void     place(const oot_follow_t *camera,
                       const camera_position_t *player,
                       camera_position_t *eye_out)
 {
     int32_t sine, cosine, horizontal, height;
+
+    if (legacy_camera)
+    {
+        kokiri_camera_sincos(camera->yaw, &sine, &cosine);
+        eye_out->x = player->x
+            - (int32_t)(((int64_t)sine * LEGACY_DISTANCE) >> 16);
+        eye_out->z = player->z
+            - (int32_t)(((int64_t)cosine * LEGACY_DISTANCE) >> 16);
+        eye_out->y = player->y + LEGACY_HEIGHT;
+        return;
+    }
 
     /* Pitch tilts the eye up and shortens its ground reach. slSin/slCos are
     ** 16.16, so each product is shifted back down after multiplying. */
@@ -95,7 +126,10 @@ static void     place(const oot_follow_t *camera,
     ** so the eye sits directly behind the camera's own heading. */
     eye_out->x = player->x - (int32_t)(((int64_t)sine * horizontal) >> 16);
     eye_out->z = player->z - (int32_t)(((int64_t)cosine * horizontal) >> 16);
-    eye_out->y = player->y + OOT_CAM_Y_OFFSET + height;
+    /* player->y is the EYE at floor+90; OoT aims at the player's origin, his
+    ** feet. Without this the at-point is 90 units too high and his feet fall
+    ** off the bottom of the screen. */
+    eye_out->y = player->y - OOT_CAM_PLAYER_ORIGIN + OOT_CAM_Y_OFFSET + height;
 }
 
 void            oot_follow_snap(oot_follow_t *camera,
@@ -139,5 +173,5 @@ void            oot_follow_update(oot_follow_t *camera,
     ** so the view has to look DOWN by the same angle for the at-point to stay
     ** on him. Getting this sign wrong puts Link off the bottom of the screen,
     ** which is why the previous camera avoided pitch entirely. */
-    *pitch_out = -camera->pitch;
+    *pitch_out = legacy_camera ? 0 : -camera->pitch;
 }

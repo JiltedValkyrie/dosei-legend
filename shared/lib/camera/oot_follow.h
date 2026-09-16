@@ -17,9 +17,14 @@
 **   yNormal = 1 + CAM_YOFFSET_NORM - CAM_YOFFSET_NORM * (68 / playerHeight)
 **   scale   = yNormal * playerHeight * 0.01
 **
-** with CAM_YOFFSET_NORM = -0.1. For child Link (height 44) that is 0.4640, so
-** the real camera sits 92.8 to 139.2 units behind him with a 9.3-unit
-** downward at-offset, not the 260 units the viewer camera used.
+** with CAM_YOFFSET_NORM = -0.1.
+**
+** playerHeight is OUR model's height, not OoT's 44: Camera_Normal1 scales the
+** whole camera to whatever the player actually measures, and our baked child
+** Link is 62 world units tall. Using 44 produced a camera correct for a
+** smaller Link -- too close, and framed so his feet fell off the bottom of the
+** screen. At 62 the scale is 0.6260, giving 125.2 to 187.8 units of distance
+** and a 12.5-unit at-offset.
 **
 ** This is the normal follow mode only. Parallel/KeepOn targeting, first-person
 ** and the swing/collision behaviour are separate Camera_* functions and are
@@ -27,11 +32,16 @@
 */
 
 /* Scaled from the table above; see the derivation in oot_follow.c. */
-#define OOT_CAM_DIST_MIN        93
-#define OOT_CAM_DIST_MAX        139
-#define OOT_CAM_Y_OFFSET        (-9)
+#define OOT_CAM_DIST_MIN        125
+#define OOT_CAM_DIST_MAX        188
+#define OOT_CAM_Y_OFFSET        (-12)
 /* CAM_DEG_TO_BINANG(10): 10 * 0x10000 / 360. */
 #define OOT_CAM_PITCH_TARGET    1820
+
+/* demo_link.y is Link's EYE at floor+90, but OoT's at-point is the player's
+** origin -- his feet. The camera must subtract this before applying the
+** at-offset, or it aims 90 units too high and cuts his feet off. */
+#define OOT_CAM_PLAYER_ORIGIN   90
 
 typedef struct
 {
@@ -45,6 +55,12 @@ typedef struct
 
 /* Place the camera behind `facing` immediately, with no easing. Used on spawn,
 ** on recenter, and after a void recovery. */
+/* Swap between the OoT geometry and the retired 260-unit viewer follow, so the
+** two can be compared at the same spot. Development only; the viewer camera is
+** NOT a design reference and must not become the shipping default. */
+void    oot_follow_set_legacy(bool legacy);
+bool    oot_follow_legacy(void);
+
 void    oot_follow_snap(oot_follow_t *camera, const camera_position_t *player,
                         uint16_t facing);
 

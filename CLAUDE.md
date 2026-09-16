@@ -1,5 +1,8 @@
 # Project handoff - 2026-09-16
 
+## BIG RULE NUMBER 1
+Caveman talk. No waste token. Efficient good.
+
 ## Communication between Claude and Codex
 
 The user manually copies and pastes messages between Claude and Codex. This is

@@ -6,6 +6,7 @@
 #include "title_paths.h"
 #include "link_anim_state.h"
 #include "oot_follow.h"
+#include "frame_timer.h"
 
 camera_position_t demo_camera;
 uint16_t demo_yaw;
@@ -200,8 +201,14 @@ void demo_update(void)
          * sampled once per update and a chord read independently in two files
          * would drift apart on the frame one button arrives before the other. */
         if ((buttons & CAMERA_L) && (buttons & CAMERA_R)) {
-            buttons &= (uint16_t)~(CAMERA_L | CAMERA_R);
-            if (!diagnostics_chord_held) demo_diagnostics_toggled = true;
+            /* L+R+Up swaps the camera for A/B comparison at one spot, instead
+             * of toggling the overlay. Development only. */
+            bool swap = (buttons & CAMERA_UP) != 0;
+            buttons &= (uint16_t)~(CAMERA_L | CAMERA_R | CAMERA_UP);
+            if (!diagnostics_chord_held) {
+                if (swap) oot_follow_set_legacy(!oot_follow_legacy());
+                else demo_diagnostics_toggled = true;
+            }
             diagnostics_chord_held = true;
         } else {
             diagnostics_chord_held = false;
@@ -317,7 +324,9 @@ void demo_update(void)
          * final state -- not inside the loop, and not in the draw callback.
          * Skinning is the most expensive thing Link costs, so it runs once per
          * frame at most, and only when the clip frame actually changed. */
+        frame_timer_begin(FRAME_PHASE_SKINNING);
         link_anim_pose(link_anim_clip(), link_anim_frame(), link_anim_fraction());
+        frame_timer_end(FRAME_PHASE_SKINNING);
         if (demo_link.x != was_x || demo_link.z != was_z)
             demo_link_yaw = kokiri_camera_facing(demo_link.x - was_x,
                                                  demo_link.z - was_z);
