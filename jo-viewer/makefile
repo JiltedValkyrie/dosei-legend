@@ -17,18 +17,20 @@ JO_DEBUG = 1
 
 # One SGL TEXTURE slot per unique Kokiri tile (1801) plus Jo's reserved entry
 # 0. The stock default is 255, which __jo_sprite_def would overflow.
-# One SGL TEXTURE slot per unique tile across every mesh (forest 1801 +
-# Link 393) plus Jo's reserved entry 0.
-JO_MAX_SPRITE = 2200
+# One SGL TEXTURE slot per unique tile across EVERY mesh, plus Jo's reserved
+# entry 0. Forest 1801 + Link 419 + 1 = 2221 today; the margin is because a
+# texture change can move Link's tile count, and overrunning this aborts into
+# Jo's error handler at load. tests/test_build_sgl_scene.py checks the sum.
+JO_MAX_SPRITE = 2400
 
 # The project-local SGL work area (generated/sglarea.o) is laid out from the
 # top of work RAM downwards and needs .bss to end below its base. The stock
 # 384 KB malloc arena sits in .bss and is nearly unused -- textures are read
 # straight into VDP1 VRAM -- so trade some of it for that headroom. Collision
 # and title data are intended to come out of what remains.
-JO_GLOBAL_MEMORY_SIZE_FOR_MALLOC = 229376
+JO_GLOBAL_MEMORY_SIZE_FOR_MALLOC = 221184
 
-SRCS = src/main.c src/kokiri_sgl.c src/title_music.c src/demo.c src/demo_camera.c src/demo_collision.c generated/kokiri_scene.c generated/kokiri_textures.c generated/link_scene.c generated/link_textures.c
+SRCS = src/main.c src/kokiri_sgl.c src/music.c src/music_banks.c src/demo.c src/demo_camera.c src/demo_collision.c generated/kokiri_scene.c generated/kokiri_textures.c generated/link_scene.c generated/link_textures.c
 
 JO_ENGINE_SRC_DIR = ../../joengine/jo_engine
 COMPILER_DIR = ../../joengine/Compiler
@@ -46,7 +48,7 @@ include $(COMPILER_DIR)/COMMON/jo_engine_makefile
 SYSOBJS = generated/sglarea.o
 
 # The converter writes kokiri_scene.h into generated/.
-_CCFLAGS += -Igenerated -Isrc -I../title-screen/assets/generated -I../title-screen/src/scene
+_CCFLAGS += -Igenerated -Isrc -Iassets/kokiri -I../title-screen/assets/generated -I../title-screen/src/scene
 
 # --- keep build products inside this project -------------------------------
 # The stock makefile derives OBJS as $(SRCS:.c=.o) and compiles via a .c.o

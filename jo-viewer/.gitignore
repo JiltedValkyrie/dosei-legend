@@ -20,3 +20,7 @@ cd/FOREST.COL
 
 # Link texture blob, staged by build.sh from generated/link_pixels.bin.
 cd/LINK.TEX
+
+# Kokiri bank staged by build.sh from assets/kokiri/.
+cd/FOREST.PCM
+cd/FOREST.LVL

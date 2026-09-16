@@ -13,7 +13,8 @@
 
 #include "kokiri_scene.h"
 #include "kokiri_sgl.h"
-#include "title_music.h"
+#include "music.h"
+#include "music_banks.h"
 #include "demo.h"
 
 /*
@@ -54,6 +55,7 @@ static void         viewer_draw(void)
     ** in baked-Y space; no runtime reflection. The demo's 60 Hz clock keeps
     ** the original 90 angle units/tick pan independent of render rate. */
     demo_update();
+    music_service();
     slRotX((ANGLE)(0u-demo_pitch));
     slRotY((ANGLE)(0u-demo_yaw));
     jo_3d_translate_matrix(-demo_camera.x, demo_camera.y, -demo_camera.z);
@@ -79,6 +81,13 @@ static void         viewer_hud(void)
             jo_printf(0, 0, "music %s refusals %d", music_ready ? "ON" : "FAIL", (int)rejected_total);
         /* Link's pose stays visible without the debug toggle: it is the
         ** quickest way to tell a framing problem from a movement one. */
+        /* Switch timing stays visible without the debug toggle: the budget
+        ** for title -> forest is two seconds and this is the measurement. */
+        jo_printf(0, 0, "%s %s swap %d ms%s   ",
+                  music_current() == &music_bank_kokiri ? "kokiri" : "title",
+                  music_busy() ? "..." : "ok",
+                  (int)(music_transition_frames() * 1000 / 60),
+                  music_failed() ? " FAILED" : "");
         if (demo_link_active)
             jo_printf(0, 1, "L %d,%d yaw %d  C %d,%d pan %d   ",
                       (int)demo_link.x, (int)demo_link.z, (int)demo_link_yaw,
@@ -107,8 +116,13 @@ static void         viewer_hud(void)
               jo_3d_get_displayed_polygon_count());
     jo_printf(0, 5, "ok mask %d max P%d V%d  ",
               (int)kokiri_scene_accepted_mask(), MaxPolygons, MaxVertices);
-    jo_printf(0, 6, "music %s tick %d    ", music_ready ? "ON" : "FAIL",
-              (int)viewer_music_ticks());
+    jo_printf(0, 6, "music %s %s tick %d  ", music_ready ? "ON" : "FAIL",
+              music_current() == &music_bank_kokiri ? "kokiri" : "title",
+              (int)music_ticks());
+    jo_printf(0, 10, "swap %d vbl (%d ms)%s  ",
+              (int)music_transition_frames(),
+              (int)(music_transition_frames() * 1000 / 60),
+              music_failed() ? " FAILED" : "");
     jo_printf(0, 7, "total refusals %d    ", (int)rejected_total);
     jo_printf(0, 9, "collision index %s   ",
               demo_collision_indexed ? "ON" : "off (full scan)");
@@ -123,7 +137,7 @@ void                jo_main(void)
 
     scene_ready = kokiri_scene_load();
     scene_ready = scene_ready && demo_init();
-    music_ready = scene_ready && viewer_music_init();
+    music_ready = scene_ready && music_init(&music_bank_title);
 
     jo_core_add_callback(viewer_draw);
     jo_core_run();

@@ -26,6 +26,8 @@ cp "$here/generated/kokiri_pixels.bin" "$here/cd/KOKIRI.TEX"
 cp "$here/generated/link_pixels.bin" "$here/cd/LINK.TEX"
 cp "$here/../title-screen/assets/TITLE_PCM.RAW" "$here/cd/TITLE.PCM"
 cp "$here/../title-screen/assets/TITLE_LEVELS.RAW" "$here/cd/TITLE.LVL"
+cp "$here/assets/kokiri/KOKIRI_PCM.RAW" "$here/cd/FOREST.PCM"
+cp "$here/assets/kokiri/KOKIRI_LEVELS.RAW" "$here/cd/FOREST.LVL"
 
 cd "$here"
 make "$@"

@@ -1,5 +1,7 @@
 #include <jo/jo.h>
 #include "demo.h"
+#include "music.h"
+#include "music_banks.h"
 
 camera_position_t demo_camera;
 uint16_t demo_yaw;
@@ -21,6 +23,8 @@ bool demo_link_active;
  * established here, and a wrong guess loses him off-screen entirely. */
 #define FOLLOW_HEIGHT   (-40)
 #define FOLLOW_LAG      2
+/* Half-fade length for the title->forest switch, in vblanks. */
+#define DEMO_MUSIC_FADE_FRAMES 10
 static bool title_visible = true;
 /* 256 cells of offsets plus one uint16 id per triangle/cell overlap. */
 #define COLLISION_INDEX_BYTES (16 * 1024)
@@ -104,6 +108,10 @@ void demo_update(void)
             /* Starting the game puts Link in the world. He spawns from the
              * same collision search the free camera used, so he stands on a
              * real floor rather than at an assumed height. */
+            /* Title gone: hand the score over to the forest track. The fade
+             * length is the caller's choice, not baked into the player. */
+            if (!title_visible)
+                music_fade_to(&music_bank_kokiri, DEMO_MUSIC_FADE_FRAMES);
             if (!title_visible && !demo_link_active) {
                 if (kokiri_collision_spawn(&demo_link)) {
                     int32_t sine, cosine;

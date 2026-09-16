@@ -71,11 +71,24 @@ class ConversionTest(unittest.TestCase):
         self.assertLessEqual(pixels + cluts, VDP1_USER_AREA_SIZE)
 
     def test_tile_count_fits_configured_sprite_table(self):
-        """__jo_sprite_def has JO_MAX_SPRITE entries and reserves index 0."""
+        """__jo_sprite_def has JO_MAX_SPRITE entries and reserves index 0.
+
+        Every mesh shares that table, so the limit must cover their combined
+        tile count -- not just the scene's. Overrunning it aborts into Jo's
+        error handler during load, which is how a Link texture change that
+        added 26 tiles took the whole build down.
+        """
         makefile = (ROOT / 'makefile').read_text()
         match = re.search(r'^JO_MAX_SPRITE\s*=\s*(\d+)', makefile, re.M)
         self.assertIsNotNone(match, 'makefile must pin JO_MAX_SPRITE')
-        self.assertGreaterEqual(int(match.group(1)), len(self.tiles) + 1)
+        total = len(self.tiles)
+        model = ROOT / 'cd' / 'LINK.BIN'
+        if model.is_file():
+            data, head, _, faces = conv.read_scene(model)
+            total += len(conv.collect_tiles(data, head, faces))
+        self.assertGreaterEqual(int(match.group(1)), total + 1,
+                                'JO_MAX_SPRITE must cover all meshes (%d tiles)'
+                                % total)
 
     def test_cull_and_mesh_flags_are_decoded(self):
         self.assertEqual(sum(f['cull'] for f in self.faces), 1937)
