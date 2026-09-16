@@ -45,7 +45,7 @@ JO_MAX_SPRITE = 2400
 # jo_memory_usage_percent() so the real figure can be checked in Kronos.
 JO_GLOBAL_MEMORY_SIZE_FOR_MALLOC = 180224
 
-SRCS = src/main.c src/kokiri_sgl.c ../shared/lib/music/music.c src/music_banks.c src/demo.c src/demo_camera.c src/demo_collision.c src/link_anim.c src/link_anim_state.c build/generated/kokiri_scene.c build/generated/kokiri_textures.c build/generated/link_scene.c build/generated/link_textures.c build/generated/link_clips.c
+SRCS = src/main.c src/kokiri_sgl.c ../shared/lib/music/music.c src/music_banks.c src/demo.c src/demo_camera.c src/demo_collision.c src/demo_follow.c src/link_anim.c src/link_anim_state.c build/generated/kokiri_scene.c build/generated/kokiri_textures.c build/generated/link_scene.c build/generated/link_textures.c build/generated/link_clips.c
 override ASSETS_DIR = ./build/cd
 
 JO_ENGINE_SRC_DIR = ../../joengine/jo_engine
@@ -96,6 +96,7 @@ $(OBJDIR)/%.o: src/%.c src/video_mode.h | $(OBJDIR)
 	$(CC) $< $(DFLAGS) $(CCFLAGS) $(_CCFLAGS) -o $@
 
 $(OBJDIR)/demo_camera.o: ../shared/lib/camera/kokiri_camera.c ../shared/lib/camera/kokiri_camera.h ../shared/lib/collision/kokiri_collision.h
+$(OBJDIR)/demo_follow.o: ../shared/lib/camera/oot_follow.c ../shared/lib/camera/oot_follow.h ../shared/lib/camera/kokiri_camera.h
 $(OBJDIR)/demo_collision.o: ../shared/lib/collision/kokiri_collision.c ../shared/lib/collision/kokiri_collision.h
 $(OBJDIR)/demo.o: build/generated/texture_probe.h build/generated/title_paths.h
 $(OBJDIR)/main.o $(OBJDIR)/kokiri_sgl.o: build/generated/kokiri_scene.h build/generated/link_scene.h build/generated/vdp1_layout.h

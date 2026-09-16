@@ -5,6 +5,7 @@
 #include "texture_probe.h"
 #include "title_paths.h"
 #include "link_anim_state.h"
+#include "oot_follow.h"
 
 camera_position_t demo_camera;
 uint16_t demo_yaw;
@@ -21,19 +22,9 @@ static int32_t link_fall_peak_y;
 static camera_position_t link_safe_position;
 static bool link_safe_position_valid;
 
-/* Third-person follow: how far behind and above Link the view sits, and how
- * hard it chases him. FOLLOW_LAG is a shift: the camera closes 1/(1<<LAG) of
- * the remaining distance per update, which trails him slightly instead of
- * moving rigidly. */
-#define FOLLOW_DISTANCE 260
-/* Relative to Link's collision position, which is his eye at floor+90. A level
- * camera frames him only if it sits near his mid-body: at 260 behind, the view
- * puts screen y at 120 + 240*(camera_y - point_y)/260, so -40 lands his feet
- * near y=166 and his head near y=109 -- centred, with no pitch needed. Pitching
- * a higher camera down would frame him too, but the sign of demo_pitch is not
- * established here, and a wrong guess loses him off-screen entirely. */
-#define FOLLOW_HEIGHT   (-40)
-#define FOLLOW_LAG      2
+/* Link's follow camera state. Geometry and easing rates come from OoT's
+ * Normal1; see shared/lib/camera/oot_follow.c for the derivation. */
+static oot_follow_t link_follow;
 /* If no walkable floor remains below Link after dropping this far from his
  * last grounded point, collision has let him out of the world. Restore that
  * nearby point rather than relying on one map-wide respawn coordinate. */
@@ -57,18 +48,6 @@ static int last_blink = -1;
  * sampled a second time in main.c. */
 static bool diagnostics_chord_held;
 bool demo_diagnostics_toggled;
-
-/* Move one axis a fraction of the way to its target. The >> alone stalls a few
- * units short, because a difference under (1<<FOLLOW_LAG) shifts to zero and
- * the camera never finishes closing; step at least one unit while any gap
- * remains. */
-static int32_t follow_approach(int32_t current, int32_t target)
-{
-    int32_t delta = target - current;
-    int32_t step = delta >> FOLLOW_LAG;
-    if (step == 0 && delta != 0) step = delta > 0 ? 1 : -1;
-    return current + step;
-}
 
 static jo_color sky_color(unsigned int row)
 {
@@ -261,15 +240,11 @@ void demo_update(void)
                 }
             }
             if (!title_visible && demo_link_active) {
-                int32_t sine, cosine;
                 /* A title shot may be far across the map. Enter gameplay
                  * directly behind Link instead of easing there for seconds. */
-                kokiri_camera_sincos(demo_yaw, &sine, &cosine);
-                demo_camera.x = demo_link.x
-                    - (int32_t)(((int64_t)sine * FOLLOW_DISTANCE) >> 16);
-                demo_camera.z = demo_link.z
-                    - (int32_t)(((int64_t)cosine * FOLLOW_DISTANCE) >> 16);
-                demo_camera.y = demo_link.y + FOLLOW_HEIGHT;
+                oot_follow_snap(&link_follow, &demo_link, demo_link_yaw);
+                oot_follow_update(&link_follow, &demo_link, demo_link_yaw,
+                                  false, &demo_camera, &demo_yaw, &demo_pitch);
             }
         }
     }
@@ -293,7 +268,7 @@ void demo_update(void)
          * moved, which is what keeps turning the view from spinning him. */
         uint16_t walk = buttons & (CAMERA_UP | CAMERA_DOWN | CAMERA_LEFT |
                                    CAMERA_RIGHT);
-        int32_t unused_pitch = 0, sine, cosine, tx, tz, ty;
+        int32_t unused_pitch = 0;
         int32_t was_x = demo_link.x, was_z = demo_link.z;
         bool recovered = false;
         if (recenter) {
@@ -346,23 +321,18 @@ void demo_update(void)
         if (demo_link.x != was_x || demo_link.z != was_z)
             demo_link_yaw = kokiri_camera_facing(demo_link.x - was_x,
                                                  demo_link.z - was_z);
-        kokiri_camera_sincos(demo_yaw, &sine, &cosine);
-        /* Forward is (sin,cos), matching kokiri_camera_update's movement
-         * basis, so the view sits directly behind the camera heading. */
-        tx = demo_link.x - (int32_t)(((int64_t)sine * FOLLOW_DISTANCE) >> 16);
-        tz = demo_link.z - (int32_t)(((int64_t)cosine * FOLLOW_DISTANCE) >> 16);
-        ty = demo_link.y + FOLLOW_HEIGHT;
+        /* OoT's Normal1 follow, with the real CAM_SET_NORMAL0 parameters.
+         * The camera keeps its own spherical state and writes the eye, so the
+         * previous per-axis easing toward a fixed 260-unit offset is gone --
+         * that was a viewer approximation, not the original's behaviour. */
         if (recovered || recenter) {
-            /* Keep the recovered player visible immediately; easing from a
-             * camera left down in the void would briefly show empty space. */
-            demo_camera.x = tx;
-            demo_camera.y = ty;
-            demo_camera.z = tz;
-        } else {
-            demo_camera.x = follow_approach(demo_camera.x, tx);
-            demo_camera.y = follow_approach(demo_camera.y, ty);
-            demo_camera.z = follow_approach(demo_camera.z, tz);
+            /* Recovery must not ease: a camera left down in the void would
+             * show empty space on the way back. Recenter snaps by design. */
+            oot_follow_snap(&link_follow, &demo_link, demo_link_yaw);
         }
+        oot_follow_update(&link_follow, &demo_link, demo_link_yaw,
+                          demo_link.x != was_x || demo_link.z != was_z,
+                          &demo_camera, &demo_yaw, &demo_pitch);
     } else {
         while (steps--) kokiri_camera_update(&demo_camera, &demo_yaw,
                                              &demo_pitch, buttons, false,

@@ -1,5 +1,33 @@
 # Current directive: OoT gameplay camera and standard Saturn pad controls
 
+## Claude status - OoT Normal1 follow camera implemented
+
+`shared/lib/camera/oot_follow.c`. Real CAM_SET_NORMAL0 parameters from
+`sSetNormal0ModeNormalData`, scaled by Camera_Normal1's own player-height
+factor (child height 44, yNormal 1.05454, scale 0.4640):
+
+  distMin 93, distMax 139, yOffset -9, pitchTarget 1820 binang (10 deg)
+
+The retired viewer camera sat at 260 units with no pitch, so the view is now
+much closer and looks slightly down. That is the original's geometry, not a
+tuning choice. Yaw/distance/pitch ease at OoT's inverse rates (12/10) rescaled
+from 20 Hz to our 30 Hz step. Yaw only swings while the player actually moved,
+matching Normal1's xzSpeed gate. Recenter and void recovery snap.
+
+Two bugs the new host tests caught, both integer-division stalls: once
+|diff| < rate the step truncated to 0 and the value froze outside the snap
+window, leaving the camera ~14 units too far back and the heading ~17 binang
+off permanently. Both approaches now always move at least one unit.
+
+NOT implemented, do not describe as done: Parallel1/KeepOn targeting, Subj3
+first person, swing/startSwingTimer, slope pitch, and at/eye collision
+handling. Pad layout beyond L and L+R is still unimplemented.
+
+95 tests pass, 8 of them executing the real camera C on the host. Both images
+build clean. No runtime confirmation.
+
+
+
 ## Input latency investigation - host checks, not end-to-end measurement
 
 Human reports sluggish input despite high-50s VDP2 FPS. Testing only requested;
