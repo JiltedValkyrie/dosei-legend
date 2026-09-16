@@ -20,6 +20,9 @@ typedef enum
 ** frame: the posed table is kept and the call returns immediately. */
 void                link_anim_pose(unsigned int clip, unsigned int frame);
 void                link_anim_reset(void);
+/* Clears the locomotion state itself; link_anim_reset() only clears the
+** cached pose. Call both when Link (re-)enters gameplay. */
+void                link_anim_reset_state(void);
 
 /* Advance the locomotion state one 30 Hz step.
 **
@@ -38,5 +41,13 @@ unsigned int        link_anim_frame(void);
 /* Root-motion-free: the slice drives translation from collision, so the clips
 ** are used for pose only. Exposed for tests and diagnostics. */
 bool                link_anim_is_locked(void);
+
+/* Last inputs the state machine decided on, and a count of how many landings
+** it has seen. These exist to trace state changes in Kronos: repeated rolling
+** has to be attributed to a real grounded transition and fall distance before
+** it can be fixed, and neither value is visible from outside otherwise. */
+int32_t             link_anim_last_fall(void);
+unsigned int        link_anim_landings(void);
+bool                link_anim_last_grounded(void);
 
 #endif

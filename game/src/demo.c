@@ -230,8 +230,11 @@ void demo_update(void)
                     link_safe_position = demo_link;
                     link_safe_position_valid = true;
                     demo_link_active = true;
-                    /* Spawn standing, not mid-clip from a previous session. */
+                    /* Spawn standing, not mid-clip from a previous session.
+                     * Both calls are needed: one clears the cached pose, the
+                     * other the locomotion state that selects it. */
                     link_anim_reset();
+                    link_anim_reset_state();
                 }
             }
             if (!title_visible && demo_link_active) {

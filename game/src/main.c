@@ -147,6 +147,13 @@ static void         viewer_hud(void)
             jo_printf(0, 2, "heap %d%%  anim %d f%d    ",
                       jo_memory_usage_percent(), (int)pose,
                       (int)link_anim_frame());
+            /* g=grounded now, L=landings seen, d=the fall distance the last
+            ** landing decided on. If Link rolls without input, L climbing on
+            ** flat ground is the evidence, and d says which gate selected it. */
+            jo_printf(0, 3, "g%d L%d d%d        ",
+                      link_anim_last_grounded() ? 1 : 0,
+                      (int)link_anim_landings(),
+                      (int)link_anim_last_fall());
         }
         return;
     }

@@ -254,25 +254,26 @@ class LandingRules(unittest.TestCase):
     def constant(self, name):
         return int(re.search(r'#\s*define\s+%s\s+(\d+)' % name, self.source)[1])
 
-    def test_thresholds_suit_this_world_scale(self):
-        """OoT's 80/800 are model units and do not transfer.
+    def test_thresholds_match_the_decomp(self):
+        """fallDistance is world-space, so OoT's gates transfer unchanged.
 
-        A real drop here measures about 11 world units, so the short-landing
-        gate has to sit below that or no fall ever counts as a landing -- which
-        is exactly what made Link roll continuously on flat ground. The roll
-        ceiling keeps OoT's order-of-magnitude gap above it.
+        z_player.c:5831 computes it as fallStartHeight - world.pos.y, and this
+        project keeps the scene's native collision coordinates without a scale
+        conversion. An earlier revision rescaled these to 4/40 on the theory
+        that 80/800 were model units; they are not.
         """
-        short = self.constant('SHORT_LANDING_FALL')
-        roll = self.constant('ROLL_LANDING_FALL')
-        self.assertLess(short, 11, 'a real 11-unit fall must count as a landing')
-        self.assertGreater(short, 0, 'some gate is needed to reject slope blips')
-        self.assertGreaterEqual(roll, short * 5,
-                                'the roll needs headroom above a short landing')
+        self.assertEqual(self.constant('SHORT_LANDING_FALL'), 80)
+        self.assertEqual(self.constant('ROLL_LANDING_FALL'), 800)
 
-    def test_a_real_fall_selects_the_roll(self):
-        """The 11-unit baseline drop should land in the roll band, not above."""
-        self.assertLess(self.constant('SHORT_LANDING_FALL'), 11)
-        self.assertGreater(self.constant('ROLL_LANDING_FALL'), 11)
+    def test_no_ground_follow_debounce(self):
+        """Ordinary slope motion keeps the grounded flag, so no debounce.
+
+        kokiri_collision_move_actor() snaps y onto the floor plane when it
+        follows ground downhill, which is what kokiri_collision_fall() then
+        tests for equality. A guard counting ungrounded steps was added for a
+        blip that the collision code does not actually produce.
+        """
+        self.assertNotIn('FALL_STATE_STEPS', self.source)
 
     def test_roll_requires_forward_motion(self):
         """OoT rolls only with the stick forward; ours needs him still moving."""

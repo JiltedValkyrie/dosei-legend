@@ -25,30 +25,25 @@
 #define WALK_SPEED_MIN      1       /* below this he is standing still */
 #define RUN_SPEED_MIN       10      /* digital d-pad: full tilt is a run */
 
-/* Fall distances, in this world's units.
+/* Fall distances, straight from OoT.
 **
-** OoT gates its landing choice at 80 and 800, but those are model units on
-** Player's own scale and do NOT transfer: here an ordinary drop off a ledge
-** measures about 11 units, so an 80-unit gate meant no fall ever registered as
-** a landing at all. These keep OoT's shape -- a short landing for small drops,
-** a roll for a real but survivable fall -- rescaled to the 11-unit baseline the
-** collision actually produces.
+** z_player.c:5831 computes fallDistance as fallStartHeight - world.pos.y, a
+** WORLD-space distance, and this project keeps the scene's native collision
+** coordinates without a scale conversion. So 80 and 800 transfer directly.
 **
-** SHORT_LANDING_FALL doubles as the "is this a landing at all" test, because
-** ground following drops the grounded flag for a step at a time on slopes. */
-#define SHORT_LANDING_FALL  4
-#define ROLL_LANDING_FALL   40
-
-/* Consecutive ungrounded 30 Hz steps before the fall clip takes over. Ground
-** following drops the grounded flag for a step at a time on slopes and stairs,
-** so a fall has to outlast that to be real. Four steps is about an eighth of a
-** second -- shorter than any drop worth animating, longer than any blip. */
-#define FALL_STATE_STEPS    4
+** An earlier revision rescaled these to 4 and 40 on the theory that they were
+** model units. They are not, and the 11 that rescale was derived from is
+** ACTOR_GROUND_FOLLOW_DROP -- a downhill floor-following tolerance, not a
+** measured fall. */
+#define SHORT_LANDING_FALL  80
+#define ROLL_LANDING_FALL   800
 
 static link_state_t     state = LINK_STATE_IDLE;
 static unsigned int     frame;
 static bool             was_grounded = true;
-static unsigned int     airborne;
+/* Diagnostics only; see the declarations in link_anim_state.h. */
+static int32_t          last_fall;
+static unsigned int     landings;
 
 /* Clip frame counts, so a one-shot knows when it has finished. Kept in step
 ** with CLIPS in build_link_model.py through link_clips[]. */
@@ -93,6 +88,11 @@ void                    link_anim_update(int32_t speed, bool grounded,
     bool    landed = grounded && !was_grounded;
 
     was_grounded = grounded;
+    if (landed)
+    {
+        last_fall = fall_units;
+        ++landings;
+    }
 
     /* A one-shot owns Link until it finishes, so a landing or roll is not cut
     ** off by the first step of movement. It still yields immediately if he
@@ -106,40 +106,30 @@ void                    link_anim_update(int32_t speed, bool grounded,
         frame = 0;
     }
 
-    /* Same blip problem as the landing test below: a single ungrounded step is
-    ** ordinary ground following, not a fall. Only switch to the fall clip once
-    ** he has been off the floor long enough to really be dropping. */
+    /* kokiri_collision_move_actor() snaps y onto the floor plane when it
+    ** follows ground downhill, so ordinary slope motion keeps the grounded
+    ** flag. An ungrounded step is a real departure and needs no debouncing. */
     if (!grounded)
     {
-        if (airborne < FALL_STATE_STEPS)
-        {
-            ++airborne;
-            ++frame;
-            return;
-        }
         enter(LINK_STATE_FALL);
         ++frame;
         return;
     }
-    airborne = 0;
 
-    /* Only a real drop counts as a landing.
-    **
-    ** kokiri_collision_fall() reports "grounded" only when Link sits exactly on
-    ** the floor plane, so walking across sloped or stepped ground drops that
-    ** flag for single steps at a time. Treating every such blip as a landing
-    ** made him land -- and, with any movement, roll -- continuously while just
-    ** walking. A landing therefore needs a fall worth animating, which is the
-    ** same fallDistance test OoT already gates its landing choice on. */
-    if (landed && fall_units > SHORT_LANDING_FALL)
+    if (landed)
     {
-        /* OoT's landing choice, verified above. The forward-stick condition
-        ** becomes "he is still moving forward", which is the closest thing the
-        ** digital d-pad offers. */
-        if (fall_units < ROLL_LANDING_FALL && speed >= WALK_SPEED_MIN)
-            enter(LINK_STATE_ROLL);
-        else
-            enter(LINK_STATE_LANDING);
+        /* OoT's landing choice, verified against z_player.c. The forward-stick
+        ** condition becomes "he is still moving forward", which is the closest
+        ** thing the digital d-pad offers. */
+        if (fall_units > SHORT_LANDING_FALL)
+        {
+            if (fall_units < ROLL_LANDING_FALL && speed >= WALK_SPEED_MIN)
+                enter(LINK_STATE_ROLL);
+            else
+                enter(LINK_STATE_LANDING);
+            return;
+        }
+        enter(LINK_STATE_LANDING);
         return;
     }
 
@@ -175,7 +165,40 @@ unsigned int            link_anim_frame(void)
     return frame;
 }
 
+/* Reset the locomotion state, not just the posed frame.
+**
+** link_anim_reset() in link_anim.c only clears the cached POINT table. Without
+** this, `state`, `frame` and `was_grounded` survive a return to the title, so
+** Link can re-enter gameplay part-way through a one-shot clip -- and a one-shot
+** only advances while grounded, so a spawn that begins airborne leaves it stuck
+** until he next touches the floor. */
+void                    link_anim_reset_state(void)
+{
+    state = LINK_STATE_IDLE;
+    frame = 0;
+    last_fall = 0;
+    landings = 0;
+    /* Spawning is a fall onto the floor; that first contact is a real landing
+    ** and should read as one rather than being swallowed. */
+    was_grounded = false;
+}
+
 bool                    link_anim_is_locked(void)
 {
     return is_one_shot(state);
+}
+
+int32_t                 link_anim_last_fall(void)
+{
+    return last_fall;
+}
+
+unsigned int            link_anim_landings(void)
+{
+    return landings;
+}
+
+bool                    link_anim_last_grounded(void)
+{
+    return was_grounded;
 }

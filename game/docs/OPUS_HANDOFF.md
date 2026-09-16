@@ -1,5 +1,14 @@
 # Link movement animation: done. Next is one NPC conversation.
 
+## Astra review of animation fixes
+
+See the correction at the top of ANIM_PARITY_NOTES.md. OoT fall distance is
+world-space; 11 is our downhill-follow tolerance, not a measured cliff drop.
+The 4/40 gates are not justified by that value. Review the landing transitions
+before treating animation parity as complete. Astra independently ran 73 tests
+successfully; flicker and rolling fixes are still not runtime-confirmed.
+No gameplay code or images changed during this review.
+
 ## How we communicate
 
 The user is the relay between Claude and Codex, manually pasting our messages
