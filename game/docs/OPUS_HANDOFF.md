@@ -46,7 +46,18 @@ tests pass, including a round-trip that re-poses the bind pose from the
 skinning tables and compares against LINK.BIN's own vertex table. That test was
 confirmed to fail when the skeleton is perturbed, so it is not vacuous.
 
-Not verified: nothing here has been run in Kronos. How the walk/run threshold
+For Astra: [animation/platforming parity notes](ANIM_PARITY_NOTES.md) list what
+was verified against the decomp and what was scaled or guessed. The fall
+distance gates are the item most worth a real derivation -- OoT's 80/800 are
+model units and do not transfer; a real fall here is ~11 world units.
+
+Two bugs the user caught in Kronos are fixed but not yet reconfirmed there:
+edge flickering (the skinner ran mid-draw and used int64 multiplies; now it
+runs in the update step and uses slMulFX) and continuous rolling (ground
+following drops the grounded flag on slopes, which read as a landing every
+step).
+
+Not verified: the fixes above have not been run in Kronos. How the walk/run threshold
 reads in motion, and whether the landing and roll transitions feel right, need
 a human look. `RUN_SPEED_MIN` in `link_anim_state.c` is the knob if the d-pad
 reads as running too eagerly.

@@ -49,7 +49,11 @@ static limb_matrix_t limb_matrices[LINK_LIMB_COUNT];
 ** nothing. -1 forces the first pose. */
 static int      posed_frame = -1;
 
-#define FIXED_MUL(a, b)  ((FIXED)(((int64_t)(a) * (int64_t)(b)) >> 16))
+/* SGL's own fixed multiply. The SH-2 has a 32x32->64 instruction and slMulFX
+** uses it; an int64_t expression here compiles to a libgcc call instead, which
+** at roughly 4,800 multiplies per posed frame was enough to overrun the field
+** and flicker the screen edges. */
+#define FIXED_MUL(a, b)  slMulFX((a), (b))
 
 static void     matrix_multiply(FIXED out[3][3], const FIXED a[3][3],
                                 const FIXED b[3][3])

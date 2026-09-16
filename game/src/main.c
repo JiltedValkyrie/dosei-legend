@@ -16,6 +16,7 @@
 #include "music.h"
 #include "music_banks.h"
 #include "demo.h"
+#include "link_anim_state.h"
 
 /*
 ** Baseline camera, in the scene's native source space.
@@ -138,9 +139,15 @@ static void         viewer_hud(void)
         ** what justifies JO_GLOBAL_MEMORY_SIZE_FOR_MALLOC: the clip tables and
         ** the skinned POINT table compete with it for the RAM below SGL's work
         ** area, so it was trimmed to measured demand rather than guessed. */
-        jo_printf(0, 2, "heap %d%%  anim %d f%d    ",
-                  jo_memory_usage_percent(), (int)link_anim_state(),
-                  (int)link_anim_frame());
+        {
+            /* Assigned first: casting an enum-returning call directly trips
+            ** -Wbad-function-cast, and this build treats warnings as noise to
+            ** stay out of. */
+            link_state_t pose = link_anim_state();
+            jo_printf(0, 2, "heap %d%%  anim %d f%d    ",
+                      jo_memory_usage_percent(), (int)pose,
+                      (int)link_anim_frame());
+        }
         return;
     }
     jo_printf(0, 0, "Jo/SGL Kokiri viewer");

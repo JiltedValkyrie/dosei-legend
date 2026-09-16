@@ -309,6 +309,11 @@ void demo_update(void)
             if (grounded)
                 link_fall_peak_y = demo_link.y;
         }
+        /* Pose once for the frame, after the catch-up steps have settled on a
+         * final state -- not inside the loop, and not in the draw callback.
+         * Skinning is the most expensive thing Link costs, so it runs once per
+         * frame at most, and only when the clip frame actually changed. */
+        link_anim_pose(link_anim_clip(), link_anim_frame());
         if (demo_link.x != was_x || demo_link.z != was_z)
             demo_link_yaw = kokiri_camera_facing(demo_link.x - was_x,
                                                  demo_link.z - was_z);

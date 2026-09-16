@@ -254,9 +254,25 @@ class LandingRules(unittest.TestCase):
     def constant(self, name):
         return int(re.search(r'#\s*define\s+%s\s+(\d+)' % name, self.source)[1])
 
-    def test_thresholds_match_the_decomp(self):
-        self.assertEqual(self.constant('SHORT_LANDING_FALL'), 80)
-        self.assertEqual(self.constant('ROLL_LANDING_FALL'), 800)
+    def test_thresholds_suit_this_world_scale(self):
+        """OoT's 80/800 are model units and do not transfer.
+
+        A real drop here measures about 11 world units, so the short-landing
+        gate has to sit below that or no fall ever counts as a landing -- which
+        is exactly what made Link roll continuously on flat ground. The roll
+        ceiling keeps OoT's order-of-magnitude gap above it.
+        """
+        short = self.constant('SHORT_LANDING_FALL')
+        roll = self.constant('ROLL_LANDING_FALL')
+        self.assertLess(short, 11, 'a real 11-unit fall must count as a landing')
+        self.assertGreater(short, 0, 'some gate is needed to reject slope blips')
+        self.assertGreaterEqual(roll, short * 5,
+                                'the roll needs headroom above a short landing')
+
+    def test_a_real_fall_selects_the_roll(self):
+        """The 11-unit baseline drop should land in the roll band, not above."""
+        self.assertLess(self.constant('SHORT_LANDING_FALL'), 11)
+        self.assertGreater(self.constant('ROLL_LANDING_FALL'), 11)
 
     def test_roll_requires_forward_motion(self):
         """OoT rolls only with the stick forward; ours needs him still moving."""
