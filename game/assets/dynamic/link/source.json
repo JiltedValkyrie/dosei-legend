@@ -1,0 +1,8 @@
+{
+  "object": "object_link_child",
+  "version": "ntsc-1.2",
+  "animation": "0x3200",
+  "frame": 0,
+  "scale": 0.0145,
+  "description": "Dynamic actor source recipe. Baked mesh and textures go to game/build/generated, not here."
+}

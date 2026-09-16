@@ -1,85 +1,70 @@
-# Dosei Legend - Kokiri Forest on Sega Saturn
+# Dosei Legend — Kokiri Forest on Sega Saturn
 
-A libyaul vertical slice of Ocarina of Time's Kokiri Forest.
+The active game uses **Jo Engine / SGL**. Work on the playable vertical slice,
+not the archived libyaul experiments. See [scope](VERTICALSLICE.md) and
+[current progress](VSLICEPROGRESS.md).
 
-## Status
-
-The renderer reached **7 FPS** before an intermittent SH-2 invalid-opcode crash.
-The user reports that the latest reorganized build **did not crash on the last
-run**. No confirmed root-cause fix or long-run stability result is established.
-Start with [the Claude handoff](CLAUDE.md) and
-[debugging status](title-screen/docs/DEBUGGING.md).
-
-## Project layout
+## Layout
 
 ```text
-title-screen/
-  src/main.c         Startup, title UI, controller polling
-  src/audio/         SCSP music player
-  src/scene/         Renderer, camera, clipping, collision
-  src/debug/         Frame probe and exception handlers
-  assets/generated/ Generated score header and asset manifests
-  assets/            Built-in bitmaps and audio
-  cd/                Scene loaded from disc
-  tests/             Native C and asset regression tests
-  tools/             Asset conversion and emulator support
-  docs/              Current reference and debugging status
-  docs/history/      Superseded investigation notes
-  build/             Ignored binaries, previews, extracted sources
-  Makefile           Saturn build
-  run-kronos.bat      Windows variant launcher GUI
+game/
+  src/                         Game flow, scene/actor submission and bank selection
+  levels/kokiri/assets/static/  Forest geometry, collision container and backdrop
+  levels/kokiri/assets/audio/   Kokiri score and sample bank
+  assets/dynamic/link/          Actor source recipe (animation/pose/scale)
+  disc/                        Checked-in disc metadata, not generated staging
+  tools/                       Game-specific asset converters
+  tests/                       Active Jo game checks
+  build/                       Ignored objects, generated meshes, CD staging, ISOs
+shared/
+  lib/camera/                  Reusable camera/movement logic
+  lib/collision/               Platform-independent collision
+  lib/music/                   Bank-agnostic Saturn music player
+  assets/static/ui/            Title artwork and prompt
+  assets/audio/title/          Shared title score and samples
+  tools/                       Shared extraction, mesh and audio export helpers
+  build/                       Ignored extraction/source caches
+tools/
+  launcher/                    Windows GUI: standard or hi-res Jo game
+  mesh-workshop/               Non-destructive triangle/quad OBJ exchange
+  tests/                       Tool checks
+workspace/meshes/               Ignored mesh editing revisions
+legacy/libyaul/                 Archived reference only; not an active build target
 ```
 
-## Current build
+**Static/dynamic describe content:** environment/UI versus movable actors.
+**Source/generated describe ownership:** tracked assets/recipes versus disposable
+`build/` output. Never edit generated meshes as the source of truth.
 
-- Filled and textured geometry from the verified **US 1.2 ROM**.
-- Collision-aware camera in the village; automatic turning while the title is visible.
-- All three `spot04` room display lists: 1,268 positions and 2,060 triangles.
-- **Start** toggles the title and switches between automatic and manual camera control.
-- Title hidden: D-pad moves, L/R turns, X/Z raises/lowers, Y + Up/Down pitches, C levels.
-- Direct SCSP title music continues while the title is hidden.
+## Build and play
 
-Launch `title-screen/run-kronos.bat`, or load `title-screen/title-screen.cue`
-after building. This workspace uses the sibling `../sh2eb-elf` toolchain and
-MSYS2 configuration in `~/.yaul.env`; these local dependencies are not in this repo.
+From MSYS2 bash:
 
-The GUI selects normal play, the performance baseline, texture/music ablations,
-staging, or the debug interpreter. Individual BAT shortcuts now live in
-[`title-screen/tools/launchers/`](title-screen/tools/launchers/README.md).
-
-For Blender OBJ export and storage of edited quad candidates, open
-[`tools/mesh-workshop/open-mesh-workshop.bat`](title-screen/tools/mesh-workshop/open-mesh-workshop.bat).
-The workshop keeps edits separate. Its saved **Prefer quads** setting awaits
-runtime quad support and does not change current ISO builds.
-
-## Build
-
-In the configured MSYS2 shell:
-
-```sh
-source ~/.yaul.env
-cd /d/Workspace-Claude/saturn-homebrew/dosei-legend/title-screen
-make
+```bash
+cd game
+./build.sh
+./build.sh --hires
 ```
 
-The converted scene ships in `title-screen/cd/FOREST.BIN`. Regenerate with Python,
-Pillow, your own US 1.2 ROM, and the decomp's segment table:
+Build sequentially. The modes have separate objects/images but share asset staging.
+Images are `game/build/game.cue` and `game/build/game-hires.cue`.
+
+Double-click **[launch-game.bat](launch-game.bat)** to choose standard 320x240 or
+experimental 320x480i. It runs existing builds, validates image availability,
+and does not build or kill an existing Kronos instance.
+Direct shortcuts: `game/run-kronos.bat` and `game/run-kronos-hires.bat`.
+
+Model tool: `tools/mesh-workshop/open-mesh-workshop.bat`.
+Imported tri/quad candidates are **not yet runtime-ready**.
+
+The build requires the existing sibling `../joengine` SDK, MSYS2, Python/Pillow
+and the local verified US 1.2 extraction/ROM used by the converters. Do not modify
+the shared SDK. Legacy experiments are not imported into active Jo runtime code.
+
+## Focused checks
 
 ```powershell
-python title-screen/tools/build_kokiri_scene.py --oot-root D:/Workspace-Claude/game-decomps/n64/oot
-python -m unittest discover -s title-screen/tests -p "test_*.py"
+python -m unittest discover -s game/tests
+python -m unittest discover -s tools/tests
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/launcher/kronos-launcher.ps1 -Check
 ```
-
-Run audio tests after `make` to check linked assets. See
-[scene details](title-screen/docs/SCENE.md) and [audio details](title-screen/docs/AUDIO.md).
-
-## Vertical slice milestones
-
-This build establishes static room rendering and the title/music layer.
-Next: establish sustained stability, profile CPU/VDP1 costs, improve depth
-ordering/materials, then add Link and
-room/actor interaction. The project allows the 4 MB expansion
-cartridge; this scene currently fits base RAM and VDP1 VRAM.
-
-The collision wireframe and unused Ponesound implementation remain in Git
-history. Historical investigation notes are not current build instructions.

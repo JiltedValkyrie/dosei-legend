@@ -11,7 +11,9 @@ title-screen/mesh-workspace/
 *.map
 
 # Converted scene loaded from CD
-!title-screen/cd/FOREST.BIN
+!game/levels/kokiri/assets/static/FOREST.BIN
+workspace/
+/game/*.raw
 
 # Local settings and Python cache
 .claude/settings.local.json
@@ -24,3 +26,7 @@ __pycache__/
 # OS cruft
 .DS_Store
 Thumbs.db
+
+# Kronos screenshots
+kronos-*.png
+Kronos-*.png

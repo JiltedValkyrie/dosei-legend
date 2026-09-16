@@ -1,0 +1,3 @@
+# Generated code, objects, disc staging, previews and images.
+build/
+*.o
