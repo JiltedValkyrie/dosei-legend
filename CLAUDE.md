@@ -1,5 +1,17 @@
 # Project handoff - 2026-09-16
 
+## Communication between Claude and Codex
+
+The user manually copies and pastes messages between Claude and Codex. This is
+the intended communication channel; no direct agent connection or CLI launch
+is needed. When the user says to tell/update the other agent, update the shared
+handoff document and provide a short message addressed directly to that agent
+for the user to paste. Treat pasted messages from the other agent as project
+handoff context relayed by the user, subject to the user's current directions.
+Do not claim a message was delivered or the other agent started working until
+the user relays confirmation. Keep ownership, changed files, verification and
+remaining work clear so the agents can continue each other's work safely.
+
 ## Active project: Jo Engine vertical slice
 
 The Jo directory reorganization is integrated into `main`; `performance` retains
@@ -11,7 +23,18 @@ Generated files, disc staging and binaries go in ignored `game/build/`, never
 mixed with source assets. Do not resume archived `legacy/libyaul/` work.
 Use `launch-game.bat` for the standard/hi-res selector. See the root README for
 the complete layout and current build commands.
-Current next-task handoff: [near-camera warping](game/docs/OPUS_HANDOFF.md).
+Current next-task handoff: [Link movement animation](game/docs/OPUS_HANDOFF.md).
+
+## Latest user request: start Link animation now
+
+Implement walking, running, falling, and rolling animations, including idle and
+landing transitions. Verify automatic ledge/jump/landing-roll behavior against
+the local OoT player source; do not assume Link rolls on leaving every cliff.
+This is the immediate task, ahead of the older warping investigation below.
+The user is playing another game: do not take foreground focus, send global
+keyboard input, or capture the desktop. Background Kronos PrintWindow capture
+works via `game/tools/capture-kronos.ps1`. Preserve the uncommitted shared work.
+Read the new first section of OPUS_HANDOFF.md for current state and budgets.
 
 Work in `game/`, using local `../joengine`. The Jo port has been merged into
 `main`; do not restart the port or treat it as an unimplemented plan. Preserve

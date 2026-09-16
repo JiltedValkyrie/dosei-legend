@@ -28,6 +28,26 @@ live in `../shared/`; game-specific bank selection stays in `src/music_banks.c`.
 Start switches title/gameplay, D-pad moves, L/R turns the camera, A toggles
 diagnostics. Current Link/follow behavior is in `src/demo.c`.
 
+The title uses five slow, wide camera routes generated from `FOREST.BIN` by
+`tools/build_title_paths.py`. The generator searches connected free space,
+favours passage centres, smooths corners, and validates the final segments
+with 16-unit clearance. Routes are cached by source/tool hash; a fresh route
+build takes longer than an ordinary rebuild. The old tree-closeup probe is
+still available only through the explicit diagnostic mode below.
+
+Forest fog blends texture palettes toward yellow-olive, with VDP1 mesh dithering
+in the last eighth of the draw range. The cutoff is 1,310 world units, half the
+original forest renderer's 2,620-unit range. Shared tiles use their nearest
+surface's fog amount to protect nearby detail. The sky table occupies B1+0x1f000;
+do not allocate it at B1+0, which is SGL's font storage despite appearing free
+to Jo's allocator. Unused/final back-screen lines stay black for the border.
+
+To capture Kronos while another application has focus, use
+`powershell -ExecutionPolicy Bypass -File tools/capture-kronos.ps1` from here.
+It uses `PrintWindow`, never desktop copying or global key input. Keep Kronos
+unminimized behind the other application; `-ShowBehind` can make a hidden test
+window drawable at the bottom of the window stack without activating it.
+
 The default converter now uses source UVs, shared/repeating textured quads,
 density-budgeted bakes and limited close-ground subdivision. The source ROM is
 the verified US 1.2 ROM in the configured ROM directory, with metadata from the

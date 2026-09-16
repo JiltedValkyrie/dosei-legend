@@ -84,6 +84,7 @@ static void         viewer_draw(void)
     ** in baked-Y space; no runtime reflection. The demo's 60 Hz clock keeps
     ** the original 90 angle units/tick pan independent of render rate. */
     demo_update();
+    slSetScreenDist(toFIXED(demo_title_is_visible() ? 180 : SCREEN_DISTANCE));
     music_service();
 #ifdef DOSEI_TEXTURE_PROBE
     texture_probe();
@@ -96,10 +97,11 @@ static void         viewer_draw(void)
     slRotY((ANGLE)(0u-demo_yaw));
     jo_3d_translate_matrix(-demo_camera.x, demo_camera.y, -demo_camera.z);
     kokiri_scene_draw();
+    kokiri_fairies_draw(demo_clock());
     /* Link is submitted after the forest so the per-frame counters, which
     ** kokiri_scene_draw() resets, cover both lists. His model origin is at his
     ** feet, EYE_HEIGHT below the collision position. */
-    if (demo_link_active)
+    if (demo_link_active && !demo_title_is_visible())
         kokiri_link_draw(demo_link.x, demo_link.y - DEMO_LINK_EYE_HEIGHT,
                          demo_link.z, demo_link_yaw);
     rejected_total += kokiri_scene_rejected();

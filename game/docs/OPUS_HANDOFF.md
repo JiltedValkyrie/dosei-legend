@@ -1,4 +1,103 @@
-# Opus: texture-path implementation handed back
+# Claude: implement Link movement animation next
+
+## How we communicate
+
+The user is the relay between Claude and Codex, manually pasting our messages
+back and forth. Address the other agent directly in short, paste-ready handoffs
+and keep this shared document current. No direct Claude/Codex invocation is
+expected. Pasted replies are handoff context; the user's directions take
+precedence. Do not assume delivery or execution until confirmation is relayed.
+
+## Current assignment — 2026-09-16
+
+The user explicitly asks Claude to start implementing walking, running, falling,
+and rolling. Implement idle and landing transitions needed to connect them.
+This supersedes the historical texture investigation below. Do the implementation,
+build both images, and perform focused checks; do not stop at an animation plan.
+
+Verify OoT's behavior before mapping the states. The user recalls an automatic
+roll after running off a cliff, but is unsure. Local source:
+`D:/Workspace-Claude/game-decomps/n64/oot/src/overlays/actors/ovl_player_actor/z_player.c`.
+Around lines 9632–9660, landing handles run-jump/lock-on variants first, short
+falls at <=80, then calls `Player_SetupRoll` for falls <800 with forward stick
+and no carried actor. This is conditional landing behavior, not unconditional
+midair rolling. Read the surrounding action, auto-jump and roll-input handlers
+before implementing; also distinguish manually initiated ground rolls.
+`Player_SetupRoll` around 6348 selects `PLAYER_ANIMGROUP_landing_roll`.
+
+### Starting points
+
+- `game/tools/build_link_model.py`: currently bakes a single child-Link idle
+  pose. It already reads the skeleton and animation data; its top-level bind-pose
+  docstring is stale. `game/assets/dynamic/link/source.json` selects animation
+  0x3200, frame 0, US 1.2. Use original animation data and retain limb ownership
+  or equivalent pose information rather than regenerating textures every frame.
+- `game/src/demo.c`: 30 Hz movement/gravity, velocity and last-safe respawn,
+  camera, title state. Drive animation from actual motion/grounded state and a
+  stable clock. Expose the state cleanly where needed. Ensure collisions that
+  stop movement also stop locomotion; avoid double-applying animation root motion.
+- `game/src/kokiri_sgl.c`: forest/Link upload and submission. Preserve baked
+  negative Y, limb normals, face textures, and the native source-world scale.
+- `shared/lib/collision/kokiri_collision.c`: Link uses a smaller actor clearance,
+  feet-based floor queries, fixed-point fall velocity, downhill ground-follow
+  tolerance and safe recovery. Preserve bridge clearance and downhill behavior.
+- Current controls use a digital D-pad. Establish an explicit walk/run policy
+  consistent with existing controls; document any necessary roll/speed binding.
+  Keep diagnostic A, Start, and L/R mappings in mind before assigning controls.
+
+### Current presentation and constraints
+
+- Five slow, wider title routes (~104 seconds total), including fairy-area passes.
+  `build_title_paths.py` searches actual collision geometry, favors passage
+  centres, smooths curves and checks every final segment with 16-unit clearance.
+  Generated `title_paths.h` is cached by input/tool hash and tracked as a build
+  dependency. The old extreme tree-closeup shots are removed from normal play.
+- Forest fog blends palettes toward yellow-olive; mesh/checkerboard fading in
+  the last eighth of visibility. Cutoff 1,310 units is half the original forest
+  renderer's 2,620-unit range. Shared tiles conservatively use their closest
+  surface's fog amount. It is an approximation, not N64 per-pixel fog.
+- Ten small fairy billboards use the original fairy wing texture with separate
+  orbit/bob phases at Kokiri/Mido/Saria homes. No NPC models added yet.
+- Title regression fixed: Jo's B1 allocator overlapped SGL's fixed font storage.
+  Sky table is now at B1+0x1f000 via `slBackColTable`. Do not put it at B1+0 or
+  reintroduce speculative BGON overrides. Black padding/final scanline keeps
+  the outer screen black. Title and black border observed in both display modes.
+- Last builds: standard `.bss` ends 0x060a4cf0 (9,488 bytes headroom); hi-res
+  0x060a4d90 (9,328 bytes). SGL work area starts 0x060a7200. Animation storage is
+  constrained: budget it before choosing a full pre-baked-frame approach.
+- Forest+Link texture/CLUT bytes 425,288; fairy adds 512 = 425,800 of 432,632,
+  leaving 6,832 VDP1 texture bytes. Combined base geometry 2,446 polygons and
+  2,112 vertices, before fairies. Keep the existing hard capacity checks.
+
+### Verification and user's desktop
+
+Both standard and hi-res images rebuilt; 59 game tests passed. Final route
+generation validated all five paths. Background captures observed title, black
+surround and olive haze in both modes. This is not hardware verification or
+proof that every camera framing is artistically final.
+
+The user needs the main screen for another game. Do not activate Kronos or use
+global keyboard events/desktop screenshots. `game/tools/capture-kronos.ps1`
+uses PrintWindow and works with Kronos unminimized behind other applications.
+`-ShowBehind` makes a hidden test window drawable at the bottom of the stack
+without activation. Local ignored `game/build/generated/start-background.ps1`
+was used to launch tests hidden; do not assume it exists on another checkout.
+The test emulator was closed after verification to free the user's GPU.
+
+Evidence (local/ignored): `game/build/generated/fog-tour-standard.png`,
+`fog-tour-standard-2.png`, `fog-tour-hires.png`, `title-memory-fixed.png`.
+
+Preserve the existing dirty worktree, inspect the diff before editing, and do
+not reset it. No commit made in this pass. Update VSLICEPROGRESS.md as animation
+lands. NPCs, music timing, and a renderer rewrite are not this assignment.
+
+Handoff prepared by Codex for the user to relay to Claude. On receiving it,
+Claude should begin the implementation above and send a short reply through
+the user when there is progress or a question for Codex.
+
+---
+
+# Historical texture handoff
 
 ## Astra's current result — 2026-09-16
 

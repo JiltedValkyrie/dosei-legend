@@ -318,7 +318,7 @@ def convert(oot, head, actor, out_dir, patches_only=False, rom_dir=None):
     ground_center = [round(sum(p[k] for p in ground['points'])/len(ground['points'])) for k in range(3)]
     tree_center = [round(sum(p[k] for p in split['points'])/len(split['points'])) for k in range(3)]
     (out_dir/'texture_probe.h').write_text(
-        '/* Diagnostic camera only; never enabled in normal builds. */\n'
+        '/* Authored camera landmarks used by the title tour and diagnostic probe. */\n'
         '#define PROBE_GROUND_X %d\n#define PROBE_GROUND_Y %d\n#define PROBE_GROUND_Z %d\n'
         '#define PROBE_TREE_X %d\n#define PROBE_TREE_Y %d\n#define PROBE_TREE_Z %d\n'
         % tuple(ground_center + tree_center))

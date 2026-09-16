@@ -16,4 +16,13 @@ bool kokiri_collision_clear(camera_position_t position);
 bool kokiri_collision_floor(int32_t x, int32_t z, int32_t below, int32_t *height);
 bool kokiri_collision_spawn(camera_position_t *position);
 void kokiri_collision_move(camera_position_t *position, int32_t dx, int32_t dy, int32_t dz);
+/* Move child Link using OoT-sized scene checks rather than the taller free
+ * camera sphere. Position remains the existing floor+EYE_HEIGHT anchor. */
+void kokiri_collision_move_actor(camera_position_t *position, int32_t dx,
+        int32_t dy, int32_t dz);
+/* Apply one 30 Hz gravity step. Velocity and sub-unit motion use Q8 fixed
+ * point so OoT's 20 Hz gravity can be time-scaled without losing precision.
+ * Returns true while standing on a floor. */
+bool kokiri_collision_fall(camera_position_t *position, int32_t *velocity_q8,
+        int32_t *remainder_q8);
 #endif

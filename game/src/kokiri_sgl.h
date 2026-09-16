@@ -19,6 +19,9 @@ void            kokiri_scene_draw(void);
 /** @brief Submit Link at a world position, facing @p yaw (binang). */
 void            kokiri_link_draw(int x, int y, int z, int yaw);
 
+/** @brief Draw ambient fairies at the original Kokiri NPC homes. */
+void            kokiri_fairies_draw(unsigned int tick);
+
 /** @brief Submissions SGL refused this frame. Non-zero means some faces never
  *  reached VDP1, so the picture is incomplete. */
 unsigned int    kokiri_scene_rejected(void);

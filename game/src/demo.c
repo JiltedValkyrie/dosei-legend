@@ -2,6 +2,8 @@
 #include "demo.h"
 #include "music.h"
 #include "music_banks.h"
+#include "texture_probe.h"
+#include "title_paths.h"
 
 camera_position_t demo_camera;
 uint16_t demo_yaw;
@@ -9,6 +11,10 @@ int32_t demo_pitch;
 camera_position_t demo_link;
 uint16_t demo_link_yaw;
 bool demo_link_active;
+static int32_t link_velocity_y_q8;
+static int32_t link_fall_remainder_q8;
+static camera_position_t link_safe_position;
+static bool link_safe_position_valid;
 
 /* Third-person follow: how far behind and above Link the view sits, and how
  * hard it chases him. FOLLOW_LAG is a shift: the camera closes 1/(1<<LAG) of
@@ -23,6 +29,10 @@ bool demo_link_active;
  * established here, and a wrong guess loses him off-screen entirely. */
 #define FOLLOW_HEIGHT   (-40)
 #define FOLLOW_LAG      2
+/* If no walkable floor remains below Link after dropping this far from his
+ * last grounded point, collision has let him out of the world. Restore that
+ * nearby point rather than relying on one map-wide respawn coordinate. */
+#define LINK_VOID_DROP 180
 /* Half-fade length for the title->forest switch, in vblanks. */
 #define DEMO_MUSIC_FADE_FRAMES 10
 static bool title_visible = true;
@@ -32,7 +42,10 @@ static void *collision_index;
 bool demo_collision_indexed;
 static unsigned short *prompt;
 static volatile unsigned int ticks;
-static unsigned int phase, refresh, previous_tick, previous_frame;
+static unsigned int phase, refresh, previous_tick;
+/* SGL owns the font at B1+0; Jo's allocator does not reserve it. Keep this
+ * table at B1+0x1f000, clear of the fixed SGL font and map storage. */
+extern void slBackColTable(void *table);
 static int last_blink = -1;
 
 /* Move one axis a fraction of the way to its target. The >> alone stalls a few
@@ -47,8 +60,73 @@ static int32_t follow_approach(int32_t current, int32_t target)
     return current + step;
 }
 
+static jo_color sky_color(unsigned int row)
+{
+    unsigned int r, g, b;
+    if (row > 239) row = 239;
+    r = 151 + (222 - 151) * row / 239;
+    g = 157 + (221 - 157) * row / 239;
+    b = 108 + (155 - 108) * row / 239;
+    return JO_COLOR_RGB(r, g, b);
+}
+
+/* Routes are sampled at build time and every interpolated segment is checked
+ * against the real collision mesh. Wide framing and roughly 60 units/second
+ * replace the old close-up texture probes. */
+static void title_showcase_camera(unsigned int tick)
+{
+    unsigned int shot, total = 0, duration, index, fraction, look;
+    unsigned int count;
+    const title_point_t *path;
+    for (shot = 0; shot < 5; ++shot) total += (title_path_counts[shot]-1)*16;
+    tick %= total;
+    for (shot = 0; shot < 4; ++shot) {
+        duration = (title_path_counts[shot]-1)*16;
+        if (tick < duration) break;
+        tick -= duration;
+    }
+    path = title_paths[shot];
+    count = title_path_counts[shot];
+    index = tick / 16;
+    fraction = tick % 16;
+    demo_camera.x = path[index].x + (path[index+1].x-path[index].x)*(int)fraction/16;
+    demo_camera.y = path[index].y + (path[index+1].y-path[index].y)*(int)fraction/16;
+    demo_camera.z = path[index].z + (path[index+1].z-path[index].z)*(int)fraction/16;
+    look = index + 8;
+    if (look >= count) look = count - 1;
+    {
+        int lx = path[look].x, lz = path[look].z;
+        if (look+1 < count) {
+            lx += (path[look+1].x-lx)*(int)fraction/16;
+            lz += (path[look+1].z-lz)*(int)fraction/16;
+        }
+        demo_yaw = kokiri_camera_facing(lx-demo_camera.x, lz-demo_camera.z);
+    }
+    demo_pitch = 0;
+}
+
+static bool recover_link_from_void(void)
+{
+    int32_t floor;
+
+    if (!link_safe_position_valid ||
+        demo_link.y >= link_safe_position.y - LINK_VOID_DROP)
+        return false;
+    /* A genuine lower landing is still valid. Recovery is only for an open
+     * hole with no walkable surface remaining beneath Link's feet. */
+    if (kokiri_collision_floor(demo_link.x, demo_link.z,
+                               demo_link.y - DEMO_LINK_EYE_HEIGHT, &floor))
+        return false;
+    demo_link = link_safe_position;
+    link_velocity_y_q8 = 0;
+    link_fall_remainder_q8 = 0;
+    return true;
+}
+
 static void demo_vblank(void)
 {
+    /* BDCLMD=0 keeps the border outside the active picture black. */
+    JO_VDP2_TVMD &= (unsigned short)~0x0100;
     phase += 60;
     while (phase >= refresh) { phase -= refresh; ++ticks; }
 }
@@ -59,6 +137,8 @@ bool demo_init(void)
     collision_triangle_t *collision = (collision_triangle_t *)jo_fs_read_file("FOREST.COL", &length);
     jo_file file;
     jo_img strip;
+    jo_color *sky;
+    unsigned int sky_lines, sky_row;
     if (!collision || length <= 0 || length % sizeof(*collision)) return false;
     kokiri_collision_init(collision, length / sizeof(*collision));
     /* Bucket the 1692 collision triangles by XZ so walking does not rescan all
@@ -73,6 +153,24 @@ bool demo_init(void)
     if (!kokiri_collision_spawn(&demo_camera)) return false;
     /* Raise the starting eye without bypassing walls/ceilings. */
     kokiri_collision_move(&demo_camera, 0, 24, 0);
+    /* Olive daylight haze, matched to the forest reference. The back screen
+     * leaves NBG1 available for the title without using VDP1 texture space. */
+#ifdef DOSEI_HIRES
+    sky_lines = 480;
+#else
+    sky_lines = 240;
+#endif
+    sky = (jo_color *)(JO_VDP2_VRAM_B1 + 0x1f000);
+    /* Some output modes/emulators fetch the full 256/512-line table even
+     * with a 240/480-line picture. Unused scanlines are black borders. */
+    for (sky_row = 0; sky_row < 512; ++sky_row) sky[sky_row] = JO_COLOR_Black;
+    for (sky_row = 0; sky_row < sky_lines; ++sky_row) {
+        sky[sky_row] = sky_color(sky_row * 240 / sky_lines);
+    }
+    /* Kronos extends the last active back colour into its outer viewport.
+     * A black final scanline preserves the original black surround there. */
+    sky[sky_lines - 1] = JO_COLOR_Black;
+    slBackColTable(sky);
     if (!jo_fs_open(&file, "TITLE.RGB")) return false;
     if (file.size != 512 * 256 * 2) { jo_fs_close(&file); return false; }
     strip.width = 512; strip.height = 1;
@@ -120,18 +218,24 @@ void demo_update(void)
                           DEMO_MUSIC_FADE_FRAMES);
             if (!title_visible && !demo_link_active) {
                 if (kokiri_collision_spawn(&demo_link)) {
-                    int32_t sine, cosine;
                     demo_link_yaw = demo_yaw;
-                    /* Snap the view behind him on the first frame; the lag
-                     * below should trail his movement, not the spawn jump. */
-                    kokiri_camera_sincos(demo_yaw, &sine, &cosine);
-                    demo_camera.x = demo_link.x
-                        - (int32_t)(((int64_t)sine * FOLLOW_DISTANCE) >> 16);
-                    demo_camera.z = demo_link.z
-                        - (int32_t)(((int64_t)cosine * FOLLOW_DISTANCE) >> 16);
-                    demo_camera.y = demo_link.y + FOLLOW_HEIGHT;
+                    link_velocity_y_q8 = 0;
+                    link_fall_remainder_q8 = 0;
+                    link_safe_position = demo_link;
+                    link_safe_position_valid = true;
                     demo_link_active = true;
                 }
+            }
+            if (!title_visible && demo_link_active) {
+                int32_t sine, cosine;
+                /* A title shot may be far across the map. Enter gameplay
+                 * directly behind Link instead of easing there for seconds. */
+                kokiri_camera_sincos(demo_yaw, &sine, &cosine);
+                demo_camera.x = demo_link.x
+                    - (int32_t)(((int64_t)sine * FOLLOW_DISTANCE) >> 16);
+                demo_camera.z = demo_link.z
+                    - (int32_t)(((int64_t)cosine * FOLLOW_DISTANCE) >> 16);
+                demo_camera.y = demo_link.y + FOLLOW_HEIGHT;
             }
         }
     }
@@ -140,7 +244,12 @@ void demo_update(void)
     steps = elapsed / 2;
     if (steps > 4) { steps = 4; previous_tick = now - now % 2; }
     else previous_tick += steps * 2;
-    if (demo_link_active) {
+    if (title_visible) {
+        /* This is an authored title shot, so controller movement does not
+         * knock it off its route. Start above has already switched state by
+         * the time gameplay reaches this branch. */
+        title_showcase_camera(now);
+    } else if (demo_link_active) {
         /* Drive Link with the baseline movement code, then follow him. Only
          * the walk/turn buttons reach it: the free camera's raise/lower and
          * pitch keys would move a character who must stay on the floor.
@@ -153,8 +262,20 @@ void demo_update(void)
                                    CAMERA_RIGHT | CAMERA_L | CAMERA_R);
         int32_t unused_pitch = 0, sine, cosine, tx, tz, ty;
         int32_t was_x = demo_link.x, was_z = demo_link.z;
-        while (steps--)
-            kokiri_camera_update(&demo_link, &demo_yaw, &unused_pitch, walk, false);
+        bool recovered = false;
+        while (steps--) {
+            bool grounded;
+            kokiri_camera_update(&demo_link, &demo_yaw, &unused_pitch, walk,
+                                 false, true);
+            grounded = kokiri_collision_fall(&demo_link, &link_velocity_y_q8,
+                                              &link_fall_remainder_q8);
+            if (grounded) {
+                link_safe_position = demo_link;
+                link_safe_position_valid = true;
+            } else if (recover_link_from_void()) {
+                recovered = true;
+            }
+        }
         if (demo_link.x != was_x || demo_link.z != was_z)
             demo_link_yaw = kokiri_camera_facing(demo_link.x - was_x,
                                                  demo_link.z - was_z);
@@ -164,14 +285,22 @@ void demo_update(void)
         tx = demo_link.x - (int32_t)(((int64_t)sine * FOLLOW_DISTANCE) >> 16);
         tz = demo_link.z - (int32_t)(((int64_t)cosine * FOLLOW_DISTANCE) >> 16);
         ty = demo_link.y + FOLLOW_HEIGHT;
-        demo_camera.x = follow_approach(demo_camera.x, tx);
-        demo_camera.y = follow_approach(demo_camera.y, ty);
-        demo_camera.z = follow_approach(demo_camera.z, tz);
+        if (recovered) {
+            /* Keep the recovered player visible immediately; easing from a
+             * camera left down in the void would briefly show empty space. */
+            demo_camera.x = tx;
+            demo_camera.y = ty;
+            demo_camera.z = tz;
+        } else {
+            demo_camera.x = follow_approach(demo_camera.x, tx);
+            demo_camera.y = follow_approach(demo_camera.y, ty);
+            demo_camera.z = follow_approach(demo_camera.z, tz);
+        }
     } else {
-        while (steps--) kokiri_camera_update(&demo_camera, &demo_yaw, &demo_pitch, buttons, false);
+        while (steps--) kokiri_camera_update(&demo_camera, &demo_yaw,
+                                             &demo_pitch, buttons, false,
+                                             false);
     }
-    if (title_visible && !buttons) demo_yaw += (uint16_t)((now - previous_frame) * CAMERA_AUTO_TURN_SPEED);
-    previous_frame = now;
     patch.width = 84; patch.height = 14; patch.data = prompt;
     /* Only upload on a blink transition, not every rendered frame. */
     if (last_blink != (int)((now / 30) & 1)) {
@@ -184,4 +313,14 @@ void demo_update(void)
     } else jo_set_background_sprite(&patch, 118, 173);
     }
     slScrAutoDisp(NBG0ON | (title_visible ? NBG1ON : 0));
+}
+
+bool demo_title_is_visible(void)
+{
+    return title_visible;
+}
+
+unsigned int demo_clock(void)
+{
+    return ticks;
 }

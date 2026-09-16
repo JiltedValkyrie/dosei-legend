@@ -20,5 +20,5 @@
 #define CAMERA_PITCH_LIMIT 14500
 void kokiri_camera_sincos(uint16_t yaw, int32_t *sine, int32_t *cosine);
 void kokiri_camera_update(camera_position_t *position, uint16_t *yaw,
-    int32_t *pitch, uint16_t buttons, bool title_visible);
+    int32_t *pitch, uint16_t buttons, bool title_visible, bool actor_collision);
 #endif

@@ -29,3 +29,7 @@ class DemoAssets(unittest.TestCase):
         self.assertEqual(len(title), 512 * 256 * 2)
         self.assertTrue(any(title))
         self.assertEqual(title[:2], b'\0\0')
+        fairy = (ROOT / 'build/cd/FAIRY.RGB').read_bytes()
+        self.assertEqual(len(fairy), 16 * 16 * 2)
+        self.assertIn(b'\0\0', fairy)
+        self.assertTrue(any(fairy))

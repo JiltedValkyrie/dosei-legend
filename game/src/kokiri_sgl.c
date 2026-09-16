@@ -17,22 +17,40 @@
 */
 
 #include <jo/jo.h>
+#include <stdint.h>
 
 #include "kokiri_scene.h"
 #include "link_scene.h"
 #include "kokiri_sgl.h"
 #include "vdp1_layout.h"
+#include "demo.h"
+
+/* Original forest renderer: radius (4367) * 60%. Requested visibility is
+ * half of that range. Keep crossing polygons using their nearest vertex. */
+#define FOREST_FAR (4367 * 6 / 10 / 2)
+#define FOREST_FOG_START (FOREST_FAR / 2)
+static short forest_depth[KOKIRI_VERTEX_COUNT];
+static short tile_depth[KOKIRI_TILE_COUNT];
+static unsigned char tile_fog[KOKIRI_TILE_COUNT];
+static unsigned char forest_mesh[KOKIRI_POLYGON_COUNT];
+static unsigned char *forest_palette;
 
 /* Pixel blobs are staged on the CD rather than compiled in: as C arrays they
 ** would add ~360 KB to the ELF. */
 #define KOKIRI_PIXEL_FILE   "KOKIRI.TEX"
 #define LINK_PIXEL_FILE     "LINK.TEX"
+#define FAIRY_PIXEL_FILE    "FAIRY.RGB"
+#define FAIRY_WIDTH         16
+#define FAIRY_HEIGHT        16
+#define FAIRY_PIXEL_BYTES   (FAIRY_WIDTH * FAIRY_HEIGHT * 2)
+#define FAIRY_COLMODE_RGB   5
 
 static unsigned int  vram_used;      /* bytes claimed in the VDP1 user area */
 static unsigned int  sprite_next = 1;/* next free __jo_sprite_def slot; 0 is Jo's */
 static unsigned int  kokiri_rejected;
 static unsigned int  kokiri_accepted_mask;
 static unsigned int  submitted;
+static unsigned int  fairy_sprite;
 
 /* SGL addresses sprite character data in 8-byte units. */
 #define VRAM_UNITS(bytes)   ((bytes) >> 3)
@@ -91,6 +109,7 @@ static bool         mesh_load(const char *file, unsigned int pixel_bytes,
     ** NUL at stream[fsize], i.e. the first CLUT byte; this upload overwrites it,
     ** and the budget checked above already counts both. */
     clut_vram = pixel_vram + pixel_bytes;
+    if (pdata == &kokiri_pdata) forest_palette = clut_vram;
     jo_dma_copy((void *)cluts, clut_vram, clut_bytes);
     vram_used += pixel_bytes + clut_bytes;
 
@@ -125,6 +144,32 @@ static bool         mesh_load(const char *file, unsigned int pixel_bytes,
     return (true);
 }
 
+static bool         fairy_load(void)
+{
+    unsigned char *pixel_vram = (unsigned char *)JO_VDP1_VRAM
+                                + GAME_TEXTURE_BASE + vram_used;
+    jo_texture_definition *texture;
+    char *loaded;
+    int length = 0;
+
+    if (vram_used + FAIRY_PIXEL_BYTES > GAME_TEXTURE_BYTES ||
+        sprite_next >= JO_MAX_SPRITE)
+        return false;
+    loaded = jo_fs_read_file_ptr(FAIRY_PIXEL_FILE, pixel_vram, &length);
+    if (!loaded || length != FAIRY_PIXEL_BYTES) return false;
+    fairy_sprite = sprite_next++;
+    texture = &__jo_sprite_def[fairy_sprite];
+    texture->width = FAIRY_WIDTH;
+    texture->height = FAIRY_HEIGHT;
+    texture->adr = (unsigned short)VRAM_UNITS((unsigned int)pixel_vram
+                                              - JO_VDP1_VRAM);
+    texture->size = JO_MULT_BY_32(FAIRY_WIDTH & 0x1f8) | FAIRY_HEIGHT;
+    __jo_sprite_pic[fairy_sprite].color_mode = COL_32K;
+    __jo_sprite_pic[fairy_sprite].data = pixel_vram;
+    vram_used += FAIRY_PIXEL_BYTES;
+    return true;
+}
+
 bool                kokiri_scene_load(void)
 {
     if (!mesh_load(KOKIRI_PIXEL_FILE, KOKIRI_PIXEL_BYTES, kokiri_tiles,
@@ -135,6 +180,13 @@ bool                kokiri_scene_load(void)
                    (const kokiri_tile *)link_tiles, LINK_TILE_COUNT,
                    link_cluts, &link_pdata, LINK_POLYGON_COUNT))
         return (false);
+    if (!fairy_load()) return (false);
+    {
+        unsigned int i;
+        for (i = 0; i < KOKIRI_POLYGON_COUNT; ++i)
+            forest_mesh[i] = (kokiri_pdata.attbl[i].atrb & MESHon) != 0;
+        for (i = 0; i < KOKIRI_TILE_COUNT; ++i) tile_fog[i] = 255;
+    }
     return (true);
 }
 
@@ -159,10 +211,71 @@ static void         submit(PDATA *pdata, unsigned int bit)
 
 void                kokiri_scene_draw(void)
 {
+    unsigned int i, j, visible = KOKIRI_POLYGON_COUNT;
+    int32_t sine, cosine;
+    kokiri_camera_sincos(demo_yaw, &sine, &cosine);
+    for (i = 0; i < KOKIRI_VERTEX_COUNT; ++i) {
+        int x = (kokiri_pdata.pntbl[i][0] >> 16) - demo_camera.x;
+        int z = (kokiri_pdata.pntbl[i][2] >> 16) - demo_camera.z;
+        forest_depth[i] = (short)(((int64_t)x * sine + (int64_t)z * cosine) >> 16);
+    }
+    for (i = 0; i < KOKIRI_TILE_COUNT; ++i) tile_depth[i] = FOREST_FAR;
+    /* Partition in place: polygons and attributes stay paired, with no second
+     * full mesh allocation and only one SGL vertex transformation per frame. */
+    for (i = 0; i < visible;) {
+        int nearest = 32767;
+        for (j = 0; j < 4; ++j) {
+            int depth = forest_depth[kokiri_pdata.pltbl[i].Vertices[j]];
+            if (depth < nearest) nearest = depth;
+        }
+        if (nearest > FOREST_FAR) {
+            POLYGON polygon = kokiri_pdata.pltbl[i];
+            ATTR attr = kokiri_pdata.attbl[i];
+            unsigned char mesh = forest_mesh[i];
+            --visible;
+            kokiri_pdata.pltbl[i] = kokiri_pdata.pltbl[visible];
+            kokiri_pdata.attbl[i] = kokiri_pdata.attbl[visible];
+            forest_mesh[i] = forest_mesh[visible];
+            kokiri_pdata.pltbl[visible] = polygon;
+            kokiri_pdata.attbl[visible] = attr;
+            forest_mesh[visible] = mesh;
+        } else {
+            ATTR *attr = &kokiri_pdata.attbl[i];
+            unsigned int tile = attr->texno - 1;
+            if (nearest < tile_depth[tile]) tile_depth[tile] = nearest;
+            attr->atrb &= ~MESHon;
+            if (forest_mesh[i] || nearest > FOREST_FAR * 7 / 8)
+                attr->atrb |= MESHon;
+            ++i;
+        }
+    }
+    /* Shared tiles use the nearest referencing surface to avoid fogging a
+     * nearby floor simply because the same tile occurs on a distant wall. */
+    for (i = 0; i < KOKIRI_TILE_COUNT; ++i) {
+        int amount = (tile_depth[i] - FOREST_FOG_START) * 16 /
+                     (FOREST_FAR - FOREST_FOG_START);
+        volatile unsigned short *palette =
+            (volatile unsigned short *)(forest_palette + i * 32);
+        if (amount < 0) amount = 0;
+        if (amount > 16) amount = 16;
+        if (tile_fog[i] == amount) continue;
+        tile_fog[i] = (unsigned char)amount;
+        for (j = 0; j < 16; ++j) {
+            unsigned short source = kokiri_cluts[i][j];
+            int r = source & 31, g = (source >> 5) & 31, b = (source >> 10) & 31;
+            if (!source) { palette[j] = 0; continue; }
+            r += (27 - r) * amount / 16;
+            g += (27 - g) * amount / 16;
+            b += (19 - b) * amount / 16;
+            palette[j] = (unsigned short)(0x8000 | r | (g << 5) | (b << 10));
+        }
+    }
     kokiri_rejected = 0;
     kokiri_accepted_mask = 0;
     submitted = 0;
+    kokiri_pdata.nbPolygon = visible;
     submit(&kokiri_pdata, 1u);
+    kokiri_pdata.nbPolygon = KOKIRI_POLYGON_COUNT;
 }
 
 void                kokiri_link_draw(int x, int y, int z, int yaw)
@@ -178,6 +291,50 @@ void                kokiri_link_draw(int x, int y, int z, int yaw)
         submit(&link_pdata, 2u);
     }
     jo_3d_pop_matrix();
+}
+
+typedef struct { short x, y, z; } fairy_home_t;
+
+/* Base child-day actor list: the Kokiri children plus Mido and Saria. Their
+ * bodies are intentionally absent for now; fairies mark their eventual homes. */
+static const fairy_home_t fairy_homes[] = {
+    {-292,   0, -430}, {  45,   0, -272}, {-608, 120, 1022},
+    {-1472,-80, -294}, { 669,   0,  521}, { 853, 100, -311},
+    {-678,   1, -179}, { -10, 180,  -22}, {1522,   0,  105},
+    {  18, -80,  873},
+};
+
+static int          fairy_wave(unsigned int angle, int amplitude)
+{
+    return (int)(((int64_t)slSin((ANGLE)angle) * amplitude) >> 16);
+}
+
+void                kokiri_fairies_draw(unsigned int tick)
+{
+    unsigned int i;
+    for (i = 0; i < sizeof(fairy_homes) / sizeof(fairy_homes[0]); ++i) {
+        unsigned int angle = tick * (97 + i * 3) + i * 6011;
+        FIXED pos[5];
+        SPR_ATTR attr = SPR_ATTRIBUTE(0, No_Palet, No_Gouraud, ECdis,
+                                      sprNoflip | FUNC_Sprite);
+        int x = fairy_homes[i].x + fairy_wave(angle, 18);
+        int y = fairy_homes[i].y + 58 + fairy_wave(angle * 2 + 9000, 9);
+        int z = fairy_homes[i].z + fairy_wave(angle + 16384, 14);
+        int32_t sine, cosine;
+        kokiri_camera_sincos(demo_yaw, &sine, &cosine);
+        if ((((int64_t)(x - demo_camera.x) * sine +
+              (int64_t)(z - demo_camera.z) * cosine) >> 16) > FOREST_FAR)
+            continue;
+
+        pos[0] = toFIXED(x);
+        pos[1] = toFIXED(-y);
+        pos[2] = toFIXED(z);
+        pos[3] = toFIXED(1);
+        pos[4] = toFIXED(1);
+        attr.texno = (Uint16)fairy_sprite;
+        attr.atrb |= (FAIRY_COLMODE_RGB & 7) << 3;
+        if (slPutSprite(pos, &attr, 0) == FALSE) ++kokiri_rejected;
+    }
 }
 
 unsigned int        kokiri_scene_accepted_mask(void)

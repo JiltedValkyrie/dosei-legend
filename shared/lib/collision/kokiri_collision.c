@@ -5,6 +5,20 @@
 #define RADIUS 24
 #define EYE_HEIGHT 90
 #define STEP 4
+/* OoT child Link checks walls at y=26 with radius 14 and checks ceilings up
+ * to y=40. One sphere with those dimensions reproduces both limits here and
+ * avoids treating low overhead floors as if the old eye-camera hit them. */
+#define ACTOR_RADIUS 14
+#define ACTOR_CHECK_HEIGHT 26
+/* OoT preserves BGCHECKFLAG_GROUND while the floor is no more than 11 units
+ * below the actor. Follow that nearby floor directly so descending a ramp
+ * does not alternate between airborne gravity and landing every few frames. */
+#define ACTOR_GROUND_FOLLOW_DROP 11
+/* OoT normally gives Link gravity -1 and a terminal velocity of -20 per
+ * 20 Hz update. These Q8 values preserve the same acceleration and terminal
+ * speed at this viewer's 30 Hz gameplay rate. */
+#define GRAVITY_Q8 (-114)
+#define TERMINAL_VELOCITY_Q8 (-3413)
 static const collision_triangle_t *triangles;
 static uint32_t triangle_count;
 
@@ -123,12 +137,12 @@ static bool inside(const collision_triangle_t *t, const int32_t p[3])
         return !(positive && negative);
 }
 
-bool kokiri_collision_clear(camera_position_t position)
+static bool collision_clear_radius(camera_position_t position, int32_t radius)
 {
         const int32_t p[3] = {position.x, position.y, position.z};
         uint32_t cx0, cx1, cz0, cz1, cx, cz, slot, end, i;
-        const bool indexed = candidate_span(p[0] - RADIUS, p[0] + RADIUS,
-                p[2] - RADIUS, p[2] + RADIUS, &cx0, &cx1, &cz0, &cz1) != 0;
+        const bool indexed = candidate_span(p[0] - radius, p[0] + radius,
+                p[2] - radius, p[2] + radius, &cx0, &cx1, &cz0, &cz1) != 0;
         for (cz = cz0; cz <= cz1; cz++)
         for (cx = cx0; cx <= cx1; cx++) {
         slot = indexed ? grid_offset[cz * GRID_DIM + cx] : 0;
@@ -137,11 +151,11 @@ bool kokiri_collision_clear(camera_position_t position)
                 i = indexed ? grid_list[slot] : slot;
                 const collision_triangle_t *t = &triangles[i];
                 bool outside = false;
-                for (int k = 0; k < 3; k++) outside |= p[k] < t->minimum[k]-RADIUS || p[k] > t->maximum[k]+RADIUS;
+                for (int k = 0; k < 3; k++) outside |= p[k] < t->minimum[k]-radius || p[k] > t->maximum[k]+radius;
                 if (outside) continue;
                 int64_t dot = 0;
                 for (int k = 0; k < 3; k++) dot += (int64_t)(p[k]-t->vertex[0][k])*t->normal[k];
-                if (dot > RADIUS*16384 || dot < -RADIUS*16384) continue;
+                if (dot > radius*16384 || dot < -radius*16384) continue;
                 int32_t projected[3];
                 for (int k = 0; k < 3; k++) projected[k] = p[k] - (int32_t)(dot*t->normal[k]/268435456);
                 if (inside(t, projected)) return false;
@@ -159,11 +173,22 @@ bool kokiri_collision_clear(camera_position_t position)
                                 int32_t q = a[k] + (length ? (int32_t)((b[k]-a[k])*along/length) : 0);
                                 distance += (int64_t)(p[k]-q)*(p[k]-q);
                         }
-                        if (distance <= RADIUS*RADIUS) return false;
+                        if (distance <= radius*radius) return false;
                 }
         }
         }
         return true;
+}
+
+bool kokiri_collision_clear(camera_position_t position)
+{
+        return collision_clear_radius(position, RADIUS);
+}
+
+static bool actor_clear(camera_position_t position)
+{
+        position.y += ACTOR_CHECK_HEIGHT - EYE_HEIGHT;
+        return collision_clear_radius(position, ACTOR_RADIUS);
 }
 
 bool kokiri_collision_floor(int32_t x, int32_t z, int32_t below, int32_t *height)
@@ -205,7 +230,8 @@ bool kokiri_collision_spawn(camera_position_t *position)
         return false;
 }
 
-static void move_axis(camera_position_t *position, int axis, int32_t amount)
+static void move_axis(camera_position_t *position, int axis, int32_t amount,
+        bool actor)
 {
         while (amount) {
                 int32_t step = amount > STEP ? STEP : amount < -STEP ? -STEP : amount;
@@ -216,10 +242,18 @@ static void move_axis(camera_position_t *position, int axis, int32_t amount)
                 if (next.x < -12000 || next.x > 12000 || next.y < -4000 || next.y > 12000 ||
                     next.z < -12000 || next.z > 12000) break;
                 int32_t floor;
-                if (kokiri_collision_floor(next.x,next.z,position->y-RADIUS,&floor) && next.y < floor+EYE_HEIGHT)
+                /* Link only considers ground at/below his feet plus one step.
+                 * The old eye-camera search reached 66 units above his feet,
+                 * so a walkable bridge overhead looked like a giant step and
+                 * blocked horizontal movement underneath it. */
+                int32_t below = actor ? position->y-EYE_HEIGHT+STEP
+                                      : position->y-RADIUS;
+                if (kokiri_collision_floor(next.x,next.z,below,&floor) &&
+                    next.y < floor+EYE_HEIGHT)
                         next.y = floor+EYE_HEIGHT;
                 /* No snapping through ceilings or climbing tall steps. */
-                if (next.y-position->y > STEP || !kokiri_collision_clear(next)) break;
+                if (next.y-position->y > STEP ||
+                    !(actor ? actor_clear(next) : kokiri_collision_clear(next))) break;
                 *position = next;
                 amount -= step;
         }
@@ -229,7 +263,78 @@ void kokiri_collision_move(camera_position_t *position, int32_t dx, int32_t dy, 
 {
         if (!(dx || dy || dz)) return;
         /* Small swept steps avoid tunnelling; separate axes slide along walls. */
-        move_axis(position,0,dx);
-        move_axis(position,2,dz);
-        move_axis(position,1,dy);
+        move_axis(position,0,dx,false);
+        move_axis(position,2,dz,false);
+        move_axis(position,1,dy,false);
+}
+
+void kokiri_collision_move_actor(camera_position_t *position, int32_t dx,
+        int32_t dy, int32_t dz)
+{
+        int32_t floor;
+        bool follow_ground = false;
+
+        if (!(dx || dy || dz)) return;
+        if ((dx || dz) &&
+            kokiri_collision_floor(position->x, position->z,
+                                   position->y - EYE_HEIGHT + STEP, &floor) &&
+            position->y == floor + EYE_HEIGHT)
+                follow_ground = true;
+
+        move_axis(position,0,dx,true);
+        if (follow_ground &&
+            kokiri_collision_floor(position->x, position->z,
+                                   position->y - EYE_HEIGHT, &floor) &&
+            position->y - (floor + EYE_HEIGHT) <= ACTOR_GROUND_FOLLOW_DROP)
+                position->y = floor + EYE_HEIGHT;
+
+        move_axis(position,2,dz,true);
+        if (follow_ground &&
+            kokiri_collision_floor(position->x, position->z,
+                                   position->y - EYE_HEIGHT, &floor) &&
+            position->y - (floor + EYE_HEIGHT) <= ACTOR_GROUND_FOLLOW_DROP)
+                position->y = floor + EYE_HEIGHT;
+
+        move_axis(position,1,dy,true);
+}
+
+bool kokiri_collision_fall(camera_position_t *position, int32_t *velocity_q8,
+        int32_t *remainder_q8)
+{
+        int32_t floor, target_y, amount;
+        int32_t below = position->y - EYE_HEIGHT + STEP;
+
+        /* Horizontal movement already snaps upward onto walkable ramps. Reset
+         * falling state whenever Link is exactly on that floor. A lower floor
+         * does not qualify, so walking off an edge starts a real fall. Probe
+         * from his feet, not the camera sphere: otherwise a bridge overhead
+         * can hide the actual ground beneath him. */
+        if (kokiri_collision_floor(position->x, position->z,
+                                   below, &floor)) {
+                target_y = floor + EYE_HEIGHT;
+                if (position->y == target_y) {
+                        position->y = target_y;
+                        *velocity_q8 = 0;
+                        *remainder_q8 = 0;
+                        return true;
+                }
+        }
+
+        *velocity_q8 += GRAVITY_Q8;
+        if (*velocity_q8 < TERMINAL_VELOCITY_Q8)
+                *velocity_q8 = TERMINAL_VELOCITY_Q8;
+        *remainder_q8 += *velocity_q8;
+        amount = *remainder_q8 / 256;
+        *remainder_q8 -= amount * 256;
+        if (amount) kokiri_collision_move_actor(position, 0, amount, 0);
+
+        below = position->y - EYE_HEIGHT + STEP;
+        if (kokiri_collision_floor(position->x, position->z, below, &floor) &&
+            position->y == floor + EYE_HEIGHT) {
+                position->y = floor + EYE_HEIGHT;
+                *velocity_q8 = 0;
+                *remainder_q8 = 0;
+                return true;
+        }
+        return false;
 }

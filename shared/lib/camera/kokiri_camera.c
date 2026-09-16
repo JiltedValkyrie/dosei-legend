@@ -1,7 +1,7 @@
 #include "kokiri_camera.h"
 
 void kokiri_camera_update(camera_position_t *position, uint16_t *yaw,
-    int32_t *pitch, uint16_t buttons, bool title_visible)
+    int32_t *pitch, uint16_t buttons, bool title_visible, bool actor_collision)
 {
         const uint16_t controls = CAMERA_L | CAMERA_R | CAMERA_X | CAMERA_Z |
             CAMERA_Y | CAMERA_C | CAMERA_UP | CAMERA_DOWN | CAMERA_LEFT | CAMERA_RIGHT;
@@ -32,5 +32,10 @@ void kokiri_camera_update(camera_position_t *position, uint16_t *yaw,
                 dz = (vertical*cosine - horizontal*sine)*speed/65536;
         }
         if (buttons & CAMERA_C) *pitch = 0;
-        if (dx || dy || dz) kokiri_collision_move(position, dx, dy, dz);
+        if (dx || dy || dz) {
+                if (actor_collision)
+                        kokiri_collision_move_actor(position, dx, dy, dz);
+                else
+                        kokiri_collision_move(position, dx, dy, dz);
+        }
 }

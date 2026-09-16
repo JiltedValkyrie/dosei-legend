@@ -3,13 +3,15 @@
 #include "kokiri_camera.h"
 bool demo_init(void);
 void demo_update(void);
+bool demo_title_is_visible(void);
+unsigned int demo_clock(void);
 extern camera_position_t demo_camera;
 extern uint16_t demo_yaw;
 extern int32_t demo_pitch;
 
 /* Link. demo_link is his collision position, i.e. an eye at floor+EYE_HEIGHT
- * exactly like the free camera, so the baseline's swept movement, wall sliding
- * and floor/ceiling constraints apply to him unchanged. His feet, and so the
+ * exactly like the free camera, so the baseline's swept movement, wall sliding,
+ * floor/ceiling constraints and gravity apply to him. His feet, and so the
  * model's origin, are EYE_HEIGHT below it. */
 extern camera_position_t demo_link;
 extern uint16_t demo_link_yaw;
