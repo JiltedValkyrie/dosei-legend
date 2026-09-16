@@ -19,6 +19,13 @@ JO_DEBUG = 1
 # 0. The stock default is 255, which __jo_sprite_def would overflow.
 JO_MAX_SPRITE = 1802
 
+# The project-local SGL work area (generated/sglarea.o) is laid out from the
+# top of work RAM downwards and needs .bss to end below its base. The stock
+# 384 KB malloc arena sits in .bss and is nearly unused -- textures are read
+# straight into VDP1 VRAM -- so trade some of it for that headroom. Collision
+# and title data are intended to come out of what remains.
+JO_GLOBAL_MEMORY_SIZE_FOR_MALLOC = 262144
+
 SRCS = src/main.c src/kokiri_sgl.c generated/kokiri_scene.c generated/kokiri_textures.c
 
 JO_ENGINE_SRC_DIR = ../../joengine/jo_engine
@@ -31,6 +38,10 @@ COMPILER_DIR = ../../joengine/Compiler
 SHELL := C:/msys64/usr/bin/bash.exe
 
 include $(COMPILER_DIR)/COMMON/jo_engine_makefile
+
+# Link our patched work area instead of the SDK's, so MaxPolygons covers the
+# scene's 2060-polygon list. The shared SDK object is only ever read.
+SYSOBJS = generated/sglarea.o
 
 # The converter writes kokiri_scene.h into generated/.
 _CCFLAGS += -Igenerated -Isrc

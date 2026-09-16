@@ -34,6 +34,7 @@
 #define CAM_Z               (0)
 #define SCREEN_DISTANCE     (240)
 static bool         scene_ready;
+static void         viewer_hud(void);
 
 static void         viewer_draw(void)
 {
@@ -43,9 +44,14 @@ static void         viewer_draw(void)
         return ;
     }
 
+    /* Pure translation: the Y negation that SGL's Y-down projection needs is
+    ** baked into the POINT table by the converter, so slScale(1,-1,1) is gone.
+    ** eye.y - y is exactly (-y) + eye.y, so this translation is unchanged.
+    ** Keeping the matrix free of reflections is what lets the generated face
+    ** normals stay meaningful, which Single_Plane culling depends on. */
     jo_3d_translate_matrix(-CAM_X, CAM_Y, -CAM_Z);
-    slScale(toFIXED(1), toFIXED(-1), toFIXED(1));
     kokiri_scene_draw();
+    viewer_hud();
 }
 
 static void         viewer_hud(void)
@@ -53,20 +59,30 @@ static void         viewer_hud(void)
     jo_printf(0, 0, "Jo/SGL Kokiri viewer");
     jo_printf(0, 1, "verts %d tris %d tiles %d",
               KOKIRI_VERTEX_COUNT, KOKIRI_POLYGON_COUNT, KOKIRI_TILE_COUNT);
-    jo_printf(0, 26, "cam %d,%d,%d yaw/pitch 0", CAM_X, CAM_Y, CAM_Z);
-    jo_printf(0, 27, "vdp1 %d B  drawn %d  ",
-              (int)kokiri_scene_vram_used(), jo_3d_get_polygon_count());
+    jo_printf(0, 2, "cam %d,%d,%d yaw/pitch 0", CAM_X, CAM_Y, CAM_Z);
+    /* jo_3d_get_polygon_count() reports SGL's TotalPolygons, i.e. polygons
+    ** submitted this frame, not DispPolygons actually drawn -- so it is a
+    ** submission count, not a coverage measurement. "rej" is the number of
+    ** slPutPolygon calls SGL refused; it must stay 0 for the view to be
+    ** complete. */
+    jo_printf(0, 3, "subm %d rej %d    ", jo_3d_get_polygon_count(),
+              (int)kokiri_scene_rejected());
+    jo_printf(0, 4, "verts %d shown %d    ", jo_3d_get_vertices_count(),
+              jo_3d_get_displayed_polygon_count());
+    jo_printf(0, 5, "ok mask %d max P%d V%d  ",
+              (int)kokiri_scene_accepted_mask(), MaxPolygons, MaxVertices);
 }
 
 void                jo_main(void)
 {
     jo_core_init(JO_COLOR_Black);
+    jo_core_set_screens_order(JO_NBG0_SCREEN, JO_NBG2_SCREEN, JO_SPRITE_SCREEN,
+                             JO_RBG0_SCREEN, JO_NBG1_SCREEN, JO_NBG3_SCREEN);
     slSetScreenDist(toFIXED(SCREEN_DISTANCE));
 
     scene_ready = kokiri_scene_load();
 
     jo_core_add_callback(viewer_draw);
-    jo_core_add_callback(viewer_hud);
     jo_core_run();
 }
 

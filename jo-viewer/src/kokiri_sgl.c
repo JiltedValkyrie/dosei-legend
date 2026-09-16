@@ -20,11 +20,13 @@
 /* Pixel blob is staged on the CD rather than compiled in: as a C array it
 ** would add ~313 KB to the ELF. */
 #define KOKIRI_PIXEL_FILE   "KOKIRI.TEX"
-#define KOKIRI_SUBMISSION_COUNT  2
+#define KOKIRI_SUBMISSION_COUNT  1
 
 static void         *kokiri_pixel_vram;
 static void         *kokiri_clut_vram;
 static unsigned int  kokiri_vram_used;
+static unsigned int  kokiri_rejected;
+static unsigned int  kokiri_accepted_mask;
 static PDATA         kokiri_submissions[KOKIRI_SUBMISSION_COUNT];
 
 /* SGL addresses sprite character data in 8-byte units. */
@@ -102,16 +104,21 @@ bool                kokiri_scene_load(void)
         attr->colno = (unsigned short)VRAM_UNITS(clut - JO_VDP1_VRAM);
     }
 
-    /* SGL 3.02j's fixed work area accepts at most 1800 polygons in one input
-    ** list. The scene has 2060, so preserve every face by presenting two
-    ** persistent views over the shared point/polygon/attribute tables. */
+    /* One submission for the whole scene. Splitting into two lists never
+    ** bypassed SGL's cumulative per-frame budgets -- it made them worse: each
+    ** list references the entire shared point pool, so two lists cost 2 x 1268
+    ** = 2536 vertex transforms against MaxVertices, while a single list costs
+    ** 1268. With the project-local work area raising MaxPolygons past 2060
+    ** (tools/build_sgl_area.py), one list fits both budgets with room spare. */
     for (i = 0; i < KOKIRI_SUBMISSION_COUNT; ++i)
     {
-        unsigned int first = i * ((KOKIRI_POLYGON_COUNT + 1) / 2);
+        unsigned int per = (KOKIRI_POLYGON_COUNT + KOKIRI_SUBMISSION_COUNT - 1)
+                           / KOKIRI_SUBMISSION_COUNT;
+        unsigned int first = i * per;
         unsigned int count = KOKIRI_POLYGON_COUNT - first;
 
-        if (count > (KOKIRI_POLYGON_COUNT + 1) / 2)
-            count = (KOKIRI_POLYGON_COUNT + 1) / 2;
+        if (count > per)
+            count = per;
         kokiri_submissions[i] = kokiri_pdata;
         kokiri_submissions[i].pltbl += first;
         kokiri_submissions[i].attbl += first;
@@ -129,8 +136,26 @@ void                kokiri_scene_draw(void)
 {
     unsigned int    i;
 
+    /* slPutPolygon returns FALSE when SGL cannot accept the list (its work
+    ** area is full). Ignoring it is how a partially drawn scene could look
+    ** complete, so record every rejection for the HUD instead. */
+    kokiri_rejected = 0;
+    kokiri_accepted_mask = 0;
     for (i = 0; i < KOKIRI_SUBMISSION_COUNT; ++i)
-        slPutPolygon(&kokiri_submissions[i]);
+        if (slPutPolygon(&kokiri_submissions[i]) == FALSE)
+            ++kokiri_rejected;
+        else
+            kokiri_accepted_mask |= 1u << i;
+}
+
+unsigned int        kokiri_scene_accepted_mask(void)
+{
+    return kokiri_accepted_mask;
+}
+
+unsigned int        kokiri_scene_rejected(void)
+{
+    return (kokiri_rejected);
 }
 
 /*

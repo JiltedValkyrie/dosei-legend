@@ -77,11 +77,14 @@ class ConversionTest(unittest.TestCase):
         self.assertIsNotNone(match, 'makefile must pin JO_MAX_SPRITE')
         self.assertGreaterEqual(int(match.group(1)), len(self.tiles) + 1)
 
-    def test_transparent_and_two_sided_flags_are_decoded(self):
-        two_sided = sum(1 for f in self.faces if f['two_sided'])
-        transparent = sum(1 for f in self.faces if f['transparent'])
-        self.assertEqual(two_sided, 1937)
-        self.assertEqual(transparent, 89)
+    def test_cull_and_mesh_flags_are_decoded(self):
+        self.assertEqual(sum(f['cull'] for f in self.faces), 1937)
+        self.assertEqual(sum(f['mesh'] for f in self.faces), 89)
+        for i, face in enumerate(self.faces):
+            flags = struct.unpack_from(conv.FACE, self.data,
+                                       self.head['face_off'] + i * 20)[-1]
+            self.assertEqual(face['cull'], bool(flags & 2))
+            self.assertEqual(face['mesh'], bool(flags & 1))
 
 
 @unittest.skipUnless((ROOT / 'generated' / 'kokiri_scene.c').is_file(),
@@ -120,6 +123,28 @@ class GeneratedOutputTest(unittest.TestCase):
 
     def test_near_clipping_is_left_to_sgl(self):
         self.assertIn('UseNearClip', self.scene_c)
+
+    def test_render_policy_matches_source_flags(self):
+        _, _, _, faces = conv.read_scene(SCENE)
+        attrs = [line for line in self.scene_c.splitlines() if 'ATTRIBUTE(' in line]
+        self.assertEqual(len(attrs), len(faces))
+        for face, line in zip(faces, attrs):
+            self.assertIn('Single_Plane' if face['cull'] else 'Dual_Plane', line)
+            self.assertEqual('MESHon' in line, face['mesh'])
+            self.assertIn('ECdis', line)
+            self.assertNotIn('CL_Trans', line)
+
+    def test_normals_are_unit_length_and_perpendicular(self):
+        _, _, verts, faces = conv.read_scene(SCENE)
+        baked = [(x, -y, z) for x, y, z in verts]
+        for face in faces:
+            normal = conv.face_normal(baked, face['idx'])
+            self.assertAlmostEqual(sum(n*n for n in normal) ** .5, 65536, delta=1)
+            a, b, c = [baked[i] for i in face['idx'][:3]]
+            for endpoint in (b, c):
+                edge = [q-p for p, q in zip(a, endpoint)]
+                self.assertLessEqual(abs(sum(n*e for n, e in zip(normal, edge))),
+                                     sum(abs(e) for e in edge))
 
     def test_staged_texture_matches_generated_blob(self):
         staged = ROOT / 'cd' / 'KOKIRI.TEX'

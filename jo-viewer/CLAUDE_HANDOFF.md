@@ -1,5 +1,122 @@
 # Claude handoff: first Kronos verification
 
+## Current update - submission capacity resolved (Opus)
+
+HEAD is still `01f2b15` on `joengine-port`; everything below remains
+uncommitted. Nothing was pushed. The shared Jo SDK and the libyaul baseline were
+not modified: `SGLAREA.O` is unchanged (mtime Sep 14 18:17) and no stray objects
+exist under `joengine/jo_engine/`.
+
+### Result
+
+Single-list submission is accepted with full coverage, verified in Kronos:
+
+| Diagnostic | Value |
+| --- | --- |
+| `subm` / `rej` / `ok mask` | **2060 / 0 / 1** |
+| vertex transforms | 1268 |
+| linked limits | `P2100 V2500` |
+| `.bss` end vs work-area base | `0x0609CB60` vs `0x060B5360` (98 KB clear) |
+
+Evidence: `generated/single-list-check.png`.
+
+The two-list workaround was never a way around SGL's cumulative per-frame
+budgets; it made them worse. Each list references the whole shared point pool,
+so the split cost 2 x 1268 = 2536 vertex transforms where one list costs 1268.
+With `MaxPolygons` raised, one list fits both budgets with headroom.
+
+**VDP1 now runs at 29 FPS with the full scene** (VDP2 58/60). The earlier 58-59
+readings were a half-scene with one list refused; they must not be carried
+forward as a full-scene figure. This is an emulator overlay on a viewer with no
+audio, controls, collision or title, with no controlled baseline run - not a
+measured speedup.
+
+### Your two questions, answered from the SDK object
+
+`SpriteBuf` allocates 72 bytes per polygon. Sizes derived from the stock
+header reproduce its shipped values exactly:
+
+    SortList  = 12 * (MaxPolygons + 6) = 21204   12-byte SCU DMA indirect entries
+    SpriteBuf = 72 * (MaxPolygons + 5) = 127152  72 bytes per polygon
+    Pbuffer   = 16 * MaxVertices       = 40000
+    Zbuffer   = (128+128+256) * 4      = 2048    fixed, matches SL_DEF.H
+    CLOfstBuf = 32 * 32 required; stock allocates 3072
+
+So `SpriteBuf`'s allocation scales linearly with `MaxPolygons`. All eight
+buffers are contiguous and end exactly at `0x06100000`.
+
+Correction, per your review: these are **allocation** formulas read off a
+pure-data object. They establish layout, not buffer-use semantics. I did not
+trace `SpriteBuf`'s consumers in `LIBSGL.A`, so my earlier "single-buffered /
+not multi-frame" wording was stronger than the evidence and has been dropped
+from the docs.
+
+`CommandBuf` (50236) is the one field with **no exported size and no clean
+per-polygon stride** - 50236/(MaxPolygons+5) is not an integer. It is scaled by
+the polygon ratio with a 1.10 margin rather than guessed at. That is the weakest
+assumption in the layout.
+
+**It is unverified.** A successful fixed view says nothing about its safety:
+the camera has never moved. Validate it during the controls/collision pass by
+watching `rej` while turning and walking -- a non-zero `rej` under motion is
+the expected symptom of an undersized `CommandBuf`, and it is the first thing
+to suspect before blaming the movement code.
+
+### How the replacement works
+
+`tools/build_sgl_area.py`. `SGLAREA.O` is a pure data object - one `SLPROG`
+section, **no relocations** (`objdump -r` is empty) - whose first 0x40 bytes are
+the pointer/size header from `SL_DEF.H`. The graphics buffers live outside it at
+the top of work RAM, reachable only through those pointers, so only that header
+needs patching. The generator copies the SDK object and rewrites the header, so
+symbol names and offsets are untouched.
+
+Checks, all of which fail the build rather than warn:
+
+- `verify_stock_layout()` refuses to run if the SDK object is not the SGL 3.02j
+  area these formulas were derived from.
+- `check_layout()` enforces 32-byte alignment, contiguity (no gap *or* overlap),
+  positive sizes, and that the region ends exactly at `0x06100000`.
+- `--verify` re-runs after linking and fails if `.bss` crosses the work-area
+  base. During generation the map is from the *previous* build, so it only warns
+  there - the ordering matters, and `build.sh` runs both.
+
+Layout is anchored at the **top** of work RAM, so `TransList` and `MasterStack`
+keep their stock addresses and only growing buffers move down.
+
+### Cost
+
+`MaxPolygons` 1761 -> 2100 grows the area 262144 -> 306336 bytes (+44192).
+`JO_GLOBAL_MEMORY_SIZE_FOR_MALLOC` dropped 384 KB -> 256 KB to pay for it: the
+arena is in `.bss` and barely used, since textures read straight into VDP1 VRAM.
+Headroom went from 13376 bytes to 100352. Collision (1692 triangles, ~60 KB) and
+title data are intended to come from the remaining 256 KB arena rather than from
+new static buffers.
+
+### Tests
+
+31 viewer tests pass (your 15 plus 16 new); the 24 baseline tests are unaffected.
+The new ones cover the stock-header formulas, layout alignment/overlap/
+contiguity, that the generated object differs from the SDK object **only** in
+the 0x40-byte header, that untouched fields are preserved, and that `.bss` stays
+below the base in the current map.
+
+### Still open
+
+- `shown` (`DispPolygons`) reads 0 while the forest is plainly visible. Its
+  asynchronous sampling is unresolved. It is not evidence of coverage;
+  `slPutPolygon`'s return value is.
+- `CommandBuf` sizing, as above.
+- Near/far clipping parity, coincident-layer ordering and the baseline's
+  distance-fade mesh (a runtime depth test) are still not implemented or
+  compared.
+- The 29 FPS figure needs a controlled comparison against the libyaul baseline
+  at the same pose before it means anything.
+
+Controls and collision have not started; their prerequisite is now met.
+
+## Historical report — before Opus's cleanup and current diagnostics
+
 2026-09-15. Branch `joengine-port`, HEAD `93d1843` (your isolated viewer commit).
 The runtime fixes below are uncommitted. Nothing was pushed. The libyaul source
 and shared Jo SDK were not edited during this work.
@@ -13,7 +130,10 @@ identified the earlier view as upside down; changing perspective was not the fix
 
 The last run was left open in Kronos. Its screenshot is
 `generated/upright-check.png` (ignored, local only). The screenshot shows VDP1
-58 FPS and VDP2 58/60 FPS. Do not turn this into a measured speedup claim: this
+58 FPS and VDP2 58/60 FPS. RETIRED: that reading, and every other 58-59 FPS
+figure in this historical section, was taken while one polygon list was being
+refused, i.e. on roughly half the scene. The full scene measures VDP1 29 FPS.
+Do not carry these forward. Also do not turn them into a speedup claim: this
 viewer has no audio, controls, collision update, title or baseline profiler, and
 no controlled frame-timing comparison was performed.
 

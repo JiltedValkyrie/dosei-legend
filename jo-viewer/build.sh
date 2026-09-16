@@ -18,11 +18,16 @@ export PATH="$compiler/Other Utilities:$compiler/bin:$PATH"
 
 # Regenerate the SGL tables from the original scene, then stage the 4bpp blob
 # on the CD image. Both are cheap and keep game.iso consistent with FOREST.BIN.
+python "$here/tools/build_sgl_area.py"
 python "$here/tools/build_sgl_scene.py"
 cp "$here/generated/kokiri_pixels.bin" "$here/cd/KOKIRI.TEX"
 
 cd "$here"
 make "$@"
+
+# The work area is laid out from the top of work RAM downwards, so .bss must
+# end below its base. Only the map just produced can prove that.
+python "$here/tools/build_sgl_area.py" --verify
 
 echo
 echo "built: $here/game.iso  (cue: game.cue)"

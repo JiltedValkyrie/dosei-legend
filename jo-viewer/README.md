@@ -18,11 +18,54 @@ build, BIOS and autostart) so both images are measured the same way.
 Requires the sibling Jo Engine SDK at `../../joengine` (bundled GCC 9.3.0,
 SGL 3.02j, make, mkisofs, JoEngineCueMaker) plus MSYS2 bash and Python.
 
+## How to open Kronos on Windows
+
+Build the viewer first so `jo-viewer/game.cue` and `jo-viewer/game.iso` exist.
+In PowerShell, run:
+
+```powershell
+Set-Location 'D:\Workspace-Claude\saturn-homebrew\dosei-legend'
+cmd.exe /c jo-viewer\run-kronos.bat
+```
+
+Alternatively, double-click `jo-viewer\run-kronos.bat` in File Explorer. This
+opens Kronos and automatically boots the viewer disc. Allow the Saturn BIOS
+animation to finish; then look for the `Jo/SGL Kokiri viewer` HUD and forest.
+After rebuilding, close the previous viewer instance and launch the batch file
+again so the new disc image is loaded.
+
+The launcher supplies these required settings:
+
+- Executable: `D:\Workspace-Claude\saturn-homebrew\Kronos\build_kronos\src\port\qt\kronos.exe`.
+- BIOS: `D:\Workspace-Claude\saturn-homebrew\bios\Sega Saturn BIOS (E) (1.00)\Sega Saturn BIOS (E) (1.00).bin`.
+- Disc: `game.cue` beside the launcher, referencing `game.iso`.
+- DLL search path: prepends `C:\msys64\mingw64\bin` to `PATH`.
+- Working directory: the Kronos executable directory, needed for its config/plugins.
+- Arguments: `-b "<BIOS>" -i "<game.cue>" -a` for BIOS, disc and autostart.
+
+Use the batch file rather than launching the executable from the repository
+directory. If Kronos does not open, check those paths and the MSYS2 DLL directory.
+If it says `Build first`, regenerate the viewer image with `build.sh`.
+
+For an agent running under a sandbox, opening the GUI requires an escalated
+terminal call (`sandbox_permissions: require_escalated`). The command is the
+same `cmd.exe /c jo-viewer\run-kronos.bat`, with the repository as working
+directory. Desktop capture also required escalation in the verification session.
+
+To open the existing libyaul baseline instead, run this from the repository root:
+
+```powershell
+cmd.exe /c title-screen\run-kronos.bat
+```
+
+That launcher loads `title-screen/title-screen.cue`, not the Jo viewer image.
+
 ## What is here
 
 | Path | Role |
 | --- | --- |
 | `tools/build_sgl_scene.py` | FOREST.BIN (KFR1 v2) -> SGL `POINT`/`POLYGON`/`ATTR` tables |
+| `tools/build_sgl_area.py` | Project-local SGL work area with a raised polygon limit |
 | `src/kokiri_sgl.c` | Uploads 4bpp tiles + CLUTs to VDP1, binds them to the tables |
 | `src/main.c` | Fixed camera, HUD, `jo_core_run()` loop |
 | `generated/` | Converter output (derived, not tracked) |
@@ -55,7 +98,8 @@ plane to SGL rather than reusing the libyaul build's CPU clipper.
 | 1801 unique tiles, 4bpp | 313.2 KB |
 | 1801 CLUTs | 56.3 KB |
 | **VDP1 total** | **369.5 KB, 85.8 KB spare** |
-| Work RAM used (`.text`+`.data`+`.rodata`+`.bss`) | 719 KB of 1024 KB |
+| SGL work area (project-local), `0x060B5360`..`0x06100000` | 299.2 KB |
+| `.bss` end `0x0609CB60`, headroom below the work area | 98.0 KB |
 
 Textures are resident, so no tile streaming is needed. The framebuffers live at
 `JO_VDP1_FB`, outside the user area. The 4 MB cart is not required.
@@ -63,7 +107,47 @@ Textures are resident, so no tile streaming is needed. The framebuffers live at
 Two settings had to be raised from the stock sample: `JO_MAX_SPRITE` (255 ->
 1802, one slot per tile plus Jo's reserved entry 0; GCC caught the overflow),
 and the texture upload reads straight into VRAM via `jo_fs_read_file_ptr()`
-rather than `jo_malloc()`'ing a 313 KB staging copy out of the 384 KB pool.
+rather than `jo_malloc()`'ing a 313 KB staging copy out of the pool.
+`JO_GLOBAL_MEMORY_SIZE_FOR_MALLOC` was lowered 384 KB -> 256 KB to make room
+for the larger work area; the arena is in `.bss` and barely used, and collision
+and title data are meant to come out of what remains.
+
+## SGL work area
+
+Stock `SGLAREA.O` caps a frame at `MaxPolygons=1761`, so the scene's
+2060-polygon list was refused outright. `tools/build_sgl_area.py` builds a
+project-local replacement. The SDK object is only ever read.
+
+It is a pure data object -- one `SLPROG` section, no relocations -- whose first
+0x40 bytes are the pointer/size header declared in `SL_DEF.H`. The graphics
+buffers live outside it at the top of work RAM, so only that header changes.
+Buffer sizes were derived from the stock header and reproduce its shipped
+values exactly:
+
+| Buffer | Size |
+| --- | --- |
+| `SortList` | `12 * (MaxPolygons + 6)`, 12-byte SCU DMA indirect entries |
+| `SpriteBuf` | `72 * (MaxPolygons + 5)`, i.e. 72 bytes allocated per polygon |
+| `Pbuffer` | `16 * MaxVertices` |
+| `Zbuffer` | `(128 + 128 + 256) * 4`, fixed per `SL_DEF.H` |
+| `CLOfstBuf` | `32 * 32` required; stock allocates 3072, kept |
+| `CommandBuf` | no exported size and no clean stride, so scaled by the polygon ratio with margin -- **unverified**, see below |
+
+These are *allocation* formulas, read off the stock header's own layout: they
+give bytes per polygon or vertex, not how SGL consumes each buffer. Nothing
+was traced into `LIBSGL.A`, so no claim is made about single- or
+multi-buffering.
+
+`CommandBuf` is the one buffer sized by ratio rather than by a derived
+formula, and **a working fixed view does not establish it is safe**. It has
+only ever been exercised by a static camera. Watch `rej` during camera
+motion; a non-zero value there is the expected symptom if it is undersized.
+
+Buffers are laid out contiguously **ending** at `0x06100000`, as the stock area
+does, so `TransList` and `MasterStack` keep their original addresses and only
+the growing buffers move down. The base address is the ceiling for `.bss`;
+`build.sh` re-runs the generator with `--verify` after linking to fail the build
+if the linker map crosses it.
 
 ## Camera
 
@@ -83,16 +167,36 @@ viewer has no collision yet, so the pose is fixed.
 
 ## Status
 
-Built and visually checked in Kronos on 2026-09-15. The fixed view now renders
-upright, with textured ground, canopy and the central tree structure. The scene
-is submitted as two 1030-face lists sharing the original point table; the initial
-single 2060-face submission produced a black viewport.
+Built and checked in Kronos on 2026-09-15. The fixed view renders upright, with
+textured ground, canopy and the central tree structure, and **full coverage is
+now verified**: the whole scene goes in one list.
 
-The final screenshot showed VDP1 58 FPS and VDP2 58/60 FPS. This is an emulator
-overlay observation, not a controlled renderer benchmark. Full submission
-acceptance, winding/culling, transparency and clipping fidelity still need
-verification. See [Claude handoff](CLAUDE_HANDOFF.md) for evidence, known policy
-mismatches and next steps. Local screenshot: `generated/upright-check.png`.
+| Diagnostic | Value |
+| --- | --- |
+| `subm` / `rej` / `ok mask` | 2060 / 0 / 1 |
+| vertex transforms | 1268 |
+| linked limits | `P2100 V2500` |
+
+Two lists were never a way around SGL's cumulative per-frame budgets -- they
+made them worse, since each list references the whole shared point pool, so the
+split cost 2 x 1268 = 2536 vertex transforms where one list costs 1268. Raising
+`MaxPolygons` and going back to a single submission fixes both.
+
+**VDP1 runs at 29 FPS with the full scene** (VDP2 58/60). The earlier 58-59 FPS
+readings were a half-scene with one list refused, and must not be quoted as a
+full-scene result. This is still an emulator overlay on a viewer with no audio,
+controls, collision or title, against no controlled baseline run -- not a
+measured speedup.
+
+`shown` (`DispPolygons`) still reads 0 while the forest is plainly visible; that
+counter's asynchronous sampling is unresolved and is not evidence of coverage.
+The `subm`/`rej`/`ok mask` values come from `slPutPolygon`'s own return, which is.
+
+Real normals, corrected cull flags, screen-door mesh and disabled end codes are
+preserved. 31 host tests pass, and the 24 baseline tests are unaffected. The HUD
+uses NBG0 above sprites and runs immediately after submission in the same
+callback. Controls and collision have not started. See
+[Claude handoff](CLAUDE_HANDOFF.md).
 
 ## Build-system caveats
 
