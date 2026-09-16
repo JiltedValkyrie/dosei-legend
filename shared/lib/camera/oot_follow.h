@@ -51,10 +51,23 @@ typedef struct
     uint16_t    yaw;
     int32_t     pitch;
     bool        initialised;
+    /* Counts down while a recenter swing is running. OoT divides the
+    ** remaining angle by this, so the turn eases out instead of snapping. */
+    int32_t     swing_timer;
 }               oot_follow_t;
 
-/* Place the camera behind `facing` immediately, with no easing. Used on spawn,
-** on recenter, and after a void recovery. */
+/* CAM_GLOBAL_50 + CAM_GLOBAL_51 is 40 updates at OoT's 20 Hz. The swing itself
+** is the CAM_GLOBAL_51 portion, 20 updates, which is 30 at our 30 Hz step --
+** about one second. */
+#define OOT_CAM_SWING_STEPS     30
+
+/* Begin a recenter swing: the camera turns behind the player over
+** OOT_CAM_SWING_STEPS instead of cutting there. Does not reset yaw -- the
+** swing starts from wherever the camera currently is. */
+void    oot_follow_recenter(oot_follow_t *camera);
+
+/* Place the camera behind `facing` immediately, with no easing. Used on spawn
+** and after a void recovery, where easing would show empty space. */
 /* Swap between the OoT geometry and the retired 260-unit viewer follow, so the
 ** two can be compared at the same spot. Development only; the viewer camera is
 ** NOT a design reference and must not become the shipping default. */

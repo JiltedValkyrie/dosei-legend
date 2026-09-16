@@ -27,8 +27,11 @@ class Position(ctypes.Structure):
 
 
 class Follow(ctypes.Structure):
+    # Must match oot_follow_t exactly, in order: a mismatch silently reads
+    # the wrong field rather than failing.
     _fields_ = [('distance', ctypes.c_int32), ('yaw', ctypes.c_uint16),
-                ('pitch', ctypes.c_int32), ('initialised', ctypes.c_bool)]
+                ('pitch', ctypes.c_int32), ('initialised', ctypes.c_bool),
+                ('swing_timer', ctypes.c_int32)]
 
 
 @unittest.skipUnless(GCC.is_file(), 'host compiler required')
@@ -158,6 +161,43 @@ class OotFollowCamera(unittest.TestCase):
         # to just under 0x10000 -- never a small increase.
         self.assertGreater(yaw.value, 0x8000)
 
+
+    def swing(self, target, steps):
+        """Recenter from yaw 0 toward `target`, standing still."""
+        self.lib.oot_follow_recenter.argtypes = [ctypes.POINTER(Follow)]
+        cam, eye = Follow(), Position()
+        yaw, pitch = ctypes.c_uint16(), ctypes.c_int32()
+        player = Position(0, 0, 0)
+        self.lib.oot_follow_snap(ctypes.byref(cam), ctypes.byref(player), 0)
+        self.lib.oot_follow_recenter(ctypes.byref(cam))
+        seen = []
+        for _ in range(steps):
+            self.lib.oot_follow_update(
+                ctypes.byref(cam), ctypes.byref(player), target, False,
+                ctypes.byref(eye), ctypes.byref(yaw), ctypes.byref(pitch))
+            seen.append(yaw.value)
+        return seen
+
+    def test_recenter_does_not_cut_on_the_first_step(self):
+        """A snap would arrive immediately; the swing must not."""
+        self.assertNotEqual(self.swing(0x4000, 1)[0], 0x4000,
+                            'recenter cut instead of swinging')
+
+    def test_recenter_swing_completes(self):
+        self.assertEqual(self.swing(0x4000, 60)[-1], 0x4000,
+                         'swing never finished')
+
+    def test_recenter_swing_does_not_overshoot(self):
+        """Dividing the remainder by a countdown must approach monotonically."""
+        seen = self.swing(0x4000, 40)
+        for previous, current in zip(seen, seen[1:]):
+            self.assertGreaterEqual(current, previous)
+            self.assertLessEqual(current, 0x4000)
+
+    def test_recenter_swings_while_standing_still(self):
+        """Ordinary yaw follow is gated on movement; the swing is not."""
+        self.assertEqual(self.swing(0x4000, 60)[-1], 0x4000)
+
     def test_snap_is_immediate(self):
         """Recenter and void recovery must not ease; both call snap."""
         cam = Follow()
@@ -223,3 +263,5 @@ class FrameTimerWrapping(unittest.TestCase):
     def test_unaccounted_time_is_reported(self):
         """Timing only suspected phases cannot explain a frame."""
         self.assertIn('frame_timer_other', self.source)
+
+

@@ -118,7 +118,10 @@ class LocomotionTiming(unittest.TestCase):
         mask = text.split('uint16_t walk = buttons &', 1)[1].split(';', 1)[0]
         self.assertNotIn('CAMERA_L', mask.replace('CAMERA_LEFT', ''))
         self.assertIn('recenter = recenter_pressed', text)
-        self.assertIn('demo_yaw = demo_link_yaw', text)
+        # L must recenter, never orbit. It now starts an OoT-style swing
+        # instead of assigning demo_yaw directly, so the check is that the
+        # press reaches the camera's recenter entry point.
+        self.assertIn('oot_follow_recenter(&link_follow)', text)
 
     def test_r_does_not_reach_gameplay_orbit(self):
         text = (ROOT / 'src/demo.c').read_text()

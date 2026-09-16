@@ -288,8 +288,9 @@ void demo_update(void)
         int32_t was_x = demo_link.x, was_z = demo_link.z;
         bool recovered = false;
         if (recenter) {
-            demo_yaw = demo_link_yaw;
-            demo_pitch = 0;
+            /* Swing behind him over ~1 second, the way OoT's Normal1 does,
+             * rather than cutting the view there in one frame. */
+            oot_follow_recenter(&link_follow);
         }
         while (steps--) {
             bool grounded;
@@ -343,9 +344,9 @@ void demo_update(void)
          * The camera keeps its own spherical state and writes the eye, so the
          * previous per-axis easing toward a fixed 260-unit offset is gone --
          * that was a viewer approximation, not the original's behaviour. */
-        if (recovered || recenter) {
+        if (recovered) {
             /* Recovery must not ease: a camera left down in the void would
-             * show empty space on the way back. Recenter snaps by design. */
+             * show empty space on the way back. Recenter swings instead. */
             oot_follow_snap(&link_follow, &demo_link, demo_link_yaw);
         }
         oot_follow_update(&link_follow, &demo_link, demo_link_yaw,

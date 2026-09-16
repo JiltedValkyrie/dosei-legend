@@ -132,6 +132,14 @@ static void     place(const oot_follow_t *camera,
     eye_out->y = player->y - OOT_CAM_PLAYER_ORIGIN + OOT_CAM_Y_OFFSET + height;
 }
 
+void            oot_follow_recenter(oot_follow_t *camera)
+{
+    /* Do not reset yaw here: the swing works from wherever the camera is now.
+    ** Snapping first would defeat the whole point. */
+    camera->swing_timer = OOT_CAM_SWING_STEPS;
+    camera->initialised = true;
+}
+
 void            oot_follow_snap(oot_follow_t *camera,
                                 const camera_position_t *player,
                                 uint16_t facing)
@@ -140,6 +148,7 @@ void            oot_follow_snap(oot_follow_t *camera,
     camera->distance = OOT_CAM_DIST_MAX;
     camera->yaw = facing;
     camera->pitch = OOT_CAM_PITCH_TARGET;
+    camera->swing_timer = 0;
     camera->initialised = true;
 }
 
@@ -155,7 +164,17 @@ void            oot_follow_update(oot_follow_t *camera,
     /* Normal1 only swings back behind the player while he is actually moving
     ** (xzSpeed > 0.001). Standing still holds the current yaw, which is what
     ** keeps the view from drifting on its own. */
-    if (moving)
+    if (camera->swing_timer > 0)
+    {
+        /* Camera_Normal1's swing: divide what is left by the countdown, so
+        ** each step covers a larger share and the turn eases out, arriving
+        ** exactly as the timer expires. Movement does not interrupt it --
+        ** in OoT the swing is what puts the camera back behind the player. */
+        camera->yaw = angle_approach(camera->yaw, player_facing,
+                                     camera->swing_timer);
+        --camera->swing_timer;
+    }
+    else if (moving)
         camera->yaw = angle_approach(camera->yaw, player_facing, YAW_RATE);
 
     /* Distance eases between distMin and distMax rather than being fixed: the
