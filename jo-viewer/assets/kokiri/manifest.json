@@ -1,0 +1,202 @@
+{
+  "version": "ntsc-1.2 US",
+  "sequence": 60,
+  "soundfont": 15,
+  "sequence_sha256": "12c32a1fa0e7b4bc42e5868e883ba1720d5abf213a8894e37c086494c40a972b",
+  "font_sha256": "5b3a98ab5629ad133b443675313c6a7f73a65081b032e3e39f1a19e895acac0c",
+  "sample_sha256": {
+    "Sample117.wav": "6310c4acbdd1bf62a1faaa95b5b8c2777b1fc72402490e9fc8a0d66d8b75f501",
+    "Sample119.wav": "78ac69dbf39d92f1378deef550be71afd513c3dba2004e8b8761b45237898443",
+    "Sample361.wav": "577519dec842a3c66ec046fb72cb33750b4a5f81fd864e313183eccb02dec3f3",
+    "Sample362.wav": "a158f98480f86c5313ce9f9c1906b1e8269208214a3b35bfb836ab932c11bdef",
+    "Sample372.wav": "ccf458b1c949c77834a11d754359a1ddadb990b1164cd5bd2ebd4b23be828b3a",
+    "Sample373.wav": "9d7b05adda232916a9dfeb83fe909c606026d59284a6e92553ce122407be4441",
+    "Sample374.wav": "4111326fd81b5e53f5cdfa03d99f04e268039b9e411f2811977515c06b6ec20a",
+    "Sample381.wav": "61128ae9b0349dbf1c49569d7c45f687452e48ac1e83715140b7c836c88d6704",
+    "Sample382.wav": "eaa72835380a7a21faad853f0871e42950776ee76d4ead71784c71e2cfa610de",
+    "Sample383.wav": "1992fbe694c6227c74de2c8d21bdba0fc6d22fb4b15a3040606668c92c25f3c8",
+    "Sample384.wav": "3eed2e80930d899594f95dcabd8658b6fe5cf100b215f32c8b35cff28266ffef",
+    "Sample387.wav": "234db757d4772b05d2c4863a67ac0df341b951e0a359f60cd058ba0c70509e8f",
+    "Sample398.wav": "c8d32f56ff023e5d92ab323211765a45a71a253d591019203925238af68a77c3",
+    "Sample399.wav": "7bfebd5c1a46791b31b7fd42ff69de6ecb2d215265ca1ade577d9f15b38c066d",
+    "Sample400.wav": "b82237f44571aceaea69472677a3d0ead56821bead757f48d2724189bbde0a08",
+    "Sample401.wav": "92bb326ee2389af9296c2a483e9e74e5da86b99e18e5e4a6fcec7455d5bbf182"
+  },
+  "notes": 597,
+  "triggers": 597,
+  "frames": 3079,
+  "loop_frame": 497,
+  "voices": 24,
+  "tempo_changes": [
+    [
+      0,
+      145
+    ],
+    [
+      960,
+      145
+    ],
+    [
+      2496,
+      145
+    ],
+    [
+      4416,
+      145
+    ]
+  ],
+  "intro_ticks": 960,
+  "end_ticks": 5952,
+  "intro_seconds": 8.275862068965644,
+  "total_seconds": 51.31034482758793,
+  "loop_seconds": 43.03448275862229,
+  "pcm_bytes": 480082,
+  "levels_bytes": 73896,
+  "omitted_opcodes": [
+    "initchan",
+    "mutebhv",
+    "mutescale",
+    "noshort",
+    "notepri",
+    "reverb",
+    "vibdepth"
+  ],
+  "limitations": [
+    "No N64 reverb or vibrato",
+    "PCM resampled to fit SCSP RAM",
+    "60 Hz envelopes and quantized SCSP pitch/pan",
+    "Four-frame fade before loop; voices restart at loop point",
+    "Host preview, not target playback verification"
+  ],
+  "samples": [
+    {
+      "name": "SAMPLE_0_117",
+      "offset": 0,
+      "loop_start": 12969,
+      "loop_end": 17276,
+      "rate": 13175,
+      "unity": 60
+    },
+    {
+      "name": "SAMPLE_0_119",
+      "offset": 34560,
+      "loop_start": 16684,
+      "loop_end": 17601,
+      "rate": 4391,
+      "unity": 55
+    },
+    {
+      "name": "SAMPLE_0_361",
+      "offset": 69770,
+      "loop_start": 10454,
+      "loop_end": 15139,
+      "rate": 13175,
+      "unity": 60
+    },
+    {
+      "name": "SAMPLE_0_362",
+      "offset": 100056,
+      "loop_start": 19047,
+      "loop_end": 20860,
+      "rate": 17567,
+      "unity": 71
+    },
+    {
+      "name": "SAMPLE_0_372",
+      "offset": 141784,
+      "loop_start": 9267,
+      "loop_end": 20001,
+      "rate": 17567,
+      "unity": 36
+    },
+    {
+      "name": "SAMPLE_0_373",
+      "offset": 181794,
+      "loop_start": 5460,
+      "loop_end": 17648,
+      "rate": 17567,
+      "unity": 56
+    },
+    {
+      "name": "SAMPLE_0_374",
+      "offset": 217098,
+      "loop_start": 5315,
+      "loop_end": 15202,
+      "rate": 17567,
+      "unity": 68
+    },
+    {
+      "name": "SAMPLE_0_381",
+      "offset": 247510,
+      "loop_start": 3176,
+      "loop_end": 4642,
+      "rate": 17567,
+      "unity": 76
+    },
+    {
+      "name": "SAMPLE_0_382",
+      "offset": 256802,
+      "loop_start": 3477,
+      "loop_end": 5233,
+      "rate": 17567,
+      "unity": 45
+    },
+    {
+      "name": "SAMPLE_0_383",
+      "offset": 267276,
+      "loop_start": 12093,
+      "loop_end": 12661,
+      "rate": 17567,
+      "unity": 47
+    },
+    {
+      "name": "SAMPLE_0_384",
+      "offset": 292606,
+      "loop_start": 12076,
+      "loop_end": 13094,
+      "rate": 17567,
+      "unity": 70
+    },
+    {
+      "name": "SAMPLE_0_387",
+      "offset": 318802,
+      "loop_start": 10654,
+      "loop_end": 30308,
+      "rate": 17567,
+      "unity": 60
+    },
+    {
+      "name": "SAMPLE_0_398",
+      "offset": 379426,
+      "loop_start": 1894,
+      "loop_end": 2968,
+      "rate": 8783,
+      "unity": 60
+    },
+    {
+      "name": "SAMPLE_0_399",
+      "offset": 385370,
+      "loop_start": 28765,
+      "loop_end": 29348,
+      "rate": 17567,
+      "unity": 55
+    },
+    {
+      "name": "SAMPLE_0_400",
+      "offset": 444074,
+      "loop_start": 7357,
+      "loop_end": 9632,
+      "rate": 8783,
+      "unity": 50
+    },
+    {
+      "name": "SAMPLE_0_401",
+      "offset": 463346,
+      "loop_start": 7467,
+      "loop_end": 8364,
+      "rate": 17567,
+      "unity": 74
+    }
+  ],
+  "preview_peak": 0.47665780204663816
+}

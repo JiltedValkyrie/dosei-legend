@@ -2,7 +2,7 @@
 """Build a live SCSP score from ZeldaRET's fresh US 1.2 extraction.
 
 No fan MIDI or legacy generated tables are inputs. The supported opcode set
-is intentionally limited to seq_30; unexpected instructions fail the build.
+covers seq_30 and seq_60; unexpected instructions fail the build.
 Expressive effects omitted by this port are recorded in the manifest.
 """
 import argparse
@@ -49,8 +49,10 @@ def parse(path):
             a = a.strip()
             if a.startswith('PITCH_'):
                 args.append(pitch(a[6:]))
-            elif a.startswith('SF6_INST_'):
-                args.append(int(a[9:]))
+            elif re.fullmatch(r'SF\d+_INST_\d+', a):
+                args.append(int(a.rsplit('_', 1)[1]))
+            elif a.startswith('IO_PORT_'):
+                args.append(int(a[8:]))
             else:
                 try:
                     args.append(int(a, 0))
@@ -67,9 +69,11 @@ class Script:
     stack: list = field(default_factory=list)
     done: bool = False
     last_delay: int = 0
+    transpose: int = 0
+    value: int = 0
 
 
-def interpret(path):
+def interpret(path, loop_label='SEQ_0027'):
     code, labels = parse(path)
     seq = Script(labels['SEQ_0000'])
     channels, notes, tempo, volumes = {}, [], [], {}
@@ -77,13 +81,14 @@ def interpret(path):
     loop_start = None
     seq_volume = 127
     finished = False
+    io = [-1] * 8  # Fresh playback, not a game-requested section resume.
 
     def run(script, tick, kind, channel=None, channel_id=None):
         nonlocal finished, loop_start, seq_volume
         if script.done or tick < script.wake:
             return
         for _ in range(10000):
-            if kind == 'sequence' and script.pc == labels['SEQ_0027']:
+            if kind == 'sequence' and script.pc == labels[loop_label]:
                 loop_start = tick
             op, a = code[script.pc]
             script.pc += 1
@@ -100,10 +105,28 @@ def interpret(path):
                     script.done = True
                     return
             elif op == 'jump':
-                if kind == 'sequence' and a[0] == 'SEQ_0027':
+                if kind == 'sequence' and a[0] == loop_label:
                     finished = True
                     return
                 script.pc = labels[a[0]]
+            elif op == 'ldi':
+                script.value = (a[0] + 128) % 256 - 128
+            elif op == 'ldio':
+                assert kind == 'sequence'
+                script.value = io[a[0]]
+                if a[0] < 2:
+                    io[a[0]] = -1
+            elif op == 'stio':
+                assert kind == 'sequence'
+                io[a[0]] = script.value
+            elif op == 'sub':
+                script.value = (script.value - a[0] + 128) % 256 - 128
+            elif op in ('beqz', 'rbeqz', 'rbltz'):
+                if (script.value < 0 if op == 'rbltz' else script.value == 0):
+                    script.pc = labels[a[0]]
+            elif op == 'transpose':
+                assert kind == 'layer', 'Only layer transpose implemented'
+                script.transpose = (a[0] + 128) % 256 - 128
             elif op == 'tempo':
                 assert kind == 'sequence'
                 tempo.append((tick, a[0]))
@@ -115,6 +138,7 @@ def interpret(path):
             elif op == 'ldlayer':
                 channel['layers'][a[0]] = Script(labels[a[1]], tick)
             elif op == 'instr':
+                assert kind == 'channel'
                 channel['program'] = a[0]
             elif op == 'pan':
                 channel['pan'] = a[0]
@@ -135,7 +159,8 @@ def interpret(path):
                     script.last_delay = delay
                 assert delay > 0 and channel['program'] is not None
                 notes.append(dict(tick=tick, end_tick=tick + delay - ((delay * gate) >> 8),
-                                  program=channel['program'], key=key, velocity=velocity,
+                                  program=channel['program'],
+                                  key=key + script.transpose, velocity=velocity,
                                   pan=channel['pan'], channel=channel_id))
                 script.wake = tick + delay
                 return
@@ -210,8 +235,8 @@ def resample(pcm, ratio, loop_start):
     return result
 
 
-def load_font(source):
-    font = ET.parse(source / 'soundfonts/Soundfont_6.xml').getroot()
+def load_font(source, font_id=6):
+    font = ET.parse(source / f'soundfonts/Soundfont_{font_id}.xml').getroot()
     envelopes = {e.attrib['Name']: dict(release=int(e.attrib['Release']),
                  points=[(int(p.attrib['Delay']), int(p.attrib['Arg'])) for p in e])
                  for e in font.find('Envelopes')}
@@ -294,9 +319,10 @@ def bake(notes, times, changes, seq_volume, envelopes, instruments, samples, end
         variant = ('Lo' if n['key'] < pitch(instrument.get('RangeLo', 'C0')) else
                    'Hi' if n['key'] > pitch(instrument.get('RangeHi', 'B9')) else '')
         sample = next(s for s in samples if s['name'] == instrument['Sample' + variant])
-        # Honor per-instrument tuning overrides if a future font supplies them.
-        assert not any('Rate' in k or 'Note' in k for k in instrument), instrument
-        rate = sample['rate'] * 2 ** ((n['key'] - sample['unity']) / 12)
+        # Soundfont 15 overrides the high split's base note for program 14.
+        assert not any('Rate' in k for k in instrument), instrument
+        unity = pitch(instrument['BaseNote' + variant]) if 'BaseNote' + variant in instrument else sample['unity']
+        rate = sample['rate'] * 2 ** ((n['key'] - unity) / 12)
         start = times[n['tick']]
         gate = times[min(n['end_tick'], end_tick)]
         gate_level = envelope_level(env, gate - start)
