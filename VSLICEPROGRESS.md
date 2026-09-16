@@ -14,7 +14,7 @@ The workshop still produces editing candidates, not runtime-ready quads.
 
 | Area | Status | Next useful step |
 | --- | --- | --- |
-| Forest | Implemented; near-camera warping is a major reported bug | Fix close-view readability |
+| Forest | Hybrid textures and capped close-ground/treeline subdivision implemented; moving Kronos probe checked | Human close-view playability check; remaining affine distortion is not declared eliminated |
 | Title/prompt | Implemented and observed in Kronos | Preserve |
 | Playable Link, camera, collision | Implemented in `5415ae8` | Feature-specific gameplay checks |
 | Animation | Static pose; no walk cycle | Walk while moving, idle when stopped |
@@ -43,6 +43,15 @@ The workshop still produces editing candidates, not runtime-ready quads.
 
 Record date, behavior delivered, brief evidence and user-visible limitations.
 Do not turn this into a benchmark checklist.
+
+- 2026-09-16: Astra took over the texture work. Source-UV hybrid rendering is
+  now active, with shared repeating tiles, larger ground bakes and limited
+  geometry splits. Old near-treeline disappearance reproduced; new split path
+  retains it on the approach/turn probe with zero refusals. 52 game tests pass.
+  Total with Link: 2,446 polygons / 2,112 vertices / 425,288 VDP1 texture+CLUT
+  bytes. Collision and title/music unchanged. Render-component metadata exists
+  for future hut/tree visibility; runtime culling is not implemented.
+  Details/evidence/fallback: [texture handoff](game/docs/TEXTURE_PLAN.md).
 
 - 2026-09-16: Established scope/progress tracking. Preserved current Link,
   collision and music-transition work for the main-branch checkpoint. Added

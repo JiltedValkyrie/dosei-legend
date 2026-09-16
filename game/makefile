@@ -62,6 +62,9 @@ _CCFLAGS += -include src/video_mode.h
 ifeq ($(HIRES),1)
 _CCFLAGS += -DDOSEI_HIRES
 endif
+ifeq ($(TEXTURE_PROBE),1)
+_CCFLAGS += -DDOSEI_TEXTURE_PROBE
+endif
 
 # --- keep build products inside this project -------------------------------
 # The stock makefile derives OBJS as $(SRCS:.c=.o) and compiles via a .c.o
@@ -85,6 +88,7 @@ $(OBJDIR)/%.o: src/%.c src/video_mode.h | $(OBJDIR)
 
 $(OBJDIR)/demo_camera.o: ../shared/lib/camera/kokiri_camera.c ../shared/lib/camera/kokiri_camera.h ../shared/lib/collision/kokiri_collision.h
 $(OBJDIR)/demo_collision.o: ../shared/lib/collision/kokiri_collision.c ../shared/lib/collision/kokiri_collision.h
+$(OBJDIR)/main.o $(OBJDIR)/kokiri_sgl.o: build/generated/kokiri_scene.h build/generated/link_scene.h build/generated/vdp1_layout.h
 
 $(OBJDIR)/music.o: ../shared/lib/music/music.c ../shared/lib/music/music.h src/video_mode.h | $(OBJDIR)
 	$(CC) $< $(DFLAGS) $(CCFLAGS) $(_CCFLAGS) -o $@

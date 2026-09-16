@@ -10,9 +10,10 @@
 ** and Link. They are uploaded back to back through the same path, so the only
 ** per-mesh state is where each one's tiles and sprite slots start.
 **
-** VDP1 VRAM budget (jo/sega_saturn.h): the user area starts at offset 0x10000
-** and runs for JO_VDP1_USER_AREA_SIZE (0x71D38 = 466232 bytes). The
-** framebuffers live outside it, at JO_VDP1_FB.
+** Generated vdp1_layout.h reserves commands below GAME_TEXTURE_BASE and
+** ends textures at Jo's physical user-area end. The SDK's nominal size does
+** not agree with its start/end addresses; do not use it as a capacity check.
+** The framebuffers are separate, at JO_VDP1_FB.
 */
 
 #include <jo/jo.h>
@@ -20,6 +21,7 @@
 #include "kokiri_scene.h"
 #include "link_scene.h"
 #include "kokiri_sgl.h"
+#include "vdp1_layout.h"
 
 /* Pixel blobs are staged on the CD rather than compiled in: as C arrays they
 ** would add ~360 KB to the ELF. */
@@ -47,18 +49,18 @@ static bool         mesh_load(const char *file, unsigned int pixel_bytes,
                               PDATA *pdata, unsigned int polygons)
 {
     unsigned char   *base = (unsigned char *)JO_VDP1_VRAM
-                            + JO_VDP1_TEXTURE_DEF_BASE_ADDRESS;
+                            + GAME_TEXTURE_BASE;
     unsigned int     clut_bytes = tile_count * 32;
     unsigned char   *pixel_vram, *clut_vram;
     char            *loaded;
     int              length = 0;
     unsigned int     i, sprite_base = sprite_next;
 
-    if (vram_used + pixel_bytes + clut_bytes > JO_VDP1_USER_AREA_SIZE)
+    if (vram_used + pixel_bytes + clut_bytes > GAME_TEXTURE_BYTES)
     {
         jo_core_error("%s needs %d more VDP1 bytes, %d used of %d", file,
                       (int)(pixel_bytes + clut_bytes), (int)vram_used,
-                      (int)JO_VDP1_USER_AREA_SIZE);
+                      (int)GAME_TEXTURE_BYTES);
         return (false);
     }
     if (sprite_base + tile_count > JO_MAX_SPRITE)

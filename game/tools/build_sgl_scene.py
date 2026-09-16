@@ -112,6 +112,31 @@ def collect_tiles(data, head, faces):
     return tiles
 
 
+def replace_with_checker(tiles):
+    """Swap every tile for the same checkerboard.
+
+    Diagnostic only. A regular grid makes the mapping legible: even squares mean
+    the texture is being sampled as intended and any distortion is the affine
+    stretch VDP1 always applies, while a smeared or folded grid means the corner
+    mapping itself is wrong.
+    """
+    clut = tuple([0x0000] + [0x8000 | (31 << (5 * c)) for c in range(3)] * 5)
+    for tile in tiles.values():
+        w, h = tile['width'], tile['height']
+        pixels = bytearray()
+        for y in range(h):
+            row = []
+            for x in range(w):
+                # 4x4 checker, with a distinct colour every other block so
+                # rotation and folding are visible as well as stretching.
+                block = ((x >> 2) + (y >> 2))
+                row.append(1 + (block % 3) if (block & 1) else 0)
+            for x in range(0, w, 2):
+                pixels.append((row[x] << 4) | row[x + 1])
+        tile['clut'] = clut
+        tile['pixels'] = bytes(pixels)
+
+
 def emit(head, verts, faces, tiles, out_dir, name='kokiri'):
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -188,10 +213,15 @@ def emit(head, verts, faces, tiles, out_dir, name='kokiri'):
     blob = bytearray()
     descs = []
     for tile in tiles.values():
+        if tile['width'] % 8 or not 8 <= tile['width'] <= 504 or not 1 <= tile['height'] <= 255:
+            raise ValueError('invalid VDP1 texture dimensions')
+        if len(tile['pixels']) != tile['width'] * tile['height'] // 2:
+            raise ValueError('tile pixel count does not match its descriptor')
         descs.append('    { %d, %d, %d, %d },'
                      % (tile['width'], tile['height'], len(blob),
                         len(tile['pixels'])))
         blob.extend(tile['pixels'])
+        blob.extend(bytes((-len(blob)) % 8))
 
     tex = [banner, '', '#include "@n@_scene.h"', '',
            'const @n@_tile @n@_tiles[@N@_TILE_COUNT] = {']
@@ -247,7 +277,23 @@ def main():
     ap.add_argument('--out', type=pathlib.Path, default=root / 'build/generated')
     ap.add_argument('--model', type=pathlib.Path, default=root / 'build/generated' / 'LINK.BIN',
                     help='actor mesh in the same KFR1 container; skipped if absent')
+    ap.add_argument('--diagnostic-tiles', action='store_true',
+                    help='replace every scene tile with a checkerboard, to make '
+                         'the texture mapping itself visible in-game')
+    ap.add_argument('--texture-path', choices=('legacy', 'patches', 'hybrid'), default='hybrid')
+    ap.add_argument('--oot', type=pathlib.Path,
+                    default=pathlib.Path('D:/Workspace-Claude/game-decomps/n64/oot'))
     args = ap.parse_args()
+    if args.texture_path == 'legacy':
+        (args.out / 'texture_manifest.json').unlink(missing_ok=True)
+
+    from vdp1_budget import Budget, TEXTURE_BASE, VDP1_USER_AREA
+    budget = Budget()
+    args.out.mkdir(parents=True, exist_ok=True)
+    (args.out / 'vdp1_layout.h').write_text(
+        '/* Generated: command table below textures, never subtracted twice. */\n'
+        '#define GAME_TEXTURE_BASE 0x%X\n#define GAME_TEXTURE_BYTES %d\n'
+        % (TEXTURE_BASE, VDP1_USER_AREA))
 
     total_polygons = 0
     for source, name in ((args.scene, 'kokiri'), (args.model, 'link')):
@@ -256,8 +302,21 @@ def main():
             continue
         data, head, verts, faces = read_scene(source)
         tiles = collect_tiles(data, head, faces)
+        if name == 'kokiri' and args.texture_path != 'legacy':
+            from build_hybrid_scene import convert
+            actor = dict(tiles=[], polygons=0, vertices=0)
+            if args.model.is_file():
+                ad, ah, av, af = read_scene(args.model)
+                at = collect_tiles(ad, ah, af)
+                actor = dict(tiles=[(t['width'],t['height']) for t in at.values()],
+                             polygons=len(af), vertices=len(av))
+            head, verts, faces, tiles = convert(args.oot, head, actor, args.out,
+                                               args.texture_path == 'patches')
+        if args.diagnostic_tiles and name == 'kokiri':
+            replace_with_checker(tiles)
         blob_bytes = emit(head, verts, faces, tiles, args.out, name)
         total_polygons += len(faces)
+        budget.add(name, [(t['width'],t['height']) for t in tiles.values()], len(faces), len(verts))
 
         cull = sum(1 for f in faces if f['cull'])
         mesh = sum(1 for f in faces if f['mesh'])
@@ -271,6 +330,8 @@ def main():
     # Everything submitted in one frame shares SGL's per-frame polygon budget,
     # so the work area (tools/build_sgl_area.py) must cover this total.
     print('frame   : %d polygons across all meshes' % total_polygons)
+    if budget.failures():
+        sys.exit('; '.join(budget.failures()))
     print('out     : %s' % args.out)
 
 

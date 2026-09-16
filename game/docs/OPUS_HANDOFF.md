@@ -1,4 +1,39 @@
-# Opus: fix near-camera warping next
+# Opus: texture-path implementation handed back
+
+## Astra's current result — 2026-09-16
+
+Read the **Astra implementation** section at the bottom of
+[TEXTURE_PLAN.md](TEXTURE_PLAN.md) first. The earlier brief below is historical.
+
+- The source-UV hybrid converter is now the default game path, not just a plan.
+  Shared/repeating quads, larger density-budgeted bakes, tall-edge splits, and
+  50 capped close-ground subdivisions are implemented.
+- Important correction: the checker did not settle the whole cause. On the
+  same moving close-treeline probe, the legacy path disappears while the split
+  path retains coverage. Submission success alone never established visibility.
+- Combined with Link: **2,446 polygons, 2,112 vertices, 425,288 texture/CLUT bytes**.
+  VRAM commands are reserved separately below `0x16500`; texture capacity is
+  432,632 bytes, not Jo's inconsistent nominal size. Do not subtract commands
+  twice or claim Work RAM SpriteBuf replaces VDP1's hardware command table.
+- Flat Link uses 95 tiles / 7,880 bytes including CLUTs; face art retained.
+- Collision, controls, title/music and baked-Y boundary preserved. The generated
+  manifest has connected render components/bounds for later object visibility;
+  no runtime visibility toggling or collision partitioning yet.
+- 52 game tests pass. The optional hi-res probe has rendered ground and treeline
+  through approach/turns with zero refusals. See local `acceptance-sweep-*.png`.
+  This is not a claim that all affine distortion or every near-plane case is gone.
+- Both standard and hi-res normal-play images were rebuilt after the probe.
+  Standard title-to-gameplay, Link movement and turning were checked in Kronos;
+  normal hi-res title-to-gameplay was also observed (`gameplay-hires-final-1.png`).
+  hi-res retains 25,024 bytes of `.bss` headroom below the unchanged SGL area.
+- Build/run/fallback/probe commands are in [game README](../README.md). Normal
+  launch images must be rebuilt without `TEXTURE_PROBE=1` after diagnostic use.
+
+Nothing committed in this pass. Preserve the human's `LICENSE` edit. Once the
+human confirms close-view playability, continue walk/idle animation, then one
+NPC conversation, menus and SFX. Do not restart music timing/optimization work.
+
+## Original investigation brief (historical)
 
 ## Current project
 

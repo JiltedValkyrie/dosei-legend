@@ -37,6 +37,35 @@ static bool         music_ready;
 static bool         debug_visible;
 static unsigned int rejected_total;
 static void         viewer_hud(void);
+#ifdef DOSEI_TEXTURE_PROBE
+#include "texture_probe.h"
+static unsigned int probe_frame;
+static unsigned int probe_stage;
+static void texture_probe(void)
+{
+    unsigned int phase = probe_frame++ % 720;
+    unsigned int step = phase % 360;
+    int distance = step < 180 ? 500 - (int)step * 2 : 140;
+    int turn = step < 180 ? 0 : ((int)step - 270) * 20;
+    probe_stage = phase / 120;
+    demo_link_active = false;
+    demo_pitch = 0;
+    if (phase < 360) {
+        demo_camera.x = PROBE_GROUND_X;
+        demo_camera.y = PROBE_GROUND_Y + 110;
+        demo_camera.z = PROBE_GROUND_Z - distance;
+        demo_yaw = (uint16_t)turn;
+    } else {
+        distance += 200;
+        demo_camera.x = PROBE_TREE_X;
+        demo_camera.y = PROBE_TREE_Y;
+        demo_camera.z = PROBE_TREE_Z + distance;
+        demo_yaw = (uint16_t)(32768 + turn);
+    }
+    slScrAutoDisp(NBG0ON);
+    debug_visible = true;
+}
+#endif
 
 static void         viewer_draw(void)
 {
@@ -56,6 +85,9 @@ static void         viewer_draw(void)
     ** the original 90 angle units/tick pan independent of render rate. */
     demo_update();
     music_service();
+#ifdef DOSEI_TEXTURE_PROBE
+    texture_probe();
+#endif
 #ifdef DOSEI_HIRES
     /* Double only projected Y, keeping the same framing at 320x480i. */
     slScale(toFIXED(1), toFIXED(2), toFIXED(1));
@@ -103,6 +135,9 @@ static void         viewer_hud(void)
         return;
     }
     jo_printf(0, 0, "Jo/SGL Kokiri viewer");
+#ifdef DOSEI_TEXTURE_PROBE
+    jo_printf(0, 0, "TEXTURE PROBE stage %d   ", (int)probe_stage);
+#endif
     jo_printf(0, 1, "verts %d tris %d tiles %d",
               KOKIRI_VERTEX_COUNT, KOKIRI_POLYGON_COUNT, KOKIRI_TILE_COUNT);
     jo_printf(0, 2, "cam %d,%d,%d pan %d   ", (int)demo_camera.x, (int)demo_camera.y, (int)demo_camera.z,

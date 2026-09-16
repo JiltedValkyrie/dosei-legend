@@ -28,8 +28,8 @@ cp "$here/disc/ABS.TXT" "$here/disc/BIB.TXT" "$here/disc/CPY.TXT" "$here/build/c
 # Regenerate the SGL tables from the original scene, then stage the 4bpp blob
 # on the CD image. Both are cheap and keep game.iso consistent with FOREST.BIN.
 python "$here/tools/build_sgl_area.py"
-python "$here/tools/build_link_model.py"
-python "$here/tools/build_sgl_scene.py"
+python "$here/tools/build_link_model.py" --flat
+python "$here/tools/build_sgl_scene.py" --texture-path "${TEXTURE_PATH:-hybrid}"
 python "$here/tools/build_demo_assets.py"
 cp "$here/build/generated/kokiri_pixels.bin" "$here/build/cd/KOKIRI.TEX"
 cp "$here/build/generated/link_pixels.bin" "$here/build/cd/LINK.TEX"

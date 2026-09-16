@@ -160,6 +160,9 @@ def walk_skeleton(limbs, rotations, root, index=0, parent=None, out=None):
 EYES_OPEN_OFFSET = 0x0000     # gLinkChildEyesOpenTex
 MOUTH_CLOSED_OFFSET = 0x4000  # gLinkChildMouthClosedTex
 GAMEPLAY_KEEP_SEGMENT = 4
+# Segments the face textures arrive on. Those keep their artwork when Link is
+# flat shaded; everything else collapses to one colour per face.
+FACE_SEGMENTS = (8, 9)
 
 
 class LimbLists(scene_tool.DisplayLists):
@@ -260,6 +263,38 @@ def apply_primitive_colour(faces):
     return tinted
 
 
+def flatten_faces(faces):
+    """Collapse each face's texture to a single averaged colour.
+
+    Link is 62 units tall and his median face spans 7 units, so a 16x16 tile
+    gives him 0.4 world units per texel -- roughly 35x finer than the scene's
+    median face, on a model that is mostly flat-coloured cloth and skin anyway.
+    That detail is invisible in play and the VRAM it costs is needed by the
+    ground, which is what actually smears.
+
+    The eyes and mouth keep their artwork: they are the one place the texture
+    carries shape rather than shade, and losing them makes Link faceless.
+    """
+    flattened = 0
+    for face in faces:
+        if face.get('texture_segment') in FACE_SEGMENTS:
+            continue
+        texture = face['texture']
+        if not texture:
+            continue
+        colours = texture['colors']
+        if not colours:
+            continue
+        opaque = [c for c in colours if c[3] >= 64] or colours
+        n = len(opaque)
+        average = tuple(sum(c[i] for c in opaque) // n for i in range(3)) + (255,)
+        face['texture'] = dict(width=1, height=1, colors=[average],
+                               scale=(1.0, 1.0), shifts=0, shiftt=0,
+                               uls=0, ult=0, cms=2, cmt=2, masks=0, maskt=0)
+        flattened += 1
+    return flattened
+
+
 def scale_faces(faces, scale):
     for face in faces:
         face['vertices'] = [
@@ -301,14 +336,34 @@ def write_model(faces, out_path):
     records = bytearray()
     tiles = {}
     for face in faces:
-        tile = scene_tool.bake(face, 16)
+        # A face collapsed to one colour needs no resolution: the smallest
+        # tile VDP1 addresses carries it exactly as well as a 16x16 would, and
+        # the difference is VRAM the ground needs.
+        source_texture = face.get('texture')
+        flat = source_texture is not None and source_texture.get('width') == 1 and source_texture.get('height') == 1
+        if flat:
+            # One lit colour per flat face, deduplicated after RGB555 conversion.
+            # Keep eye/mouth artwork on the normal textured path.
+            sample = dict(face)
+            corners = face['vertices']
+            sample_centre = tuple(sum((v[k] if v[k] < 128 else v[k]-256)
+                                      if face['lighting'] and 5 <= k <= 7 else v[k]
+                                      for v in corners) / 3 for k in range(9))
+            sample['vertices'] = [sample_centre] * 3
+            baked = scene_tool.bake(sample, 8)
+            colour = struct.unpack_from('>H', baked, 2 * (baked[32] >> 4))[0]
+            tile = struct.pack('>16H', 0, colour, *([0] * 14)) + bytes([0x11] * 8)
+            width, height = 8, 2
+        else:
+            tile = scene_tool.bake(face, 16)
+            width, height = 16, 16
         if tile not in tiles:
             tiles[tile] = len(texture)
             texture.extend(tile)
         offset = tiles[tile]
         ids = [lookup[v[:3]] for v in face['vertices']]
         records.extend(struct.pack('>4HIIHH', *ids, ids[2], offset + 32, offset,
-                                   (16 // 8) << 8 | 16,
+                                   (width // 8) << 8 | height,
                                    int(face['transparent']) | (int(face['cull']) << 1)))
 
     vertex_data = b''.join(struct.pack('>3h', *p) for p in positions)
@@ -337,6 +392,9 @@ def main():
     ap.add_argument('--animation', type=lambda v: int(v, 0), default=int(recipe['animation'], 0),
                     help='LinkAnimationHeader offset in gameplay_keep')
     ap.add_argument('--frame', type=int, default=recipe['frame'])
+    ap.add_argument('--flat', action='store_true',
+                    help='collapse every face except the eyes and mouth to a '
+                         'single colour, freeing VDP1 VRAM for the scene')
     args = ap.parse_args()
 
     data = read_object(args.oot, OBJECT)
@@ -347,6 +405,7 @@ def main():
                                              args.frame, LIMB_COUNT)
     placed = walk_skeleton(limbs, rotations, root)
     faces = collect_faces(data, keep, placed)
+    flattened = flatten_faces(faces) if args.flat else 0
     tinted = apply_primitive_colour(faces)
     faces = scale_faces(faces, args.scale)
     faces = drop_degenerate(faces)
@@ -363,6 +422,9 @@ def main():
     print('faces   : %d  vertices %d  tiles %d'
           % (len(faces), len(positions), len(tiles)))
     print('prim    : %d faces tinted by primitive colour (tunic/hat)' % tinted)
+    if args.flat:
+        print('flat    : %d faces collapsed to one colour (eyes/mouth kept)'
+              % flattened)
     print('extent  : x %s  y %s  z %s' % tuple(extent))
     print('height  : %d world units' % (extent[1][1] - extent[1][0]))
     print('out     : %s' % args.out)
