@@ -1,5 +1,7 @@
 # Build output. The shared SDK is never written to; objects land here instead.
 obj/
+obj-hires/
+game-hires.raw
 game.raw
 
 # Generated from ../title-screen/cd/FOREST.BIN by tools/build_sgl_scene.py.

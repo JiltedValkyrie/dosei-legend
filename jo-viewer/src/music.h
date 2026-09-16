@@ -66,6 +66,16 @@ bool music_failed(void);
 /** @brief Vblanks the last completed switch took, end to end. 0 if none. */
 unsigned int music_transition_frames(void);
 
+/** @brief Vblanks from the switch request to the new bank actually playing. */
+unsigned int music_audible_frames(void);
+
+/** @brief Longest gap in vblanks between service calls during the last switch,
+ *  i.e. the worst frame stall the streaming load caused. */
+unsigned int music_worst_stall(void);
+
+/** @brief Completed switches since init. */
+unsigned int music_swap_count(void);
+
 /** @brief Score frames advanced since init; a liveness counter. */
 unsigned int music_ticks(void);
 

@@ -103,15 +103,21 @@ void demo_update(void)
         MAP(L); MAP(R); MAP(X); MAP(Y); MAP(Z); MAP(C);
         MAP(UP); MAP(DOWN); MAP(LEFT); MAP(RIGHT);
 #undef MAP
-        if (jo_is_pad1_key_down(JO_KEY_START)) {
+        /* Ignore Start while a score switch is running: music_fade_to() would
+         * refuse it anyway, and toggling the title regardless would leave the
+         * artwork and the music disagreeing about which state we are in. */
+        if (jo_is_pad1_key_down(JO_KEY_START) && !music_busy()) {
             title_visible = !title_visible;
             /* Starting the game puts Link in the world. He spawns from the
              * same collision search the free camera used, so he stands on a
              * real floor rather than at an assumed height. */
-            /* Title gone: hand the score over to the forest track. The fade
-             * length is the caller's choice, not baked into the player. */
-            if (!title_visible)
-                music_fade_to(&music_bank_kokiri, DEMO_MUSIC_FADE_FRAMES);
+            /* Follow the title with the score, both ways. music_fade_to()
+             * refuses while a switch is running, so held or repeated presses
+             * cannot stack transitions. The fade length is the caller's
+             * choice, not baked into the player. */
+            music_fade_to(title_visible ? &music_bank_title
+                                        : &music_bank_kokiri,
+                          DEMO_MUSIC_FADE_FRAMES);
             if (!title_visible && !demo_link_active) {
                 if (kokiri_collision_spawn(&demo_link)) {
                     int32_t sine, cosine;

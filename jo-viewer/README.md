@@ -52,6 +52,14 @@ the generated capture configuration. The normal batch launcher sets neither.
 
 ## Build and run
 
+Standard: `./build.sh` then `run-kronos.bat` (320x240).
+Hi-res experiment: `./build.sh --hires` then `run-kronos-hires.bat` (320x480i).
+Both retain the same scene, Link, controls, title and music. Separate object trees
+and `game` / `game-hires` disc images prevent mode contamination. Build sequentially
+because generated assets and the CD staging directory are shared. The hi-res
+mode doubles vertical resolution only; it is not a texture-warping fix. Native
+hardware appearance and the preferred mode remain for human comparison.
+
 ```bash
 ./build.sh          # converts the scene, compiles, makes game.iso + game.cue
 ```

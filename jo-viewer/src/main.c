@@ -56,6 +56,10 @@ static void         viewer_draw(void)
     ** the original 90 angle units/tick pan independent of render rate. */
     demo_update();
     music_service();
+#ifdef DOSEI_HIRES
+    /* Double only projected Y, keeping the same framing at 320x480i. */
+    slScale(toFIXED(1), toFIXED(2), toFIXED(1));
+#endif
     slRotX((ANGLE)(0u-demo_pitch));
     slRotY((ANGLE)(0u-demo_yaw));
     jo_3d_translate_matrix(-demo_camera.x, demo_camera.y, -demo_camera.z);
@@ -83,11 +87,15 @@ static void         viewer_hud(void)
         ** quickest way to tell a framing problem from a movement one. */
         /* Switch timing stays visible without the debug toggle: the budget
         ** for title -> forest is two seconds and this is the measurement. */
-        jo_printf(0, 0, "%s %s swap %d ms%s   ",
+        /* Kept inside 40 columns: the Saturn screen truncates past that and
+        ** the stall figure was being cut off. a=audible f=full s=worst stall. */
+        jo_printf(0, 0, "%s n%d a%d f%d s%d%s   ",
                   music_current() == &music_bank_kokiri ? "kokiri" : "title",
-                  music_busy() ? "..." : "ok",
+                  (int)music_swap_count(),
+                  (int)(music_audible_frames() * 1000 / 60),
                   (int)(music_transition_frames() * 1000 / 60),
-                  music_failed() ? " FAILED" : "");
+                  (int)(music_worst_stall() * 1000 / 60),
+                  music_failed() ? " FAIL" : "");
         if (demo_link_active)
             jo_printf(0, 1, "L %d,%d yaw %d  C %d,%d pan %d   ",
                       (int)demo_link.x, (int)demo_link.z, (int)demo_link_yaw,
@@ -131,6 +139,11 @@ static void         viewer_hud(void)
 void                jo_main(void)
 {
     jo_core_init(JO_COLOR_Black);
+#ifdef DOSEI_HIRES
+    /* VDP2 samples the existing title/font at half rate vertically. */
+    jo_vdp2_zoom_nbg0f(1.0f, 0.5f);
+    jo_vdp2_zoom_nbg1f(1.0f, 0.5f);
+#endif
     jo_core_set_screens_order(JO_NBG0_SCREEN, JO_NBG1_SCREEN, JO_SPRITE_SCREEN,
                              JO_RBG0_SCREEN, JO_NBG2_SCREEN, JO_NBG3_SCREEN);
     slSetScreenDist(toFIXED(SCREEN_DISTANCE));

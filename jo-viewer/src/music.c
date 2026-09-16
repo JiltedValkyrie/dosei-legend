@@ -12,8 +12,8 @@
 #define VOLUME_MAX       15
 /* Default half-fade length; music_fade_to() takes an explicit one. */
 #define FADE_DEFAULT     15
-#define LOAD_CHUNK       2048          /* staging buffer, word-copied to SCSP */
-#define LOAD_PER_FRAME   16            /* chunks per rendered frame: 32 KB */
+#define LOAD_CHUNK       8192          /* staging buffer, word-copied to SCSP */
+#define LOAD_PER_FRAME   4             /* chunks per rendered frame: 32 KB */
 
 enum { MUSIC_IDLE, MUSIC_FADE_OUT, MUSIC_SWAP, MUSIC_FADE_IN };
 
@@ -31,8 +31,16 @@ static volatile unsigned char state;
 static volatile unsigned char volume = VOLUME_MAX;
 static unsigned int fade_step, fade_length = FADE_DEFAULT;
 static unsigned int transition_start, transition_frames;
+/* Switch measurements. audible_frames is request -> new bank actually playing;
+ * transition_frames is request -> full volume. worst_stall is the longest gap
+ * between successive music_service() calls during a switch, i.e. the longest
+ * frame the streaming load cost. */
+static unsigned int audible_frames, worst_stall, last_service, swap_count;
 
-/* Swap progress, owned by viewer_music_service() on the main thread. */
+/* Swap progress, owned by music_service() on the main thread. */
+static jo_file level_file;
+static bool level_file_open;
+static unsigned int level_offset;
 static jo_file swap_file;
 static bool swap_file_open;
 static unsigned short *swap_staging;
@@ -168,6 +176,9 @@ bool music_fade_to(const music_bank_t *target, unsigned int fade_frames)
     transition_frames = 0;
     fade_step = fade_length;
     swap_stage = 1;
+    audible_frames = 0;
+    worst_stall = 0;
+    last_service = vblanks;
     state = MUSIC_FADE_OUT;
     return true;
 }
@@ -181,18 +192,61 @@ void music_service(void)
 {
     unsigned int chunk;
 
+    /* Called once per rendered frame, so the gap between calls is the frame
+     * time; the largest one during a switch is the worst stall it caused. */
+    if (state != MUSIC_IDLE || swap_stage) {
+        unsigned int now = vblanks, gap = now - last_service;
+        if (gap > worst_stall) worst_stall = gap;
+        last_service = now;
+    }
+
     if (swap_stage == 1) {
         /* Off the critical path: the envelope file goes to the heap, not sound
         ** RAM, so it loads while the outgoing bank is still fading. Releasing
         ** the outgoing set first also keeps the two (112 KB + 74 KB) from
-        ** having to coexist in the arena this build configures. */
-        unsigned char *outgoing = levels;
-        levels = JO_NULL;                 /* the vblank stops reading it here */
-        if (outgoing) jo_free(outgoing);
-        pending_levels = read_levels(incoming);
-        if (!pending_levels) {
-            swap_failed = true; swap_stage = 0; state = MUSIC_IDLE; return;
+        ** having to coexist in the arena this build configures.
+        **
+        ** Streamed in the same chunks as the PCM. Reading it in one call cost
+        ** a single 266-366 ms frame, which is the whole stall a switch used to
+        ** produce; the total is CD-bound either way, so spreading it is free. */
+        int got;
+        if (!level_file_open) {
+            unsigned char *outgoing = levels;
+            levels = JO_NULL;             /* the vblank stops reading it here */
+            if (outgoing) jo_free(outgoing);
+            pending_levels = jo_malloc(incoming->level_bytes);
+            if (!pending_levels) {
+                swap_failed = true; swap_stage = 0; set_volume(VOLUME_MAX);
+                state = MUSIC_IDLE; return;
+            }
+            if (!jo_fs_open(&level_file, incoming->level_file) ||
+                (unsigned int)level_file.size != incoming->level_bytes) {
+                if (level_file.size) jo_fs_close(&level_file);
+                jo_free(pending_levels); pending_levels = JO_NULL;
+                swap_failed = true; swap_stage = 0; set_volume(VOLUME_MAX);
+                state = MUSIC_IDLE; return;
+            }
+            level_offset = 0;
+            level_file_open = true;
         }
+        for (chunk = 0; chunk < LOAD_PER_FRAME &&
+                        level_offset < incoming->level_bytes; ++chunk) {
+            unsigned int want = incoming->level_bytes - level_offset;
+            if (want > LOAD_CHUNK) want = LOAD_CHUNK;
+            got = jo_fs_read_next_bytes(&level_file,
+                                        (char *)pending_levels + level_offset,
+                                        want);
+            if (got != (int)want) {
+                jo_fs_close(&level_file); level_file_open = false;
+                jo_free(pending_levels); pending_levels = JO_NULL;
+                swap_failed = true; swap_stage = 0; set_volume(VOLUME_MAX);
+                state = MUSIC_IDLE; return;
+            }
+            level_offset += (unsigned int)got;
+        }
+        if (level_offset < incoming->level_bytes) return;
+        jo_fs_close(&level_file);
+        level_file_open = false;
         swap_stage = 2;
         return;
     }
@@ -201,16 +255,16 @@ void music_service(void)
 
     if (!swap_file_open) {
         if (!jo_fs_open(&swap_file, incoming->pcm_file)) {
-            swap_failed = true; swap_stage = 0; state = MUSIC_IDLE; return;
+            swap_failed = true; swap_stage = 0; set_volume(VOLUME_MAX); state = MUSIC_IDLE; return;
         }
         if ((unsigned int)swap_file.size != incoming->pcm_bytes ||
             incoming->sample_base + incoming->pcm_bytes > 0x80000) {
-            jo_fs_close(&swap_file); swap_failed = true; swap_stage = 0;
+            jo_fs_close(&swap_file); swap_failed = true; swap_stage = 0; set_volume(VOLUME_MAX);
             state = MUSIC_IDLE; return;
         }
         swap_staging = jo_malloc(LOAD_CHUNK);
         if (!swap_staging) {
-            jo_fs_close(&swap_file); swap_failed = true; swap_stage = 0;
+            jo_fs_close(&swap_file); swap_failed = true; swap_stage = 0; set_volume(VOLUME_MAX);
             state = MUSIC_IDLE; return;
         }
         swap_offset = 0;
@@ -226,7 +280,7 @@ void music_service(void)
         if (got != (int)want || (got & 1)) {
             jo_fs_close(&swap_file); jo_free(swap_staging);
             swap_staging = JO_NULL; swap_file_open = false;
-            swap_failed = true; swap_stage = 0; state = MUSIC_IDLE;
+            swap_failed = true; swap_stage = 0; set_volume(VOLUME_MAX); state = MUSIC_IDLE;
             return;
         }
         upload(swap_staging, incoming->sample_base, swap_offset, (unsigned int)got);
@@ -246,6 +300,8 @@ void music_service(void)
     swap_stage = 0;
     frame = cursor = 0;
     phase = 0;
+    audible_frames = vblanks - transition_start;
+    ++swap_count;
     playing = true;
     fade_step = fade_length;
     state = MUSIC_FADE_IN;
@@ -308,6 +364,9 @@ bool music_init(const music_bank_t *first)
     return true;
 }
 
+unsigned int music_audible_frames(void) { return audible_frames; }
+unsigned int music_worst_stall(void) { return worst_stall; }
+unsigned int music_swap_count(void) { return swap_count; }
 unsigned int music_ticks(void) { return ticks; }
 const music_bank_t *music_current(void) { return bank; }
 bool music_busy(void) { return state != MUSIC_IDLE; }

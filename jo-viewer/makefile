@@ -14,6 +14,13 @@ JO_COMPILE_WITH_PSEUDO_MODE7_MODULE = 0
 JO_COMPILE_WITH_EFFECTS_MODULE = 0
 JO_COMPILE_WITH_FAST_BUT_LESS_ACCURATE_MATH = 0
 JO_DEBUG = 1
+HIRES ?= 0
+ifeq ($(HIRES),1)
+override TARGET = game-hires.elf
+OBJDIR = obj-hires
+else
+OBJDIR = obj
+endif
 
 # One SGL TEXTURE slot per unique Kokiri tile (1801) plus Jo's reserved entry
 # 0. The stock default is 255, which __jo_sprite_def would overflow.
@@ -49,6 +56,10 @@ SYSOBJS = generated/sglarea.o
 
 # The converter writes kokiri_scene.h into generated/.
 _CCFLAGS += -Igenerated -Isrc -Iassets/kokiri -I../title-screen/assets/generated -I../title-screen/src/scene
+_CCFLAGS += -include src/video_mode.h
+ifeq ($(HIRES),1)
+_CCFLAGS += -DDOSEI_HIRES
+endif
 
 # --- keep build products inside this project -------------------------------
 # The stock makefile derives OBJS as $(SRCS:.c=.o) and compiles via a .c.o
@@ -57,30 +68,30 @@ _CCFLAGS += -Igenerated -Isrc -Iassets/kokiri -I../title-screen/assets/generated
 # time the include returns, so redefining OBJS alone cannot redirect them.
 # Instead declare our own link/convert targets against an obj/ object list and
 # cancel the inherited suffix rule so it can never fire on an SDK source.
-MY_OBJS = $(patsubst %.c,obj/%.o,$(notdir $(SRCS)))
+MY_OBJS = $(patsubst %.c,$(OBJDIR)/%.o,$(notdir $(SRCS)))
 
 # The parent expanded $(TARGET)'s prerequisites from its own OBJS while reading
 # its rules; make unions prerequisites across rules for the same target, so
 # those SDK paths must be given a rule of their own. Point each one at the
 # corresponding obj/ file instead of compiling in place.
-$(foreach s,$(SRCS),$(eval $(s:.c=.o): obj/$(notdir $(s:.c=.o))))
+$(foreach s,$(SRCS),$(eval $(s:.c=.o): $(OBJDIR)/$(notdir $(s:.c=.o))))
 
 %.o: %.c
 
-obj/%.o: src/%.c | obj
+$(OBJDIR)/%.o: src/%.c src/video_mode.h | $(OBJDIR)
 	$(CC) $< $(DFLAGS) $(CCFLAGS) $(_CCFLAGS) -o $@
 
-obj/demo_camera.o: ../title-screen/src/scene/kokiri_camera.c ../title-screen/src/scene/kokiri_camera.h ../title-screen/src/scene/kokiri_collision.h
-obj/demo_collision.o: ../title-screen/src/scene/kokiri_collision.c ../title-screen/src/scene/kokiri_collision.h
+$(OBJDIR)/demo_camera.o: ../title-screen/src/scene/kokiri_camera.c ../title-screen/src/scene/kokiri_camera.h ../title-screen/src/scene/kokiri_collision.h
+$(OBJDIR)/demo_collision.o: ../title-screen/src/scene/kokiri_collision.c ../title-screen/src/scene/kokiri_collision.h
 
-obj/%.o: generated/%.c | obj
+$(OBJDIR)/%.o: generated/%.c src/video_mode.h | $(OBJDIR)
 	$(CC) $< $(DFLAGS) $(CCFLAGS) $(_CCFLAGS) -o $@
 
-obj/%.o: $(JO_ENGINE_SRC_DIR)/%.c | obj
+$(OBJDIR)/%.o: $(JO_ENGINE_SRC_DIR)/%.c src/video_mode.h | $(OBJDIR)
 	$(CC) $< $(DFLAGS) $(CCFLAGS) $(_CCFLAGS) -o $@
 
-obj:
-	mkdir -p obj
+$(OBJDIR):
+	mkdir -p $(OBJDIR)
 
 $(TARGET): $(SYSOBJS) $(MY_OBJS) $(MAKEFILE) $(LDFILE)
 	$(CC) $(LDFLAGS) $(SYSOBJS) $(MY_OBJS) $(LIBS) -o $@
@@ -95,5 +106,8 @@ $(TARGET2): $(TARGET1)
 	$(CONV) -O binary $(TARGET) $(ASSETS_DIR)/0.bin
 	$(MKISOFS) -quiet -sysid "SEGA SATURN" -volid "KOKIRIJO" -volset "KOKIRIJO" 		-sectype 2352 -publisher "SEGA ENTERPRISES, LTD." 		-preparer "SEGA ENTERPRISES, LTD." -appid "KOKIRIJO" 		-abstract "$(ASSETS_DIR)/ABS.TXT" -copyright "$(ASSETS_DIR)/CPY.TXT" 		-biblio "$(ASSETS_DIR)/BIB.TXT" -generic-boot $(IPFILE) 		-full-iso9660-filenames -o $(TARGET2) $(ASSETS_DIR)
 
+$(TARGET3): $(TARGET2)
+	python tools/write_cue.py $(TARGET2) $(TARGET3)
+
 clean:
-	$(RM) obj $(TARGET) $(TARGET1) $(TARGET2) $(TARGET3) $(MPFILE) cd/0.bin
+	$(RM) $(OBJDIR) $(TARGET) $(TARGET1) $(TARGET2) $(TARGET3) $(MPFILE) cd/0.bin

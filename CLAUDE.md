@@ -1,13 +1,61 @@
-# Project handoff - 2026-09-15
+# Project handoff - 2026-09-16
 
-## Active branch: Jo Engine port
+## Active project: Jo Engine vertical slice
 
-User requested a fresh start from `main`, not the old `master` branch.
-Read [JOENGINE_PORT.md](title-screen/docs/JOENGINE_PORT.md) first. Current branch
-`joengine-port` starts from main `f545532`; later experiments are safely committed
-on `performance` at `dad76ea`, not merged here. Start a separate Jo/SGL viewer
-using local `../joengine` and the original textured scene. Preserve this branch's
-libyaul implementation as a reference. No port code exists yet.
+Work in `jo-viewer/`, using local `../joengine`. The Jo port has been merged into
+`main`; do not restart the port or treat it as an unimplemented plan. Preserve
+`title-screen/` as the libyaul reference. Check the actual branch, log and working
+diff before editing; another agent may be working in the same tree.
+
+## Human directive: stay on target
+
+Read [VERTICALSLICE.md](VERTICALSLICE.md) for scope and keep
+[VSLICEPROGRESS.md](VSLICEPROGRESS.md) current as features land.
+
+This is a **playable vertical slice, not a launch product**. The goal is a baseline
+match to the N64 game's Kokiri Forest experience, adapted to Saturn hardware:
+
+- Recognizable Kokiri Forest, with traversable terrain and working collision.
+- Playable Link, usable controls and camera, idle/walk and interaction animations.
+- Kokiri NPCs with proximity interaction and dialogue that can be advanced/dismissed.
+- Working menus and the title-to-gameplay flow, not just a renderer showcase.
+- Title/forest music, gameplay and menu sound effects, and appropriate transitions.
+
+**No bosses or dungeons.** Do not expand into the rest of the game. Match the
+baseline behavior, presentation and interactions within this area; pixel-perfect
+parity, exhaustive polish and efficiency are not acceptance gates for this slice.
+
+### Required playability fix: near-camera texture warping
+
+The human now reports near-camera texture warping is **almost unplayable**.
+Fix it as a major gameplay/visibility bug. This explicitly supersedes earlier
+instructions to park warping. Verify the affected close-ground/near-camera view
+while moving and turning; a successful build or accepted polygon submission is
+not evidence that the visual problem is fixed. Do not turn this focused fix into
+a general renderer optimization project.
+
+### Work order and testing limits
+
+1. Resolve the near-camera warping enough to make gameplay readable and usable.
+2. Keep delivering the missing slice features: Link animation, NPC interaction
+   and dialogue, menus, and sound effects. Preserve the working title/music flow.
+3. Do not hold feature work for music-swap timing targets, profiling, memory
+   optimization, extended soak tests, repeated benchmark runs or broad refactors.
+
+Use only proportionate checks by default: build, relevant focused tests, and a
+short in-game check of the behavior changed. Once it works well enough for the
+slice, move on. **Do not overtest unless the human expressly requests it or there
+is a major bug** (for example a crash, corruption, blocked controls/progression,
+or the currently reported warping). Extra investigation must address that bug,
+not become an open-ended quality campaign. Keep existing hard safety checks,
+such as memory-boundary and asset-capacity guards; don't disable them to pass.
+
+Report briefly what works, what changed, and any genuine remaining blocker.
+Do not invent new acceptance gates. Coordinate ownership and leave another
+agent's in-progress edits alone.
+
+Current build/run instructions: [jo-viewer/README.md](jo-viewer/README.md).
+Launch with `jo-viewer/run-kronos.bat`, not the historical libyaul launcher below.
 
 ## Read first
 
@@ -26,7 +74,13 @@ Use basic, short language. No long explanations. Keep token usage SHORT for what
 - Take user reports seriously. The previous floor/camera diagnoses were wrong;
   do not dismiss a continuing failure because isolated tests passed.
 
-This is a Sega Saturn/libyaul Kokiri Forest vertical slice. The source tree was
+## Historical libyaul reference — not the current work queue
+
+Everything below records the earlier libyaul effort. Its status, test counts,
+profiling tasks and launch instructions are historical, not new requirements
+for the Jo slice. The current human directives above take precedence.
+
+This was a Sega Saturn/libyaul Kokiri Forest vertical slice. The source tree was
 reorganized; old IDE tabs pointing directly into `title-screen/*.c` are stale.
 See [README.md](README.md) for the directory map and build command.
 
@@ -37,7 +91,7 @@ was supplied for the successful run, and no confirmed crash fix was introduced
 during reorganization. Treat stability as unproven, not as a guaranteed failure
 or a solved issue.
 
-## Current implementation
+## Historical libyaul implementation
 
 - Latest regression: disabling DEBUG removed `assert(kokiri_collision_spawn(&camera))`
   entirely, leaving the camera at `(0,0,0)` inside ground collision. Spawn now
@@ -66,7 +120,7 @@ or a solved issue.
   Ponesound and the old US 1.1 converters are retired. Preserve this working
   audio unless there is evidence requiring an audio change.
 
-## Next work and evidence
+## Historical libyaul investigation and evidence (not current priorities)
 
 1. Establish sustained stability and capture any new failure with its matching
    ELF. [DEBUGGING.md](title-screen/docs/DEBUGGING.md) records the prior dump:
@@ -85,7 +139,7 @@ The exact pre-reorganization crash ELF is local-only in
 `title-screen/build/crash-0600bae0/`. Neither is versioned; addresses change on
 rebuild and must not be mapped with a different ELF.
 
-## Validation and local dependencies
+## Historical libyaul validation and local dependencies
 
 The reorganized build succeeded; **21 tests pass**, including full idle-rotation
 clipping output guards. Native tests do not exercise SH-2 interrupts, target
