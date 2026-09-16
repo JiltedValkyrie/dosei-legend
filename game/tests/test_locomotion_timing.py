@@ -56,6 +56,36 @@ class LocomotionTiming(unittest.TestCase):
     def test_native_child_run_speed_over_ten_seconds(self):
         self.assertEqual(self.travel(0x1000), 1650)
 
+    def test_short_press_survives_eight_vblanks_without_draw(self):
+        self.lib.edge_reset()
+        self.lib.edge_sample(True)
+        for _ in range(8):
+            self.lib.edge_sample(False)
+        self.assertEqual(self.lib.edge_consume(), 1)
+        self.assertEqual(self.lib.edge_consume(), 0)
+
+    def test_held_button_does_not_repeat(self):
+        self.lib.edge_reset()
+        self.lib.edge_sample(True)
+        self.assertEqual(self.lib.edge_consume(), 1)
+        for _ in range(20):
+            self.lib.edge_sample(True)
+        self.assertEqual(self.lib.edge_consume(), 0)
+
+    def test_release_rearms_button(self):
+        self.lib.edge_reset()
+        self.lib.edge_sample(True)
+        self.lib.edge_consume()
+        self.lib.edge_sample(False)
+        self.lib.edge_sample(True)
+        self.assertEqual(self.lib.edge_consume(), 1)
+
+    def test_start_no_longer_uses_ephemeral_edge(self):
+        text = (ROOT / 'src/demo.c').read_text()
+        self.assertNotIn('jo_is_pad1_key_down(JO_KEY_START)', text)
+        self.assertIn('input_edge_sample(&start_edge', text)
+        self.assertIn('if (start_pressed && !music_busy())', text)
+
     def test_diagonal_and_rotated_speed_match(self):
         for buttons, yaw in ((0x9000, 0), (0x1000, 8192), (0x9000, 5000)):
             self.assertAlmostEqual(self.travel(buttons, yaw), 1650, delta=4)
@@ -87,7 +117,7 @@ class LocomotionTiming(unittest.TestCase):
         text = (ROOT / 'src/demo.c').read_text()
         mask = text.split('uint16_t walk = buttons &', 1)[1].split(';', 1)[0]
         self.assertNotIn('CAMERA_L', mask.replace('CAMERA_LEFT', ''))
-        self.assertIn('recenter = jo_is_pad1_key_down(JO_KEY_L)', text)
+        self.assertIn('recenter = recenter_pressed', text)
         self.assertIn('demo_yaw = demo_link_yaw', text)
 
     def test_r_does_not_reach_gameplay_orbit(self):

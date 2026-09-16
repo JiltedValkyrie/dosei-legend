@@ -345,7 +345,7 @@ class DiagnosticsChord(unittest.TestCase):
     def test_recenter_is_skipped_while_the_chord_is_held(self):
         """Otherwise asking for diagnostics also recenters the camera."""
         chord = self.demo.index('if ((buttons & CAMERA_L) && (buttons & CAMERA_R))')
-        recenter = self.demo.index('recenter = jo_is_pad1_key_down(JO_KEY_L);')
+        recenter = self.demo.index('recenter = recenter_pressed;')
         self.assertGreater(recenter, chord,
                            'recenter must sit in the chord-not-held branch')
 

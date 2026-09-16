@@ -1,6 +1,12 @@
 /* Host-only adapters: exercise the real controller and animation state code. */
 #include <math.h>
 #include "kokiri_camera.h"
+#include "../../src/input_edge.h"
+
+static input_edge_t test_edge;
+void edge_reset(void) { test_edge = (input_edge_t){0}; }
+void edge_sample(bool held) { input_edge_sample(&test_edge, held); }
+int edge_consume(void) { return input_edge_consume(&test_edge); }
 
 void kokiri_camera_sincos(uint16_t yaw, int32_t *sine, int32_t *cosine)
 {

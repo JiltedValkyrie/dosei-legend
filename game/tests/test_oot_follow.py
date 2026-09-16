@@ -169,3 +169,57 @@ class OotFollowCamera(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class BehindCameraCulling(unittest.TestCase):
+    """Polygons entirely behind the camera must not be submitted.
+
+    The depth cull only removed distant geometry: anything behind the camera
+    has negative depth, so the nearest-vertex test kept it and the whole rear
+    hemisphere within 1310 units was transformed and submitted every frame for
+    SGL to reject. That cost is paid on the title screen too, where Link is not
+    drawn at all.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.source = (ROOT / 'src' / 'kokiri_sgl.c').read_text()
+
+    def test_cull_uses_the_farthest_vertex_for_the_behind_test(self):
+        """Nearest-vertex would drop polygons straddling the camera plane."""
+        self.assertIn('farthest < 0', self.source)
+
+    def test_far_cull_still_uses_the_nearest_vertex(self):
+        """A polygon partly inside the draw distance must still be drawn."""
+        self.assertIn('nearest > FOREST_FAR', self.source)
+
+    def test_cull_decision_table(self):
+        """The two tests together, over the cases that matter."""
+        FAR = 4367 * 6 // 10 // 2
+        def culled(depths):
+            return max(depths) < 0 or min(depths) > FAR
+        self.assertTrue(culled([-500, -400, -450, -480]), 'fully behind')
+        self.assertFalse(culled([-100, 50, -20, 30]), 'straddles the plane')
+        self.assertFalse(culled([200, 300, 250, 280]), 'in front')
+        self.assertTrue(culled([1400, 1500, 1450, 1480]), 'beyond draw distance')
+        self.assertFalse(culled([1200, 1400, 1300, 1350]), 'partly in range')
+
+
+class FrameTimerWrapping(unittest.TestCase):
+    """The FRT is 16-bit; a slow frame wraps it more than once."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.source = (ROOT / 'src' / 'frame_timer.c').read_text()
+
+    def test_prescaler_is_set_explicitly(self):
+        """Inheriting the SDK's prescaler leaves the wrap period unknown."""
+        self.assertIn('FRT_TCR = FRT_PRESCALER_128', self.source)
+
+    def test_counter_is_extended_past_sixteen_bits(self):
+        """At /8 a 125 ms frame wraps three times and reports the remainder."""
+        self.assertIn('0x10000u', self.source)
+
+    def test_unaccounted_time_is_reported(self):
+        """Timing only suspected phases cannot explain a frame."""
+        self.assertIn('frame_timer_other', self.source)

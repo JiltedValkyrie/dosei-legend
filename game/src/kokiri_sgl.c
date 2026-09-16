@@ -225,11 +225,21 @@ void                kokiri_scene_draw(void)
      * full mesh allocation and only one SGL vertex transformation per frame. */
     for (i = 0; i < visible;) {
         int nearest = 32767;
+        int farthest = -32768;
         for (j = 0; j < 4; ++j) {
             int depth = forest_depth[kokiri_pdata.pltbl[i].Vertices[j]];
             if (depth < nearest) nearest = depth;
+            if (depth > farthest) farthest = depth;
         }
-        if (nearest > FOREST_FAR) {
+        /* Cull behind the camera as well as beyond the draw distance.
+        **
+        ** The depth test alone only removed distant polygons: anything behind
+        ** the camera has a negative depth, so `nearest` was very negative and
+        ** it survived. The entire rear hemisphere within range was therefore
+        ** transformed and submitted every frame for SGL to reject. Using the
+        ** FARTHEST vertex keeps any polygon with a vertex still in front,
+        ** including one straddling the camera plane. */
+        if (farthest < 0 || nearest > FOREST_FAR) {
             POLYGON polygon = kokiri_pdata.pltbl[i];
             ATTR attr = kokiri_pdata.attbl[i];
             unsigned char mesh = forest_mesh[i];

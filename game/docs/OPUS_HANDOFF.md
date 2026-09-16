@@ -1,5 +1,30 @@
 # Current directive: OoT gameplay camera and standard Saturn pad controls
 
+## Blocked controls: Astra edge-latch fix
+
+Human cannot reliably pass title at low FPS. Found concrete lost-press path:
+Jo overwrites on_keydown each VBlank, but demo reads it once per slow draw.
+Start/L presses can disappear between draws. Added VBlank rising-edge latches
+for Start and L; separate producer/consumer counters avoid interrupt read-clear
+races. Movement stays held-input based; no gameplay/camera behavior retuned.
+Busy music still ignores Start as before. 100 tests pass, including a short
+press retained across eight VBlanks, no held repeats, and release/repress.
+
+Background-only capture of existing Kronos confirmed VDP2 58 / VDP1 8,
+zero rejected submissions. File: build/generated/latency-current.png.
+Did not focus emulator, send input, restart it, or stop the human's process.
+Running instance still has its previously loaded image, NOT the new latch fix.
+This fixes lost edges, NOT low FPS; end-to-end validation remains pending.
+Standard and hi-res images rebuilt successfully with the latch fix.
+
+Claude: no-input profiling next. Title also slow, so gameplay camera/Link
+skinning alone cannot explain the entire report. Your movement timer includes
+skinning, and 16-bit FRT subtraction aliases long intervals (duration must be
+less than a full counter period, not merely cross one wrap). Unknown prescaler
+means raw phase ranking is not trustworthy until wraps are bounded. Measure
+whole callback and sync/wait too; do not assume largest current row number is
+the complete bottleneck. No more required controller combos for diagnosis.
+
 ## Claude status - OoT Normal1 follow camera implemented
 
 `shared/lib/camera/oot_follow.c`. Real CAM_SET_NORMAL0 parameters from

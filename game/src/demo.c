@@ -7,6 +7,7 @@
 #include "link_anim_state.h"
 #include "oot_follow.h"
 #include "frame_timer.h"
+#include "input_edge.h"
 
 camera_position_t demo_camera;
 uint16_t demo_yaw;
@@ -49,6 +50,7 @@ static int last_blink = -1;
  * sampled a second time in main.c. */
 static bool diagnostics_chord_held;
 bool demo_diagnostics_toggled;
+static input_edge_t start_edge, recenter_edge;
 
 static jo_color sky_color(unsigned int row)
 {
@@ -115,6 +117,11 @@ static bool recover_link_from_void(void)
 
 static void demo_vblank(void)
 {
+    /* Jo refreshes held inputs before this callback. Preserve press edges
+     * across slow draws instead of relying on its one-VBlank on_keydown. */
+    bool connected = jo_is_pad1_available();
+    input_edge_sample(&start_edge, connected && jo_is_pad1_key_pressed(JO_KEY_START));
+    input_edge_sample(&recenter_edge, connected && jo_is_pad1_key_pressed(JO_KEY_L));
     /* BDCLMD=0 keeps the border outside the active picture black. */
     JO_VDP2_TVMD &= (unsigned short)~0x0100;
     phase += 60;
@@ -185,6 +192,8 @@ void demo_update(void)
 {
     uint16_t buttons = 0;
     bool recenter = false;
+    bool start_pressed = input_edge_consume(&start_edge);
+    bool recenter_pressed = input_edge_consume(&recenter_edge);
     unsigned int now = ticks, elapsed = now - previous_tick, steps;
     jo_img patch;
     if (jo_is_pad1_available()) {
@@ -212,12 +221,12 @@ void demo_update(void)
             diagnostics_chord_held = true;
         } else {
             diagnostics_chord_held = false;
-            recenter = jo_is_pad1_key_down(JO_KEY_L);
+            recenter = recenter_pressed;
         }
         /* Ignore Start while a score switch is running: music_fade_to() would
          * refuse it anyway, and toggling the title regardless would leave the
          * artwork and the music disagreeing about which state we are in. */
-        if (jo_is_pad1_key_down(JO_KEY_START) && !music_busy()) {
+        if (start_pressed && !music_busy()) {
             title_visible = !title_visible;
             /* Starting the game puts Link in the world. He spawns from the
              * same collision search the free camera used, so he stands on a

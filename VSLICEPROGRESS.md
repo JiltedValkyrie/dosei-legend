@@ -1,5 +1,13 @@
 # Vertical slice progress
 
+## Low-FPS lost button presses
+
+- Background capture confirms VDP1 8 / VDP2 58, zero submission refusals.
+- Start/L now latch rising edges at VBlank until slow gameplay consumes them.
+  100 host tests pass. No speculative camera/render optimization applied.
+- FPS bottleneck still open. Existing emulator was not restarted or disturbed;
+  runtime confirmation of rebuilt latch fix remains pending.
+
 ## Gameplay controls supersede the viewer
 
 - Removed R orbit from gameplay; actor-mode controller ignores both shoulder

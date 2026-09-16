@@ -86,6 +86,11 @@ static void         viewer_draw(void)
     /* Source yaw rotates (x,z) to (cx-sz,sx+cz). Use a proper rotation
     ** in baked-Y space; no runtime reflection. The demo's 60 Hz clock keeps
     ** the original 90 angle units/tick pan independent of render rate. */
+    /* The gap since the previous callback returned is Jo's slSynch wait plus
+    ** whatever the engine does between callbacks: the part of the frame this
+    ** file never sees. Measured first so it covers the real idle. */
+    frame_timer_end(FRAME_PHASE_SYNC);
+    frame_timer_frame_begin();
     frame_timer_begin(FRAME_PHASE_MOVEMENT);
     demo_update();
     frame_timer_end(FRAME_PHASE_MOVEMENT);
@@ -116,6 +121,8 @@ static void         viewer_draw(void)
     }
     rejected_total += kokiri_scene_rejected();
     viewer_hud();
+    frame_timer_frame_end();
+    frame_timer_begin(FRAME_PHASE_SYNC);
 }
 
 static void         viewer_hud(void)
@@ -174,22 +181,28 @@ static void         viewer_hud(void)
             ** -frame case, not a state bug. If s is 5 and L is climbing on flat
             ** ground, a real grounded transition is firing and d names the gate
             ** that chose the roll. */
-            /* Raw FRT counts, comparable only to each other: mv=movement,
-            ** sk=skinning, sc=forest submit, lk=Link submit. Whichever
-            ** dominates is where the VDP1 rate is going. */
-            jo_printf(0, 4, "mv%u sk%u sc%u lk%u    ",
-                      frame_timer_cost(FRAME_PHASE_MOVEMENT),
-                      frame_timer_cost(FRAME_PHASE_SKINNING),
-                      frame_timer_cost(FRAME_PHASE_SCENE),
-                      frame_timer_cost(FRAME_PHASE_LINK));
-            jo_printf(0, 5, "cam %s  L+R+Up swaps   ",
-                      oot_follow_legacy() ? "LEGACY 260" : "OoT 125-188");
             jo_printf(0, 3, "s%d g%d L%d d%d      ",
                       (int)pose,
                       link_anim_last_grounded() ? 1 : 0,
                       (int)link_anim_landings(),
                       (int)link_anim_last_fall());
         }
+        /* Outside the Link guard: the title screen is reported slow too, and
+        ** Link is not drawn there. If the forest alone is the cost, these rows
+        ** show it with no player on screen. */
+        /* Microseconds against a 16700 us frame budget. mv=movement,
+        ** sk=skinning, sc=forest submit, lk=Link submit, sy=sync wait,
+        ** ot=everything none of those accounted for. */
+        jo_printf(0, 4, "mv%u sk%u sc%u lk%u   ",
+                  frame_timer_cost(FRAME_PHASE_MOVEMENT),
+                  frame_timer_cost(FRAME_PHASE_SKINNING),
+                  frame_timer_cost(FRAME_PHASE_SCENE),
+                  frame_timer_cost(FRAME_PHASE_LINK));
+        jo_printf(0, 5, "sy%u ot%u FRAME%u us  ",
+                  frame_timer_cost(FRAME_PHASE_SYNC),
+                  frame_timer_other(), frame_timer_frame());
+        jo_printf(0, 6, "cam %s          ",
+                  oot_follow_legacy() ? "LEGACY 260" : "OoT 125-188");
         return;
     }
     jo_printf(0, 0, "Jo/SGL Kokiri viewer");
@@ -232,6 +245,7 @@ static void         viewer_hud(void)
 void                jo_main(void)
 {
     jo_core_init(JO_COLOR_Black);
+    frame_timer_init();
 #ifdef DOSEI_HIRES
     /* VDP2 samples the existing title/font at half rate vertically. */
     jo_vdp2_zoom_nbg0f(1.0f, 0.5f);

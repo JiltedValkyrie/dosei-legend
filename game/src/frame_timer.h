@@ -3,20 +3,29 @@
 #include <stdint.h>
 
 /*
-** Per-phase frame timing, for attributing a low VDP1 rate to real work.
+** Per-phase frame timing on the SH-2 Free Running Timer.
 **
-** The SH-2's Free Running Timer is a 16-bit counter on the on-chip register
-** block at 0xFFFFFE00 (the same block jo/serial.h uses). It counts continuously
-** and is not tied to VBlank, so unlike the vblank tick it can resolve phases
-** inside a single frame. It wraps often; every reading here is a 16-bit
-** difference, which stays correct across one wrap.
+** The FRT is a 16-bit counter on the on-chip register block at 0xFFFFFE00.
+** Two things make a naive reading wrong, and both cost real debugging time:
 **
-** Units are raw FRT counts, not milliseconds: the prescaler is whatever the
-** SDK left set, so these are only meaningful RELATIVE to each other. Comparing
-** phases against each other is the entire point; do not report them as ms.
+**  1. WRAPPING. At the /8 prescaler the counter wraps every 36.6 ms, so a
+**     125 ms frame (8 FPS) wraps three times and a 16-bit difference silently
+**     reports the remainder. The largest raw number could be the smallest
+**     real cost. This file sets the prescaler to /128 explicitly -- 585 ms per
+**     wrap, comfortably longer than any frame we care about -- and extends the
+**     counter to 32 bits by accumulating wraps on every read.
+**
+**  2. COVERAGE. Timing only the phases we suspect cannot explain a frame:
+**     whatever is left over is invisible. frame_timer_frame() measures the
+**     whole callback and frame_timer_other() reports what none of the named
+**     phases accounted for, so the unmeasured remainder is always on screen.
+**
+** frame_timer_read() must be called at least once per frame for the wrap
+** accounting to stay correct; frame_timer_frame_begin() does that.
+**
+** Units are microseconds at the /128 prescaler, so the figures are directly
+** comparable with the 16.7 ms frame budget.
 */
-
-#define FRT_COUNTER (*(volatile uint16_t *)0xFFFFFE12)
 
 typedef enum
 {
@@ -24,12 +33,20 @@ typedef enum
     FRAME_PHASE_SKINNING,       /* link_anim_pose */
     FRAME_PHASE_SCENE,          /* forest culling and submission */
     FRAME_PHASE_LINK,           /* Link submission */
+    FRAME_PHASE_SYNC,           /* waiting for VDP1/VBlank */
     FRAME_PHASE_COUNT
 }               frame_phase_t;
 
+void            frame_timer_init(void);
+void            frame_timer_frame_begin(void);
+void            frame_timer_frame_end(void);
 void            frame_timer_begin(frame_phase_t phase);
 void            frame_timer_end(frame_phase_t phase);
-/* Smoothed cost of one phase, in raw FRT counts. */
+
+/* All in microseconds, smoothed. */
 unsigned int    frame_timer_cost(frame_phase_t phase);
+unsigned int    frame_timer_frame(void);
+/* Whole frame minus every named phase: the work nothing else accounted for. */
+unsigned int    frame_timer_other(void);
 
 #endif
