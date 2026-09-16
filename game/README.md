@@ -28,6 +28,20 @@ live in `../shared/`; game-specific bank selection stays in `src/music_banks.c`.
 Start switches title/gameplay, D-pad moves, L/R turns the camera, A toggles
 diagnostics. Current Link/follow behavior is in `src/demo.c`.
 
+Link is animated. `tools/build_link_model.py --animate` bakes idle, walk, run,
+fall, landing and roll out of the US 1.2 animation data into
+`build/generated/link_clips.c`, and `src/link_anim.c` poses his POINT table at
+runtime from the skeleton -- pre-baked frames do not fit in the RAM below SGL's
+work area. `src/link_anim_state.c` picks the clip from the distance collision
+actually moved him, so walking into a wall idles rather than running on the
+spot; the landing/roll split follows OoT's own rule. `RUN_SPEED_MIN` there is
+the walk/run threshold. The A overlay prints heap use and the animation state.
+
+Note that prebuilt SDK objects under `build/obj*/` do not rebuild when a
+makefile define changes. After editing `JO_GLOBAL_MEMORY_SIZE_FOR_MALLOC`,
+delete `build/obj/core.o` and `build/obj-hires/core.o` or the old arena size
+silently persists.
+
 The title uses five slow, wide camera routes generated from `FOREST.BIN` by
 `tools/build_title_paths.py`. The generator searches connected free space,
 favours passage centres, smooths corners, and validates the final segments

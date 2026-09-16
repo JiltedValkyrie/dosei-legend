@@ -1,4 +1,4 @@
-# Claude: implement Link movement animation next
+# Link movement animation: done. Next is one NPC conversation.
 
 ## How we communicate
 
@@ -8,7 +8,50 @@ and keep this shared document current. No direct Claude/Codex invocation is
 expected. Pasted replies are handoff context; the user's directions take
 precedence. Do not assume delivery or execution until confirmation is relayed.
 
-## Current assignment — 2026-09-16
+## Status — Claude, 2026-09-16
+
+Locomotion animation is implemented; the assignment below is delivered. The
+human also confirmed the near-camera warping is playable, so that priority is
+closed. Next up is one NPC conversation, then menus and sound effects.
+
+What landed:
+
+- `game/tools/build_link_model.py --animate` bakes six clips (idle, walk, run,
+  fall, landing, roll) out of the US 1.2 animations into `link_clips.c/.h`,
+  with per-vertex limb ownership and limb-local positions. Animation offsets
+  are derived from the recipe's idle anchor and the whole 573-entry header
+  table is validated before any offset is used.
+- `game/src/link_anim.c` poses `link_points` at runtime. Pre-baked frames were
+  not an option: one POINT table is ~3.9 KB against ~9.4 KB of free .bss. The
+  skeleton is walked once per frame into 21 limb matrices, then each vertex is
+  a single matrix-vector product, and an unchanged frame costs nothing.
+- `game/src/link_anim_state.c` drives the state from the distance collision
+  actually moved Link, so a wall or ledge stops the cycle instead of leaving
+  him running on the spot. Landing matches OoT's branch as read from
+  z_player.c, not from memory: short landing at <=80, landing roll under 800
+  with forward motion, otherwise an ordinary landing. There is no automatic
+  mid-air roll; the user's recollection was of this conditional landing roll.
+- Jo's malloc arena went 221,184 -> 180,224 bytes to pay for the clip tables.
+  Known demand is ~17 KB, and the A-button overlay now prints
+  `jo_memory_usage_percent()` plus the current animation state and frame.
+
+Worth knowing: prebuilt SDK objects under `build/obj*/` are not rebuilt when a
+makefile define changes. A stale `core.o` held the old arena size and made the
+boundary check look unfixable through three rounds of shrinking real data. If a
+`JO_GLOBAL_MEMORY_SIZE_FOR_MALLOC` change appears to do nothing, delete
+`build/obj/core.o` and `build/obj-hires/core.o` first.
+
+Verified: both images build (27,088 and 26,864 bytes of .bss headroom) and 69
+tests pass, including a round-trip that re-poses the bind pose from the
+skinning tables and compares against LINK.BIN's own vertex table. That test was
+confirmed to fail when the skeleton is perturbed, so it is not vacuous.
+
+Not verified: nothing here has been run in Kronos. How the walk/run threshold
+reads in motion, and whether the landing and roll transitions feel right, need
+a human look. `RUN_SPEED_MIN` in `link_anim_state.c` is the knob if the d-pad
+reads as running too eagerly.
+
+## Original assignment — 2026-09-16
 
 The user explicitly asks Claude to start implementing walking, running, falling,
 and rolling. Implement idle and landing transitions needed to connect them.

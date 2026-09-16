@@ -17,7 +17,7 @@ The workshop still produces editing candidates, not runtime-ready quads.
 | Forest | Hybrid textures and capped close-ground/treeline subdivision implemented; moving Kronos probe checked | Human close-view playability check; remaining affine distortion is not declared eliminated |
 | Title/prompt | Implemented and observed in Kronos | Preserve |
 | Playable Link, camera, collision | Implemented; 30 Hz gravity follows ramp/ledge departures | Confirm fall feel in Kronos |
-| Animation | Static pose; no walk cycle | Walk while moving, idle when stopped |
+| Animation | Runtime skinning; idle/walk/run/fall/landing/roll driven by actual motion | Human check of the walk/run read and landing feel in Kronos |
 | Music | Two banks and reusable player in `b8e1642`; later streaming/timing edits included in this checkpoint | Good enough; no timing gate |
 | NPC/dialogue | Not implemented | One complete proximity conversation |
 | Menus | Title toggle exists; gameplay menu not implemented | Functional navigation/confirm/cancel |
@@ -34,15 +34,29 @@ The workshop still produces editing candidates, not runtime-ready quads.
 
 ## Next
 
-1. Near-camera warping playability fix.
-2. Walk/idle animation.
-3. One NPC with prompt and advance/dismiss dialogue.
-4. Menus and sound effects, then a short slice playthrough.
+1. One NPC with prompt and advance/dismiss dialogue.
+2. Menus and sound effects, then a short slice playthrough.
 
 ## Update convention
 
 Record date, behavior delivered, brief evidence and user-visible limitations.
 Do not turn this into a benchmark checklist.
+
+- 2026-09-16: Human confirmed the near-camera warping is playable, closing that
+  priority. Link is now animated: idle, walk, run, fall, landing and roll are
+  baked from the US 1.2 animations and posed at runtime by a skeletal skinner
+  (`game/src/link_anim.c`), rather than pre-baked per frame -- one POINT table
+  is ~3.9 KB and only ~9.4 KB of .bss was free. Locomotion is driven by the
+  distance collision actually moved Link, so walking into a wall idles instead
+  of running on the spot. Landing follows OoT's own branch, verified against
+  z_player.c: short landing under 80 units, landing roll under 800 with forward
+  motion. The roll is a landing behavior, not an automatic mid-air roll.
+  Jo's malloc arena was trimmed 221,184 -> 180,224 bytes to pay for the clip
+  tables; measured demand is ~17 KB and the A overlay now prints heap usage.
+  Both images build (27,088 / 26,864 bytes of .bss headroom) and 69 tests pass,
+  including a check that re-posing the bind pose from the skinning tables
+  reproduces LINK.BIN's own vertices. Not yet confirmed in Kronos: how the
+  walk/run threshold and the landing transitions actually read in motion.
 
 - 2026-09-16: Astra took over the texture work. Source-UV hybrid rendering is
   now active, with shared repeating tiles, larger ground bakes and limited

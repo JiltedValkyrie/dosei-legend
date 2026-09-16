@@ -225,6 +225,11 @@ def collect_faces(data, keep, placed):
             moved = [transform(matrix, origin, v[:3]) + tuple(v[3:])
                      for v in face['vertices']]
             face = dict(face)
+            # Keep the untransformed limb-local coordinates alongside the posed
+            # ones. The posed vertices drive texture baking and the bind-pose
+            # extent exactly as before; the locals are what the runtime skinner
+            # re-poses every frame, so they must survive unscaled and uncentred.
+            face['local'] = [tuple(v[:3]) for v in face['vertices']]
             face['vertices'] = moved
             face['limb'] = index
             faces.append(face)
@@ -306,6 +311,12 @@ def scale_faces(faces, scale):
 
 
 def drop_degenerate(faces):
+    """Drop faces that collapsed to a line or point once scaled to world units.
+
+    Degeneracy is judged on the scaled bind pose, as before. A face kept here
+    can still collapse in some animated pose, but VDP1 tolerates that far
+    better than the alternative of re-testing every face every frame.
+    """
     kept = []
     for face in faces:
         if len({v[:3] for v in face['vertices']}) == 3:
@@ -314,7 +325,11 @@ def drop_degenerate(faces):
 
 
 def ground_and_centre(faces):
-    """Put the feet on y=0 and centre x/z, so the model sits on its position."""
+    """Put the feet on y=0 and centre x/z, so the model sits on its position.
+
+    Returns the shift as well: the runtime skinner rebuilds vertices from the
+    limb-local data and has to apply the same offset to land in the same place.
+    """
     points = [v[:3] for f in faces for v in f['vertices']]
     low = [min(p[i] for p in points) for i in range(3)]
     high = [max(p[i] for p in points) for i in range(3)]
@@ -322,13 +337,38 @@ def ground_and_centre(faces):
     for face in faces:
         face['vertices'] = [tuple(v[i] + shift[i] for i in range(3)) + tuple(v[3:])
                             for v in face['vertices']]
-    return faces
+    return faces, shift
 
 
-def write_model(faces, out_path):
-    """Same KFR1 v2 container as FOREST.BIN, with no collision triangles."""
-    positions = list(dict.fromkeys(v[:3] for f in faces for v in f['vertices']))
-    lookup = {p: i for i, p in enumerate(positions)}
+def write_model(faces, out_path, skinned=False):
+    """Same KFR1 v2 container as FOREST.BIN, with no collision triangles.
+
+    When `skinned`, vertices are deduplicated by (position, limb) rather than by
+    position alone. Two limbs' vertices can coincide in the bind pose -- the
+    shoulder and upper arm meet exactly -- and merging them there would weld the
+    limbs together the moment an animation moves them apart. The cost is a few
+    extra vertices; the benefit is that every vertex has one unambiguous owner.
+    """
+    if skinned:
+        # Pair each posed vertex with the limb-local coordinate it came from.
+        # collect_faces() kept face['local'] in the same order as the vertices,
+        # and every later stage rewrote them in place, so index i still matches.
+        keys, locals_by_key = [], {}
+        for f in faces:
+            for v, loc in zip(f['vertices'], f['local']):
+                key = (v[:3], f['limb'])
+                if key not in locals_by_key:
+                    locals_by_key[key] = loc
+                    keys.append(key)
+        positions = [k[0] for k in keys]
+        skin_limbs = [k[1] for k in keys]
+        skin_locals = [locals_by_key[k] for k in keys]
+        lookup = None   # faces index through key_index below
+        key_index = {k: i for i, k in enumerate(keys)}
+    else:
+        positions = list(dict.fromkeys(v[:3] for f in faces for v in f['vertices']))
+        lookup = {p: i for i, p in enumerate(positions)}
+        key_index = skin_limbs = skin_locals = None
     centre = tuple((min(p[i] for p in positions) + max(p[i] for p in positions)) // 2
                    for i in range(3))
     radius = math.ceil(max(math.dist(p, centre) for p in positions))
@@ -362,7 +402,8 @@ def write_model(faces, out_path):
             tiles[tile] = len(texture)
             texture.extend(tile)
         offset = tiles[tile]
-        ids = [lookup[v[:3]] for v in face['vertices']]
+        ids = ([key_index[(v[:3], face['limb'])] for v in face['vertices']]
+               if key_index is not None else [lookup[v[:3]] for v in face['vertices']])
         records.extend(struct.pack('>4HIIHH', *ids, ids[2], offset + 32, offset,
                                    (width // 8) << 8 | height,
                                    int(face['transparent']) | (int(face['cull']) << 1)))
@@ -379,7 +420,144 @@ def write_model(faces, out_path):
                          len(faces) + 3, co, 0)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_bytes(header + vertex_data + records + bytes(to - co) + texture)
-    return positions, tiles
+    return positions, tiles, skin_limbs, skin_locals
+
+
+# Animation clips baked for the slice, as (name, decomp symbol, frame stride).
+#
+# Offsets are not hardcoded: gameplay_keep's LinkAnimationHeader table is one
+# contiguous array in the same order as player_anim_headers.c, so the known
+# idle offset (recipe 'animation') anchors every other symbol by index. The
+# whole 573-entry table is validated before use -- see resolve_animations().
+#
+# `stride` decimates long clips. Idle is a 184-frame fidget loop whose first
+# 20 frames are the standing breath cycle we want; sampling the rest would cost
+# ROM for motion nothing in the slice triggers. Fall is a 37-frame descent that
+# reads fine at a third of the rate because the pose barely changes.
+CLIPS = (
+    # name       symbol                                    first  count stride
+    ('idle',    'gPlayerAnim_link_normal_waitF_typeA_20f',      0,   20, 1),
+    ('walk',    'gPlayerAnim_link_normal_walk',                 0,   29, 1),
+    ('run',     'gPlayerAnim_link_normal_run',                  0,   20, 1),
+    ('fall',    'gPlayerAnim_link_normal_fall',                 0,   12, 3),
+    ('landing', 'gPlayerAnim_link_normal_landing',              0,   21, 1),
+    ('roll',    'gPlayerAnim_link_normal_landing_roll',         0,   32, 1),
+)
+
+# Rotations keep their full 16-bit binang precision. The clip tables share the
+# RAM below SGL's work area with .bss, so they are not free; the makefile's
+# malloc arena was trimmed to measured demand to pay for them.
+
+IDLE_SYMBOL = 'gPlayerAnim_link_normal_waitF_typeA_20f'
+
+
+def resolve_animations(oot, keep, idle_offset):
+    """Map each decomp animation symbol to its offset in gameplay_keep.
+
+    gameplay_keep holds the LinkAnimationHeaders as one contiguous 8-byte array
+    in declaration order, so the recipe's known idle offset fixes the table base
+    and every other symbol follows by index. That assumption is checked, not
+    trusted: all 573 headers must decode as a plausible frame count, zero pad
+    and a segment-7 pointer before any offset derived here is used.
+    """
+    source = (oot / 'assets/objects/gameplay_keep/player_anim_headers.c').read_text()
+    names = re.findall(r'LinkAnimationHeader (\w+) = \{', source)
+    if IDLE_SYMBOL not in names:
+        sys.exit('%s not found in player_anim_headers.c' % IDLE_SYMBOL)
+    base = idle_offset - names.index(IDLE_SYMBOL) * 8
+    for index in range(len(names)):
+        count, pad, segment = struct.unpack_from('>hhI', keep, base + index * 8)
+        if not (0 < count < 1000 and pad == 0 and (segment >> 24) == 7):
+            sys.exit('animation header table failed validation at %s (%#x): '
+                     'frames=%d pad=%d segment=%#x'
+                     % (names[index], base + index * 8, count, pad, segment))
+    return {name: base + i * 8 for i, name in enumerate(names)}
+
+
+def read_animation_frames(keep, animetion, offset, first, count, stride,
+                          limb_count):
+    """Read `count` frames from one LinkAnimation, every `stride`-th frame.
+
+    Same layout as read_animation(), just kept across a range: entry 0 of each
+    frame is the root translation and entry i+1 is limb i's rotation in binang.
+    Sampling past the clip wraps, so a decimated loop still closes on itself.
+    """
+    frames, _, segment = struct.unpack_from('>hhI', keep, offset)
+    stride_words = (limb_count + 1) * 3
+    out = []
+    for step in range(count):
+        frame = (first + step * stride) % frames
+        base = (segment & 0xFFFFFF) + frame * stride_words * 2
+        values = struct.unpack_from('>%dh' % stride_words, animetion, base)
+        out.append((values[0:3],
+                    [tuple(values[3 + i * 3:6 + i * 3]) for i in range(limb_count)]))
+    return frames, out
+
+
+def emit_animation(out_dir, clips, limbs, skin_limbs, skin_locals, shift, scale):
+    """Write the skinning tables and clip rotations the runtime poses from.
+
+    Rotation data is const: it lives in ROM with the rest of the ELF, not in the
+    ~9 KB of .bss left below SGL's work area. Only the posed POINT table is RAM,
+    and there is exactly one of it, which is why frames are re-posed at runtime
+    instead of pre-baked -- one baked POINT table is 12 bytes a vertex and two
+    of them would exhaust the entire remaining budget.
+    """
+    banner = '/* Generated by game/tools/build_link_model.py -- do not edit. */'
+    h = [banner, '', '#ifndef LINK_CLIPS_H', '# define LINK_CLIPS_H', '',
+         '# include <stdint.h>', '',
+         '# define LINK_LIMB_COUNT      %d' % len(limbs),
+         '# define LINK_SKIN_VERTICES   %d' % len(skin_limbs),
+         '# define LINK_CLIP_COUNT      %d' % len(clips),
+         '# define LINK_ANIM_SHIFT_X    %d' % shift[0],
+         '# define LINK_ANIM_SHIFT_Y    %d' % shift[1],
+         '# define LINK_ANIM_SHIFT_Z    %d' % shift[2],
+         '/* model units -> world units, as 16.16 */',
+         '# define LINK_ANIM_SCALE_Q16  %d' % int(round(scale * 65536)), '']
+    for index, (name, *_rest) in enumerate(clips):
+        h.append('# define LINK_CLIP_%-10s %d' % (name.upper(), index))
+    h += ['', 'typedef struct { int16_t x, y, z; } link_vec3_t;',
+          'typedef struct { uint8_t child, sibling; link_vec3_t pos; } link_limb_t;',
+          'typedef struct { uint16_t first, count; } link_clip_t;', '',
+          'extern const link_limb_t  link_limbs[LINK_LIMB_COUNT];',
+          'extern const link_clip_t  link_clips[LINK_CLIP_COUNT];',
+          '/* Per frame: the root translation, at full precision. */',
+          'extern const int16_t      link_root[][3];',
+          '/* Per frame: one binang rotation per limb, full precision. */',
+          'extern const int16_t      link_rotations[][LINK_LIMB_COUNT * 3];',
+          '/* Per skinned vertex: owning limb, and its limb-local position. */',
+          'extern const uint8_t      link_vertex_limb[LINK_SKIN_VERTICES];',
+          'extern const link_vec3_t  link_vertex_local[LINK_SKIN_VERTICES];',
+          '#endif', '']
+    (out_dir / 'link_clips.h').write_text('\n'.join(h))
+
+    c = [banner, '', '#include "link_clips.h"', '',
+         'const link_limb_t link_limbs[LINK_LIMB_COUNT] = {']
+    for limb in limbs:
+        c.append('    { %3d, %3d, { %6d, %6d, %6d } },'
+                 % (limb['child'], limb['sibling'], *limb['pos']))
+    c += ['};', '', 'const link_clip_t link_clips[LINK_CLIP_COUNT] = {']
+    first = 0
+    rows = []
+    for name, _symbol, _start, count, _stride, frames in clips:
+        c.append('    { %4d, %3d },   /* %s */' % (first, len(frames), name))
+        first += len(frames)
+        rows.extend(frames)
+    c += ['};', '', 'const int16_t link_root[][3] = {']
+    for root, _rotations in rows:
+        c.append('    { %6d, %6d, %6d },' % tuple(root))
+    c += ['};', '', 'const int16_t link_rotations[][LINK_LIMB_COUNT * 3] = {']
+    for _root, rotations in rows:
+        c.append('    { %s },' % ', '.join('%6d' % v for rot in rotations for v in rot))
+    c += ['};', '', 'const uint8_t link_vertex_limb[LINK_SKIN_VERTICES] = {']
+    for i in range(0, len(skin_limbs), 16):
+        c.append('    ' + ' '.join('%3d,' % v for v in skin_limbs[i:i + 16]))
+    c += ['};', '', 'const link_vec3_t link_vertex_local[LINK_SKIN_VERTICES] = {']
+    for local in skin_locals:
+        c.append('    { %6d, %6d, %6d },' % tuple(local))
+    c += ['};', '']
+    (out_dir / 'link_clips.c').write_text('\n'.join(c))
+    return sum(len(f) for *_r, f in clips)
 
 
 def main():
@@ -394,6 +572,10 @@ def main():
     ap.add_argument('--animation', type=lambda v: int(v, 0), default=int(recipe['animation'], 0),
                     help='LinkAnimationHeader offset in gameplay_keep')
     ap.add_argument('--frame', type=int, default=recipe['frame'])
+    ap.add_argument('--animate', action='store_true',
+                    help='also emit link_anim.c/.h: the skeleton, per-vertex '
+                         'limb ownership and the baked locomotion clips that '
+                         'the runtime skinner poses each frame')
     ap.add_argument('--flat', action='store_true',
                     help='collapse every face except the eyes and mouth to a '
                          'single colour, freeing VDP1 VRAM for the scene')
@@ -411,8 +593,26 @@ def main():
     tinted = apply_primitive_colour(faces)
     faces = scale_faces(faces, args.scale)
     faces = drop_degenerate(faces)
-    faces = ground_and_centre(faces)
-    positions, tiles = write_model(faces, args.out)
+    faces, shift = ground_and_centre(faces)
+    positions, tiles, skin_limbs, skin_locals = write_model(
+        faces, args.out, skinned=args.animate)
+
+    clips = baked = 0
+    if args.animate:
+        offsets = resolve_animations(args.oot, keep, args.animation)
+        resolved = []
+        for name, symbol, first, count, stride in CLIPS:
+            if symbol not in offsets:
+                sys.exit('%s: unknown animation symbol' % symbol)
+            total, sampled = read_animation_frames(
+                keep, animetion, offsets[symbol], first, count, stride,
+                LIMB_COUNT)
+            resolved.append((name, symbol, first, count, stride, sampled))
+            print('clip    : %-8s %3d/%3d frames stride %d  (%#07x)'
+                  % (name, len(sampled), total, stride, offsets[symbol]))
+        baked = emit_animation(args.out.parent, resolved, limbs, skin_limbs,
+                               skin_locals, shift, args.scale)
+        clips = len(resolved)
 
     points = [v[:3] for f in faces for v in f['vertices']]
     extent = [(min(p[i] for p in points), max(p[i] for p in points))
@@ -427,6 +627,13 @@ def main():
     if args.flat:
         print('flat    : %d faces collapsed to one colour (eyes/mouth kept)'
               % flattened)
+    if args.animate:
+        # Rotations are const and live in ROM; only the posed POINT table costs
+        # the scarce .bss below SGL's work area.
+        print('anim    : %d clips, %d frames, %d rodata bytes; %d skinned vertices'
+              % (clips, baked, baked * (LIMB_COUNT * 3 + 3) * 2, len(skin_limbs)))
+        print('          runtime POINT table %d bytes of .bss'
+              % (len(positions) * 12))
     print('extent  : x %s  y %s  z %s' % tuple(extent))
     print('height  : %d world units' % (extent[1][1] - extent[1][0]))
     print('out     : %s' % args.out)

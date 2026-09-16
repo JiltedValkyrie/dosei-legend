@@ -36,7 +36,7 @@ cp "$here/disc/ABS.TXT" "$here/disc/BIB.TXT" "$here/disc/CPY.TXT" "$here/build/c
 # Regenerate the SGL tables from the original scene, then stage the 4bpp blob
 # on the CD image. Both are cheap and keep game.iso consistent with FOREST.BIN.
 "$python" "$here/tools/build_sgl_area.py" --source "$sgl_source"
-"$python" "$here/tools/build_link_model.py" --flat --oot "$oot" --rom-dir "$roms"
+"$python" "$here/tools/build_link_model.py" --flat --animate --oot "$oot" --rom-dir "$roms"
 "$python" "$here/tools/build_sgl_scene.py" --texture-path "${TEXTURE_PATH:-hybrid}" --oot "$oot" --rom-dir "$roms"
 "$python" "$here/tools/build_demo_assets.py" --oot "$oot"
 "$python" "$here/tools/build_title_paths.py"

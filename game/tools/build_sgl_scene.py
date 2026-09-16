@@ -154,11 +154,23 @@ def emit(head, verts, faces, tiles, out_dir, name='kokiri'):
     # about how a reflection transforms them. The camera translation in
     # main.c is unchanged: eye.y - y is exactly (-y) + eye.y.
     baked = [(x, -y, z) for x, y, z in verts]
-    lines = [banner, '', '#include <jo/jo.h>', '#include "@n@_scene.h"', '',
-             'static POINT @n@_points[@N@_VERTEX_COUNT] = {']
-    for x, y, z in baked:
-        lines.append('    { toFIXED(%d), toFIXED(%d), toFIXED(%d) },' % (x, y, z))
-    lines += ['};', '']
+    if name == 'link':
+        # Link's table is skinned: link_anim.c rewrites every vertex from the
+        # baked clips before the first submission, so an initialiser here would
+        # be overwritten without ever being drawn. Leaving it uninitialised puts
+        # it in .bss instead of .data, which matters because the whole image
+        # sits below SGL's work area -- the initialiser is ~4 KB of the budget
+        # the clip data needs. It is also not static: the skinner is another
+        # translation unit.
+        lines = [banner, '', '#include <jo/jo.h>', '#include "@n@_scene.h"', '',
+                 '/* Skinned at runtime by link_anim.c; see link_clips.h. */',
+                 'POINT @n@_points[@N@_VERTEX_COUNT];', '']
+    else:
+        lines = [banner, '', '#include <jo/jo.h>', '#include "@n@_scene.h"', '',
+                 'static POINT @n@_points[@N@_VERTEX_COUNT] = {']
+        for x, y, z in baked:
+            lines.append('    { toFIXED(%d), toFIXED(%d), toFIXED(%d) },' % (x, y, z))
+        lines += ['};', '']
 
     # --- POLYGON table: real unit normals, required by Single_Plane -----
     lines.append('static POLYGON @n@_polygons[@N@_POLYGON_COUNT] = {')
@@ -259,7 +271,11 @@ def emit(head, verts, faces, tiles, out_dir, name='kokiri'):
               '    unsigned int    length;',
               '}                   @n@_tile;',
               '',
-              'extern PDATA                 @n@_pdata;',
+              'extern PDATA                 @n@_pdata;']
+    if name == 'link':
+        header += ['/* Rewritten in place by the runtime skinner; see link_anim.h. */',
+                   'extern POINT                 @n@_points[@N@_VERTEX_COUNT];']
+    header += [
               'extern const @n@_tile     @n@_tiles[@N@_TILE_COUNT];',
               'extern const unsigned short  @n@_cluts[@N@_TILE_COUNT][16];',
               '',

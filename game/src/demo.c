@@ -4,6 +4,7 @@
 #include "music_banks.h"
 #include "texture_probe.h"
 #include "title_paths.h"
+#include "link_anim_state.h"
 
 camera_position_t demo_camera;
 uint16_t demo_yaw;
@@ -13,6 +14,10 @@ uint16_t demo_link_yaw;
 bool demo_link_active;
 static int32_t link_velocity_y_q8;
 static int32_t link_fall_remainder_q8;
+/* Highest point since Link last left the ground, so the drop can be measured
+ * at the moment he lands -- that distance is what OoT's landing branch picks
+ * the short landing, ordinary landing or roll from. */
+static int32_t link_fall_peak_y;
 static camera_position_t link_safe_position;
 static bool link_safe_position_valid;
 
@@ -221,9 +226,12 @@ void demo_update(void)
                     demo_link_yaw = demo_yaw;
                     link_velocity_y_q8 = 0;
                     link_fall_remainder_q8 = 0;
+                    link_fall_peak_y = demo_link.y;
                     link_safe_position = demo_link;
                     link_safe_position_valid = true;
                     demo_link_active = true;
+                    /* Spawn standing, not mid-clip from a previous session. */
+                    link_anim_reset();
                 }
             }
             if (!title_visible && demo_link_active) {
@@ -265,16 +273,41 @@ void demo_update(void)
         bool recovered = false;
         while (steps--) {
             bool grounded;
+            int32_t step_x = demo_link.x, step_z = demo_link.z;
+            int32_t dx, dz, moved, fell;
             kokiri_camera_update(&demo_link, &demo_yaw, &unused_pitch, walk,
                                  false, true);
             grounded = kokiri_collision_fall(&demo_link, &link_velocity_y_q8,
                                               &link_fall_remainder_q8);
+            /* Drive the pose from the motion collision actually allowed, so
+             * walking into a wall idles instead of running on the spot. The
+             * Chebyshev distance is close enough to the true length for a
+             * walk/run threshold and costs no multiply on the SH-2. */
+            dx = demo_link.x - step_x;
+            if (dx < 0) dx = -dx;
+            dz = demo_link.z - step_z;
+            if (dz < 0) dz = -dz;
+            moved = dz > dx ? dz : dx;
+
             if (grounded) {
+                /* The peak still holds the height he left the ground from, so
+                 * this is the whole drop. It is only meaningful on the step he
+                 * lands; link_anim_update() ignores it otherwise. */
+                fell = link_fall_peak_y - demo_link.y;
+                if (fell < 0) fell = 0;
                 link_safe_position = demo_link;
                 link_safe_position_valid = true;
-            } else if (recover_link_from_void()) {
-                recovered = true;
+            } else {
+                fell = 0;
+                if (recover_link_from_void())
+                    recovered = true;
             }
+            link_anim_update(moved, grounded, fell, false);
+            /* Follow him while he is on the ground, so the next departure
+             * measures from where he actually left. Left alone while airborne,
+             * which is what makes the landing drop the full fall. */
+            if (grounded)
+                link_fall_peak_y = demo_link.y;
         }
         if (demo_link.x != was_x || demo_link.z != was_z)
             demo_link_yaw = kokiri_camera_facing(demo_link.x - was_x,

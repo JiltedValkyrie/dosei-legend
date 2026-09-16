@@ -24,6 +24,7 @@
 #include "kokiri_sgl.h"
 #include "vdp1_layout.h"
 #include "demo.h"
+#include "link_anim_state.h"
 
 /* Original forest renderer: radius (4367) * 60%. Requested visibility is
  * half of that range. Keep crossing polygons using their nearest vertex. */
@@ -284,6 +285,9 @@ void                kokiri_link_draw(int x, int y, int z, int yaw)
     ** coordinates reach this matrix as (x, -y, z) -- the same convention the
     ** camera translation in main.c already uses. The caller's yaw is binang;
     ** Jo's matrix helpers take degrees. */
+    /* Re-pose link_points before submitting. This is a no-op while the clip
+    ** frame is unchanged, so a stationary Link costs nothing extra. */
+    link_anim_pose(link_anim_clip(), link_anim_frame());
     jo_3d_push_matrix();
     {
         jo_3d_translate_matrix(x, -y, z);

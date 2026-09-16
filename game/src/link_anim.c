@@ -1,0 +1,257 @@
+/*
+** Runtime skinning for child Link.
+**
+** Why pose at runtime instead of baking frames: one POINT table is 12 bytes a
+** vertex, so Link's 329 vertices cost ~3.9 KB. The link-time boundary check
+** leaves about 9.4 KB of .bss below SGL's work area, so two baked frames would
+** exhaust it. Baked per-frame limb *rotations* are const instead, and there is
+** exactly one posed POINT table, rewritten in place when the frame changes.
+**
+** The clip data still shares the RAM below SGL's work area with .bss, so the
+** malloc arena in the makefile was trimmed to measured demand to pay for it.
+** Rotations are kept at full 16-bit binang precision.
+**
+** Cost control: the skeleton is walked once per frame to build 21 limb
+** matrices (21 rotations), then each vertex is one matrix-vector product.
+** That is far cheaper than the per-vertex Euler evaluation a naive version
+** would do, and it is only redone when the clip frame actually advances.
+**
+** Conventions this file must preserve, all established by the existing
+** pipeline (see build_sgl_scene.py and kokiri_sgl.c):
+**   - POINT Y is negated. The Y flip is baked at the rendering boundary so the
+**     modelview matrix stays a pure translation; the skinner applies the same
+**     negation rather than reintroducing a runtime reflection.
+**   - POLYGON normals stay at their bind-pose values. Recomputing 460 normals
+**     per frame is not affordable on the SH-2, and Link is flat shaded with
+**     SORT_CEN, so the visible cost is limited to lighting, not culling order.
+**   - The model is grounded and centred at build time; the same integer shift
+**     is reapplied here so a posed frame lands where the bind pose did.
+*/
+
+#include <jo/jo.h>
+#include <stdint.h>
+
+#include "link_clips.h"
+#include "link_scene.h"
+#include "link_anim_state.h"
+
+/* 3x3 rotation plus translation, in the model's own units. Rotations are
+** FIXED (16.16); origins stay integer model units until the final scale. */
+typedef struct
+{
+    FIXED   m[3][3];
+    int32_t origin[3];
+}           limb_matrix_t;
+
+static limb_matrix_t limb_matrices[LINK_LIMB_COUNT];
+
+/* The frame currently resident in link_points, so an unchanged frame costs
+** nothing. -1 forces the first pose. */
+static int      posed_frame = -1;
+
+#define FIXED_MUL(a, b)  ((FIXED)(((int64_t)(a) * (int64_t)(b)) >> 16))
+
+static void     matrix_multiply(FIXED out[3][3], const FIXED a[3][3],
+                                const FIXED b[3][3])
+{
+    unsigned int    row;
+    unsigned int    col;
+
+    for (row = 0; row < 3; ++row)
+        for (col = 0; col < 3; ++col)
+            out[row][col] = FIXED_MUL(a[row][0], b[0][col])
+                          + FIXED_MUL(a[row][1], b[1][col])
+                          + FIXED_MUL(a[row][2], b[2][col]);
+}
+
+/*
+** Binang Euler triple -> matrix, composed Z then Y then X.
+**
+** This is OoT's own order (z_player_lib.c poses limbs ZYX), and it has to match
+** build_link_model.py:rotation_matrix() exactly, or the baked bind pose and the
+** runtime pose disagree and Link's limbs twist.
+*/
+static void     rotation_matrix(FIXED out[3][3], const int16_t rot[3])
+{
+    ANGLE           ax = (ANGLE)(uint16_t)rot[0];
+    ANGLE           ay = (ANGLE)(uint16_t)rot[1];
+    ANGLE           az = (ANGLE)(uint16_t)rot[2];
+    FIXED           sx = slSin(ax);
+    FIXED           cx = slCos(ax);
+    FIXED           sy = slSin(ay);
+    FIXED           cy = slCos(ay);
+    FIXED           sz = slSin(az);
+    FIXED           cz = slCos(az);
+    FIXED           zy[3][3];
+    FIXED           rx[3][3];
+    FIXED           ry[3][3];
+    FIXED           rz[3][3];
+
+    rx[0][0] = toFIXED(1); rx[0][1] = 0;   rx[0][2] = 0;
+    rx[1][0] = 0;          rx[1][1] = cx;  rx[1][2] = -sx;
+    rx[2][0] = 0;          rx[2][1] = sx;  rx[2][2] = cx;
+
+    ry[0][0] = cy;         ry[0][1] = 0;   ry[0][2] = sy;
+    ry[1][0] = 0;          ry[1][1] = toFIXED(1); ry[1][2] = 0;
+    ry[2][0] = -sy;        ry[2][1] = 0;   ry[2][2] = cy;
+
+    rz[0][0] = cz;         rz[0][1] = -sz; rz[0][2] = 0;
+    rz[1][0] = sz;         rz[1][1] = cz;  rz[1][2] = 0;
+    rz[2][0] = 0;          rz[2][1] = 0;   rz[2][2] = toFIXED(1);
+
+    matrix_multiply(zy, rz, ry);
+    matrix_multiply(out, zy, rx);
+}
+
+/*
+** Compose every limb's matrix for one frame.
+**
+** Mirrors build_link_model.py:walk_skeleton() and SkelAnime's hierarchical
+** draw: each limb translates by its jointPos expressed in the parent's frame,
+** then rotates. Limb 0 uses the animation's root translation instead of its
+** own jointPos. The recursion there is rewritten as an explicit stack walk;
+** the sibling/child links are a tree of 21 nodes, so the stack is tiny and
+** bounded, and this avoids recursion on the SH-2's small stack.
+*/
+static void     pose_skeleton(const int16_t *root, const int16_t *rotations)
+{
+    /* Each entry is a limb whose parent matrix is already composed. */
+    uint8_t         pending[LINK_LIMB_COUNT];
+    uint8_t         parent_of[LINK_LIMB_COUNT];
+    unsigned int    count = 0;
+    unsigned int    at = 0;
+    unsigned int    i;
+
+    for (i = 0; i < LINK_LIMB_COUNT; ++i)
+        parent_of[i] = 0xFF;
+    pending[count++] = 0;
+
+    while (at < count)
+    {
+        uint8_t         index = pending[at++];
+        const link_limb_t *limb = &link_limbs[index];
+        limb_matrix_t   *out = &limb_matrices[index];
+        uint8_t         parent = parent_of[index];
+        int32_t         offset[3];
+        unsigned int    axis;
+        uint8_t         child;
+        uint8_t         sibling;
+
+        if (index == 0)
+        {
+            offset[0] = root[0];
+            offset[1] = root[1];
+            offset[2] = root[2];
+        }
+        else
+        {
+            offset[0] = limb->pos.x;
+            offset[1] = limb->pos.y;
+            offset[2] = limb->pos.z;
+        }
+
+        if (parent == 0xFF)
+        {
+            /* Limb 0: the animation's root translation, no parent rotation. */
+            FIXED   local[3][3];
+
+            for (axis = 0; axis < 3; ++axis)
+                out->origin[axis] = offset[axis];
+            rotation_matrix(local, &rotations[index * 3]);
+            for (axis = 0; axis < 3; ++axis)
+            {
+                out->m[axis][0] = local[axis][0];
+                out->m[axis][1] = local[axis][1];
+                out->m[axis][2] = local[axis][2];
+            }
+        }
+        else
+        {
+            const limb_matrix_t *up = &limb_matrices[parent];
+            FIXED           local[3][3];
+
+            /* Place the joint in the parent's frame, then rotate within it. */
+            for (axis = 0; axis < 3; ++axis)
+                out->origin[axis] = up->origin[axis]
+                    + (FIXED_MUL(up->m[axis][0], toFIXED(offset[0]))
+                     + FIXED_MUL(up->m[axis][1], toFIXED(offset[1]))
+                     + FIXED_MUL(up->m[axis][2], toFIXED(offset[2]))) / 65536;
+            rotation_matrix(local, &rotations[index * 3]);
+            matrix_multiply(out->m, up->m, local);
+        }
+
+        /* Queue children and siblings with their parent recorded. A sibling
+        ** shares this limb's parent; a child's parent is this limb. */
+        child = limb->child;
+        if (child != 0xFF && child < LINK_LIMB_COUNT)
+        {
+            parent_of[child] = index;
+            pending[count++] = child;
+        }
+        sibling = limb->sibling;
+        if (sibling != 0xFF && sibling < LINK_LIMB_COUNT && count < LINK_LIMB_COUNT)
+        {
+            parent_of[sibling] = parent;
+            pending[count++] = sibling;
+        }
+    }
+}
+
+/*
+** Transform every skinned vertex by its owning limb and write link_points.
+**
+** The build-time chain was: pose -> scale to world units -> ground/centre.
+** The same order is reproduced here, in integer model units until the scale,
+** so a posed frame sits exactly where the baked bind pose did. Y is negated
+** last, matching the baked POINT convention.
+*/
+static void     skin_vertices(void)
+{
+    unsigned int    i;
+
+    for (i = 0; i < LINK_SKIN_VERTICES; ++i)
+    {
+        const limb_matrix_t *m = &limb_matrices[link_vertex_limb[i]];
+        const link_vec3_t   *local = &link_vertex_local[i];
+        int32_t             posed[3];
+        unsigned int        axis;
+
+        for (axis = 0; axis < 3; ++axis)
+            posed[axis] = m->origin[axis]
+                + (FIXED_MUL(m->m[axis][0], toFIXED(local->x))
+                 + FIXED_MUL(m->m[axis][1], toFIXED(local->y))
+                 + FIXED_MUL(m->m[axis][2], toFIXED(local->z))) / 65536;
+
+        /* Model units -> world units, then the build-time grounding shift. */
+        posed[0] = ((posed[0] * LINK_ANIM_SCALE_Q16) >> 16) + LINK_ANIM_SHIFT_X;
+        posed[1] = ((posed[1] * LINK_ANIM_SCALE_Q16) >> 16) + LINK_ANIM_SHIFT_Y;
+        posed[2] = ((posed[2] * LINK_ANIM_SCALE_Q16) >> 16) + LINK_ANIM_SHIFT_Z;
+
+        link_points[i][X] = toFIXED(posed[0]);
+        link_points[i][Y] = toFIXED(-posed[1]);   /* baked Y negation */
+        link_points[i][Z] = toFIXED(posed[2]);
+    }
+}
+
+void            link_anim_pose(unsigned int clip, unsigned int frame)
+{
+    const link_clip_t   *entry;
+    unsigned int        absolute;
+
+    if (clip >= LINK_CLIP_COUNT)
+        clip = LINK_CLIP_IDLE;
+    entry = &link_clips[clip];
+    if (entry->count == 0)
+        return;
+    absolute = entry->first + (frame % entry->count);
+    if ((int)absolute == posed_frame)
+        return;                     /* already resident; skinning is the cost */
+    posed_frame = (int)absolute;
+    pose_skeleton(link_root[absolute], link_rotations[absolute]);
+    skin_vertices();
+}
+
+void            link_anim_reset(void)
+{
+    posed_frame = -1;
+}

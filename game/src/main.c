@@ -134,6 +134,13 @@ static void         viewer_hud(void)
             jo_printf(0, 1, "L %d,%d yaw %d  C %d,%d pan %d   ",
                       (int)demo_link.x, (int)demo_link.z, (int)demo_link_yaw,
                       (int)demo_camera.x, (int)demo_camera.z, (int)demo_yaw);
+        /* Heap headroom and the current locomotion state. The heap figure is
+        ** what justifies JO_GLOBAL_MEMORY_SIZE_FOR_MALLOC: the clip tables and
+        ** the skinned POINT table compete with it for the RAM below SGL's work
+        ** area, so it was trimmed to measured demand rather than guessed. */
+        jo_printf(0, 2, "heap %d%%  anim %d f%d    ",
+                  jo_memory_usage_percent(), (int)link_anim_state(),
+                  (int)link_anim_frame());
         return;
     }
     jo_printf(0, 0, "Jo/SGL Kokiri viewer");
