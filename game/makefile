@@ -43,6 +43,7 @@ override ASSETS_DIR = ./build/cd
 
 JO_ENGINE_SRC_DIR = ../../joengine/jo_engine
 COMPILER_DIR = ../../joengine/Compiler
+PYTHON ?= python
 
 # The toolchain ships an ancient msys-1.0 sh.exe in "Other Utilities", which is
 # first on PATH during a build and mangles arguments passed to the cygwin
@@ -74,6 +75,7 @@ endif
 # Instead declare our own link/convert targets against an obj/ object list and
 # cancel the inherited suffix rule so it can never fire on an SDK source.
 MY_OBJS = $(patsubst %.c,$(OBJDIR)/%.o,$(notdir $(SRCS)))
+$(MY_OBJS): build/generated/toolchain.stamp
 
 # The parent expanded $(TARGET)'s prerequisites from its own OBJS while reading
 # its rules; make unions prerequisites across rules for the same target, so
@@ -116,7 +118,7 @@ $(TARGET2): $(TARGET1)
 	$(MKISOFS) -quiet -sysid "SEGA SATURN" -volid "KOKIRIJO" -volset "KOKIRIJO" 		-sectype 2352 -publisher "SEGA ENTERPRISES, LTD." 		-preparer "SEGA ENTERPRISES, LTD." -appid "KOKIRIJO" 		-abstract "$(ASSETS_DIR)/ABS.TXT" -copyright "$(ASSETS_DIR)/CPY.TXT" 		-biblio "$(ASSETS_DIR)/BIB.TXT" -generic-boot $(IPFILE) 		-full-iso9660-filenames -o $(TARGET2) $(ASSETS_DIR)
 
 $(TARGET3): $(TARGET2)
-	python tools/write_cue.py $(TARGET2) $(TARGET3)
+	"$(PYTHON)" tools/write_cue.py $(TARGET2) $(TARGET3)
 
 clean:
 	$(RM) $(OBJDIR) $(TARGET) $(TARGET1) $(TARGET2) $(TARGET3) $(MPFILE) build/cd/0.bin

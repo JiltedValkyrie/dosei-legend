@@ -49,12 +49,13 @@ import build_kokiri_scene as scene_tool  # noqa: E402
 from extract_title_source import yaz0     # noqa: E402
 
 
-def read_object(oot, name):
+def read_object(oot, name, rom_dir=None):
     config = oot / 'baseroms' / 'ntsc-1.2'
-    roms = [p for p in config.glob('*.z64')
+    rom_folder = pathlib.Path(rom_dir) if rom_dir else config
+    roms = [p for p in rom_folder.glob('*.z64')
             if hashlib.md5(p.read_bytes()).hexdigest() == ROM_MD5]
     if len(roms) != 1:
-        sys.exit('verified US 1.2 ROM (md5 %s) required in %s' % (ROM_MD5, config))
+        sys.exit('verified US 1.2 ROM (md5 %s) required in %s' % (ROM_MD5, rom_folder))
     rom = roms[0].read_bytes()
     dma = int(re.search(r'dmadata_start: (\w+)',
                         (config / 'config.yml').read_text())[1], 16)
@@ -386,6 +387,7 @@ def main():
     recipe = json.loads((root / 'assets/dynamic/link/source.json').read_text())
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument('--oot', type=pathlib.Path, default=OOT_DEFAULT)
+    ap.add_argument('--rom-dir', type=pathlib.Path)
     ap.add_argument('--out', type=pathlib.Path, default=root / 'build/generated' / 'LINK.BIN')
     ap.add_argument('--scale', type=float, default=recipe['scale'],
                     help='model units -> world units')
@@ -397,9 +399,9 @@ def main():
                          'single colour, freeing VDP1 VRAM for the scene')
     args = ap.parse_args()
 
-    data = read_object(args.oot, OBJECT)
-    keep = read_object(args.oot, 'gameplay_keep')
-    animetion = read_object(args.oot, 'link_animetion')
+    data = read_object(args.oot, OBJECT, args.rom_dir)
+    keep = read_object(args.oot, 'gameplay_keep', args.rom_dir)
+    animetion = read_object(args.oot, 'link_animetion', args.rom_dir)
     limbs = read_limbs(data)
     frames, root, rotations = read_animation(keep, animetion, args.animation,
                                              args.frame, LIMB_COUNT)

@@ -15,7 +15,10 @@ sys.path.insert(0, str(ROOT / 'tools'))
 
 import build_sgl_area as area  # noqa: E402
 
-SDK_OBJECT = (ROOT.parent.parent / 'joengine' / 'Compiler' / 'COMMON'
+sys.path.insert(0, str(ROOT.parent / 'tools/launcher'))
+from project_config import read_paths
+
+SDK_OBJECT = (pathlib.Path(read_paths()['jo_engine']) / 'Compiler' / 'COMMON'
               / 'SGL_302j' / 'LIB_ELF' / 'SGLAREA.O')
 GENERATED = ROOT / 'build/generated' / 'sglarea.o'
 

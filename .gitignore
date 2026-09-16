@@ -16,6 +16,7 @@ workspace/
 /game/*.raw
 
 # Local settings and Python cache
+/config.ini
 .claude/settings.local.json
 __pycache__/
 *.pyc

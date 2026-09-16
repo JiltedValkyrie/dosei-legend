@@ -3,10 +3,17 @@
 Double-click `../../launch-game.bat`. Choose standard **320x240** or experimental
 **320x480i**, then Run selected. Only Jo builds are offered.
 
-The selector uses the corresponding `game/run-kronos*.bat`, checking its CUE
-and referenced data first. This is an explicit two-entry catalog, not arbitrary
-batch discovery. Add variants to `$variants` in `kronos-launcher.ps1`, with Image
-and Batch paths relative to the repository root. Missing images disable launch.
+**Config > Paths...** selects the local Jo SDK, MSYS2, Python, Kronos, runtime
+DLL folder, Saturn BIOS, OoT decomp and US 1.2 ROM directory. Save writes the
+git-ignored root `config.ini`. Validation checks paths, Pillow and the ROM MD5;
+buttons open the configured decomp and ROM folders. See [developer setup](SETUP.md)
+for the exact ROM, decomp revision and build instructions.
+
+The selector launches configured Kronos directly, checking the CUE and referenced
+data first. Direct `game/run-kronos*.bat` shortcuts call the same selector.
+This is an explicit two-entry catalog, not arbitrary batch discovery. Add variants
+to `$variants` in `kronos-launcher.ps1`, with Image paths relative to the repository
+root. Missing images disable launch.
 
 Refresh updates timestamps. It does not build, kill Kronos, or change emulator
 settings. Close Kronos before switching.

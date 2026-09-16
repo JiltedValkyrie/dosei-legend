@@ -5,6 +5,11 @@ Active Jo Engine / SGL project. See the [directory map](../README.md),
 
 ## Build and launch
 
+Configure local dependencies with `../launch-game.bat` > **Config > Paths...**.
+See [developer setup](../tools/launcher/SETUP.md) for the SDK, decomp and exact ROM.
+Settings are saved to the repository's ignored `config.ini`. From Windows, use
+`build.bat` or `build.bat -Variant hires`.
+
 In MSYS2 bash, run `./build.sh` here. Add `--hires` for 320x480i;
 standard is 320x240. Same assets, gameplay and audio. Build sequentially.
 All generated output goes under `build/`, including both `game*.cue/.iso` images,
@@ -25,7 +30,8 @@ diagnostics. Current Link/follow behavior is in `src/demo.c`.
 
 The default converter now uses source UVs, shared/repeating textured quads,
 density-budgeted bakes and limited close-ground subdivision. The source ROM is
-the verified US 1.2 extraction under `D:/Workspace-Claude/game-decomps/n64/oot`.
+the verified US 1.2 ROM in the configured ROM directory, with metadata from the
+configured `zeldaret/oot` checkout.
 Collision remains the original whole mesh; no runtime Y reflection was added.
 See [texture implementation and evidence](docs/TEXTURE_PLAN.md).
 

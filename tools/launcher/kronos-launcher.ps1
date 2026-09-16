@@ -6,10 +6,8 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'project-config.ps1')
 $project = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../..'))
-$workspace = Split-Path $project -Parent
-$kronosDir = Join-Path $workspace 'Kronos/build_kronos/src/port/qt'
-$bios = Join-Path $workspace 'bios/Sega Saturn BIOS (E) (1.00)/Sega Saturn BIOS (E) (1.00).bin'
 $variants = @(
     [pscustomobject]@{ Id='normal'; Name='Dosei Legend - standard (320x240)'; Image='game/build/game.cue'; Batch='game/run-kronos.bat'; Note='Jo Engine game: Link, forest, controls and music.' },
     [pscustomobject]@{ Id='hires'; Name='Dosei Legend - hi-res (320x480i)'; Image='game/build/game-hires.cue'; Batch='game/run-kronos-hires.bat'; Note='Same Jo game, native interlaced vertical-resolution experiment.' }
@@ -31,17 +29,18 @@ function Test-Image($entry) {
 function Start-Variant($entry) {
     $state = Test-Image $entry
     if ($state -ne 'Ready') { throw $state }
-    $exe = Join-Path $kronosDir 'kronos.exe'
-    foreach ($path in @($exe, $bios)) {
-        if (!(Test-Path -LiteralPath $path -PathType Leaf)) { throw "Missing dependency: $path" }
-    }
+    $paths = Get-ProjectPaths
+    $problems = @(Get-PathProblems $paths)
+    if ($problems.Count) { throw ($problems -join "`r`n") }
     # Do not silently run two competing performance experiments.
     if (Get-Process -Name kronos -ErrorAction SilentlyContinue) {
         throw 'Kronos is already running. Close it before starting another variant.'
     }
-    $batch = Join-Path $project $entry.Batch
-    if (!(Test-Path -LiteralPath $batch -PathType Leaf)) { throw "Missing launcher: $batch" }
-    Start-Process -FilePath 'cmd.exe' -WorkingDirectory $project -WindowStyle Hidden -ArgumentList "/c `"$batch`"" | Out-Null
+    $oldPath = $env:PATH
+    try {
+        if ($paths.kronos_dlls) { $env:PATH = $paths.kronos_dlls + ';' + $env:PATH }
+        Start-Process -FilePath $paths.kronos -WorkingDirectory (Split-Path $paths.kronos -Parent) -WindowStyle Normal -ArgumentList @('-b', ('"' + $paths.saturn_bios + '"'), '-i', ('"' + (Get-ImagePath $entry) + '"'), '-a') | Out-Null
+    } finally { $env:PATH = $oldPath }
 }
 
 if ($Check) {
@@ -54,6 +53,7 @@ if ($Check) {
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 [Windows.Forms.Application]::EnableVisualStyles()
+. (Join-Path $PSScriptRoot 'config-dialog.ps1')
 if ($Variant) {
     try { Start-Variant ($variants | Where-Object Id -eq $Variant) }
     catch { [Windows.Forms.MessageBox]::Show($_.Exception.Message, 'Kronos launcher') | Out-Null; exit 1 }
@@ -67,10 +67,19 @@ $form.StartPosition = 'CenterScreen'
 $form.FormBorderStyle = 'FixedDialog'
 $form.MaximizeBox = $false
 $form.Font = New-Object Drawing.Font('Segoe UI', 10)
+$menu = New-Object Windows.Forms.MenuStrip
+$configMenu = New-Object Windows.Forms.ToolStripMenuItem('Config')
+$pathsItem = $configMenu.DropDownItems.Add('Paths...')
+$pathsItem.Add_Click({ Show-ConfigDialog $form })
+$guideItem = $configMenu.DropDownItems.Add('Developer setup guide')
+$guideItem.Add_Click({ Start-Process (Join-Path $project 'tools/launcher/SETUP.md') })
+[void]$menu.Items.Add($configMenu)
+$form.MainMenuStrip = $menu
+$form.Controls.Add($menu)
 
 $list = New-Object Windows.Forms.ListView
-$list.Location = New-Object Drawing.Point(16, 16)
-$list.Size = New-Object Drawing.Size(788, 220)
+$list.Location = New-Object Drawing.Point(16, 32)
+$list.Size = New-Object Drawing.Size(788, 204)
 $list.View = 'Details'
 $list.FullRowSelect = $true
 $list.MultiSelect = $false
@@ -147,6 +156,7 @@ if ($SmokeTest) {
     if ($list.Items.Count -ne $variants.Count) { throw 'Variant list incomplete' }
     if ($details.Text -notlike '*game-hires*') { throw 'Selection details missing' }
     Write-Output 'GUI controls and hi-res selection passed; no emulator launched.'
+    Show-ConfigDialog $form -TestOnly
     $form.Dispose()
     exit 0
 }

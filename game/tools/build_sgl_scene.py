@@ -283,6 +283,7 @@ def main():
     ap.add_argument('--texture-path', choices=('legacy', 'patches', 'hybrid'), default='hybrid')
     ap.add_argument('--oot', type=pathlib.Path,
                     default=pathlib.Path('D:/Workspace-Claude/game-decomps/n64/oot'))
+    ap.add_argument('--rom-dir', type=pathlib.Path)
     args = ap.parse_args()
     if args.texture_path == 'legacy':
         (args.out / 'texture_manifest.json').unlink(missing_ok=True)
@@ -311,7 +312,7 @@ def main():
                 actor = dict(tiles=[(t['width'],t['height']) for t in at.values()],
                              polygons=len(af), vertices=len(av))
             head, verts, faces, tiles = convert(args.oot, head, actor, args.out,
-                                               args.texture_path == 'patches')
+                                               args.texture_path == 'patches', rom_dir=args.rom_dir)
         if args.diagnostic_tiles and name == 'kokiri':
             replace_with_checker(tiles)
         blob_bytes = emit(head, verts, faces, tiles, args.out, name)

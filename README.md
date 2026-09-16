@@ -38,6 +38,11 @@ legacy/libyaul/                 Archived reference only; not an active build tar
 
 ## Build and play
 
+First use **launch-game.bat > Config > Paths...** to select your own tools and
+save `config.ini`. See [developer setup](tools/launcher/SETUP.md) for dependencies,
+the exact OoT decomp/US 1.2 ROM and ROM placement. Windows builds can then use
+`game\build.bat` or `game\build.bat -Variant hires`.
+
 From MSYS2 bash:
 
 ```bash
@@ -57,8 +62,8 @@ Direct shortcuts: `game/run-kronos.bat` and `game/run-kronos-hires.bat`.
 Model tool: `tools/mesh-workshop/open-mesh-workshop.bat`.
 Imported tri/quad candidates are **not yet runtime-ready**.
 
-The build requires the existing sibling `../joengine` SDK, MSYS2, Python/Pillow
-and the local verified US 1.2 extraction/ROM used by the converters. Do not modify
+The build requires a configured Jo Engine SDK, MSYS2, Python/Pillow
+and the verified US 1.2 ROM/decomp used by the converters. Do not modify
 the shared SDK. Legacy experiments are not imported into active Jo runtime code.
 
 ## Focused checks

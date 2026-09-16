@@ -20,8 +20,8 @@ from vdp1_budget import Budget, tile_bytes
 OOT_DEFAULT = pathlib.Path('D:/Workspace-Claude/game-decomps/n64/oot')
 
 
-def load_faces(oot):
-    segments = source.extract(oot)
+def load_faces(oot, rom_dir=None):
+    segments = source.extract(oot, rom_dir)
     faces = []
     for name, data in segments.items():
         if 'room' in name:
@@ -123,8 +123,8 @@ def render_tile(group, width, height, shared=False):
     return quantize(pixels, width, height)
 
 
-def convert(oot, head, actor, out_dir, patches_only=False):
-    groups = quads.build(load_faces(oot))
+def convert(oot, head, actor, out_dir, patches_only=False, rom_dir=None):
+    groups = quads.build(load_faces(oot, rom_dir))
     split = max((g for g in groups if g['kind'] == quads.SPLIT), key=lambda g:g['size'])
     ground = min((g for g in groups if g['kind'] == quads.BAKE and
                   abs(quads.normal(g['points'])[1]) > .85 * math.sqrt(sum(
@@ -135,7 +135,7 @@ def convert(oot, head, actor, out_dir, patches_only=False):
     if patches_only:
         selected = set(split['source'] + ground['source'])
         groups = [g for g in groups if set(g['source']) <= selected]
-        for i, face in enumerate(load_faces(oot)):
+        for i, face in enumerate(load_faces(oot, rom_dir)):
             if i not in selected:
                 groups.append(dict(kind=quads.BAKE, repeat=(1,1), tri=face,
                                    points=face['vertices'], texture=face['texture'],

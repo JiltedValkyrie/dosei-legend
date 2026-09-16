@@ -23,9 +23,9 @@ from extract_title_source import yaz0
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def extract(root):
+def extract(root, rom_dir=None):
     config = root / 'baseroms/ntsc-1.2'
-    roms = [p for p in config.glob('*.z64') if hashlib.md5(p.read_bytes()).hexdigest()
+    roms = [p for p in (Path(rom_dir) if rom_dir else config).glob('*.z64') if hashlib.md5(p.read_bytes()).hexdigest()
             == '57a9719ad547c516342e1a15d5c28c3d']
     assert len(roms) == 1, 'Verified US 1.2 ROM required'
     rom = roms[0].read_bytes()
