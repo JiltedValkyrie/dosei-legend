@@ -222,7 +222,10 @@ def main():
                     / 'SGL_302j' / 'LIB_ELF' / 'SGLAREA.O')
     ap.add_argument('--out', type=pathlib.Path,
                     default=root / 'generated' / 'sglarea.o')
-    ap.add_argument('--max-polygons', type=int, default=2100)
+    # Forest 2060 + Link 460 = 2520 submitted in one frame, plus a small
+    # margin. Each extra polygon costs 84 bytes of work area (SortList 12 +
+    # SpriteBuf 72) plus CommandBuf scaling, and that area competes with .bss.
+    ap.add_argument('--max-polygons', type=int, default=2600)
     ap.add_argument('--max-vertices', type=int, default=2500)
     ap.add_argument('--commandbuf-margin', type=float, default=1.10)
     ap.add_argument('--map', type=pathlib.Path, default=root / 'game.map')

@@ -58,6 +58,12 @@ static void         viewer_draw(void)
     slRotY((ANGLE)(0u-demo_yaw));
     jo_3d_translate_matrix(-demo_camera.x, demo_camera.y, -demo_camera.z);
     kokiri_scene_draw();
+    /* Link is submitted after the forest so the per-frame counters, which
+    ** kokiri_scene_draw() resets, cover both lists. His model origin is at his
+    ** feet, EYE_HEIGHT below the collision position. */
+    if (demo_link_active)
+        kokiri_link_draw(demo_link.x, demo_link.y - DEMO_LINK_EYE_HEIGHT,
+                         demo_link.z, demo_link_yaw);
     rejected_total += kokiri_scene_rejected();
     viewer_hud();
 }
@@ -71,6 +77,12 @@ static void         viewer_hud(void)
     if (!debug_visible) {
         if (rejected_total || !music_ready)
             jo_printf(0, 0, "music %s refusals %d", music_ready ? "ON" : "FAIL", (int)rejected_total);
+        /* Link's pose stays visible without the debug toggle: it is the
+        ** quickest way to tell a framing problem from a movement one. */
+        if (demo_link_active)
+            jo_printf(0, 1, "L %d,%d yaw %d  C %d,%d pan %d   ",
+                      (int)demo_link.x, (int)demo_link.z, (int)demo_link_yaw,
+                      (int)demo_camera.x, (int)demo_camera.z, (int)demo_yaw);
         return;
     }
     jo_printf(0, 0, "Jo/SGL Kokiri viewer");
@@ -78,6 +90,12 @@ static void         viewer_hud(void)
               KOKIRI_VERTEX_COUNT, KOKIRI_POLYGON_COUNT, KOKIRI_TILE_COUNT);
     jo_printf(0, 2, "cam %d,%d,%d pan %d   ", (int)demo_camera.x, (int)demo_camera.y, (int)demo_camera.z,
               (int)demo_yaw);
+    if (demo_link_active)
+        jo_printf(0, 8, "link %d,%d,%d yaw %d  ", (int)demo_link.x,
+                  (int)(demo_link.y - DEMO_LINK_EYE_HEIGHT), (int)demo_link.z,
+                  (int)demo_link_yaw);
+    else
+        jo_printf(0, 8, "link: press START      ");
     /* jo_3d_get_polygon_count() reports SGL's TotalPolygons, i.e. polygons
     ** submitted this frame, not DispPolygons actually drawn -- so it is a
     ** submission count, not a coverage measurement. "rej" is the number of
@@ -92,6 +110,8 @@ static void         viewer_hud(void)
     jo_printf(0, 6, "music %s tick %d    ", music_ready ? "ON" : "FAIL",
               (int)viewer_music_ticks());
     jo_printf(0, 7, "total refusals %d    ", (int)rejected_total);
+    jo_printf(0, 9, "collision index %s   ",
+              demo_collision_indexed ? "ON" : "off (full scan)");
 }
 
 void                jo_main(void)

@@ -8,10 +8,102 @@
 static const collision_triangle_t *triangles;
 static uint32_t triangle_count;
 
+/* Optional XZ lookup grid. Both queries below reject a triangle first on its
+ * XZ bounds, so scanning all of them costs the same whether or not anything is
+ * near. With an index built, only the triangles bucketed into the queried
+ * cells are visited. It is opt-in: until kokiri_collision_index() succeeds the
+ * queries behave exactly as before, scanning every triangle. */
+#define GRID_DIM 16
+static uint32_t *grid_offset;   /* GRID_DIM*GRID_DIM+1 entries: cell starts */
+static uint16_t *grid_list;     /* triangle ids, grouped by cell */
+static int32_t grid_x0, grid_z0, grid_step_x, grid_step_z;
+static bool grid_ready;
+
 void kokiri_collision_init(const collision_triangle_t *data, uint32_t count)
 {
         triangles = data;
         triangle_count = count;
+        grid_ready = false;
+}
+
+static uint32_t grid_cell(int32_t value, int32_t origin, int32_t step)
+{
+        int32_t cell = (value - origin) / step;
+        if (cell < 0) cell = 0;
+        if (cell >= GRID_DIM) cell = GRID_DIM - 1;
+        return (uint32_t)cell;
+}
+
+bool kokiri_collision_index(void *buffer, uint32_t bytes)
+{
+        const uint32_t cells = GRID_DIM * GRID_DIM;
+        int32_t min_x, max_x, min_z, max_z;
+        uint32_t i, c, total, need;
+
+        grid_ready = false;
+        /* Ids are stored as uint16_t, so a larger set stays on the linear path. */
+        if (!triangles || !triangle_count || triangle_count > 65535) return false;
+        if (bytes < (cells + 1) * sizeof(uint32_t)) return false;
+
+        min_x = max_x = triangles[0].minimum[0];
+        min_z = max_z = triangles[0].minimum[2];
+        for (i = 0; i < triangle_count; i++) {
+                if (triangles[i].minimum[0] < min_x) min_x = triangles[i].minimum[0];
+                if (triangles[i].maximum[0] > max_x) max_x = triangles[i].maximum[0];
+                if (triangles[i].minimum[2] < min_z) min_z = triangles[i].minimum[2];
+                if (triangles[i].maximum[2] > max_z) max_z = triangles[i].maximum[2];
+        }
+        grid_x0 = min_x;
+        grid_z0 = min_z;
+        grid_step_x = (max_x - min_x) / GRID_DIM + 1;
+        grid_step_z = (max_z - min_z) / GRID_DIM + 1;
+
+        grid_offset = (uint32_t *)buffer;
+        for (c = 0; c <= cells; c++) grid_offset[c] = 0;
+        for (i = 0; i < triangle_count; i++) {
+                uint32_t x0 = grid_cell(triangles[i].minimum[0], grid_x0, grid_step_x);
+                uint32_t x1 = grid_cell(triangles[i].maximum[0], grid_x0, grid_step_x);
+                uint32_t z0 = grid_cell(triangles[i].minimum[2], grid_z0, grid_step_z);
+                uint32_t z1 = grid_cell(triangles[i].maximum[2], grid_z0, grid_step_z);
+                uint32_t x, z;
+                for (z = z0; z <= z1; z++)
+                        for (x = x0; x <= x1; x++) grid_offset[z * GRID_DIM + x]++;
+        }
+        /* Inclusive prefix sum leaves each entry at its cell's end; the fill
+         * below then decrements them back down to each cell's start. */
+        for (c = 1; c < cells; c++) grid_offset[c] += grid_offset[c - 1];
+        total = grid_offset[cells - 1];
+        grid_offset[cells] = total;
+
+        need = (cells + 1) * sizeof(uint32_t) + total * sizeof(uint16_t);
+        if (bytes < need) return false;
+        grid_list = (uint16_t *)(grid_offset + cells + 1);
+        for (i = 0; i < triangle_count; i++) {
+                uint32_t x0 = grid_cell(triangles[i].minimum[0], grid_x0, grid_step_x);
+                uint32_t x1 = grid_cell(triangles[i].maximum[0], grid_x0, grid_step_x);
+                uint32_t z0 = grid_cell(triangles[i].minimum[2], grid_z0, grid_step_z);
+                uint32_t z1 = grid_cell(triangles[i].maximum[2], grid_z0, grid_step_z);
+                uint32_t x, z;
+                for (z = z0; z <= z1; z++)
+                        for (x = x0; x <= x1; x++)
+                                grid_list[--grid_offset[z * GRID_DIM + x]] = (uint16_t)i;
+        }
+        grid_ready = true;
+        return true;
+}
+
+/* Triangle ids that can matter for an XZ box. A triangle bucketed into several
+ * queried cells is visited more than once, which is harmless: both queries are
+ * idempotent (one takes a maximum, the other returns on the first hit). */
+static uint32_t candidate_span(int32_t min_x, int32_t max_x, int32_t min_z,
+        int32_t max_z, uint32_t *cx0, uint32_t *cx1, uint32_t *cz0, uint32_t *cz1)
+{
+        if (!grid_ready) { *cx0 = *cx1 = *cz0 = *cz1 = 0; return 0; }
+        *cx0 = grid_cell(min_x, grid_x0, grid_step_x);
+        *cx1 = grid_cell(max_x, grid_x0, grid_step_x);
+        *cz0 = grid_cell(min_z, grid_z0, grid_step_z);
+        *cz1 = grid_cell(max_z, grid_z0, grid_step_z);
+        return 1;
 }
 
 static bool inside(const collision_triangle_t *t, const int32_t p[3])
@@ -34,7 +126,15 @@ static bool inside(const collision_triangle_t *t, const int32_t p[3])
 bool kokiri_collision_clear(camera_position_t position)
 {
         const int32_t p[3] = {position.x, position.y, position.z};
-        for (uint32_t i = 0; i < triangle_count; i++) {
+        uint32_t cx0, cx1, cz0, cz1, cx, cz, slot, end, i;
+        const bool indexed = candidate_span(p[0] - RADIUS, p[0] + RADIUS,
+                p[2] - RADIUS, p[2] + RADIUS, &cx0, &cx1, &cz0, &cz1) != 0;
+        for (cz = cz0; cz <= cz1; cz++)
+        for (cx = cx0; cx <= cx1; cx++) {
+        slot = indexed ? grid_offset[cz * GRID_DIM + cx] : 0;
+        end = indexed ? grid_offset[cz * GRID_DIM + cx + 1] : triangle_count;
+        for (; slot < end; slot++) {
+                i = indexed ? grid_list[slot] : slot;
                 const collision_triangle_t *t = &triangles[i];
                 bool outside = false;
                 for (int k = 0; k < 3; k++) outside |= p[k] < t->minimum[k]-RADIUS || p[k] > t->maximum[k]+RADIUS;
@@ -62,13 +162,20 @@ bool kokiri_collision_clear(camera_position_t position)
                         if (distance <= RADIUS*RADIUS) return false;
                 }
         }
+        }
         return true;
 }
 
 bool kokiri_collision_floor(int32_t x, int32_t z, int32_t below, int32_t *height)
 {
         int32_t best = INT32_MIN;
-        for (uint32_t i = 0; i < triangle_count; i++) {
+        uint32_t cx0, cx1, cz0, cz1, slot, end, i;
+        const bool indexed = candidate_span(x, x, z, z, &cx0, &cx1, &cz0, &cz1) != 0;
+        slot = indexed ? grid_offset[cz0 * GRID_DIM + cx0] : 0;
+        end = indexed ? grid_offset[cz0 * GRID_DIM + cx0 + 1] : triangle_count;
+        (void)cx1; (void)cz1;
+        for (; slot < end; slot++) {
+                i = indexed ? grid_list[slot] : slot;
                 const collision_triangle_t *t = &triangles[i];
                 if (t->normal[1] < 8192 || x < t->minimum[0] || x > t->maximum[0] ||
                     z < t->minimum[2] || z > t->maximum[2]) continue;

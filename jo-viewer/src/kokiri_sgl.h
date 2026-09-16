@@ -1,26 +1,33 @@
 /*
-** Kokiri Forest scene loader for the isolated Jo Engine / SGL viewer.
+** Mesh loader for the isolated Jo Engine / SGL viewer.
 */
 
 #ifndef __KOKIRI_SGL_H__
 # define __KOKIRI_SGL_H__
 
-/** @brief Upload the scene's textures/CLUTs and bind them to the SGL tables.
+/** @brief Upload every mesh's textures/CLUTs and bind them to the SGL tables.
  *  @return true on success; on failure jo_core_error() describes the reason. */
 bool            kokiri_scene_load(void);
 
-/** @brief VDP1 bytes consumed by the scene, valid after kokiri_scene_load(). */
+/** @brief VDP1 bytes consumed, valid after kokiri_scene_load(). */
 unsigned int    kokiri_scene_vram_used(void);
 
-/** @brief Submit the whole scene in SGL-sized polygon lists. */
+/** @brief Submit the forest. Resets the per-frame submission counters, so it
+ *  must be called before any actor draw in the same frame. */
 void            kokiri_scene_draw(void);
 
-/** @brief Submissions SGL refused in the last kokiri_scene_draw(). Non-zero
- *  means some faces never reached VDP1, so the picture is incomplete. */
+/** @brief Submit Link at a world position, facing @p yaw (binang). */
+void            kokiri_link_draw(int x, int y, int z, int yaw);
+
+/** @brief Submissions SGL refused this frame. Non-zero means some faces never
+ *  reached VDP1, so the picture is incomplete. */
 unsigned int    kokiri_scene_rejected(void);
 
-/** @brief Bit i is set when submission i returned success this frame. */
+/** @brief Bit per accepted list: 1 = forest, 2 = Link. */
 unsigned int    kokiri_scene_accepted_mask(void);
+
+/** @brief Polygons in the lists SGL accepted this frame. */
+unsigned int    kokiri_scene_submitted(void);
 
 #endif /* !__KOKIRI_SGL_H__ */
 

@@ -17,3 +17,6 @@ cd/FOREST.COL
 
 # Stray objects from a misconfigured build (see makefile).
 *.o
+
+# Link texture blob, staged by build.sh from generated/link_pixels.bin.
+cd/LINK.TEX

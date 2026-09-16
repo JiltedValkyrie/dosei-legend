@@ -197,9 +197,12 @@ class DisplayLists:
                 raw = self.read(self.image[0], count * 2)
                 assert 0 <= base and base + count <= 256
                 self.palette[base:base+count] = [rgba16(v[0]) for v in struct.iter_unpack('>H', raw)]
-            elif op in (0x00, 0x03, 0xD8, 0xDB, 0xDC, 0xE2, 0xE3, 0xE6, 0xE7, 0xE8,
-                        0xE9, 0xEE, 0xF7, 0xF8, 0xF9, 0xFB, 0xFC):
-                pass  # culling bounds, RDP state, fog, lights and combiner
+            elif op in (0x00, 0x03, 0xD8, 0xDA, 0xDB, 0xDC, 0xE2, 0xE3, 0xE6, 0xE7,
+                        0xE8, 0xE9, 0xEE, 0xF7, 0xF8, 0xF9, 0xFB, 0xFC):
+                # Culling bounds, RDP state, fog, lights and combiner. 0xDA is
+                # G_MTX: skeletal limb matrices, which callers that walk a
+                # skeleton supply themselves. Scene display lists contain none.
+                pass
             else:
                 raise ValueError(f'Unsupported display opcode {op:02x} at {address-8:08x}')
         raise ValueError('Unterminated display list')
