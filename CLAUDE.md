@@ -1,5 +1,14 @@
 # Project handoff - 2026-09-15
 
+## Active branch: Jo Engine port
+
+User requested a fresh start from `main`, not the old `master` branch.
+Read [JOENGINE_PORT.md](title-screen/docs/JOENGINE_PORT.md) first. Current branch
+`joengine-port` starts from main `f545532`; later experiments are safely committed
+on `performance` at `dad76ea`, not merged here. Start a separate Jo/SGL viewer
+using local `../joengine` and the original textured scene. Preserve this branch's
+libyaul implementation as a reference. No port code exists yet.
+
 ## Read first
 
 Use basic, short language. No long explanations. Keep token usage SHORT for what was done. Caveman-like, even.

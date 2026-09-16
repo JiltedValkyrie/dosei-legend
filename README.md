@@ -1,5 +1,10 @@
 # Dosei Legend - Kokiri Forest on Sega Saturn
 
+Current branch: **Jo Engine port preparation**. See the
+[port plan and Claude handoff](title-screen/docs/JOENGINE_PORT.md).
+This branch starts from `main`; performance experiments remain on `performance`.
+The libyaul project below is the reference implementation, not yet a Jo port.
+
 A libyaul vertical slice of Ocarina of Time's Kokiri Forest.
 
 ## Status
