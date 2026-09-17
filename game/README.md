@@ -42,16 +42,11 @@ The Link converter consumes `assets/dynamic/link/source.json`. Generated actor
 meshes live in `build/generated/`. Shared title UI/audio and reusable libraries
 live in `../shared/`; game-specific bank selection stays in `src/music_banks.c`.
 
-Current build: Start switches title/gameplay, D-pad runs, L recenters behind Link,
-and L+R toggles diagnostics. R alone never moves the camera. L is recenter only,
-not enemy lock-on. A jumps from ground (custom feature): tap once per jump;
-holding does not repeat and airborne presses do not double-jump. D-pad steers
-in air. Existing airborne clip is reused; no dedicated takeoff clip yet.
-B/C/X/Y/Z currently have no active gameplay action.
-The settled replacement layout (including shield, pause and walk) and pending
-OoT camera work are documented at the top of docs/OPUS_HANDOFF.md.
-Current Link/follow behavior
-is in `src/demo.c`. These controls require only the standard digital Saturn pad.
+See the [current controls table](../README.md#controls-current-build) for the
+standard digital Saturn pad. A jumps; D-pad runs/air-steers; L recenters;
+Start switches title/gameplay. Planned controls are explicitly marked there.
+Existing airborne clip is reused; no dedicated takeoff clip yet.
+Current Link/follow behavior is in `src/demo.c`.
 
 Child outdoor running uses 165 native world units/second (5.5 per 30 Hz step),
 with fractional movement retained on both axes. Animation playback is tuned to
@@ -65,7 +60,8 @@ runtime from the skeleton -- pre-baked frames do not fit in the RAM below SGL's
 work area. `src/link_anim_state.c` picks the clip from the distance collision
 actually moved him, so walking into a wall idles rather than running on the
 spot; the landing/roll split follows OoT's own rule. `RUN_SPEED_MIN` there is
-the walk/run threshold. The A overlay prints heap use and the animation state.
+the walk/run threshold. Diagnostics show heap use and animation state; L+R
+switches views in regular builds. Clean player-test builds hide all of it.
 
 Note that prebuilt SDK objects under `build/obj*/` do not rebuild when a
 makefile define changes. After editing `JO_GLOBAL_MEMORY_SIZE_FOR_MALLOC`,

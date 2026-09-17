@@ -66,6 +66,25 @@ The build requires a configured Jo Engine SDK, MSYS2, Python/Pillow
 and the verified US 1.2 ROM/decomp used by the converters. Do not modify
 the shared SDK. Legacy experiments are not imported into active Jo runtime code.
 
+## Controls (current build)
+
+Standard digital Saturn pad; no 3D pad needed. These are Saturn buttons,
+not keyboard keys; keyboard bindings depend on Kronos settings.
+
+| Button | What works now |
+| --- | --- |
+| D-pad | Run relative to camera; steer while airborne |
+| A | Jump from ground; release and press again for another jump. No double-jump |
+| L | Recenter camera behind Link; not enemy lock-on |
+| Start | Switch between title and gameplay; not pause yet |
+| R | No action yet; never rotates camera |
+| B / C / X / Y / Z | Not assigned to active gameplay actions yet |
+| L + R | Switch diagnostic overlay views; hidden in clean player-test image |
+| L + R + Up | Developer camera comparison: current follow / old camera |
+
+Camera follows automatically. Sword, shield, items, walk modifier, interactions,
+first-person look and pause are still planned, not working controls.
+
 ## Focused checks
 
 ```powershell
