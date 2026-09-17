@@ -143,3 +143,20 @@ int32_t link_points[LINK_SKIN_VERTICES][3];
                         value = (expected[axis]*scale+shift[axis])*(-1 if axis==1 else 1)
                         self.assertAlmostEqual(points[i][axis]/65536,value,delta=.2,
                             msg=f'clip {clip_id} frame {frame} vertex {i} axis {axis}')
+
+    def test_airborne_mesh_does_not_sink_below_collision_origin(self):
+        points = ((ctypes.c_int32*3)*self.count).in_dll(self.lib,'link_points')
+        # Run -> airborne at every possible run frame. Mesh Y is inverted at
+        # the render boundary; world/collision Y remains positive upwards.
+        def bounds(clip, frame):
+            self.lib.link_anim_pose(clip,frame,0)
+            ys = [-p[1]/65536 for p in points]
+            return min(ys), max(ys)
+        run = [bounds(2,frame) for frame in range(20)]
+        air = [bounds(3,frame) for frame in range(12)]
+        for low, high in air:
+            self.assertGreater(low, -12, 'baked root travel sinks mesh below actor')
+            self.assertGreater(high, 40, 'head sank below expected body height')
+        for _, run_head in run:
+            self.assertLess(abs(air[0][1]-run_head), 20,
+                            'run-to-jump must not teleport body downward')

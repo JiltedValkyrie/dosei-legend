@@ -190,13 +190,19 @@ void demo_update(void)
         MAP(L); MAP(R); MAP(X); MAP(Y); MAP(Z); MAP(C);
         MAP(UP); MAP(DOWN); MAP(LEFT); MAP(RIGHT);
 #undef MAP
-#if defined(DOSEI_PERF_PROBE) && (DOSEI_PERF_PROBE == 2 || DOSEI_PERF_PROBE == 3)
+#if defined(DOSEI_PERF_PROBE) && (DOSEI_PERF_PROBE == 2 || DOSEI_PERF_PROBE == 3 || DOSEI_PERF_PROBE == 4)
         /* Diagnostic-only autonomous walk. No OS/controller input injection. */
         {
             static bool entered;
             if (!entered && now > 120) { start_pressed = true; entered = true; }
             buttons = DOSEI_PERF_PROBE == 3 ? 0 :
                       (((now / 180) & 1) ? CAMERA_DOWN : CAMERA_UP);
+#if DOSEI_PERF_PROBE == 4
+            /* Background visual regression: real running/jump physics, no OS
+             * input injection. Never enabled in normal player-test discs. */
+            if (!title_visible && now / 120 != (now-elapsed) / 120)
+                jump_pending = true;
+#endif
         }
 #endif
         /* L+R held is the diagnostics chord, and it CONSUMES both buttons:

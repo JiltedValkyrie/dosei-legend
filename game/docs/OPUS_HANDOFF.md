@@ -1,5 +1,20 @@
 # Current directive: OoT gameplay camera and standard Saturn pad controls
 
+## Run-to-jump visual sinking
+
+FALL imported root Y 2292 -> -3328 (model units), ~82 world units downward.
+Collision moved up correctly, but animation added a second downward trajectory.
+Emitter now anchors FALL root XYZ to idle reference, retaining limb rotations.
+Other clips keep local root bob/crouch. Camera and collision signs unchanged.
+Actual C skinner regression checks every run-frame -> first airborne-frame
+head height and all airborne mesh bounds relative to collision origin. Earlier
+reference-matching tests missed this because both sides used the same bad data.
+`PERF_PROBE=4` adds an autonomous run/jump visual check; rebuild without it.
+146 tests pass; normal, hi-res and clean discs rebuilt without probe mode.
+Background `jump-root-check2.png` shows airborne s3/g0, eye Y130, visible model
+above ground. Another landing view obscured Link behind scene geometry: world
+plane/sorting visibility remains open, not claimed fixed by root correction.
+
 ## Manual jump checkpoint; work on dev from now on
 
 A now jumps from ground. This custom feature supersedes the older unimplemented

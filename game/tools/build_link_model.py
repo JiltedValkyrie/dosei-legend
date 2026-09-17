@@ -562,10 +562,17 @@ def emit_animation(out_dir, clips, limbs, skin_limbs, skin_locals, shift, scale)
     c += ['};', '', 'const link_clip_t link_clips[LINK_CLIP_COUNT] = {']
     first = 0
     rows = []
+    # FALL carries authored root travel (2292 -> -3328 model Y). Collision
+    # already moves the actor through the jump/fall. Keep its pelvis at the
+    # standing reference; retain every limb rotation, not the second trajectory.
+    idle_root = next(frames[0][0] for name, *_, frames in clips if name == 'idle')
     for name, _symbol, _start, count, _stride, frames in clips:
         c.append('    { %4d, %3d },   /* %s */' % (first, len(frames), name))
         first += len(frames)
-        rows.extend(frames)
+        if name == 'fall':
+            rows.extend((idle_root, rotations) for _, rotations in frames)
+        else:
+            rows.extend(frames)
     c += ['};', '', 'const int16_t link_root[][3] = {']
     for root, _rotations in rows:
         c.append('    { %6d, %6d, %6d },' % tuple(root))

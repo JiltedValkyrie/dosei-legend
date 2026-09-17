@@ -1,5 +1,9 @@
 # Vertical slice progress
 
+- Fixed jump/fall visual sinking: remove FALL clip's ~82-world-unit authored
+  root descent, keeping rotations. Physics alone owns airborne travel. Added
+  actual-skinned-mesh bounds/run-transition regression, not just data parity.
+
 ## Manual jump (custom feature)
 
 - A jumps only from ground; one jump per press, no airborne retry or held repeat.

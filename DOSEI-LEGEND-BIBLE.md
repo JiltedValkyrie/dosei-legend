@@ -2,6 +2,14 @@
 
 ## Every animated model: vertex owns bone, not triangle
 
+Root motion is a separate contract: if gameplay physics owns actor travel,
+do not also apply a clip's authored travel to the mesh. Link FALL carried
+2292 -> -3328 model-Y translation (~82 world units downward), making a rising
+jump look like sinking. FALL now uses idle-reference root translation while
+retaining its rotations. Other clips keep their local bob/crouch; do not erase
+all root animation indiscriminately. Test visible mesh bounds against collision
+origin across transitions, not just that the skinner matches imported tables.
+
 Link broke because extraction ignored **24 G_MTX commands**. OoT Flex display
 lists change matrices within one limb list to join vertices to neighbouring
 bones. Assigning the whole face to the drawn limb splits boots, joints and neck.

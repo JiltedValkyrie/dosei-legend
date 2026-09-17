@@ -80,7 +80,7 @@ endif
 ifeq ($(TEXTURE_PROBE),1)
 _CCFLAGS += -DDOSEI_TEXTURE_PROBE
 endif
-ifneq ($(filter 1 2 3,$(PERF_PROBE)),)
+ifneq ($(filter 1 2 3 4,$(PERF_PROBE)),)
 _CCFLAGS += -DDOSEI_PERF_PROBE=$(PERF_PROBE)
 endif
 
