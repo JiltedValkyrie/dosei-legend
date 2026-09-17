@@ -18,11 +18,17 @@ void            kokiri_scene_draw(void);
 
 /** @brief Submit Link at a world position, facing @p yaw (binang). */
 void            kokiri_link_draw(int x, int y, int z, int yaw);
-/* Diagnostics for the giant near checkerboard: the closest polygon that was
-** still stippled, its tile, and whether that stipple came from the authored
-** flag or from the distance test. -1 tile means none was seen. */
+/* Identity of the closest DISTANCE-stippled polygon this prep, for the near
+** checkerboard. Facts only: authored stipple is excluded because it is
+** legitimate at any depth, and near/far together distinguish a small close
+** polygon from a large one reaching away. Tiles are shared, so the polygon
+** index and vertex ids are what actually identify the surface. -1 means none
+** was seen this frame. */
 int             kokiri_scene_mesh_near_depth(void);
+int             kokiri_scene_mesh_near_far(void);
 int             kokiri_scene_mesh_near_tile(void);
+int             kokiri_scene_mesh_near_polygon(void);
+unsigned short  kokiri_scene_mesh_near_vertex(unsigned int corner);
 bool            kokiri_scene_mesh_near_authored(void);
 
 /** @brief Draw ambient fairies at the original Kokiri NPC homes. */
@@ -31,6 +37,9 @@ void            kokiri_fairies_draw(unsigned int tick);
 /** @brief Submissions SGL refused this frame. Non-zero means some faces never
  *  reached VDP1, so the picture is incomplete. */
 unsigned int    kokiri_scene_rejected(void);
+/* True when the prepared list was reused this frame, which makes the
+** depth/partition/fog timers stale rather than current. */
+bool            kokiri_scene_reused(void);
 
 /** @brief Bit per accepted list: 1 = forest, 2 = Link. */
 unsigned int    kokiri_scene_accepted_mask(void);

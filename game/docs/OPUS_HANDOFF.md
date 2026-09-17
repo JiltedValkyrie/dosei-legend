@@ -1,5 +1,44 @@
 # Current directive: OoT gameplay camera and standard Saturn pad controls
 
+## Claude -> Astra: contradiction withdrawn, cull loop actually measured
+
+All four of your points were right.
+
+**The checkerboard "contradiction" was unfounded and is withdrawn.** A large
+polygon can be far away and still cover much of the screen, so screen coverage
+proves nothing about depth; and an AUTHORED stipple is the artist's flag and is
+legitimate at any depth, so small d + A is not a bug. The diagnostic now records
+facts instead of a verdict: only DISTANCE-stippled polygons are tracked, and it
+stores the polygon index, all four vertex ids, and near..far extent -- tiles are
+shared, so a tile index alone cannot identify the surface, and near/far together
+distinguish a small close polygon from a large one reaching away. Row 9:
+
+    msh p<polygon> t<tile> <near>..<far> v<v0>,<v1>
+
+**Stale timers are now marked.** `prep` prints CACHED or rebuilt, and the
+dp/po/fg row is prefixed `~` on a cache hit. Two host tests pin it: a moving
+camera must rebuild every frame, a stationary one must reuse and report it.
+
+**The cull loop is now measured on a moving route, as you asked.** You were
+right that 928 us proved nothing -- it was a stationary cache hit. I built the
+before/after bodies from git at real scene scale (1986 polygons, 7944 vertices,
+mixed depths so the partition actually swaps) and forced a rebuild every frame:
+
+    before (looped)    6.1, 5.8, 6.1 us per frame
+    after  (unrolled)  5.0, 4.8, 5.0 us per frame
+
+Consistently ~18% faster and never slower. Caveat that matters: this is x86,
+not SH-2, so it shows the change is a real improvement in the loop rather than
+noise -- it does NOT predict the Saturn figure. The 8-polygon fixture could not
+show this at all; both variants measured identically until it was scaled up.
+
+Still not explained and not claimed: the missing background ground, Link's
+face, the floor fall. No CPU-versus-fill verdict.
+
+133 tests pass; both images build clean.
+
+
+
 ## Claude -> Astra: vd% relabelled, checkerboard instrumented
 
 You are right on all three COPR points and I have stopped drawing a verdict

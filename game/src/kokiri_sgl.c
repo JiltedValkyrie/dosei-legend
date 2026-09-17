@@ -36,11 +36,32 @@ static short tile_depth[KOKIRI_TILE_COUNT];
 static unsigned char tile_fog[KOKIRI_TILE_COUNT];
 static unsigned char forest_mesh[KOKIRI_POLYGON_COUNT];
 static unsigned char *forest_palette;
-/* Worst "stippled yet close" polygon seen this prep; see the partition loop. */
-static int mesh_near_depth = 32767;
+/*
+** Identity of the closest DISTANCE-stippled polygon seen this prep.
+**
+** Deliberately records facts, not a verdict. An earlier version claimed a
+** stippled polygon that looks huge must be a bug, on the reasoning that huge
+** means close and stipple means far. Both halves are wrong: a large polygon
+** can be far away and still cover much of the screen, and an AUTHORED stipple
+** is the artist's flag and is legitimate at any depth. Only the distance test
+** can be wrong, so only distance-stippled polygons are tracked here, and the
+** polygon's own near/far extent is recorded so a large-but-far surface is
+** distinguishable from a genuinely close one.
+**
+** The tile index alone is not enough to identify the surface: tiles are shared
+** between polygons, which is the whole point of the shared-tile fog handling.
+*/
+static int mesh_near_depth = 32767;       /* its nearest vertex */
+static int mesh_near_far = 32767;         /* its farthest vertex: extent */
 static short mesh_near_tile = -1;
+static short mesh_near_polygon = -1;      /* index into the ORIGINAL table */
+static unsigned short mesh_near_verts[4];
 static bool mesh_near_authored;
 static bool forest_prepared;
+/* True when this frame reused the prepared list instead of rebuilding it. The
+** depth/partition/fog timers are then STALE -- they hold the last rebuild's
+** figures -- and must not be read as this frame's work. */
+static bool forest_reused;
 static int prepared_x, prepared_y, prepared_z, prepared_pitch;
 static unsigned short prepared_yaw;
 static unsigned int prepared_visible;
@@ -229,6 +250,26 @@ bool                kokiri_scene_mesh_near_authored(void)
     return mesh_near_authored;
 }
 
+int                 kokiri_scene_mesh_near_far(void)
+{
+    return mesh_near_far;
+}
+
+int                 kokiri_scene_mesh_near_polygon(void)
+{
+    return mesh_near_polygon;
+}
+
+unsigned short      kokiri_scene_mesh_near_vertex(unsigned int corner)
+{
+    return mesh_near_verts[corner & 3];
+}
+
+bool                kokiri_scene_reused(void)
+{
+    return forest_reused;
+}
+
 unsigned int        kokiri_scene_vram_used(void)
 {
     return (vram_used);
@@ -260,8 +301,10 @@ void                kokiri_scene_draw(void)
         prepared_y == demo_camera.y && prepared_z == demo_camera.z &&
         prepared_yaw == demo_yaw && prepared_pitch == demo_pitch) {
         visible = prepared_visible;
+        forest_reused = true;
         goto prepared;
     }
+    forest_reused = false;
     frame_timer_begin(FRAME_PHASE_DEPTH);
     kokiri_camera_sincos(demo_yaw, &sine, &cosine);
     for (i = 0; i < KOKIRI_VERTEX_COUNT; ++i) {
@@ -273,7 +316,9 @@ void                kokiri_scene_draw(void)
     frame_timer_begin(FRAME_PHASE_PARTITION);
     for (i = 0; i < KOKIRI_TILE_COUNT; ++i) tile_depth[i] = 32767;
     mesh_near_depth = 32767;
+    mesh_near_far = 32767;
     mesh_near_tile = -1;
+    mesh_near_polygon = -1;
     /* Two-ended partition. Skip rejected tails without copying them; swap
      * only a rejected front with an accepted tail. Unlike front compaction,
      * one newly rejected polygon cannot shift the entire accepted suffix.
@@ -343,17 +388,22 @@ void                kokiri_scene_draw(void)
             attr->atrb &= ~MESHon;
             if (forest_mesh[i] || nearest > FOREST_FAR * 7 / 8)
                 attr->atrb |= MESHon;
-            /* A stippled polygon that is also very CLOSE is the giant
-             * checkerboard: stipple means "judged far", large on screen means
-             * near, and both cannot be true. Record the worst offender rather
-             * than guessing which stage produced it -- authored stipple and
-             * distance stipple are distinguished so the cause is not
-             * ambiguous, and the tile index says whether the palette or the
-             * geometry is at fault. */
-            if ((attr->atrb & MESHon) && nearest < FOREST_FOG_START / 4 &&
+            /* Record the closest DISTANCE-stippled polygon, with enough to
+             * identify it: vertex ids pin the exact surface where a shared
+             * tile cannot, and near/far together say whether it is a small
+             * close polygon or a large one reaching into the distance. No
+             * judgement is applied here -- authored stipple is excluded
+             * because it is legitimate at any depth, and everything else is
+             * left for the capture to explain. */
+            if ((attr->atrb & MESHon) && !forest_mesh[i] &&
                 nearest < mesh_near_depth) {
+                const unsigned short *v = kokiri_pdata.pltbl[i].Vertices;
                 mesh_near_depth = nearest;
+                mesh_near_far = farthest;
                 mesh_near_tile = (short)tile;
+                mesh_near_polygon = (short)i;
+                mesh_near_verts[0] = v[0]; mesh_near_verts[1] = v[1];
+                mesh_near_verts[2] = v[2]; mesh_near_verts[3] = v[3];
                 mesh_near_authored = forest_mesh[i];
             }
             ++i;

@@ -216,12 +216,14 @@ static void         viewer_hud(void)
         jo_printf(0, 5, "sy%u ot%u WORK%u us   ",
                   frame_timer_cost(FRAME_PHASE_SYNC),
                   frame_timer_other(), frame_timer_frame());
-        jo_printf(0, 7, "prep%u us  mshT%d d%d %c ",
+        jo_printf(0, 7, "prep%u us %s      ",
                   frame_timer_cost(FRAME_PHASE_PREP),
-                  kokiri_scene_mesh_near_tile(),
-                  kokiri_scene_mesh_near_depth(),
-                  kokiri_scene_mesh_near_authored() ? 'A' : 'D');
-        jo_printf(0, 8, "dp%u po%u fg%u       ", frame_timer_cost(FRAME_PHASE_DEPTH),
+                  kokiri_scene_reused() ? "CACHED" : "rebuilt");
+        /* Marked when stale: on a cache hit these hold the last rebuild's
+        ** figures, not this frame's work. */
+        jo_printf(0, 8, "%sdp%u po%u fg%u    ",
+                  kokiri_scene_reused() ? "~" : " ",
+                  frame_timer_cost(FRAME_PHASE_DEPTH),
                   frame_timer_cost(FRAME_PHASE_PARTITION), frame_timer_cost(FRAME_PHASE_FOG));
         /* copr is the share of recent frames where VDP1's command address
         ** moved between two adjacent reads. It is NOT a busy measurement and
@@ -229,6 +231,16 @@ static void         viewer_hud(void)
         jo_printf(0, 6, "cam %s copr%u%%  ",
                   oot_follow_legacy() ? "LEGACY 260" : "OoT 125-188",
                   frame_timer_copr_changed());
+        /* Closest distance-stippled polygon: index, its tile, near..far
+        ** extent, and its first two vertex ids. Tiles are shared, so the
+        ** polygon and vertex ids are what identify the surface. */
+        jo_printf(0, 9, "msh p%d t%d %d..%d v%u,%u  ",
+                  kokiri_scene_mesh_near_polygon(),
+                  kokiri_scene_mesh_near_tile(),
+                  kokiri_scene_mesh_near_depth(),
+                  kokiri_scene_mesh_near_far(),
+                  (unsigned int)kokiri_scene_mesh_near_vertex(0),
+                  (unsigned int)kokiri_scene_mesh_near_vertex(1));
         return;
     }
     jo_printf(0, 0, "Jo/SGL Kokiri viewer");

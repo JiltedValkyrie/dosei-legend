@@ -67,5 +67,13 @@ int paired(int index) {
 /* The partition loop records the closest still-stippled polygon, so the host
 ** build needs the same statics the game file declares above the body. */
 static int mesh_near_depth = 32767;
+static int mesh_near_far = 32767;
 static short mesh_near_tile = -1;
+static short mesh_near_polygon = -1;
+static unsigned short mesh_near_verts[4];
 static bool mesh_near_authored;
+static bool forest_reused;
+
+/* Expose the reuse flag so tests can tell a rebuilt list from a cached one --
+** the distinction that makes a timing figure meaningful. */
+int scene_reused(void) { return forest_reused ? 1 : 0; }

@@ -97,3 +97,34 @@ class ForestPartition(unittest.TestCase):
                 for channel in range(32):
                     self.assertEqual(self.lib.fog_color(target, amount, channel),
                                      channel + int((color-channel)*amount/16))
+
+    def test_moving_route_rebuilds_every_frame(self):
+        """A moving camera must not reuse the prepared list.
+
+        The 928 us scene figure in the capture came from a STATIONARY camera
+        reusing the prepared list, so it says nothing about the cull loop's
+        cost while moving. This pins the precondition for measuring it: along
+        a moving route the list is rebuilt every frame, so the partition work
+        is actually being done.
+        """
+        self.lib.reset_scene()
+        for i in range(8):
+            self.lib.set_depth(i, 100)
+        for step in range(20):
+            self.lib.set_camera_z(step * 37)
+            self.lib.kokiri_scene_draw()
+            self.assertFalse(self.lib.scene_reused(),
+                             'moving camera reused the list at step %d' % step)
+
+    def test_stationary_camera_reuses_and_reports_it(self):
+        """And the reuse must be visible, so stale timers are not misread."""
+        self.lib.reset_scene()
+        for i in range(8):
+            self.lib.set_depth(i, 100)
+        self.lib.set_camera_z(500)
+        self.lib.kokiri_scene_draw()
+        self.assertFalse(self.lib.scene_reused(), 'first build is not a reuse')
+        for _ in range(5):
+            self.lib.kokiri_scene_draw()
+            self.assertTrue(self.lib.scene_reused(),
+                            'stationary camera should reuse the prepared list')
