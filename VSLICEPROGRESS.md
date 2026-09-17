@@ -1,5 +1,8 @@
 # Vertical slice progress
 
+- Clean player-test image: `game/build/game-clean.cue` (`./game/build.sh --clean`).
+  No in-game diagnostic HUD; independent objects/image, safety checks retained.
+
 ## Title flights (2026-09-16)
 
 - Replaced low tunnel routes with eight elevated main-village fairy shots:

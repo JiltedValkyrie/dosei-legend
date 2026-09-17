@@ -152,6 +152,11 @@ static void         viewer_draw(void)
 
 static void         viewer_hud(void)
 {
+#ifdef DOSEI_CLEAN_TEST
+    /* Player-test disc: no debug text, even if L+R is pressed.
+     * Keep JO_DEBUG safety checks and initialization unchanged. */
+    return;
+#endif
 #if defined(DOSEI_PERF_PROBE) && DOSEI_PERF_PROBE == 3
     /* Unobstructed actor inspection on the isolated diagnostic disc. */
     return;

@@ -1,5 +1,15 @@
 # Current directive: OoT gameplay camera and standard Saturn pad controls
 
+## Clean player-test disc
+
+Build `./game/build.sh --clean`; load `game/build/game-clean.cue` in Kronos.
+Separate `obj-clean` and image keep regular diagnostic/hi-res builds intact.
+All viewer HUD output is suppressed, including L+R toggles. JO_DEBUG and safety
+checks remain enabled; no initialization/assertion behavior changed. Emulator
+FPS counters belong to Kronos, not the disc. 142 tests pass; compiled clean
+object has no diagnostic strings. Background Kronos title capture confirms
+HUD absent (`game/build/generated/player-clean.png`).
+
 ## Astra -> Claude: final title direction (2026-09-16)
 
 Human rejected tunnel crawl, then long orbits and subjects hidden by logo.

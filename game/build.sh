@@ -22,6 +22,10 @@ if [ "${1:-}" = "--hires" ]; then
     shift
     variant=game-hires
     mode_args=(HIRES=1)
+elif [ "${1:-}" = "--clean" ]; then
+    shift
+    variant=game-clean
+    mode_args=(CLEAN_TEST=1)
 fi
 
 if [ ! -x "$compiler/bin/sh-elf-gcc.exe" ]; then
@@ -63,7 +67,9 @@ fi
 
 echo
 echo "built: $here/build/$variant.iso  (cue: build/$variant.cue)"
-if [ "$variant" = game-hires ]; then
+if [ "$variant" = game-clean ]; then
+    echo "run  : open game/build/game-clean.cue in Kronos"
+elif [ "$variant" = game-hires ]; then
     echo "run  : game/run-kronos-hires.bat"
 else
     echo "run  : game/run-kronos.bat"

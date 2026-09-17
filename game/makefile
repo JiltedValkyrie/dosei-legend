@@ -15,7 +15,11 @@ JO_COMPILE_WITH_EFFECTS_MODULE = 0
 JO_COMPILE_WITH_FAST_BUT_LESS_ACCURATE_MATH = 0
 JO_DEBUG = 1
 HIRES ?= 0
-ifeq ($(HIRES),1)
+CLEAN_TEST ?= 0
+ifeq ($(CLEAN_TEST),1)
+override TARGET = build/game-clean.elf
+OBJDIR = build/obj-clean
+else ifeq ($(HIRES),1)
 override TARGET = build/game-hires.elf
 OBJDIR = build/obj-hires
 else
@@ -67,6 +71,9 @@ SYSOBJS = build/generated/sglarea.o
 # The converter writes kokiri_scene.h into generated/.
 _CCFLAGS += -Ibuild/generated -Isrc -Ilevels/kokiri/assets/audio -I../shared/assets/audio/title -I../shared/lib/camera -I../shared/lib/collision -I../shared/lib/music
 _CCFLAGS += -include src/video_mode.h
+ifeq ($(CLEAN_TEST),1)
+_CCFLAGS += -DDOSEI_CLEAN_TEST
+endif
 ifeq ($(HIRES),1)
 _CCFLAGS += -DDOSEI_HIRES
 endif

@@ -15,6 +15,11 @@ standard is 320x240. Same assets, gameplay and audio. Build sequentially.
 All generated output goes under `build/`, including both `game*.cue/.iso` images,
 objects, generated meshes and CD staging. `disc/` holds checked-in ISO metadata.
 
+Clean player test: `./game/build.sh --clean` produces `game/build/game-clean.cue`
+and `.iso`, with all in-game diagnostic overlays suppressed (including L+R).
+Separate objects preserve normal/hi-res builds. Safety checks remain enabled;
+this is not a `JO_DEBUG=0` build. Kronos's own FPS display is an emulator setting.
+
 Diagnostics only: append `PERF_PROBE=1` for a fixed title-camera benchmark, or
 `PERF_PROBE=2` for autonomous gameplay walking, or `PERF_PROBE=3` for an isolated
 Link inspection (four camera angles, idle/walk/run; forest and HUD hidden).
