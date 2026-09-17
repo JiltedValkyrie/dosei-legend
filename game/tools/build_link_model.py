@@ -9,13 +9,12 @@ build_sgl_scene.py then converts it exactly like FOREST.BIN.
 Skeleton (object_link_child, segment 6):
   gLinkChildLimbs @ 0x2CF18 -- 21 pointers to LodLimb
   LodLimb = { Vec3s jointPos; u8 child; u8 sibling; Gfx* dList[2]; }  (16 bytes)
-  dList[1] is the Far LOD, which is what we take: it is the low-poly variant and
-  18 of the 21 limbs have one. All of them live in segment 6, so nothing from
-  gameplay_keep is needed.
+  dList[1] is the Far LOD used for the body; head uses dList[0] (Near).
+  Display lists live in segment 6, with shared textures from gameplay_keep.
 
-Pose: limbs are drawn in the bind pose, accumulating only jointPos down the
-hierarchy with no rotations. Each limb's display list is authored in its own
-local space, so this is the pose the vertices were modelled in.
+Pose: compose the selected animation's root, joint offsets and rotations.
+Animated output retains limb-local vertex identity, even where integer bind
+positions coincide. The runtime writes fractional 16.16 world positions.
 """
 
 import argparse
@@ -36,6 +35,7 @@ LIMB_TABLE = 0x2CF18
 LIMB_COUNT = 21
 LIMB_STRUCT = '>hhhBBII'       # jointPos, child, sibling, near, far
 LIMB_NONE = 255
+HEAD_LIMB = 10  # zero-based skeleton entry; PLAYER_LIMB_HEAD is 11
 
 # gPlayerAnim_link_normal_waitF_typeA_20f in gameplay_keep: a standing idle.
 IDLE_ANIMATION = 0x3200
@@ -46,6 +46,7 @@ _TOOLS = pathlib.Path(__file__).resolve().parents[2] / 'shared' / 'tools'
 sys.path.insert(0, str(_TOOLS))
 
 import build_kokiri_scene as scene_tool  # noqa: E402
+from flex_vertex_owners import FlexVertexOwners  # noqa: E402
 from extract_title_source import yaz0     # noqa: E402
 
 
@@ -150,7 +151,10 @@ def walk_skeleton(limbs, rotations, root, index=0, parent=None, out=None):
         offset = root if index == 0 else limb['pos']
         here = transform(matrix, origin, offset)
         local = matmul(matrix, rotation_matrix(rotations[index]))
-        out.append((index, local, here, limb['far']))
+        # Gameplay camera is close to Link: use the original near head mesh,
+        # not the distant-face LOD. Body stays far to retain Saturn budgets.
+        display = limb['near'] if index == HEAD_LIMB else limb['far']
+        out.append((index, local, here, display))
         if limb['child'] != LIMB_NONE:
             walk_skeleton(limbs, rotations, root, limb['child'], (local, here), out)
         index = limb['sibling']
@@ -168,7 +172,7 @@ GAMEPLAY_KEEP_SEGMENT = 4
 FACE_SEGMENTS = (8, 9)
 
 
-class LimbLists(scene_tool.DisplayLists):
+class LimbLists(FlexVertexOwners, scene_tool.DisplayLists):
     """Display lists for one limb, tolerant of runtime-assigned segments.
 
     Player draw code binds gameplay_keep at segment 4 and the current eye and
@@ -194,15 +198,20 @@ class LimbLists(scene_tool.DisplayLists):
         and its transparent texels punch black holes through the green. Knowing
         the source segment lets apply_primitive_colour() keep those flat.
         """
-        before = len(self.faces)
-        super().triangle(word, transparent)
-        if len(self.faces) > before:
-            self.faces[-1]['texture_segment'] = (
-                (self.image[0] >> 24) if self.image else None)
+        indices = [(word >> shift & 255) // 2 for shift in (16, 8, 0)]
+        vertices = [self.cache[i] for i in indices]
+        owners = [self.vertex_limbs[i] for i in indices]
+        assert all(v is not None for v in vertices) and None not in owners
+        if len({(owner, v[:3]) for owner, v in zip(owners, vertices)}) < 3:
+            return
+        self.faces.append(dict(vertices=vertices, vertex_limbs=owners,
+                               texture=self.texture(), lighting=bool(self.geom & 0x20000),
+                               prim=self.prim, transparent=transparent, cull=bool(self.geom & 0x400),
+                               texture_segment=(self.image[0] >> 24) if self.image else None))
 
 
 def collect_faces(data, keep, placed):
-    """Walk each limb's Far display list, posing its vertices into model space.
+    """Walk selected limb display lists, posing each vertex with its own bone.
 
     One walker is shared across every limb, in draw order, because RDP state --
     above all the loaded TLUT -- persists between limb display lists in the real
@@ -218,14 +227,18 @@ def collect_faces(data, keep, placed):
                       8: data[EYES_OPEN_OFFSET:],
                       9: data[MOUTH_CLOSED_OFFSET:]}
     faces = []
+    lists.matrix_limbs = [i for i, _, _, display in placed if display]
+    poses = {i: (matrix, origin) for i, matrix, origin, _ in placed}
     for index, matrix, origin, far in placed:
         if not far:
             continue
         first = len(lists.faces)
+        # The skeleton loads the owning matrix before calling this list.
+        lists.current_limb = index
         lists.walk(far)
         for face in lists.faces[first:]:
-            moved = [transform(matrix, origin, v[:3]) + tuple(v[3:])
-                     for v in face['vertices']]
+            moved = [transform(*poses[owner], v[:3]) + tuple(v[3:])
+                     for v, owner in zip(face['vertices'], face['vertex_limbs'])]
             face = dict(face)
             # Keep the untransformed limb-local coordinates alongside the posed
             # ones. The posed vertices drive texture baking and the bind-pose
@@ -272,7 +285,7 @@ def apply_primitive_colour(faces):
 
 
 def flatten_faces(faces):
-    """Collapse each face's texture to a single averaged colour.
+    """Flatten body materials, preserving the complete head's textures.
 
     Link is 62 units tall and his median face spans 7 units, so a 16x16 tile
     gives him 0.4 world units per texel -- roughly 35x finer than the scene's
@@ -280,12 +293,12 @@ def flatten_faces(faces):
     That detail is invisible in play and the VRAM it costs is needed by the
     ground, which is what actually smears.
 
-    The eyes and mouth keep their artwork: they are the one place the texture
-    carries shape rather than shade, and losing them makes Link faceless.
+    Head artwork (including hair/skin, not just eyes/mouth) carries facial shape
+    at the close gameplay camera and must not be replaced by per-face averages.
     """
     flattened = 0
     for face in faces:
-        if face.get('texture_segment') in FACE_SEGMENTS:
+        if face.get('texture_segment') in FACE_SEGMENTS or face.get('limb') == HEAD_LIMB:
             continue
         texture = face['texture']
         if not texture:
@@ -345,8 +358,8 @@ def ground_and_centre(faces):
 def write_model(faces, out_path, skinned=False):
     """Same KFR1 v2 container as FOREST.BIN, with no collision triangles.
 
-    When `skinned`, vertices are deduplicated by (position, limb) rather than by
-    position alone. Two limbs' vertices can coincide in the bind pose -- the
+    When `skinned`, vertices are deduplicated by (local position, limb), not by
+    rounded world position. Two limbs' vertices can coincide in the bind pose -- the
     shoulder and upper arm meet exactly -- and merging them there would weld the
     limbs together the moment an animation moves them apart. The cost is a few
     extra vertices; the benefit is that every vertex has one unambiguous owner.
@@ -357,12 +370,18 @@ def write_model(faces, out_path, skinned=False):
         # and every later stage rewrote them in place, so index i still matches.
         keys, locals_by_key = [], {}
         for f in faces:
-            for v, loc in zip(f['vertices'], f['local']):
-                key = (v[:3], f['limb'])
+            for v, loc, owner in zip(f['vertices'], f['local'],
+                                     f.get('vertex_limbs', [f['limb']]*3)):
+                key = (tuple(loc), owner)
                 if key not in locals_by_key:
                     locals_by_key[key] = loc
                     keys.append(key)
-        positions = [k[0] for k in keys]
+        # The integer bind pose is only a container/extent placeholder. Live
+        # geometry retains fractional world coordinates in the skinner.
+        positions_by_key = {(tuple(loc), owner): v[:3]
+                            for f in faces for v, loc, owner in zip(f['vertices'], f['local'],
+                                f.get('vertex_limbs', [f['limb']]*3))}
+        positions = [positions_by_key[k] for k in keys]
         skin_limbs = [k[1] for k in keys]
         skin_locals = [locals_by_key[k] for k in keys]
         lookup = None   # faces index through key_index below
@@ -398,13 +417,17 @@ def write_model(faces, out_path, skinned=False):
             tile = struct.pack('>16H', 0, colour, *([0] * 14)) + bytes([0x11] * 8)
             width, height = 8, 2
         else:
-            tile = scene_tool.bake(face, 16)
-            width, height = 16, 16
+            # Keep eye/mouth detail at 16; other head materials retain their
+            # real texture at 8, instead of one flat color per triangle.
+            size = 8 if face.get('limb') == HEAD_LIMB and face.get('texture_segment') not in FACE_SEGMENTS else 16
+            tile = scene_tool.bake(face, size)
+            width, height = size, size
         if tile not in tiles:
             tiles[tile] = len(texture)
             texture.extend(tile)
         offset = tiles[tile]
-        ids = ([key_index[(v[:3], face['limb'])] for v in face['vertices']]
+        ids = ([key_index[(tuple(loc), owner)] for loc, owner in
+                zip(face['local'], face.get('vertex_limbs', [face['limb']]*3))]
                if key_index is not None else [lookup[v[:3]] for v in face['vertices']])
         records.extend(struct.pack('>4HIIHH', *ids, ids[2], offset + 32, offset,
                                    (width // 8) << 8 | height,
@@ -592,7 +615,8 @@ def main():
     flattened = flatten_faces(faces) if args.flat else 0
     tinted = apply_primitive_colour(faces)
     faces = scale_faces(faces, args.scale)
-    faces = drop_degenerate(faces)
+    if not args.animate:
+        faces = drop_degenerate(faces)
     faces, shift = ground_and_centre(faces)
     positions, tiles, skin_limbs, skin_locals = write_model(
         faces, args.out, skinned=args.animate)
@@ -619,13 +643,13 @@ def main():
               for i in range(3)]
     print('object  : %s (%d bytes)' % (OBJECT, len(data)))
     print('pose    : %#06x frame %d of %d' % (args.animation, args.frame, frames))
-    print('limbs   : %d placed, %d with a Far display list'
+    print('limbs   : %d placed, %d drawn (near head, far body)'
           % (len(placed), sum(1 for *_, far in placed if far)))
     print('faces   : %d  vertices %d  tiles %d'
           % (len(faces), len(positions), len(tiles)))
     print('prim    : %d faces tinted by primitive colour (tunic/hat)' % tinted)
     if args.flat:
-        print('flat    : %d faces collapsed to one colour (eyes/mouth kept)'
+        print('flat    : %d faces collapsed to one colour (head artwork kept)'
               % flattened)
     if args.animate:
         # Rotations are const and live in ROM; only the posed POINT table costs

@@ -126,6 +126,13 @@ class DisplayLists:
         self.textures[key] = texture
         return texture
 
+    def load_vertex(self, index, vertex):
+        self.cache[index] = vertex
+
+    def matrix(self, word, address):
+        # Static rooms have none. Other importers must interpret, never ignore.
+        raise ValueError(f'Matrix-aware importer required: {word:08x} {address:08x}')
+
     def triangle(self, word, transparent):
         indices = [(word >> shift & 255) // 2 for shift in (16, 8, 0)]
         vertices = [self.cache[i] for i in indices]
@@ -161,7 +168,7 @@ class DisplayLists:
                 assert 0 <= first and first + n <= 32
                 for i in range(n):
                     x, y, z, flag, u, v, r, g, b, a = struct.unpack('>hhhHhhBBBB', self.read(w1 + i * 16, 16))
-                    self.cache[first + i] = (x, y, z, u / 32, v / 32, r, g, b, a)
+                    self.load_vertex(first + i, (x, y, z, u / 32, v / 32, r, g, b, a))
             elif op == 0x05:
                 self.triangle(w0, transparent)
             elif op == 0x06:
@@ -197,11 +204,11 @@ class DisplayLists:
                 raw = self.read(self.image[0], count * 2)
                 assert 0 <= base and base + count <= 256
                 self.palette[base:base+count] = [rgba16(v[0]) for v in struct.iter_unpack('>H', raw)]
-            elif op in (0x00, 0x03, 0xD8, 0xDA, 0xDB, 0xDC, 0xE2, 0xE3, 0xE6, 0xE7,
+            elif op == 0xDA:
+                self.matrix(w0, w1)
+            elif op in (0x00, 0x03, 0xD8, 0xDB, 0xDC, 0xE2, 0xE3, 0xE6, 0xE7,
                         0xE8, 0xE9, 0xEE, 0xF7, 0xF8, 0xF9, 0xFB, 0xFC):
-                # Culling bounds, RDP state, fog, lights and combiner. 0xDA is
-                # G_MTX: skeletal limb matrices, which callers that walk a
-                # skeleton supply themselves. Scene display lists contain none.
+                # Culling bounds, RDP state, fog, lights and combiner.
                 pass
             else:
                 raise ValueError(f'Unsupported display opcode {op:02x} at {address-8:08x}')

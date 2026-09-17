@@ -100,6 +100,22 @@ static void         viewer_draw(void)
     demo_camera.x = -300; demo_camera.y = 141; demo_camera.z = -260;
     demo_yaw = 0; demo_pitch = 0;
 #endif
+#if defined(DOSEI_PERF_PROBE) && DOSEI_PERF_PROBE == 3
+    /* Actor inspection only: original animations, slowly orbiting camera.
+     * No controller injection or focus needed. Never in a normal disc. */
+    if (demo_link_active) {
+        int32_t sine, cosine;
+        unsigned int tick = demo_clock();
+        demo_yaw = (uint16_t)(32768u + ((tick / 180) % 4) * 8192u);
+        kokiri_camera_sincos(demo_yaw, &sine, &cosine);
+        demo_camera.x = demo_link.x - (int32_t)(((int64_t)sine * 155) >> 16);
+        demo_camera.z = demo_link.z - (int32_t)(((int64_t)cosine * 155) >> 16);
+        demo_camera.y = demo_link.y - DEMO_LINK_EYE_HEIGHT + 77;
+        demo_pitch = -1820;
+        demo_link_yaw = 0;
+        link_anim_pose((tick / 300) % 3, (tick / 3) % 20, 0);
+    }
+#endif
     frame_timer_end(FRAME_PHASE_MOVEMENT);
     slSetScreenDist(toFIXED(demo_title_is_visible() ? 180 : SCREEN_DISTANCE));
     music_service();
@@ -114,8 +130,10 @@ static void         viewer_draw(void)
     slRotY((ANGLE)(0u-demo_yaw));
     jo_3d_translate_matrix(-demo_camera.x, demo_camera.y, -demo_camera.z);
     frame_timer_begin(FRAME_PHASE_SCENE);
+#if !defined(DOSEI_PERF_PROBE) || DOSEI_PERF_PROBE != 3
     kokiri_scene_draw();
     kokiri_fairies_draw(demo_clock());
+#endif
     frame_timer_end(FRAME_PHASE_SCENE);
     /* Link is submitted after the forest so the per-frame counters, which
     ** kokiri_scene_draw() resets, cover both lists. His model origin is at his
@@ -134,6 +152,10 @@ static void         viewer_draw(void)
 
 static void         viewer_hud(void)
 {
+#if defined(DOSEI_PERF_PROBE) && DOSEI_PERF_PROBE == 3
+    /* Unobstructed actor inspection on the isolated diagnostic disc. */
+    return;
+#endif
     static unsigned int last_refresh;
     unsigned int now = demo_clock();
     /* L+R, latched in demo_update() so the chord is read with the rest of the

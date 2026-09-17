@@ -232,14 +232,15 @@ static void     skin_vertices(void)
                  + FIXED_MUL(m->m[axis][1], INTEGER_FIXED(local->y))
                  + FIXED_MUL(m->m[axis][2], INTEGER_FIXED(local->z))) / 65536;
 
-        /* Model units -> world units, then the build-time grounding shift. */
-        posed[0] = ((posed[0] * LINK_ANIM_SCALE_Q16) >> 16) + LINK_ANIM_SHIFT_X;
-        posed[1] = ((posed[1] * LINK_ANIM_SCALE_Q16) >> 16) + LINK_ANIM_SHIFT_Y;
-        posed[2] = ((posed[2] * LINK_ANIM_SCALE_Q16) >> 16) + LINK_ANIM_SHIFT_Z;
-
-        link_points[i][X] = INTEGER_FIXED(posed[0]);
-        link_points[i][Y] = INTEGER_FIXED(-posed[1]);   /* baked Y negation */
-        link_points[i][Z] = INTEGER_FIXED(posed[2]);
+        /* Integer model * Q16 scale is ALREADY fixed world position. Keep its
+         * fraction: shifting down and back up collapses small face triangles
+         * and makes silhouettes jump by a whole world unit while animating. */
+        link_points[i][X] = posed[0] * LINK_ANIM_SCALE_Q16
+                           + INTEGER_FIXED(LINK_ANIM_SHIFT_X);
+        link_points[i][Y] = -(posed[1] * LINK_ANIM_SCALE_Q16
+                            + INTEGER_FIXED(LINK_ANIM_SHIFT_Y));
+        link_points[i][Z] = posed[2] * LINK_ANIM_SCALE_Q16
+                           + INTEGER_FIXED(LINK_ANIM_SHIFT_Z);
     }
 }
 

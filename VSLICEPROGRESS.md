@@ -1,5 +1,17 @@
 # Vertical slice progress
 
+## Link model ownership and face (2026-09-16)
+
+- Fixed 24 ignored matrix loads: bone ownership captured per vertex, not limb.
+- Shared OoT Flex ownership helper rejects unsupported transforms. Import rules
+  and regression requirements now in DOSEI-LEGEND-BIBLE.md, linked from CLAUDE.md.
+- Preserve local precision, tiny animated faces and fractional world output;
+  use native near head with artwork. Background actor capture shows joined
+  limbs and coherent face. All poses/sorting cases not visually certified.
+- 140 tests pass; normal/hi-res images rebuilt without inspection mode.
+- Actor texture growth reduces adaptive forest texture budget by 7392 bytes;
+  geometry unchanged. Floor penetration and large-plane clipping still open.
+
 ## FPS regression and camera height (2026-09-16)
 
 - Removed SH-2 software float in skinning: measured ~97 ms -> ~7 ms.

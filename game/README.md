@@ -16,7 +16,10 @@ All generated output goes under `build/`, including both `game*.cue/.iso` images
 objects, generated meshes and CD staging. `disc/` holds checked-in ISO metadata.
 
 Diagnostics only: append `PERF_PROBE=1` for a fixed title-camera benchmark, or
-`PERF_PROBE=2` for autonomous gameplay walking. Rebuild without the option for
+`PERF_PROBE=2` for autonomous gameplay walking, or `PERF_PROBE=3` for an isolated
+Link inspection (four camera angles, idle/walk/run; forest and HUD hidden).
+Mode 3 poses twice per draw: do not use it for performance measurements.
+Rebuild without the option for
 normal play. HUD times are microseconds: `WORK` is callback time, `sy` the
 separate between-callback interval; nested `sk/prep/dp/po/fg` must not be added
 twice. Profiling text refreshes four times per second.

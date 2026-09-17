@@ -237,8 +237,8 @@ class SkinningReproducesTheBakedPose(unittest.TestCase):
 
         rebuilt = set()
         for face in faces:
-            for local in face['local']:
-                matrix, origin = matrices[face['limb']]
+            for local, owner in zip(face['local'], face['vertex_limbs']):
+                matrix, origin = matrices[owner]
                 posed = blm.transform(matrix, origin, local)
                 rebuilt.add(tuple(
                     int(round(posed[i] * scale)) + shift[i] for i in range(3)))

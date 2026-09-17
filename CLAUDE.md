@@ -5,6 +5,9 @@ Caveman talk. No waste token. Efficient good. Stop talk between final output. Wa
 
 ## SH-2 runtime rule: NO FPU
 
+Model import rules: read [DOSEI-LEGEND-BIBLE.md](DOSEI-LEGEND-BIBLE.md).
+All animated importers must preserve per-vertex matrix ownership at load time.
+
 Saturn SH-2 has NO hardware floating-point unit. Runtime game math must use
 integers/fixed point. `toFIXED(variable)` multiplies by a double constant in
 this SDK: it can silently emit slow software-float helpers. Use range-checked
