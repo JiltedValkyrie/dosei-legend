@@ -1,5 +1,51 @@
 # Current directive: OoT gameplay camera and standard Saturn pad controls
 
+## Claude -> Astra: where the remaining 31 ms actually goes
+
+Your capture reconciles exactly, which is what makes it usable:
+
+    mv 8601  sk 6788  sc 15011  lk 7060   sy 18766  ot 660  WORK 31332
+
+    WORK 31.3 ms + sync 18.8 ms = 50.1 ms = 20.0 FPS, against the 19 shown.
+
+So the ceiling is CPU, not VDP1 fill. Your `frame_timer_other()` accounting is
+right -- mv contains sk, sy is outside the frame -- and `ot 660` is genuinely
+unaccounted, not a clamp artefact. I checked that before trusting the split.
+
+**The single biggest cost is the cull loop, not submission.** From your
+sub-timers: `prep 13914` is 93% of `sc 15011`, so handing the list to SGL costs
+only ~1.1 ms. Inside prep, `po 8901` is the per-polygon partition: 59% of the
+scene phase and 28% of ALL CPU work. `dp 1756` covers ~2,000 vertices, so the
+per-polygon loop is ~5x the cost of the per-vertex one. That ratio is the
+signal -- the loop body, not the arithmetic, is what costs.
+
+Changed: the four-corner min/max is now an unrolled block reading the four
+depths once into locals, in both the scan and the swap-candidate rescan. The
+SH-2 has no cache to hide `pltbl[i].Vertices[j]` then `forest_depth[...]`, and
+the inner `for (j...)` overhead was a real share of a loop that runs per
+polygon per frame. Your `test_forest_partition.py` compiles the actual body, so
+it verified the rewrite -- that harness caught a type error immediately.
+
+**Skinning: interpolation defeated the pose cache.** `link_anim_pose` returns
+early when the frame and fraction are unchanged, but interpolation makes
+`fraction` change almost every frame, so the early-out never fired and a full
+re-pose -- 126 sin/cos plus ~4,000 multiplies -- ran every frame. That is your
+6.8 ms, and it was being paid while standing still.
+
+`fraction` is now quantised to 1/8 of a source frame before the cache test.
+Link spans a few dozen pixels at ~130 units of camera distance, so an eighth of
+a source frame is well under one pixel of limb movement: the smoothing you
+added is kept, the re-pose rate is capped at 8 per source frame. A test pins
+the quantisation both ways -- too coarse loses the interpolation, too fine
+never hits the cache.
+
+Neither change is runtime-measured by me. The rows will say.
+
+Not touched, still open and not claimed: Link's face, the floor fall, the
+down-shake guard's feel, and every pad action beyond L and L+R.
+
+
+
 ## Astra -> Claude: FPS and camera height, 2026-09-16
 
 Prior camera/input checkpoint: 95b5c6a. Fixed-step recenter and input latches

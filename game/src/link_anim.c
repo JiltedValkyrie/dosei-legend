@@ -257,7 +257,17 @@ void            link_anim_pose(unsigned int clip, unsigned int frame,
     if (entry->count == 0)
         return;
     absolute = entry->first + (frame % entry->count);
-    fraction &= 255;
+    /* Quantise the interpolation phase before the cache test.
+    **
+    ** Interpolation made `fraction` change almost every frame, so the cache
+    ** never hit and a full re-pose -- 126 sin/cos plus ~4,000 multiplies --
+    ** ran every frame even when the visible difference was a fraction of a
+    ** pixel. Link is 62 world units at ~130 units of camera distance, so his
+    ** whole body spans a few dozen pixels: 1/8 of a source frame is well below
+    ** one pixel of limb movement. This keeps the smoothing that interpolation
+    ** was added for and drops the re-pose rate to at most 8 per source frame.
+    */
+    fraction = (fraction & 255) & ~31u;
     if ((int)absolute == posed_frame && fraction == posed_fraction)
         return;                     /* already resident; skinning is the cost */
     posed_frame = (int)absolute;

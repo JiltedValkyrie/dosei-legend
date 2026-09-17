@@ -258,12 +258,21 @@ void                kokiri_scene_draw(void)
      * one newly rejected polygon cannot shift the entire accepted suffix.
      * An unchanged view needs ZERO polygon/attribute copies. */
     for (i = 0; i < visible;) {
-        int nearest = 32767;
-        int farthest = -32768;
-        for (j = 0; j < 4; ++j) {
-            int depth = forest_depth[kokiri_pdata.pltbl[i].Vertices[j]];
-            if (depth < nearest) nearest = depth;
-            if (depth > farthest) farthest = depth;
+        int nearest, farthest;
+        /* One pass over the four corners, unrolled. The SH-2 has no cache to
+         * hide the double indirection (pltbl[i].Vertices[j] then
+         * forest_depth[...]), and this loop runs for every polygon every
+         * frame, so the loop overhead itself was a measurable share of it. */
+        {
+            const unsigned short *corner = kokiri_pdata.pltbl[i].Vertices;
+            int d0 = forest_depth[corner[0]], d1 = forest_depth[corner[1]];
+            int d2 = forest_depth[corner[2]], d3 = forest_depth[corner[3]];
+            nearest = d0 < d1 ? d0 : d1;
+            if (d2 < nearest) nearest = d2;
+            if (d3 < nearest) nearest = d3;
+            farthest = d0 > d1 ? d0 : d1;
+            if (d2 > farthest) farthest = d2;
+            if (d3 > farthest) farthest = d3;
         }
         /* Cull behind the camera as well as beyond the draw distance.
         **
@@ -277,12 +286,16 @@ void                kokiri_scene_draw(void)
             do {
                 --visible;
                 if (i == visible) break;
-                nearest = 32767;
-                farthest = -32768;
-                for (j = 0; j < 4; ++j) {
-                    int depth = forest_depth[kokiri_pdata.pltbl[visible].Vertices[j]];
-                    if (depth < nearest) nearest = depth;
-                    if (depth > farthest) farthest = depth;
+                {
+                    const unsigned short *corner = kokiri_pdata.pltbl[visible].Vertices;
+                    int d0 = forest_depth[corner[0]], d1 = forest_depth[corner[1]];
+                    int d2 = forest_depth[corner[2]], d3 = forest_depth[corner[3]];
+                    nearest = d0 < d1 ? d0 : d1;
+                    if (d2 < nearest) nearest = d2;
+                    if (d3 < nearest) nearest = d3;
+                    farthest = d0 > d1 ? d0 : d1;
+                    if (d2 > farthest) farthest = d2;
+                    if (d3 > farthest) farthest = d3;
                 }
             } while (farthest < 0 || nearest > FOREST_FAR);
             if (i == visible) break;

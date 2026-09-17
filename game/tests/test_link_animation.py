@@ -360,3 +360,33 @@ class DiagnosticsChord(unittest.TestCase):
         that distinction gets recorded wrongly, so they print together.
         """
         self.assertIn('"s%d g%d L%d d%d', self.main)
+
+
+class SkinningReposeRate(unittest.TestCase):
+    """Interpolation must not force a full re-pose every frame.
+
+    Adding interpolation made `fraction` change almost every frame, so the
+    pose cache never hit and 126 sin/cos plus ~4,000 multiplies ran every
+    frame -- 6.8 ms of a 31 ms budget, while standing still. Quantising the
+    phase keeps the smoothing and caps the re-pose rate.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.source = (ROOT / 'src' / 'link_anim.c').read_text()
+
+    def test_fraction_is_quantised_before_the_cache_test(self):
+        quantise = self.source.index('fraction = (fraction & 255)')
+        compare = self.source.index('fraction == posed_fraction')
+        self.assertLess(quantise, compare,
+                        'quantise before comparing or the cache never hits')
+
+    def test_quantisation_keeps_several_steps_per_source_frame(self):
+        """Too coarse and the interpolation it was added for disappears."""
+        mask = re.search(r'fraction = \(fraction & 255\) & ~(\d+)u', self.source)
+        self.assertIsNotNone(mask, 'phase quantisation not found')
+        step = int(mask[1]) + 1
+        self.assertGreaterEqual(256 // step, 4,
+                                'too coarse: interpolation is lost')
+        self.assertLessEqual(256 // step, 32,
+                             'too fine: the cache will not hit')
