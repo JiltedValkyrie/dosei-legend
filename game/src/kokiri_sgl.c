@@ -36,6 +36,10 @@ static short tile_depth[KOKIRI_TILE_COUNT];
 static unsigned char tile_fog[KOKIRI_TILE_COUNT];
 static unsigned char forest_mesh[KOKIRI_POLYGON_COUNT];
 static unsigned char *forest_palette;
+/* Worst "stippled yet close" polygon seen this prep; see the partition loop. */
+static int mesh_near_depth = 32767;
+static short mesh_near_tile = -1;
+static bool mesh_near_authored;
 static bool forest_prepared;
 static int prepared_x, prepared_y, prepared_z, prepared_pitch;
 static unsigned short prepared_yaw;
@@ -210,6 +214,21 @@ bool                kokiri_scene_load(void)
     return (true);
 }
 
+int                 kokiri_scene_mesh_near_depth(void)
+{
+    return mesh_near_depth;
+}
+
+int                 kokiri_scene_mesh_near_tile(void)
+{
+    return mesh_near_tile;
+}
+
+bool                kokiri_scene_mesh_near_authored(void)
+{
+    return mesh_near_authored;
+}
+
 unsigned int        kokiri_scene_vram_used(void)
 {
     return (vram_used);
@@ -253,6 +272,8 @@ void                kokiri_scene_draw(void)
     frame_timer_end(FRAME_PHASE_DEPTH);
     frame_timer_begin(FRAME_PHASE_PARTITION);
     for (i = 0; i < KOKIRI_TILE_COUNT; ++i) tile_depth[i] = 32767;
+    mesh_near_depth = 32767;
+    mesh_near_tile = -1;
     /* Two-ended partition. Skip rejected tails without copying them; swap
      * only a rejected front with an accepted tail. Unlike front compaction,
      * one newly rejected polygon cannot shift the entire accepted suffix.
@@ -322,6 +343,19 @@ void                kokiri_scene_draw(void)
             attr->atrb &= ~MESHon;
             if (forest_mesh[i] || nearest > FOREST_FAR * 7 / 8)
                 attr->atrb |= MESHon;
+            /* A stippled polygon that is also very CLOSE is the giant
+             * checkerboard: stipple means "judged far", large on screen means
+             * near, and both cannot be true. Record the worst offender rather
+             * than guessing which stage produced it -- authored stipple and
+             * distance stipple are distinguished so the cause is not
+             * ambiguous, and the tile index says whether the palette or the
+             * geometry is at fault. */
+            if ((attr->atrb & MESHon) && nearest < FOREST_FOG_START / 4 &&
+                nearest < mesh_near_depth) {
+                mesh_near_depth = nearest;
+                mesh_near_tile = (short)tile;
+                mesh_near_authored = forest_mesh[i];
+            }
             ++i;
         }
     }

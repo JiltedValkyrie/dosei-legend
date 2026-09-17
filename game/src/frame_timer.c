@@ -80,25 +80,24 @@ unsigned int    frame_timer_frame(void)
     return frame_smoothed;
 }
 
-/* VDP1 current command address. Nonzero and changing while a list is drawing;
-** the end-of-draw bit in EDSR is latched and cleared by the SDK, so COPR is
-** the reading that survives Jo's own handling. */
+/* VDP1 current command address. See the header: a change between two reads
+** proves some command advanced, and nothing more. */
 #define VDP1_COPR   (*(volatile unsigned short *)0x25D00014)
 
 static unsigned int busy_permille;
 
 void            frame_timer_sample_vdp1(void)
 {
-    /* Two reads: if the address moved between them, VDP1 is actively working
-    ** through the list rather than parked at the end of it. */
+    /* Two reads. A difference means a command advanced between them; equality
+    ** means nothing, because both reads can land inside one long command. */
     unsigned short first = VDP1_COPR;
     unsigned short second = VDP1_COPR;
-    unsigned int busy = (first != second) ? 1000u : 0u;
+    unsigned int changed = (first != second) ? 1000u : 0u;
 
-    busy_permille += (int)(busy - busy_permille) >> 3;
+    busy_permille += (int)(changed - busy_permille) >> 3;
 }
 
-unsigned int    frame_timer_vdp1_busy(void)
+unsigned int    frame_timer_copr_changed(void)
 {
     return busy_permille / 10;      /* percent of recent frames */
 }

@@ -216,16 +216,19 @@ static void         viewer_hud(void)
         jo_printf(0, 5, "sy%u ot%u WORK%u us   ",
                   frame_timer_cost(FRAME_PHASE_SYNC),
                   frame_timer_other(), frame_timer_frame());
-        jo_printf(0, 7, "prep%u us            ", frame_timer_cost(FRAME_PHASE_PREP));
+        jo_printf(0, 7, "prep%u us  mshT%d d%d %c ",
+                  frame_timer_cost(FRAME_PHASE_PREP),
+                  kokiri_scene_mesh_near_tile(),
+                  kokiri_scene_mesh_near_depth(),
+                  kokiri_scene_mesh_near_authored() ? 'A' : 'D');
         jo_printf(0, 8, "dp%u po%u fg%u       ", frame_timer_cost(FRAME_PHASE_DEPTH),
                   frame_timer_cost(FRAME_PHASE_PARTITION), frame_timer_cost(FRAME_PHASE_FOG));
-        /* vd is the share of recent frames where VDP1 was STILL DRAWING when
-        ** the CPU regained control. A large sy with a low vd is idle waiting
-        ** for VBlank; a large sy with a high vd is genuine VDP1 backpressure,
-        ** which submission time alone cannot tell apart. */
-        jo_printf(0, 6, "cam %s vd%u%%   ",
+        /* copr is the share of recent frames where VDP1's command address
+        ** moved between two adjacent reads. It is NOT a busy measurement and
+        ** no CPU-versus-fill verdict follows from it -- see frame_timer.h. */
+        jo_printf(0, 6, "cam %s copr%u%%  ",
                   oot_follow_legacy() ? "LEGACY 260" : "OoT 125-188",
-                  frame_timer_vdp1_busy());
+                  frame_timer_copr_changed());
         return;
     }
     jo_printf(0, 0, "Jo/SGL Kokiri viewer");

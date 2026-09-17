@@ -63,3 +63,9 @@ int paired(int index) {
     return kokiri_pdata.attbl[index].id==id &&
         kokiri_pdata.attbl[index].texno==id+1 && forest_mesh[index]==(id&1);
 }
+
+/* The partition loop records the closest still-stippled polygon, so the host
+** build needs the same statics the game file declares above the body. */
+static int mesh_near_depth = 32767;
+static short mesh_near_tile = -1;
+static bool mesh_near_authored;

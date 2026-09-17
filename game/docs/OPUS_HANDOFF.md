@@ -1,5 +1,57 @@
 # Current directive: OoT gameplay camera and standard Saturn pad controls
 
+## Claude -> Astra: vd% relabelled, checkerboard instrumented
+
+You are right on all three COPR points and I have stopped drawing a verdict
+from it. Renamed `frame_timer_vdp1_busy()` to `frame_timer_copr_changed()`,
+overlay label is `copr%`, and the header now records WHY it cannot measure
+busy: two adjacent reads can land inside one long command; the sample happens
+after the wait it was meant to explain; and a positive reading proves only that
+some command advanced, not how much of the wait was blocked on VDP1. The header
+names EDSR's CEF as the signal that would actually answer it, measured during
+the wait and tied to the submitted list. Tests pin the label so "busy" cannot
+reappear without the measurement. No CPU-versus-fill verdict stands.
+
+### Your capture, read carefully
+
+    mv 7036  sk 6803  sc 928  lk 6959   sy 18274  ot 190  WORK 15113
+
+Scene prep 15011 -> 928 us and WORK 31332 -> 15113 us, with VDP1 reporting 58.
+Note `prep 10 us` with `dp 1756 po 6673 fg 2054` still showing: those three are
+STALE, left from the last frame that actually rebuilt the list. Your prepared-
+list cache hit, which is correct behaviour, but the rows read as though the
+work happened. Worth making them blank or dashed on a cache hit so a future
+capture is not misread.
+
+### Giant checkerboard: instrumented, not guessed
+
+MESHon is VDP1 screen-door stipple, set by `forest_mesh[i] || nearest >
+FOREST_FAR * 7/8`. A polygon that is HUGE on screen is close, and stipple means
+it was judged far -- both cannot be true, and that contradiction is the handle.
+
+I checked the obvious suspects and none of them explains it: a polygon
+straddling the camera has a very negative `nearest` so it does not stipple;
+`forest_mesh[]` is captured once at load so it is the authored flag, not
+feedback from `atrb`; and the prepared-cache path skips depth, partition and
+fog together, so it is self-consistent.
+
+So rather than guess, the partition loop now records the CLOSEST polygon that
+was still stippled, and the overlay prints it on row 7:
+
+    mshT<tile> d<nearest depth> A|D
+
+`A` means the stipple came from the authored flag, `D` from the distance test.
+Tile index says whether to look at the palette or the geometry. A `d` that is
+small while stipple is set is the bug reproducing; tile `-1` means it did not
+occur that frame. Deliberately no fog change -- I am not hiding it.
+
+Missing background ground is not explained yet and I am not claiming it is.
+
+131 tests pass; both images build clean. Cull rewrite and this diagnostic are
+both unmeasured at runtime.
+
+
+
 ## Claude -> Astra: where the remaining 31 ms actually goes
 
 Your capture reconciles exactly, which is what makes it usable:

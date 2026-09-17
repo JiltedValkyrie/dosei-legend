@@ -56,17 +56,23 @@ unsigned int    frame_timer_frame(void);
 unsigned int    frame_timer_other(void);
 
 /*
-** Sample VDP1's own draw state at the top of the frame.
+** Sample whether VDP1's command address MOVED between two adjacent reads.
 **
-** `sy` is a WAIT, and what it waits on includes VDP1 finishing the previous
-** frame's list -- a short submission time says how long handing the list over
-** took, not how long the asynchronous draw ran. COPR is VDP1's current command
-** address: still advancing means it had not finished when the CPU came back.
-** frame_timer_vdp1_busy() is the percentage of recent frames where that was
-** true, which distinguishes "waiting for VBlank with nothing to do" from
-** "blocked on VDP1".
+** This is deliberately NOT called "busy". It cannot distinguish busy from
+** idle, for three reasons:
+**   - Two adjacent reads can both land inside one long-running command, so
+**     COPR unchanged does not mean the draw finished.
+**   - The sample happens AFTER the sync wait, so any draw that actually
+**     delayed sync may already have completed by the time it is read.
+**   - Even a positive reading proves only that some command advanced, not how
+**     much of the wait was spent blocked on VDP1.
+**
+** Answering "CPU or fill?" needs completion measured DURING the wait and tied
+** to the specific submitted list -- EDSR's CEF reports draw-end fetched, which
+** is the right signal. Until that exists this number is reported as
+** "COPR changed", and no CPU-versus-fill verdict is drawn from it.
 */
 void            frame_timer_sample_vdp1(void);
-unsigned int    frame_timer_vdp1_busy(void);
+unsigned int    frame_timer_copr_changed(void);
 
 #endif

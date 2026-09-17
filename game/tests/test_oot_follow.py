@@ -338,3 +338,32 @@ class CameraStepTiming(unittest.TestCase):
     def test_skinning_stays_outside_the_step_loop(self):
         self.assertNotIn('link_anim_pose', self.step_loop(),
                          'skinning must not run once per catch-up step')
+
+
+class VdpLabelHonesty(unittest.TestCase):
+    """The COPR reading must not be presented as a busy measurement.
+
+    Two adjacent reads can both land inside one long command, the sample
+    happens after the wait it is meant to explain, and a positive reading
+    proves only that some command advanced. None of that supports a
+    CPU-versus-fill verdict, so the label must not imply one.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        camera = ROOT / 'src'
+        cls.header = (camera / 'frame_timer.h').read_text()
+        cls.main = (camera / 'main.c').read_text()
+
+    def test_accessor_is_not_named_busy(self):
+        self.assertIn('frame_timer_copr_changed', self.header)
+        self.assertNotIn('frame_timer_vdp1_busy', self.header)
+
+    def test_overlay_label_says_copr_not_busy(self):
+        self.assertIn('copr%u%%', self.main)
+        self.assertNotIn('vd%u%%', self.main)
+
+    def test_header_records_why_it_cannot_measure_busy(self):
+        """So the limitation travels with the code, not just a commit."""
+        self.assertIn('deliberately NOT called "busy"', self.header)
+        self.assertIn('CEF', self.header)

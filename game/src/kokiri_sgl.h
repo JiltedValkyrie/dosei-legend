@@ -18,6 +18,12 @@ void            kokiri_scene_draw(void);
 
 /** @brief Submit Link at a world position, facing @p yaw (binang). */
 void            kokiri_link_draw(int x, int y, int z, int yaw);
+/* Diagnostics for the giant near checkerboard: the closest polygon that was
+** still stippled, its tile, and whether that stipple came from the authored
+** flag or from the distance test. -1 tile means none was seen. */
+int             kokiri_scene_mesh_near_depth(void);
+int             kokiri_scene_mesh_near_tile(void);
+bool            kokiri_scene_mesh_near_authored(void);
 
 /** @brief Draw ambient fairies at the original Kokiri NPC homes. */
 void            kokiri_fairies_draw(unsigned int tick);
