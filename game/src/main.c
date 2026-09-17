@@ -93,6 +93,11 @@ static void         viewer_draw(void)
     frame_timer_frame_begin();
     frame_timer_begin(FRAME_PHASE_MOVEMENT);
     demo_update();
+#if defined(DOSEI_PERF_PROBE) && DOSEI_PERF_PROBE == 1
+    /* Repeatable no-input render baseline. Never enabled in normal builds. */
+    demo_camera.x = -300; demo_camera.y = 141; demo_camera.z = -260;
+    demo_yaw = 0; demo_pitch = 0;
+#endif
     frame_timer_end(FRAME_PHASE_MOVEMENT);
     slSetScreenDist(toFIXED(demo_title_is_visible() ? 180 : SCREEN_DISTANCE));
     music_service();
@@ -127,6 +132,8 @@ static void         viewer_draw(void)
 
 static void         viewer_hud(void)
 {
+    static unsigned int last_refresh;
+    unsigned int now = demo_clock();
     /* L+R, latched in demo_update() so the chord is read with the rest of the
     ** input and consumes both buttons. A is deliberately not used here: it is
     ** reserved for the action button, and the g/L/d readout below is the only
@@ -135,7 +142,13 @@ static void         viewer_hud(void)
         demo_diagnostics_toggled = false;
         debug_visible = !debug_visible;
         jo_clear_screen();
+        last_refresh = now - 15;
     }
+    /* VDP2 retains the text. Formatting and rewriting every digit every draw
+     * costs several milliseconds; four readable updates per second suffice.
+     * Input/chord handling above still runs every frame. */
+    if (now - last_refresh < 15) return;
+    last_refresh = now;
     if (!debug_visible) {
         if (rejected_total || !music_ready)
             jo_printf(0, 0, "music %s refusals %d", music_ready ? "ON" : "FAIL", (int)rejected_total);
@@ -153,9 +166,9 @@ static void         viewer_hud(void)
                   (int)(music_worst_stall() * 1000 / 60),
                   music_failed() ? " FAIL" : "");
         if (demo_link_active)
-            jo_printf(0, 1, "L %d,%d yaw %d  C %d,%d pan %d   ",
-                      (int)demo_link.x, (int)demo_link.z, (int)demo_link_yaw,
-                      (int)demo_camera.x, (int)demo_camera.z, (int)demo_yaw);
+            jo_printf(0, 1, "L %d,%d,%d yaw %d   ",
+                      (int)demo_link.x, (int)demo_link.y, (int)demo_link.z,
+                      (int)demo_link_yaw);
         /* Heap headroom and the current locomotion state. The heap figure is
         ** what justifies JO_GLOBAL_MEMORY_SIZE_FOR_MALLOC: the clip tables and
         ** the skinned POINT table compete with it for the RAM below SGL's work
@@ -198,9 +211,12 @@ static void         viewer_hud(void)
                   frame_timer_cost(FRAME_PHASE_SKINNING),
                   frame_timer_cost(FRAME_PHASE_SCENE),
                   frame_timer_cost(FRAME_PHASE_LINK));
-        jo_printf(0, 5, "sy%u ot%u FRAME%u us  ",
+        jo_printf(0, 5, "sy%u ot%u WORK%u us   ",
                   frame_timer_cost(FRAME_PHASE_SYNC),
                   frame_timer_other(), frame_timer_frame());
+        jo_printf(0, 7, "prep%u us            ", frame_timer_cost(FRAME_PHASE_PREP));
+        jo_printf(0, 8, "dp%u po%u fg%u       ", frame_timer_cost(FRAME_PHASE_DEPTH),
+                  frame_timer_cost(FRAME_PHASE_PARTITION), frame_timer_cost(FRAME_PHASE_FOG));
         jo_printf(0, 6, "cam %s          ",
                   oot_follow_legacy() ? "LEGACY 260" : "OoT 125-188");
         return;

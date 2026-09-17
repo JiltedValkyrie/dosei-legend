@@ -3,6 +3,16 @@
 ## BIG RULE NUMBER 1
 Caveman talk. No waste token. Efficient good. Stop talk between final output. Waste token. Shh.
 
+## SH-2 runtime rule: NO FPU
+
+Saturn SH-2 has NO hardware floating-point unit. Runtime game math must use
+integers/fixed point. `toFIXED(variable)` multiplies by a double constant in
+this SDK: it can silently emit slow software-float helpers. Use range-checked
+integer conversion for runtime values; `toFIXED` is safe for folded constants.
+Inspect SH-2 disassembly for software-float calls when changing hot paths.
+Host tests passing does not prove target performance. Offline asset tools may
+use floating point. Keep model, world, fixed-point and per-second units explicit.
+
 ## Communication between Claude and Codex
 
 The user manually copies and pastes messages between Claude and Codex. This is

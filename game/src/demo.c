@@ -201,6 +201,14 @@ void demo_update(void)
         MAP(L); MAP(R); MAP(X); MAP(Y); MAP(Z); MAP(C);
         MAP(UP); MAP(DOWN); MAP(LEFT); MAP(RIGHT);
 #undef MAP
+#if defined(DOSEI_PERF_PROBE) && DOSEI_PERF_PROBE == 2
+        /* Diagnostic-only autonomous walk. No OS/controller input injection. */
+        {
+            static bool entered;
+            if (!entered && now > 120) { start_pressed = true; entered = true; }
+            buttons = ((now / 180) & 1) ? CAMERA_DOWN : CAMERA_UP;
+        }
+#endif
         /* L+R held is the diagnostics chord, and it CONSUMES both buttons:
          * the recenter and the R camera bit are cleared, so asking for
          * diagnostics never also recenters the view or triggers whatever R

@@ -7,11 +7,11 @@
 #define FRT_FRC     (*(volatile uint16_t *)0xFFFFFE12)
 #define FRT_TCR     (*(volatile uint8_t *)0xFFFFFE16)
 
-/* CKS1:0 = 10 selects peripheral clock / 128. At ~14.3 MHz that is 111.9 kHz,
-** one tick per 8.94 us, wrapping every 586 ms. A frame at 8 FPS is 125 ms, so
+/* CKS1:0 = 10 selects SH-2 clock / 128. At ~28.6 MHz that is 223.7 kHz,
+** one tick per 4.47 us, wrapping every 293 ms. A frame at 8 FPS is 125 ms, so
 ** a single wrap can no longer hide inside one measurement. */
 #define FRT_PRESCALER_128   0x02
-#define TICKS_PER_US_NUM    894     /* 8.94 us per tick, as 100ths */
+#define TICKS_PER_US_NUM    447     /* 4.47 us per tick, as 100ths (NTSC 320) */
 #define TICKS_PER_US_DEN    100
 
 static uint16_t     previous_count;
@@ -82,10 +82,9 @@ unsigned int    frame_timer_frame(void)
 
 unsigned int    frame_timer_other(void)
 {
-    unsigned int named = 0, i;
-
-    for (i = 0; i < FRAME_PHASE_COUNT; ++i)
-        named += smoothed[i];
+    /* Sync is outside this callback; skinning and preparation are nested. */
+    unsigned int named = smoothed[FRAME_PHASE_MOVEMENT] +
+        smoothed[FRAME_PHASE_SCENE] + smoothed[FRAME_PHASE_LINK];
     /* Nested phases would make this negative; clamp rather than print a huge
     ** unsigned number, and treat 0 as "everything is accounted for". */
     return frame_smoothed > named ? frame_smoothed - named : 0;

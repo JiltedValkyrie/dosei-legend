@@ -38,10 +38,10 @@
 /* CAM_DEG_TO_BINANG(10): 10 * 0x10000 / 360. */
 #define OOT_CAM_PITCH_TARGET    1820
 
-/* demo_link.y is Link's EYE at floor+90, but OoT's at-point is the player's
-** origin -- his feet. The camera must subtract this before applying the
-** at-offset, or it aims 90 units too high and cuts his feet off. */
+/* Storage Y is feet+90. Camera_CalcAtDefault targets player origin PLUS
+** Player_GetHeight() PLUS yOffset; neither the storage eye nor feet alone. */
 #define OOT_CAM_PLAYER_ORIGIN   90
+#define OOT_CAM_PLAYER_HEIGHT   62
 
 typedef struct
 {

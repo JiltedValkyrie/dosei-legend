@@ -205,7 +205,11 @@ def emit(head, verts, faces, tiles, out_dir, name='kokiri'):
     # depth test this fixed-view viewer does not implement.
     lines.append('static ATTR @n@_attributes[@N@_POLYGON_COUNT] = {')
     for face in faces:
-        plane = 'Single_Plane' if face['cull'] else 'Dual_Plane'
+        # Animated Link's POINTs rotate with each limb but these normals are
+        # still the bind-pose normals. Single_Plane would cull live faces from
+        # stale directions, opening holes in his body. No runtime lighting
+        # uses them; draw both sides until posed normals are supplied.
+        plane = 'Single_Plane' if face['cull'] and name != 'link' else 'Dual_Plane'
         atrb = 'CL16Look | No_Gouraud | ECdis'
         if face['mesh']:
             atrb += ' | MESHon'

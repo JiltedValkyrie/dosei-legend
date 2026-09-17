@@ -114,31 +114,29 @@ class OotFollowCamera(unittest.TestCase):
         self.assertLess(pitch, 0)
 
     def test_link_is_framed_on_screen_at_both_distances(self):
-        """Project Link's feet and head and require both inside 0..240.
-
-        This is the check that would have caught the shipped framing bug: the
-        at-point was applied to demo_link.y, which is his EYE at floor+90, not
-        his origin, so the camera aimed 90 units high and his feet projected to
-        screen y 375. Everything else about the camera still passed.
-
-        main.c: sy = 120 + SCREEN_DISTANCE * (camera_y - point_y) / depth.
-        """
+        """Project through camera pitch too, not a fictitious level camera."""
         SCREEN_DISTANCE, EYE_HEIGHT, LINK_HEIGHT = 240, 90, 62
         for moving in (False, True):
             cam, eye, _yaw, _pitch = self.run_steps(200, moving=moving)
             depth = math.hypot(eye.x, eye.z)
             for height, part in ((0, 'feet'), (LINK_HEIGHT, 'head')):
                 point_y = height - EYE_HEIGHT     # relative to demo_link.y
-                sy = 120 + SCREEN_DISTANCE * (eye.y - point_y) / depth
+                angle = -_pitch * 2 * math.pi / 65536
+                dy = eye.y - point_y
+                view_y = dy * math.cos(angle) - depth * math.sin(angle)
+                view_z = dy * math.sin(angle) + depth * math.cos(angle)
+                sy = 120 + SCREEN_DISTANCE * view_y / view_z
                 self.assertGreater(sy, 0, '%s above the screen at d=%d'
                                    % (part, cam.distance))
                 self.assertLess(sy, 240, '%s below the screen at d=%d'
                                 % (part, cam.distance))
 
-    def test_at_point_targets_the_feet_not_the_eye(self):
-        """OoT aims at the player origin; demo_link.y is 90 units above it."""
-        source = (ROOT.parent / 'shared/lib/camera/oot_follow.c').read_text()
-        self.assertIn('OOT_CAM_PLAYER_ORIGIN', source)
+    def test_at_point_includes_player_height(self):
+        """Actual decomp: origin + Player_GetHeight() + yOffset."""
+        for moving in (False, True):
+            cam, eye, _yaw, _pitch = self.run_steps(200, moving=moving)
+            rise = int(cam.distance * math.sin(cam.pitch * 2 * math.pi / 65536))
+            self.assertAlmostEqual(eye.y + 90 - rise, 62 - 12, delta=1)
 
     def test_yaw_follows_the_player_only_while_moving(self):
         """Normal1 swings back behind the player only while xzSpeed > 0."""
@@ -160,6 +158,11 @@ class OotFollowCamera(unittest.TestCase):
         # One step toward 0xF000 the short way is a small decrease, which wraps
         # to just under 0x10000 -- never a small increase.
         self.assertGreater(yaw.value, 0x8000)
+
+    def test_running_toward_camera_does_not_chase_opposite_facing(self):
+        for facing in (0x7fff, 0x8000, 0x8001, 0x6000, 0xa000):
+            _cam, _eye, yaw, _pitch = self.run_steps(120, facing=facing, moving=True)
+            self.assertEqual(yaw, 0, 'rearward motion spun camera')
 
 
     def swing(self, target, steps):

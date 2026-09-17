@@ -1,5 +1,25 @@
 # Vertical slice progress
 
+## FPS regression and camera height (2026-09-16)
+
+- Removed SH-2 software float in skinning: measured ~97 ms -> ~7 ms.
+- Forest partition avoids redundant copies; invisible fog palettes untouched;
+  channel lookup preserves colors; stationary view reuses preparation.
+  Fog samples ~17 ms -> ~3-4 ms. Fixed-view 15 -> 20 VDP1 FPS. Moving samples
+  reach 19 but fluctuate; sustained 30/60 is NOT verified.
+- Corrected FRT conversion/accounting and added nested stage timing.
+- Follow aim = feet + height + offset, verified in decomp. Background capture
+  frames Link; camera/terrain collision remains absent.
+- Animated Link no longer culls against stale bind-pose normals. Flat baking
+  and sorting artifacts are separate remaining issues.
+- Human's repeatable floor penetration OPEN: nearby host replay did not
+  reproduce it. HUD records Y now. Nearby-safe recovery retained.
+- No-FPU rule in CLAUDE.md; testing stays background-only.
+- Down no longer chases opposite facing; rear-half-plane yaw held unless L
+  recenters. Host regression passes; interactive feel check pending.
+- 125 tests pass; normal and hi-res discs rebuilt without autonomous probes.
+  Last moving capture: VDP1 19, WORK 31.3 ms, sync 18.8 ms. Not a full FPS fix.
+
 ## Low-FPS lost button presses
 
 - Background capture confirms VDP1 8 / VDP2 58, zero submission refusals.

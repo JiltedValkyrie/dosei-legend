@@ -21,9 +21,9 @@
 **   - POINT Y is negated. The Y flip is baked at the rendering boundary so the
 **     modelview matrix stays a pure translation; the skinner applies the same
 **     negation rather than reintroducing a runtime reflection.
-**   - POLYGON normals stay at their bind-pose values. Recomputing 460 normals
-**     per frame is not affordable on the SH-2, and Link is flat shaded with
-**     SORT_CEN, so the visible cost is limited to lighting, not culling order.
+**   - POLYGON normals stay at bind-pose values, so generated animated Link
+**     uses Dual_Plane. Single_Plane uses those stale normals for backface
+**     rejection and opens holes as limbs rotate. No runtime lighting uses them.
 **   - The model is grounded and centred at build time; the same integer shift
 **     is reapplied here so a posed frame lands where the bind pose did.
 */
@@ -50,11 +50,16 @@ static limb_matrix_t limb_matrices[LINK_LIMB_COUNT];
 static int      posed_frame = -1;
 static unsigned int posed_fraction;
 
-/* SGL's own fixed multiply. The SH-2 has a 32x32->64 instruction and slMulFX
-** uses it; an int64_t expression here compiles to a libgcc call instead, which
-** at roughly 4,800 multiplies per posed frame was enough to overrun the field
-** and flicker the screen edges. */
+/* SGL's fixed multiply uses the SH-2 32x32->64 instruction. Keep it here.
+** The measured ~97 ms regression was the runtime toFIXED conversions below,
+** not evidence that every int64 multiply calls libgcc: the forest depth loop
+** compiles its int64 products to native dmuls.l as well. Inspect target code. */
 #define FIXED_MUL(a, b)  slMulFX((a), (b))
+/* SGL's toFIXED macro multiplies by 65536.0: runtime integers therefore
+ * become SOFTWARE DOUBLE calls on SH-2. These coordinates are integers in
+ * signed 16-bit range; multiplication is exact and defined for negative
+ * values too (unlike a signed left shift). Constants still use toFIXED. */
+#define INTEGER_FIXED(a) ((FIXED)((int32_t)(a) * 65536))
 
 static void     matrix_multiply(FIXED out[3][3], const FIXED a[3][3],
                                 const FIXED b[3][3])
@@ -178,9 +183,9 @@ static void     pose_skeleton(const int16_t *root, const int16_t *rotations)
             /* Place the joint in the parent's frame, then rotate within it. */
             for (axis = 0; axis < 3; ++axis)
                 out->origin[axis] = up->origin[axis]
-                    + (FIXED_MUL(up->m[axis][0], toFIXED(offset[0]))
-                     + FIXED_MUL(up->m[axis][1], toFIXED(offset[1]))
-                     + FIXED_MUL(up->m[axis][2], toFIXED(offset[2]))) / 65536;
+                    + (FIXED_MUL(up->m[axis][0], INTEGER_FIXED(offset[0]))
+                     + FIXED_MUL(up->m[axis][1], INTEGER_FIXED(offset[1]))
+                     + FIXED_MUL(up->m[axis][2], INTEGER_FIXED(offset[2]))) / 65536;
             rotation_matrix(local, &rotations[index * 3]);
             matrix_multiply(out->m, up->m, local);
         }
@@ -223,18 +228,18 @@ static void     skin_vertices(void)
 
         for (axis = 0; axis < 3; ++axis)
             posed[axis] = m->origin[axis]
-                + (FIXED_MUL(m->m[axis][0], toFIXED(local->x))
-                 + FIXED_MUL(m->m[axis][1], toFIXED(local->y))
-                 + FIXED_MUL(m->m[axis][2], toFIXED(local->z))) / 65536;
+                + (FIXED_MUL(m->m[axis][0], INTEGER_FIXED(local->x))
+                 + FIXED_MUL(m->m[axis][1], INTEGER_FIXED(local->y))
+                 + FIXED_MUL(m->m[axis][2], INTEGER_FIXED(local->z))) / 65536;
 
         /* Model units -> world units, then the build-time grounding shift. */
         posed[0] = ((posed[0] * LINK_ANIM_SCALE_Q16) >> 16) + LINK_ANIM_SHIFT_X;
         posed[1] = ((posed[1] * LINK_ANIM_SCALE_Q16) >> 16) + LINK_ANIM_SHIFT_Y;
         posed[2] = ((posed[2] * LINK_ANIM_SCALE_Q16) >> 16) + LINK_ANIM_SHIFT_Z;
 
-        link_points[i][X] = toFIXED(posed[0]);
-        link_points[i][Y] = toFIXED(-posed[1]);   /* baked Y negation */
-        link_points[i][Z] = toFIXED(posed[2]);
+        link_points[i][X] = INTEGER_FIXED(posed[0]);
+        link_points[i][Y] = INTEGER_FIXED(-posed[1]);   /* baked Y negation */
+        link_points[i][Z] = INTEGER_FIXED(posed[2]);
     }
 }
 

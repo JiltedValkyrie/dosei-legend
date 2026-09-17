@@ -126,10 +126,11 @@ static void     place(const oot_follow_t *camera,
     ** so the eye sits directly behind the camera's own heading. */
     eye_out->x = player->x - (int32_t)(((int64_t)sine * horizontal) >> 16);
     eye_out->z = player->z - (int32_t)(((int64_t)cosine * horizontal) >> 16);
-    /* player->y is the EYE at floor+90; OoT aims at the player's origin, his
-    ** feet. Without this the at-point is 90 units too high and his feet fall
-    ** off the bottom of the screen. */
-    eye_out->y = player->y - OOT_CAM_PLAYER_ORIGIN + OOT_CAM_Y_OFFSET + height;
+    /* z_camera.c Camera_CalcAtDefault/func_800458D4:
+    ** atTarget.y = player origin + Player_GetHeight() + yOffset.
+    ** Forgetting height put the camera only 9..20 units above the floor. */
+    eye_out->y = player->y - OOT_CAM_PLAYER_ORIGIN + OOT_CAM_PLAYER_HEIGHT
+                + OOT_CAM_Y_OFFSET + height;
 }
 
 void            oot_follow_recenter(oot_follow_t *camera)
@@ -193,8 +194,15 @@ void            oot_follow_update(oot_follow_t *camera,
             camera->yaw = (uint16_t)(camera->yaw + (int16_t)step);
         --camera->swing_timer;
     }
-    else if (moving)
-        camera->yaw = angle_approach(camera->yaw, player_facing, YAW_RATE);
+    else if (moving) {
+        /* D-pad travel is camera-relative. Chasing facing in the rear half
+         * makes Down a moving 180-degree target: rounding flips the chosen
+         * turn direction every step. Hold yaw on rearward travel; explicit L
+         * still turns above. Full Normal1 eye/at swing remains separate work. */
+        int16_t heading = (int16_t)(player_facing - camera->yaw);
+        if (heading >= -16384 && heading <= 16384)
+            camera->yaw = angle_approach(camera->yaw, player_facing, YAW_RATE);
+    }
 
     /* Distance eases between distMin and distMax rather than being fixed: the
     ** camera trails out to distMax while he runs and draws back in to distMin

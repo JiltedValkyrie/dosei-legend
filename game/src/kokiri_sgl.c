@@ -18,6 +18,7 @@
 
 #include <jo/jo.h>
 #include <stdint.h>
+#include "frame_timer.h"
 
 #include "kokiri_scene.h"
 #include "link_scene.h"
@@ -35,6 +36,22 @@ static short tile_depth[KOKIRI_TILE_COUNT];
 static unsigned char tile_fog[KOKIRI_TILE_COUNT];
 static unsigned char forest_mesh[KOKIRI_POLYGON_COUNT];
 static unsigned char *forest_palette;
+static bool forest_prepared;
+static int prepared_x, prepared_y, prepared_z, prepared_pitch;
+static unsigned short prepared_yaw;
+static unsigned int prepared_visible;
+static unsigned char fog_channel[2][17][32];
+
+static void forest_fog_init(void)
+{
+    unsigned int amount, channel;
+    for (amount = 0; amount <= 16; ++amount)
+        for (channel = 0; channel < 32; ++channel) {
+            int c = (int)channel, a = (int)amount;
+            fog_channel[0][amount][channel] = (unsigned char)(c + (27-c)*a/16);
+            fog_channel[1][amount][channel] = (unsigned char)(c + (19-c)*a/16);
+        }
+}
 
 /* Pixel blobs are staged on the CD rather than compiled in: as C arrays they
 ** would add ~360 KB to the ELF. */
@@ -173,6 +190,8 @@ static bool         fairy_load(void)
 
 bool                kokiri_scene_load(void)
 {
+    forest_prepared = false;
+    forest_fog_init();
     if (!mesh_load(KOKIRI_PIXEL_FILE, KOKIRI_PIXEL_BYTES, kokiri_tiles,
                    KOKIRI_TILE_COUNT, kokiri_cluts, &kokiri_pdata,
                    KOKIRI_POLYGON_COUNT))
@@ -214,15 +233,30 @@ void                kokiri_scene_draw(void)
 {
     unsigned int i, j, visible = KOKIRI_POLYGON_COUNT;
     int32_t sine, cosine;
+    frame_timer_begin(FRAME_PHASE_PREP);
+    /* Geometry/fog depend on the camera, not Link's animation or music.
+     * A stationary camera can reuse the prepared list without rescanning it.
+     * Include Y/pitch as well so future pitch-aware culling stays safe. */
+    if (forest_prepared && prepared_x == demo_camera.x &&
+        prepared_y == demo_camera.y && prepared_z == demo_camera.z &&
+        prepared_yaw == demo_yaw && prepared_pitch == demo_pitch) {
+        visible = prepared_visible;
+        goto prepared;
+    }
+    frame_timer_begin(FRAME_PHASE_DEPTH);
     kokiri_camera_sincos(demo_yaw, &sine, &cosine);
     for (i = 0; i < KOKIRI_VERTEX_COUNT; ++i) {
         int x = (kokiri_pdata.pntbl[i][0] >> 16) - demo_camera.x;
         int z = (kokiri_pdata.pntbl[i][2] >> 16) - demo_camera.z;
         forest_depth[i] = (short)(((int64_t)x * sine + (int64_t)z * cosine) >> 16);
     }
-    for (i = 0; i < KOKIRI_TILE_COUNT; ++i) tile_depth[i] = FOREST_FAR;
-    /* Partition in place: polygons and attributes stay paired, with no second
-     * full mesh allocation and only one SGL vertex transformation per frame. */
+    frame_timer_end(FRAME_PHASE_DEPTH);
+    frame_timer_begin(FRAME_PHASE_PARTITION);
+    for (i = 0; i < KOKIRI_TILE_COUNT; ++i) tile_depth[i] = 32767;
+    /* Two-ended partition. Skip rejected tails without copying them; swap
+     * only a rejected front with an accepted tail. Unlike front compaction,
+     * one newly rejected polygon cannot shift the entire accepted suffix.
+     * An unchanged view needs ZERO polygon/attribute copies. */
     for (i = 0; i < visible;) {
         int nearest = 32767;
         int farthest = -32768;
@@ -240,17 +274,31 @@ void                kokiri_scene_draw(void)
         ** FARTHEST vertex keeps any polygon with a vertex still in front,
         ** including one straddling the camera plane. */
         if (farthest < 0 || nearest > FOREST_FAR) {
-            POLYGON polygon = kokiri_pdata.pltbl[i];
-            ATTR attr = kokiri_pdata.attbl[i];
-            unsigned char mesh = forest_mesh[i];
-            --visible;
-            kokiri_pdata.pltbl[i] = kokiri_pdata.pltbl[visible];
-            kokiri_pdata.attbl[i] = kokiri_pdata.attbl[visible];
-            forest_mesh[i] = forest_mesh[visible];
-            kokiri_pdata.pltbl[visible] = polygon;
-            kokiri_pdata.attbl[visible] = attr;
-            forest_mesh[visible] = mesh;
-        } else {
+            do {
+                --visible;
+                if (i == visible) break;
+                nearest = 32767;
+                farthest = -32768;
+                for (j = 0; j < 4; ++j) {
+                    int depth = forest_depth[kokiri_pdata.pltbl[visible].Vertices[j]];
+                    if (depth < nearest) nearest = depth;
+                    if (depth > farthest) farthest = depth;
+                }
+            } while (farthest < 0 || nearest > FOREST_FAR);
+            if (i == visible) break;
+            {
+                POLYGON polygon = kokiri_pdata.pltbl[i];
+                ATTR attr = kokiri_pdata.attbl[i];
+                unsigned char mesh = forest_mesh[i];
+                kokiri_pdata.pltbl[i] = kokiri_pdata.pltbl[visible];
+                kokiri_pdata.attbl[i] = kokiri_pdata.attbl[visible];
+                forest_mesh[i] = forest_mesh[visible];
+                kokiri_pdata.pltbl[visible] = polygon;
+                kokiri_pdata.attbl[visible] = attr;
+                forest_mesh[visible] = mesh;
+            }
+        }
+        {
             ATTR *attr = &kokiri_pdata.attbl[i];
             unsigned int tile = attr->texno - 1;
             if (nearest < tile_depth[tile]) tile_depth[tile] = nearest;
@@ -260,31 +308,49 @@ void                kokiri_scene_draw(void)
             ++i;
         }
     }
+    frame_timer_end(FRAME_PHASE_PARTITION);
+    frame_timer_begin(FRAME_PHASE_FOG);
     /* Shared tiles use the nearest referencing surface to avoid fogging a
      * nearby floor simply because the same tile occurs on a distant wall. */
     for (i = 0; i < KOKIRI_TILE_COUNT; ++i) {
-        int amount = (tile_depth[i] - FOREST_FOG_START) * 16 /
-                     (FOREST_FAR - FOREST_FOG_START);
+        int amount;
+        const unsigned char *rg, *blue;
         volatile unsigned short *palette =
             (volatile unsigned short *)(forest_palette + i * 32);
-        if (amount < 0) amount = 0;
-        if (amount > 16) amount = 16;
+        /* Invisible tiles retain their last palette. Recompute on re-entry,
+         * not twice (full fog then visible fog) whenever they cross a plane. */
+        if (tile_depth[i] == 32767) continue;
+        /* Most tiles are either unused/far or fully clear. Avoid signed
+         * division for those, preserving the exact original fog steps. */
+        if (tile_depth[i] <= FOREST_FOG_START) amount = 0;
+        else if (tile_depth[i] >= FOREST_FAR) amount = 16;
+        else amount = (tile_depth[i] - FOREST_FOG_START) * 16 /
+                      (FOREST_FAR - FOREST_FOG_START);
         if (tile_fog[i] == amount) continue;
         tile_fog[i] = (unsigned char)amount;
+        rg = fog_channel[0][amount];
+        blue = fog_channel[1][amount];
         for (j = 0; j < 16; ++j) {
             unsigned short source = kokiri_cluts[i][j];
             int r = source & 31, g = (source >> 5) & 31, b = (source >> 10) & 31;
             if (!source) { palette[j] = 0; continue; }
-            r += (27 - r) * amount / 16;
-            g += (27 - g) * amount / 16;
-            b += (19 - b) * amount / 16;
+            r = rg[r];
+            g = rg[g];
+            b = blue[b];
             palette[j] = (unsigned short)(0x8000 | r | (g << 5) | (b << 10));
         }
     }
+    frame_timer_end(FRAME_PHASE_FOG);
+    forest_prepared = true;
+    prepared_x = demo_camera.x; prepared_y = demo_camera.y;
+    prepared_z = demo_camera.z; prepared_yaw = demo_yaw;
+    prepared_pitch = demo_pitch; prepared_visible = visible;
+prepared:
     kokiri_rejected = 0;
     kokiri_accepted_mask = 0;
     submitted = 0;
     kokiri_pdata.nbPolygon = visible;
+    frame_timer_end(FRAME_PHASE_PREP);
     submit(&kokiri_pdata, 1u);
     kokiri_pdata.nbPolygon = KOKIRI_POLYGON_COUNT;
 }

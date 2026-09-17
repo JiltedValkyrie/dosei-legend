@@ -6,6 +6,7 @@ Add-Type @'
 using System;
 using System.Runtime.InteropServices;
 public static class KronosCapture {
+ [DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
  public delegate bool EnumProc(IntPtr h,IntPtr p);
  [DllImport("user32.dll")] public static extern bool EnumWindows(EnumProc p,IntPtr l);
  [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr h,out uint p);
@@ -21,6 +22,7 @@ public static class KronosCapture {
  [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr h,IntPtr after,int x,int y,int w,int height,uint flags);
 }
 '@
+[KronosCapture]::SetProcessDPIAware() | Out-Null
 if (!$OutputPath) { $OutputPath=Join-Path $PSScriptRoot '../build/generated/kronos-window.png' }
 if ($Delay) { Start-Sleep -Seconds $Delay }
 $viewer=Get-Process kronos | Select-Object -First 1

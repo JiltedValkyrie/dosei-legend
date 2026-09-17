@@ -73,6 +73,14 @@ endif
 ifeq ($(TEXTURE_PROBE),1)
 _CCFLAGS += -DDOSEI_TEXTURE_PROBE
 endif
+ifneq ($(filter 1 2,$(PERF_PROBE)),)
+_CCFLAGS += -DDOSEI_PERF_PROBE=$(PERF_PROBE)
+endif
+
+# Never retain a fixed-view callback in a subsequent normal build.
+.PHONY: perf_mode_check
+$(OBJDIR)/main.o $(OBJDIR)/demo.o: perf_mode_check
+$(OBJDIR)/main.o $(OBJDIR)/demo.o $(OBJDIR)/kokiri_sgl.o $(OBJDIR)/frame_timer.o: src/frame_timer.h
 
 # --- keep build products inside this project -------------------------------
 # The stock makefile derives OBJS as $(SRCS:.c=.o) and compiles via a .c.o

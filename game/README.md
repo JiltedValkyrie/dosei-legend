@@ -15,6 +15,12 @@ standard is 320x240. Same assets, gameplay and audio. Build sequentially.
 All generated output goes under `build/`, including both `game*.cue/.iso` images,
 objects, generated meshes and CD staging. `disc/` holds checked-in ISO metadata.
 
+Diagnostics only: append `PERF_PROBE=1` for a fixed title-camera benchmark, or
+`PERF_PROBE=2` for autonomous gameplay walking. Rebuild without the option for
+normal play. HUD times are microseconds: `WORK` is callback time, `sy` the
+separate between-callback interval; nested `sk/prep/dp/po/fg` must not be added
+twice. Profiling text refreshes four times per second.
+
 Double-click `../launch-game.bat` to choose a mode in the GUI, or use
 `run-kronos.bat` / `run-kronos-hires.bat`. Close Kronos before switching modes.
 
