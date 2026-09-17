@@ -62,39 +62,22 @@ static jo_color sky_color(unsigned int row)
     return JO_COLOR_RGB(r, g, b);
 }
 
-/* Routes are sampled at build time and every interpolated segment is checked
- * against the real collision mesh. Wide framing and roughly 60 units/second
- * replace the old close-up texture probes. */
+/* Authored travelling shots: 10 seconds each, fairy subjects beside logo.
+ * Interpolate baked headings, not the rounded path tangent (which wobbled).
+ * All runtime math is integer; offline builder checks every flight segment. */
 static void title_showcase_camera(unsigned int tick)
 {
-    unsigned int shot, total = 0, duration, index, fraction, look;
-    unsigned int count;
-    const title_point_t *path;
-    for (shot = 0; shot < 5; ++shot) total += (title_path_counts[shot]-1)*16;
-    tick %= total;
-    for (shot = 0; shot < 4; ++shot) {
-        duration = (title_path_counts[shot]-1)*16;
-        if (tick < duration) break;
-        tick -= duration;
-    }
-    path = title_paths[shot];
-    count = title_path_counts[shot];
-    index = tick / 16;
-    fraction = tick % 16;
-    demo_camera.x = path[index].x + (path[index+1].x-path[index].x)*(int)fraction/16;
-    demo_camera.y = path[index].y + (path[index+1].y-path[index].y)*(int)fraction/16;
-    demo_camera.z = path[index].z + (path[index+1].z-path[index].z)*(int)fraction/16;
-    look = index + 8;
-    if (look >= count) look = count - 1;
-    {
-        int lx = path[look].x, lz = path[look].z;
-        if (look+1 < count) {
-            lx += (path[look+1].x-lx)*(int)fraction/16;
-            lz += (path[look+1].z-lz)*(int)fraction/16;
-        }
-        demo_yaw = kokiri_camera_facing(lx-demo_camera.x, lz-demo_camera.z);
-    }
-    demo_pitch = 0;
+    unsigned int shot = (tick / TITLE_SHOT_TICKS) % TITLE_SHOT_COUNT;
+    unsigned int scaled = (tick % TITLE_SHOT_TICKS) * 64;
+    unsigned int index = scaled / TITLE_SHOT_TICKS;
+    int fraction = scaled % TITLE_SHOT_TICKS;
+    const title_point_t *a = &title_paths[shot][index];
+    const title_point_t *b = a + 1;
+    demo_camera.x = a->x + (b->x-a->x)*fraction/TITLE_SHOT_TICKS;
+    demo_camera.y = a->y + (b->y-a->y)*fraction/TITLE_SHOT_TICKS;
+    demo_camera.z = a->z + (b->z-a->z)*fraction/TITLE_SHOT_TICKS;
+    demo_yaw = (uint16_t)(a->yaw + (int16_t)(b->yaw-a->yaw)*fraction/TITLE_SHOT_TICKS);
+    demo_pitch = a->pitch + (b->pitch-a->pitch)*fraction/TITLE_SHOT_TICKS;
 }
 
 static bool recover_link_from_void(void)

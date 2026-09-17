@@ -1,5 +1,17 @@
 # Vertical slice progress
 
+## Title flights (2026-09-16)
+
+- Replaced low tunnel routes with eight elevated main-village fairy shots:
+  clearing traverses, pull-back reveals, rising cranes and diagonal flybys.
+  Ten seconds each, eased travel, cuts between subjects. No stationary swivels.
+- Subjects frame beside the logo at x=60/260, not behind its centre. Baked aim
+  replaces rounded path-tangent steering. Runtime remains integer-only.
+- Builder checks flight segments and sampled sight lines against collision.
+  Native test runs actual camera C across every tick of all eight shots,
+  checks travel, bounded changes and subject projection outside logo centre.
+- Both images rebuilt; 141 tests pass. Existing world clipping is separate.
+
 ## Link model ownership and face (2026-09-16)
 
 - Fixed 24 ignored matrix loads: bone ownership captured per vertex, not limb.

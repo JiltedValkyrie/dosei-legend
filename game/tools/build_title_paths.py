@@ -1,5 +1,4 @@
 """Build collision-checked title routes from the forest's actual floor mesh."""
-import heapq
 import hashlib
 import math
 import struct
@@ -8,7 +7,6 @@ from pathlib import Path
 from build_sgl_scene import read_scene
 
 ROOT = Path(__file__).resolve().parents[1]
-STEP = 16
 
 
 def build():
@@ -27,8 +25,8 @@ def build():
         normal = tuple(n / 16384 for n in values[9:12])
         lo, hi = values[12:15], values[15:18]
         triangles.append((vertices, normal, lo, hi))
-        for x in range((lo[0] - 28) // 128, (hi[0] + 28) // 128 + 1):
-            for z in range((lo[2] - 28) // 128, (hi[2] + 28) // 128 + 1):
+        for x in range((lo[0] - 128) // 128, (hi[0] + 128) // 128 + 1):
+            for z in range((lo[2] - 128) // 128, (hi[2] + 128) // 128 + 1):
                 buckets.setdefault((x, z), []).append(i)
 
     def inside(p, vertices, normal):
@@ -44,13 +42,13 @@ def build():
         return (triangles[i] for i in buckets.get((int(x)//128, int(z)//128), ()))
 
     @lru_cache(maxsize=200000)
-    def clear(p):
+    def clear(p, clearance=16):
         for vertices, n, lo, hi in nearby(p[0], p[2]):
-            if any(p[k] < lo[k]-16 or p[k] > hi[k]+16 for k in range(3)):
+            if any(p[k] < lo[k]-clearance or p[k] > hi[k]+clearance for k in range(3)):
                 continue
             a = vertices[0]
             distance = sum((p[k]-a[k])*n[k] for k in range(3))
-            if abs(distance) >= 16:
+            if abs(distance) >= clearance:
                 continue
             projected = [p[k]-distance*n[k] for k in range(3)]
             if inside(projected, vertices, n):
@@ -59,130 +57,76 @@ def build():
                 edge = [b[k]-a[k] for k in range(3)]
                 length = sum(v*v for v in edge)
                 t = max(0, min(1, sum((p[k]-a[k])*edge[k] for k in range(3))/length)) if length else 0
-                if sum((p[k]-a[k]-edge[k]*t)**2 for k in range(3)) < 16**2:
+                if sum((p[k]-a[k]-edge[k]*t)**2 for k in range(3)) < clearance**2:
                     return False
         return True
 
-    @lru_cache(None)
-    def node(x, z):
-        heights = []
-        for vertices, n, lo, hi in nearby(x, z):
-            if x < lo[0] or x > hi[0] or z < lo[2] or z > hi[2]:
-                continue
-            if n[1] < 0.5:
-                continue
-            a = vertices[0]
-            y = a[1] - (n[0]*(x-a[0]) + n[2]*(z-a[2]))/n[1]
-            if y <= 350 and inside((x,y,z), vertices, n):
-                heights.append(y)
-        positions = []
-        for y in sorted(set(round(v) for v in heights)):
-            for eye in (90, 50, 130, 170):
-                p = (x, round(y + eye), z)
-                if clear(p) and p not in positions:
-                    positions.append(p)
-        return positions
-
-    @lru_cache(maxsize=200000)
-    def segment(a, b):
-        count = max(1, math.ceil(math.dist(a,b)/4))
-        return all(clear(tuple(a[k]+(b[k]-a[k])*i/count for k in range(3)))
+    def segment(a, b, clearance=96):
+        count = max(1, math.ceil(math.dist(a, b) / 4))
+        return all(clear(tuple(a[k] + (b[k]-a[k])*i/count for k in range(3)), clearance)
                    for i in range(count+1))
 
-    @lru_cache(None)
-    def wall_cost(p):
-        # Prefer the middle of a passage over the shortest wall-hugging route.
-        # Narrow tunnels remain possible, but open village space wins ties.
-        return sum(not clear((p[0]+dx,p[1],p[2]+dz))
-                   for dx,dz in ((32,0),(-32,0),(0,32),(0,-32))) * 0.6
-
-    def nearest(x,z):
-        candidates = [(dx,dz) for dx in range(-8,9) for dz in range(-8,9)]
-        candidates.sort(key=lambda d:d[0]**2+d[1]**2)
-        for dx,dz in candidates:
-            p = node(round(x/STEP)*STEP+dx*STEP, round(z/STEP)*STEP+dz*STEP)
-            if p:
-                return p[0]
-        raise ValueError(f'No safe camera near {x},{z}')
-
-    def route(start, end):
-        start, end = nearest(*start), nearest(*end)
-        queue = [(0,start)]
-        cost, parent = {start:0}, {}
-        visited = set()
-        while queue:
-            _, current = heapq.heappop(queue)
-            if current in visited:
-                continue
-            visited.add(current)
-            if current == end:
+    # Main village only. No routes to the Deku tunnel or training passages.
+    # Fixed fairy/home subjects keep yaw independent of small path tangents.
+    subjects = [(-292,58,-430), (45,58,-272), (669,58,521),
+                (853,158,-311), (-10,238,-22), (-608,178,1022),
+                (18,-22,873), (-678,59,-179)]
+    styles = ('clearing traverse', 'pull-back reveal', 'rising crane', 'diagonal flyby')
+    lines = [signature, '/* Elevated movie shots, collision checked offline. */',
+             '#define TITLE_SHOT_TICKS 600',
+             f'#define TITLE_SHOT_COUNT {len(subjects)}',
+             'typedef struct { short x,y,z,yaw,pitch; } title_point_t;']
+    for i, target in enumerate(subjects):
+        points = None
+        # Search clear staging for four distinct travelling shots. Never
+        # substitute a tunnel route or a stationary swivel when a shot fails.
+        for height in (200, 260, 320):
+            if points is not None:
                 break
-            for dx,dz in ((STEP,0),(-STEP,0),(0,STEP),(0,-STEP),
-                          (STEP,STEP),(STEP,-STEP),(-STEP,STEP),(-STEP,-STEP)):
-                for nxt in node(current[0]+dx,current[2]+dz):
-                    if abs(nxt[1]-current[1]) > 40 or not segment(current,nxt):
-                        continue
-                    value = cost[current]+math.dist(current,nxt)*(1+wall_cost(nxt))
-                    if value < cost.get(nxt,math.inf):
-                        cost[nxt],parent[nxt] = value,current
-                        heapq.heappush(queue,(value+math.dist(nxt,end),nxt))
-        else:
-            closest = min(cost, key=lambda p: math.dist(p,end))
-            raise ValueError(f'No connected camera route: {start} -> {end}; closest={closest}; reachable={len(cost)}')
-        path = [end]
-        while path[-1] != start:
-            path.append(parent[path[-1]])
-        path.reverse()
-        # Chaikin corner cutting, accepted only if every resulting segment is clear.
-        for _ in range(3):
-            smooth = [path[0]]
-            for a,b in zip(path,path[1:]):
-                smooth.extend(tuple(round(a[k]*(1-t)+b[k]*t) for k in range(3)) for t in (.25,.75))
-            smooth.append(path[-1])
-            if all(segment(a,b) for a,b in zip(smooth,smooth[1:])):
-                path = smooth
-        # Even arc-length sampling produces constant speed through bends.
-        samples = [path[0]]
-        carried = 0
-        for a,b in zip(path,path[1:]):
-            length = math.dist(a,b)
-            offset = 16-carried
-            while offset < length:
-                samples.append(tuple(round(a[k]+(b[k]-a[k])*offset/length) for k in range(3)))
-                offset += 16
-            carried = length-(offset-16)
-        samples.append(path[-1])
-        if not all(segment(a,b) for a,b in zip(samples,samples[1:])):
-            samples = [path[0]]
-            cursor = 0
-            while cursor < len(path)-1:
-                last = cursor+1
-                for candidate in range(cursor+2,len(path)):
-                    if math.dist(path[cursor],path[candidate]) > 20:
+            for radius in (360, 440, 280):
+                if points is not None:
+                    break
+                for turn in range(24):
+                    angle = (turn + i*3) * math.tau / 24
+                    candidate = []
+                    for sample in range(65):
+                        t = sample / 64
+                        t = t*t*(3-2*t)  # gentle acceleration and braking
+                        if i % 4 == 0:
+                            forward, across, up = radius, 520*(t-.5), height
+                        elif i % 4 == 1:
+                            forward, across, up = radius-80+280*t, 0, height
+                        elif i % 4 == 2:
+                            forward, across, up = radius+100*t, 0, height+140*t
+                        else:
+                            forward, across, up = radius+140-200*t, 420*(t-.5), height+60-40*t
+                        x = target[0] + forward*math.sin(angle) + across*math.cos(angle)
+                        z = target[2] + forward*math.cos(angle) - across*math.sin(angle)
+                        y = target[1] + up
+                        distance = math.hypot(x-target[0], z-target[2])
+                        # Project subject to x=60/260 with title focal length
+                        # 180, including elevation. Logo stays in the middle.
+                        ratio = 100 / 180
+                        side = math.asin(math.sqrt(ratio**2*(up**2+distance**2)
+                                                 / (distance**2*(1+ratio**2))))
+                        pitch = round(-math.atan2(up, distance*math.cos(side))*65536/math.tau)
+                        yaw = round(math.atan2(target[0]-x, target[2]-z)*65536/math.tau)
+                        # Logo owns the centre. Alternate left/right margins.
+                        yaw += round(side*(1 if i % 2 == 0 else -1)*65536/math.tau)
+                        yaw = (yaw+32768)%65536-32768
+                        candidate.append((round(x),round(y),round(z),yaw,pitch))
+                    if (all(segment(a[:3],b[:3]) for a,b in zip(candidate,candidate[1:]))
+                            and all(segment(p[:3], target, 16) for p in candidate[::8])):
+                        points = candidate
                         break
-                    if segment(path[cursor],path[candidate]):
-                        last = candidate
-                if path[last] != samples[-1]:
-                    samples.append(path[last])
-                cursor = last
-        assert all(segment(a,b) for a,b in zip(samples,samples[1:])), 'Camera intersects geometry'
-        return samples
-
-    shots = [((-350,-350),(800,450)), ((700,450),(1500,100)),
-             ((1400,100),(2900,-400)), ((2800,-400),(3500,-800)),
-             ((-700,1500),(-300,2050))]
-    lines = [signature, '/* Generated collision-checked camera routes. */',
-             'typedef struct { short x,y,z; } title_point_t;']
-    for i,(start,end) in enumerate(shots):
-        points = route(start,end)
-        print(f'Title shot {i+1}: {len(points)} samples, all segments clear')
+        if points is None:
+            raise ValueError(f'No clear {styles[i%4]} for fairy {i}: {target}')
+        print(f'Title shot {i+1}: {styles[i%4]}, all segments clear')
         lines.append(f'static const title_point_t title_path_{i}[] = {{')
-        lines.extend('    {%d,%d,%d},' % p for p in points)
+        lines.extend('    {%d,%d,%d,%d,%d},' % p for p in points)
         lines.append('};')
     lines.append('static const title_point_t *const title_paths[] = {'+
-                 ','.join(f'title_path_{i}' for i in range(len(shots)))+'};')
-    lines.append('static const unsigned short title_path_counts[] = {'+
-                 ','.join(f'sizeof(title_path_{i})/sizeof(title_point_t)' for i in range(len(shots)))+'};')
+                 ','.join(f'title_path_{i}' for i in range(len(subjects)))+'};')
     output.write_text('\n'.join(lines)+'\n')
 
 

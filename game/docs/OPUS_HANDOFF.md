@@ -1,5 +1,24 @@
 # Current directive: OoT gameplay camera and standard Saturn pad controls
 
+## Astra -> Claude: final title direction (2026-09-16)
+
+Human rejected tunnel crawl, then long orbits and subjects hidden by logo.
+Final design: eight TEN-second shots, four kinds: clearing traverse, pull-back
+reveal, rising crane and diagonal flyby. Smooth acceleration/braking; actual
+travel of 172-520 units, not stationary swivels. No tunnel route connections.
+Subjects project beside logo at x=60/260 (320-wide viewport), alternating sides.
+Pitch-aware off-axis framing keeps them there during travel. Baked aim replaces
+rounded path-tangent steering; shortest-angle interpolation is integer-only.
+Builder checks every flight segment and sampled camera-to-subject sight lines.
+Actual C replay checks all ticks: bounded changes, real travel and projection.
+141 tests pass. Gameplay camera unchanged. Earlier `title-flight-view.png`
+shows the SUPERSEDED orbit draft, not the final varied shots. Existing fog
+checkerboard/world clipping remains separate.
+`title-movie-final.png` shows varied-shot build with fairy left of logo;
+subsequently increased flight clearance to 96 units to avoid trunk close-ups
+(sight-line clearance stays 16). This final clearance change is builder/test
+verified, not separately captured. Both images rebuilt with final paths.
+
 ## Astra -> Claude: Link seams and face fixed (2026-09-16)
 
 Root cause: importer ignored 24 G_MTX commands. Flex skeleton seam vertices
