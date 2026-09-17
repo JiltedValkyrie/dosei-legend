@@ -35,6 +35,7 @@ typedef enum
     FRAME_PHASE_SCENE,          /* forest culling and submission */
     FRAME_PHASE_LINK,           /* Link submission */
     FRAME_PHASE_SYNC,           /* waiting for VDP1/VBlank */
+    FRAME_PHASE_VDP1,           /* VDP1 still drawing when we came back */
     FRAME_PHASE_PREP,           /* forest CPU culling/fog before SGL */
     FRAME_PHASE_DEPTH,
     FRAME_PHASE_PARTITION,
@@ -53,5 +54,19 @@ unsigned int    frame_timer_cost(frame_phase_t phase);
 unsigned int    frame_timer_frame(void);
 /* Callback minus disjoint outer phases (not nested skin/prep or sync). */
 unsigned int    frame_timer_other(void);
+
+/*
+** Sample VDP1's own draw state at the top of the frame.
+**
+** `sy` is a WAIT, and what it waits on includes VDP1 finishing the previous
+** frame's list -- a short submission time says how long handing the list over
+** took, not how long the asynchronous draw ran. COPR is VDP1's current command
+** address: still advancing means it had not finished when the CPU came back.
+** frame_timer_vdp1_busy() is the percentage of recent frames where that was
+** true, which distinguishes "waiting for VBlank with nothing to do" from
+** "blocked on VDP1".
+*/
+void            frame_timer_sample_vdp1(void);
+unsigned int    frame_timer_vdp1_busy(void);
 
 #endif

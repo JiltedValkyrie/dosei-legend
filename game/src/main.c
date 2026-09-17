@@ -90,6 +90,8 @@ static void         viewer_draw(void)
     ** whatever the engine does between callbacks: the part of the frame this
     ** file never sees. Measured first so it covers the real idle. */
     frame_timer_end(FRAME_PHASE_SYNC);
+    /* Before any CPU work: was VDP1 still drawing when control came back? */
+    frame_timer_sample_vdp1();
     frame_timer_frame_begin();
     frame_timer_begin(FRAME_PHASE_MOVEMENT);
     demo_update();
@@ -217,8 +219,13 @@ static void         viewer_hud(void)
         jo_printf(0, 7, "prep%u us            ", frame_timer_cost(FRAME_PHASE_PREP));
         jo_printf(0, 8, "dp%u po%u fg%u       ", frame_timer_cost(FRAME_PHASE_DEPTH),
                   frame_timer_cost(FRAME_PHASE_PARTITION), frame_timer_cost(FRAME_PHASE_FOG));
-        jo_printf(0, 6, "cam %s          ",
-                  oot_follow_legacy() ? "LEGACY 260" : "OoT 125-188");
+        /* vd is the share of recent frames where VDP1 was STILL DRAWING when
+        ** the CPU regained control. A large sy with a low vd is idle waiting
+        ** for VBlank; a large sy with a high vd is genuine VDP1 backpressure,
+        ** which submission time alone cannot tell apart. */
+        jo_printf(0, 6, "cam %s vd%u%%   ",
+                  oot_follow_legacy() ? "LEGACY 260" : "OoT 125-188",
+                  frame_timer_vdp1_busy());
         return;
     }
     jo_printf(0, 0, "Jo/SGL Kokiri viewer");

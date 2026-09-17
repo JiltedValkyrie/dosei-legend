@@ -363,30 +363,47 @@ class DiagnosticsChord(unittest.TestCase):
 
 
 class SkinningReposeRate(unittest.TestCase):
-    """Interpolation must not force a full re-pose every frame.
+    """Measure how often the pose cache actually misses.
 
-    Adding interpolation made `fraction` change almost every frame, so the
-    pose cache never hit and 126 sin/cos plus ~4,000 multiplies ran every
-    frame -- 6.8 ms of a 31 ms budget, while standing still. Quantising the
-    phase keeps the smoothing and caps the re-pose rate.
+    An earlier revision masked the low bits of `fraction` to hit the cache
+    more often, and a test checked that the mask was PRESENT rather than that
+    it saved anything. It saved nothing: link_anim_state.c advances
+    phase_ninths by 6 per step -- two thirds of a source frame -- so fraction
+    only takes 0, 85 or 170 and a 32-step mask merges none of them.
+
+    This measures the miss count instead, so a future quantisation attempt has
+    to demonstrate a saving rather than merely exist.
     """
 
-    @classmethod
-    def setUpClass(cls):
-        cls.source = (ROOT / 'src' / 'link_anim.c').read_text()
+    @staticmethod
+    def misses(step, updates=30, mask=0):
+        """Distinct (frame, fraction) pairs, which is what link_anim_pose
+        keys its early-out on. Mirrors advance() and link_anim_fraction()."""
+        phase, last, missed = 0, None, 0
+        for _ in range(updates):
+            phase += step
+            fraction = (phase % 9) * 256 // 9
+            if mask:
+                fraction &= ~mask
+            key = (phase // 9, fraction)
+            if key != last:
+                missed += 1
+                last = key
+        return missed
 
-    def test_fraction_is_quantised_before_the_cache_test(self):
-        quantise = self.source.index('fraction = (fraction & 255)')
-        compare = self.source.index('fraction == posed_fraction')
-        self.assertLess(quantise, compare,
-                        'quantise before comparing or the cache never hits')
+    def test_fraction_only_takes_three_values_per_frame(self):
+        """Six ninths per step means thirds of a frame, nothing finer."""
+        seen = {(phase % 9) * 256 // 9 for phase in range(6, 6 * 30 + 1, 6)}
+        self.assertEqual(sorted(seen), [0, 85, 170])
 
-    def test_quantisation_keeps_several_steps_per_source_frame(self):
-        """Too coarse and the interpolation it was added for disappears."""
-        mask = re.search(r'fraction = \(fraction & 255\) & ~(\d+)u', self.source)
-        self.assertIsNotNone(mask, 'phase quantisation not found')
-        step = int(mask[1]) + 1
-        self.assertGreaterEqual(256 // step, 4,
-                                'too coarse: interpolation is lost')
-        self.assertLessEqual(256 // step, 32,
-                             'too fine: the cache will not hit')
+    def test_masking_the_phase_saves_nothing_at_this_cadence(self):
+        """The reason the quantisation was reverted, pinned as a fact."""
+        for step in (6, 2):     # locomotion, and fall's slower cadence
+            self.assertEqual(self.misses(step, mask=31),
+                             self.misses(step, mask=0),
+                             'a 32-step mask merged no poses at step %d' % step)
+
+    def test_no_phase_quantisation_is_present(self):
+        """If one is reintroduced, the test above must justify it first."""
+        source = (ROOT / 'src' / 'link_anim.c').read_text()
+        self.assertNotIn('& ~31u', source)

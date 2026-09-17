@@ -257,17 +257,20 @@ void            link_anim_pose(unsigned int clip, unsigned int frame,
     if (entry->count == 0)
         return;
     absolute = entry->first + (frame % entry->count);
-    /* Quantise the interpolation phase before the cache test.
+    /* No quantisation here.
     **
-    ** Interpolation made `fraction` change almost every frame, so the cache
-    ** never hit and a full re-pose -- 126 sin/cos plus ~4,000 multiplies --
-    ** ran every frame even when the visible difference was a fraction of a
-    ** pixel. Link is 62 world units at ~130 units of camera distance, so his
-    ** whole body spans a few dozen pixels: 1/8 of a source frame is well below
-    ** one pixel of limb movement. This keeps the smoothing that interpolation
-    ** was added for and drops the re-pose rate to at most 8 per source frame.
+    ** An earlier revision masked the low bits of `fraction` hoping to hit this
+    ** cache more often. It saved nothing: link_anim_state.c advances
+    ** phase_ninths by 6 per step, i.e. two thirds of a source frame, so
+    ** fraction only ever takes 0, 85 or 170. Every step already lands on a
+    ** different (frame, fraction) pair, and a 32-step mask merges none of
+    ** them -- measured at 30 misses over 30 updates both with and without it.
+    **
+    ** The cost is real but it is the CADENCE, not the phase resolution. Making
+    ** this cache hit would mean re-posing less often than the animation
+    ** actually advances, which is a visible change, not an optimisation.
     */
-    fraction = (fraction & 255) & ~31u;
+    fraction &= 255;
     if ((int)absolute == posed_frame && fraction == posed_fraction)
         return;                     /* already resident; skinning is the cost */
     posed_frame = (int)absolute;

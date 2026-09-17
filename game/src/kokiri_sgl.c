@@ -259,10 +259,14 @@ void                kokiri_scene_draw(void)
      * An unchanged view needs ZERO polygon/attribute copies. */
     for (i = 0; i < visible;) {
         int nearest, farthest;
-        /* One pass over the four corners, unrolled. The SH-2 has no cache to
-         * hide the double indirection (pltbl[i].Vertices[j] then
-         * forest_depth[...]), and this loop runs for every polygon every
-         * frame, so the loop overhead itself was a measurable share of it. */
+        /* One pass over the four corners, unrolled.
+         *
+         * The SH7604 does have a 4 KB unified cache, but the working set here
+         * does not fit it: the POLYGON table alone is ~40 KB and is walked
+         * linearly every frame, and forest_depth[] is indexed by vertex id, so
+         * the second lookup scatters. What this removes is the inner loop's
+         * own overhead and the repeated indirection through
+         * pltbl[i].Vertices[j], on a loop that runs per polygon per frame. */
         {
             const unsigned short *corner = kokiri_pdata.pltbl[i].Vertices;
             int d0 = forest_depth[corner[0]], d1 = forest_depth[corner[1]];

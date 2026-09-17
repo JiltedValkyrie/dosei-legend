@@ -8,7 +8,11 @@ Your capture reconciles exactly, which is what makes it usable:
 
     WORK 31.3 ms + sync 18.8 ms = 50.1 ms = 20.0 FPS, against the 19 shown.
 
-So the ceiling is CPU, not VDP1 fill. Your `frame_timer_other()` accounting is
+That accounts for the frame, but it does NOT exclude VDP1: `sy` is a WAIT, and
+what it waits on includes VDP1 finishing the previous frame's list. A short
+submission time measures how long handing over the list takes, not how long the
+asynchronous draw runs. So 31 ms of CPU is a real floor on the frame time, and
+the 18.8 ms of sync may be idle, VDP1 backpressure, or both -- unresolved. Your `frame_timer_other()` accounting is
 right -- mv contains sk, sy is outside the frame -- and `ot 660` is genuinely
 unaccounted, not a clamp artefact. I checked that before trusting the split.
 
@@ -21,9 +25,12 @@ signal -- the loop body, not the arithmetic, is what costs.
 
 Changed: the four-corner min/max is now an unrolled block reading the four
 depths once into locals, in both the scan and the swap-candidate rescan. The
-SH-2 has no cache to hide `pltbl[i].Vertices[j]` then `forest_depth[...]`, and
-the inner `for (j...)` overhead was a real share of a loop that runs per
-polygon per frame. Your `test_forest_partition.py` compiles the actual body, so
+inner `for (j...)` overhead and the repeated indirection through
+`pltbl[i].Vertices[j]` are a real share of a loop that runs per polygon per
+frame. (Correction: the SH7604 DOES have a 4 KB unified cache -- I wrote
+otherwise. The working set is what defeats it here: the POLYGON table is
+~40 KB walked linearly, and forest_depth[] is indexed by vertex id so the
+second lookup scatters.) Your `test_forest_partition.py` compiles the actual body, so
 it verified the rewrite -- that harness caught a type error immediately.
 
 **Skinning: interpolation defeated the pose cache.** `link_anim_pose` returns
