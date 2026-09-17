@@ -1,5 +1,24 @@
 # Current directive: OoT gameplay camera and standard Saturn pad controls
 
+## Manual jump checkpoint; work on dev from now on
+
+A now jumps from ground. This custom feature supersedes the older unimplemented
+A action/roll mapping below. No claim of N64 or future remake parity. Uses a
+7-unit/30-Hz-step impulse (210 units/sec), existing gravity, about 52 units of
+height, ~1 second airborne. Existing FALL clip covers ascent/descent; a specific
+takeoff animation is not added. D-pad still steers in air.
+
+A taps are latched in VBlank and preserved until the next fixed step; holding
+does not repeat. Ground query rejects airborne/void attempts, including a second
+press before takeoff moves Link. Title presses are discarded. Rising head sweep
+uses actual 62-unit model height; ceiling contact clears upward velocity.
+Peak tracks ascent so landing drop remains meaningful. Host collision checks
+cover takeoff/apex/landing, repeat rejection, void rejection and low ceilings.
+145 tests pass. Manual controller feel in Kronos still needs player confirmation.
+
+Requested workflow: commit this checkpoint on main, create/push dev at it, then
+leave dev checked out. All subsequent development uses dev; CLAUDE.md records it.
+
 ## Clean player-test disc
 
 Build `./game/build.sh --clean`; load `game/build/game-clean.cue` in Kronos.

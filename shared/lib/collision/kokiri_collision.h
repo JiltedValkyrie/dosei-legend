@@ -25,4 +25,7 @@ void kokiri_collision_move_actor(camera_position_t *position, int32_t dx,
  * Returns true while standing on a floor. */
 bool kokiri_collision_fall(camera_position_t *position, int32_t *velocity_q8,
         int32_t *remainder_q8);
+/* Custom manual jump, not original OoT behavior. Accept only on actual ground. */
+bool kokiri_collision_jump(const camera_position_t *position, int32_t *velocity_q8,
+        int32_t *remainder_q8);
 #endif

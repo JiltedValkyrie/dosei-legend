@@ -50,7 +50,8 @@ static int last_blink = -1;
  * sampled a second time in main.c. */
 static bool diagnostics_chord_held;
 bool demo_diagnostics_toggled;
-static input_edge_t start_edge, recenter_edge;
+static input_edge_t start_edge, recenter_edge, jump_edge;
+static bool jump_pending;
 
 static jo_color sky_color(unsigned int row)
 {
@@ -105,6 +106,7 @@ static void demo_vblank(void)
     bool connected = jo_is_pad1_available();
     input_edge_sample(&start_edge, connected && jo_is_pad1_key_pressed(JO_KEY_START));
     input_edge_sample(&recenter_edge, connected && jo_is_pad1_key_pressed(JO_KEY_L));
+    input_edge_sample(&jump_edge, connected && jo_is_pad1_key_pressed(JO_KEY_A));
     /* BDCLMD=0 keeps the border outside the active picture black. */
     JO_VDP2_TVMD &= (unsigned short)~0x0100;
     phase += 60;
@@ -177,8 +179,12 @@ void demo_update(void)
     bool recenter = false;
     bool start_pressed = input_edge_consume(&start_edge);
     bool recenter_pressed = input_edge_consume(&recenter_edge);
+    bool jump_pressed = input_edge_consume(&jump_edge);
     unsigned int now = ticks, elapsed = now - previous_tick, steps;
     jo_img patch;
+    /* Preserve a tap until a fixed step runs, but never carry title input
+     * into gameplay or queue an airborne press for a later landing. */
+    if (!title_visible && demo_link_active && jump_pressed) jump_pending = true;
     if (jo_is_pad1_available()) {
 #define MAP(key) if (jo_is_pad1_key_pressed(JO_KEY_##key)) buttons |= CAMERA_##key
         MAP(L); MAP(R); MAP(X); MAP(Y); MAP(Z); MAP(C);
@@ -262,6 +268,7 @@ void demo_update(void)
     if (steps > 4) { steps = 4; previous_tick = now - now % 2; }
     else previous_tick += steps * 2;
     if (title_visible) {
+        jump_pending = false;
         /* This is an authored title shot, so controller movement does not
          * knock it off its route. Start above has already switched state by
          * the time gameplay reaches this branch. */
@@ -287,6 +294,11 @@ void demo_update(void)
             bool grounded;
             int32_t step_x = demo_link.x, step_z = demo_link.z;
             int32_t dx, dz, moved, fell;
+            if (jump_pending) {
+                kokiri_collision_jump(&demo_link, &link_velocity_y_q8,
+                                      &link_fall_remainder_q8);
+                jump_pending = false;
+            }
             kokiri_camera_update(&demo_link, &demo_yaw, &unused_pitch, walk,
                                  false, true);
             grounded = kokiri_collision_fall(&demo_link, &link_velocity_y_q8,
@@ -311,6 +323,8 @@ void demo_update(void)
                 link_safe_position_valid = true;
             } else {
                 fell = 0;
+                if (demo_link.y > link_fall_peak_y)
+                    link_fall_peak_y = demo_link.y;
                 if (recover_link_from_void())
                     recovered = true;
             }

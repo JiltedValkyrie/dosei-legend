@@ -1,5 +1,12 @@
 # Project handoff - 2026-09-16
 
+## Active development branch: dev
+
+Human directive: after the manual-jump checkpoint, work on `dev` from now on.
+`main` keeps the pushed checkpoint; do not default new development to main.
+Current custom control: A jumps from ground. This supersedes the older planned
+A action/roll assignment until interaction controls are implemented.
+
 ## BIG RULE NUMBER 1
 Caveman talk. No waste token. Efficient good. Stop talk between final output. Waste token. Shh.
 

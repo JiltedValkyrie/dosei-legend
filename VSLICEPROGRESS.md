@@ -1,5 +1,13 @@
 # Vertical slice progress
 
+## Manual jump (custom feature)
+
+- A jumps only from ground; one jump per press, no airborne retry or held repeat.
+- Existing gravity/air steering/airborne clip; roughly 52-unit jump height.
+  Swept head clearance stops upward motion at low ceilings.
+- Host physics checks pass; controller feel still needs runtime confirmation.
+- Development moves to `dev` after the main checkpoint.
+
 - Clean player-test image: `game/build/game-clean.cue` (`./game/build.sh --clean`).
   No in-game diagnostic HUD; independent objects/image, safety checks retained.
 

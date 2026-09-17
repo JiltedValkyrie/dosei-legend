@@ -41,7 +41,10 @@ live in `../shared/`; game-specific bank selection stays in `src/music_banks.c`.
 
 Current build: Start switches title/gameplay, D-pad runs, L recenters behind Link,
 and L+R toggles diagnostics. R alone never moves the camera. L is recenter only,
-not enemy lock-on. A/B/C/X/Y/Z currently have no active gameplay action.
+not enemy lock-on. A jumps from ground (custom feature): tap once per jump;
+holding does not repeat and airborne presses do not double-jump. D-pad steers
+in air. Existing airborne clip is reused; no dedicated takeoff clip yet.
+B/C/X/Y/Z currently have no active gameplay action.
 The settled replacement layout (including shield, pause and walk) and pending
 OoT camera work are documented at the top of docs/OPUS_HANDOFF.md.
 Current Link/follow behavior

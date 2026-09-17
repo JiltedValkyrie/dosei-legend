@@ -80,6 +80,8 @@ class CollisionGravityTest(unittest.TestCase):
                                                    ctypes.POINTER(ctypes.c_int32),
                                                    ctypes.POINTER(ctypes.c_int32)]
         cls.lib.kokiri_collision_fall.restype = ctypes.c_bool
+        cls.lib.kokiri_collision_jump.argtypes = cls.lib.kokiri_collision_fall.argtypes
+        cls.lib.kokiri_collision_jump.restype = ctypes.c_bool
         cls.lib.kokiri_collision_move.argtypes = [ctypes.POINTER(Position),
                                                    ctypes.c_int32,
                                                    ctypes.c_int32,
@@ -109,6 +111,58 @@ class CollisionGravityTest(unittest.TestCase):
         self.assertTrue(grounded)
         self.assertEqual(position.y, 90)
         self.assertEqual((velocity.value, remainder.value), (0, 0))
+
+    def test_manual_jump_rises_peaks_and_lands_without_double_jump(self):
+        self._load(platform(-100, 100, 0))
+        link, velocity, remainder = Position(0,90,0), ctypes.c_int32(), ctypes.c_int32()
+        args = ctypes.byref(link), ctypes.byref(velocity), ctypes.byref(remainder)
+        self.assertTrue(self.lib.kokiri_collision_jump(*args))
+        self.assertFalse(self.lib.kokiri_collision_jump(*args))
+        heights = []
+        for step in range(90):
+            self.lib.kokiri_collision_move_actor(ctypes.byref(link), 2, 0, 0)
+            grounded = self.lib.kokiri_collision_fall(*args)
+            heights.append(link.y)
+            if grounded:
+                break
+            self.assertFalse(self.lib.kokiri_collision_jump(*args), 'no double jump')
+        self.assertTrue(grounded)
+        self.assertGreater(heights[0], 90, 'ground snap must not cancel takeoff')
+        self.assertTrue(45 <= max(heights)-90 <= 55)
+        self.assertTrue(25 <= len(heights) <= 35)
+        self.assertEqual(link.y, 90)
+        self.assertGreater(link.x, 40, 'jump must retain horizontal movement')
+        self.assertEqual((velocity.value,remainder.value), (0,0))
+        for _ in range(10):
+            self.assertTrue(self.lib.kokiri_collision_fall(*args))
+            self.assertEqual(link.y, 90, 'no automatic bounce after landing')
+        self.assertTrue(self.lib.kokiri_collision_jump(*args), 'new press can jump again')
+
+    def test_jump_hits_low_ceiling_and_clears_upward_velocity(self):
+        self._load(platform(-100,100,0)+platform(-100,100,80))
+        link, velocity, remainder = Position(0,90,0), ctypes.c_int32(), ctypes.c_int32()
+        args = ctypes.byref(link), ctypes.byref(velocity), ctypes.byref(remainder)
+        self.assertTrue(self.lib.kokiri_collision_jump(*args))
+        hit = False
+        for _ in range(60):
+            old_velocity = velocity.value
+            grounded = self.lib.kokiri_collision_fall(*args)
+            self.assertLessEqual(link.y-90+62, 80, 'head passed ceiling')
+            if old_velocity > 0 and velocity.value == 0:
+                hit = True
+            if grounded:
+                break
+        self.assertTrue(hit)
+        self.assertTrue(grounded)
+        self.assertEqual(link.y, 90)
+
+    def test_airborne_press_and_void_press_do_not_jump(self):
+        self._load(platform(-100,100,0))
+        for link in (Position(0,110,0), Position(200,90,0)):
+            velocity, remainder = ctypes.c_int32(-30), ctypes.c_int32(12)
+            self.assertFalse(self.lib.kokiri_collision_jump(ctypes.byref(link),
+                             ctypes.byref(velocity),ctypes.byref(remainder)))
+            self.assertEqual((velocity.value,remainder.value), (-30,12))
 
     def test_link_falls_from_high_platform_to_lower_floor(self):
         self._load(platform(-100, 0, 100) + platform(1, 100, 0))

@@ -19,6 +19,8 @@
  * speed at this viewer's 30 Hz gameplay rate. */
 #define GRAVITY_Q8 (-114)
 #define TERMINAL_VELOCITY_Q8 (-3413)
+/* Custom jump: 210 world units/sec, about 52 units high with existing gravity. */
+#define JUMP_VELOCITY_Q8 (7 * 256)
 static const collision_triangle_t *triangles;
 static uint32_t triangle_count;
 
@@ -254,6 +256,13 @@ static void move_axis(camera_position_t *position, int axis, int32_t amount,
                 /* No snapping through ceilings or climbing tall steps. */
                 if (next.y-position->y > STEP ||
                     !(actor ? actor_clear(next) : kokiri_collision_clear(next))) break;
+                if (actor && axis == 1 && step > 0) {
+                        /* Rendered child is 62 units tall. Sweep a small head
+                         * sphere too when rising; don't jump through a bridge. */
+                        camera_position_t head = next;
+                        head.y += 54 - EYE_HEIGHT;
+                        if (!collision_clear_radius(head, 8)) break;
+                }
                 *position = next;
                 amount -= step;
         }
@@ -298,6 +307,20 @@ void kokiri_collision_move_actor(camera_position_t *position, int32_t dx,
         move_axis(position,1,dy,true);
 }
 
+bool kokiri_collision_jump(const camera_position_t *position, int32_t *velocity_q8,
+        int32_t *remainder_q8)
+{
+        int32_t floor;
+        if (*velocity_q8 > 0 ||
+            !kokiri_collision_floor(position->x, position->z,
+                                   position->y - EYE_HEIGHT, &floor) ||
+            position->y != floor + EYE_HEIGHT)
+                return false;
+        *velocity_q8 = JUMP_VELOCITY_Q8;
+        *remainder_q8 = 0;
+        return true;
+}
+
 bool kokiri_collision_fall(camera_position_t *position, int32_t *velocity_q8,
         int32_t *remainder_q8)
 {
@@ -312,7 +335,7 @@ bool kokiri_collision_fall(camera_position_t *position, int32_t *velocity_q8,
         if (kokiri_collision_floor(position->x, position->z,
                                    below, &floor)) {
                 target_y = floor + EYE_HEIGHT;
-                if (position->y == target_y) {
+                if (position->y == target_y && *velocity_q8 <= 0) {
                         position->y = target_y;
                         *velocity_q8 = 0;
                         *remainder_q8 = 0;
@@ -326,11 +349,20 @@ bool kokiri_collision_fall(camera_position_t *position, int32_t *velocity_q8,
         *remainder_q8 += *velocity_q8;
         amount = *remainder_q8 / 256;
         *remainder_q8 -= amount * 256;
-        if (amount) kokiri_collision_move_actor(position, 0, amount, 0);
+        if (amount) {
+                int32_t old_y = position->y;
+                kokiri_collision_move_actor(position, 0, amount, 0);
+                if (amount > 0 && position->y - old_y < amount) {
+                        /* Head hit: start falling now, not after an invisible
+                         * upward velocity counts down against the ceiling. */
+                        *velocity_q8 = 0;
+                        *remainder_q8 = 0;
+                }
+        }
 
         below = position->y - EYE_HEIGHT + STEP;
         if (kokiri_collision_floor(position->x, position->z, below, &floor) &&
-            position->y == floor + EYE_HEIGHT) {
+            position->y == floor + EYE_HEIGHT && *velocity_q8 <= 0) {
                 position->y = floor + EYE_HEIGHT;
                 *velocity_q8 = 0;
                 *remainder_q8 = 0;
