@@ -1,5 +1,5 @@
 param(
-    [ValidateSet('normal', 'hires')]
+    [ValidateSet('normal', 'hires', 'clean')]
     [string]$Variant,
     [switch]$Check,
     [switch]$SmokeTest
@@ -10,7 +10,8 @@ $ErrorActionPreference = 'Stop'
 $project = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../..'))
 $variants = @(
     [pscustomobject]@{ Id='normal'; Name='Dosei Legend - standard (320x240)'; Image='game/build/game.cue'; Batch='game/run-kronos.bat'; Note='Jo Engine game: Link, forest, controls and music.' },
-    [pscustomobject]@{ Id='hires'; Name='Dosei Legend - hi-res (320x480i)'; Image='game/build/game-hires.cue'; Batch='game/run-kronos-hires.bat'; Note='Same Jo game, native interlaced vertical-resolution experiment.' }
+    [pscustomobject]@{ Id='hires'; Name='Dosei Legend - hi-res (320x480i)'; Image='game/build/game-hires.cue'; Batch='game/run-kronos-hires.bat'; Note='Same Jo game, native interlaced vertical-resolution experiment.' },
+    [pscustomobject]@{ Id='clean'; Name='Dosei Legend - clean player test'; Image='game/build/game-clean.cue'; Batch='game/run-kronos-clean.bat'; Note='320x240 player test with jump. No in-game debug overlay; safety checks retained.' }
 )
 
 function Get-ImagePath($entry) { Join-Path $project $entry.Image }
@@ -155,7 +156,11 @@ if ($SmokeTest) {
     Update-Selection
     if ($list.Items.Count -ne $variants.Count) { throw 'Variant list incomplete' }
     if ($details.Text -notlike '*game-hires*') { throw 'Selection details missing' }
-    Write-Output 'GUI controls and hi-res selection passed; no emulator launched.'
+    $list.Items[1].Selected = $false
+    $list.Items[2].Selected = $true
+    Update-Selection
+    if ($details.Text -notlike '*game-clean.cue*') { throw 'Clean selection details missing' }
+    Write-Output 'GUI controls, hi-res and clean selection passed; no emulator launched.'
     Show-ConfigDialog $form -TestOnly
     $form.Dispose()
     exit 0

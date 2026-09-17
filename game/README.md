@@ -17,6 +17,8 @@ objects, generated meshes and CD staging. `disc/` holds checked-in ISO metadata.
 
 Clean player test: `./game/build.sh --clean` produces `game/build/game-clean.cue`
 and `.iso`, with all in-game diagnostic overlays suppressed (including L+R).
+Choose **clean player test** in the root launcher, or run `run-kronos-clean.bat`.
+Windows build: `build.bat -Variant clean`. Reopen the launcher after updating.
 Separate objects preserve normal/hi-res builds. Safety checks remain enabled;
 this is not a `JO_DEBUG=0` build. Kronos's own FPS display is an emulator setting.
 

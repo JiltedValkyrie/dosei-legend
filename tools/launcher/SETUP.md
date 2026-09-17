@@ -81,7 +81,9 @@ Alternatively use `./build.sh` or `./build.sh --hires` from `game/` in MSYS2;
 that shell needs a working Windows Python on PATH to read the config initially
 (or set `DOSEI_PYTHON` to its full path).
 
-Open `launch-game.bat`, select standard or hi-res, then **Run selected**.
+Open `launch-game.bat`, select standard, hi-res or clean player test, then **Run selected**.
+Clean hides the in-game diagnostic overlay. Build it with `game/build.bat -Variant clean`.
+Reopen an already-running launcher after updating its variant list.
 The selector launches existing images; it does not build them. Direct launchers
 `game/run-kronos.bat` and `game/run-kronos-hires.bat` use the same configuration.
 Close Kronos before switching variants or rebuilding its mounted image.

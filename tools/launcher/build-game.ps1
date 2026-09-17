@@ -1,4 +1,4 @@
-param([ValidateSet('normal','hires')][string]$Variant='normal')
+param([ValidateSet('normal','hires','clean')][string]$Variant='normal')
 $ErrorActionPreference = 'Stop'
 . "$PSScriptRoot/project-config.ps1"
 $paths = Get-ProjectPaths
@@ -10,5 +10,6 @@ $env:PATH = (Join-Path $paths.msys2 'usr/bin') + ';' + (Split-Path $paths.python
 Set-Location (Join-Path $ProjectRoot 'game')
 $arguments = @('./build.sh')
 if ($Variant -eq 'hires') { $arguments += '--hires' }
+if ($Variant -eq 'clean') { $arguments += '--clean' }
 & $bash @arguments
 exit $LASTEXITCODE
