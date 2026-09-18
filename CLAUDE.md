@@ -1,5 +1,13 @@
 # Project handoff - 2026-09-16
 
+## Renderer failure record — read before warp work
+
+Read `game/docs/FOREGROUND_WARP_FAILURE_2026-09-18.md` and follow its prevention
+rules. Astra's material/grid experiment failed and was rolled back. Warp remains
+unresolved. Older adaptive-subdivision directions below or in the handoff are
+not an approved solution. Identify the requested original clipper first; prove
+the failure during real movement before changing the rendering pipeline.
+
 ## Active development branch: dev
 
 Human directive: after the manual-jump checkpoint, work on `dev` from now on.

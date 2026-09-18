@@ -1,5 +1,14 @@
 # Dosei Legend engineering rules
 
+## Renderer repairs: reproduce movement before changing the pipeline
+
+Read [the foreground-warp failure record](game/docs/FOREGROUND_WARP_FAILURE_2026-09-18.md)
+before further warp/clipping work. Its prevention rules are mandatory.
+Identify the original clipper and preserve a runnable baseline. Trace the exact
+bad face during real movement. Change one stage only. Keep experiments separate
+from player images. Revert on visual regression; tests and budgets do not prove
+playability. Preserve checker mesh. Do not restart the failed material/grid rewrite.
+
 ## Every animated model: vertex owns bone, not triangle
 
 Root motion is a separate contract: if gameplay physics owns actor travel,
