@@ -334,20 +334,25 @@ class DiagnosticsChord(unittest.TestCase):
     def setUpClass(cls):
         cls.demo = (ROOT / 'src' / 'demo.c').read_text()
         cls.main = (ROOT / 'src' / 'main.c').read_text()
+        # The chord moved into the control-mapping layer with the 2026-09-18
+        # remap; demo.c only applies the decision now.
+        cls.input = (ROOT / 'src' / 'player_input.c').read_text()
 
-    def test_chord_clears_both_buttons(self):
-        """Both shoulder bits must be masked off inside the chord branch."""
-        mask = re.search(r'buttons &= \(uint16_t\)~\(([^)]*)\);', self.demo)
-        self.assertIsNotNone(mask, 'the chord must consume its buttons')
-        self.assertIn('CAMERA_L', mask[1])
-        self.assertIn('CAMERA_R', mask[1])
+    def test_chord_still_detects_both_shoulders(self):
+        self.assertIn('if ((held & CAMERA_L) && (held & CAMERA_R))', self.input)
 
     def test_recenter_is_skipped_while_the_chord_is_held(self):
         """Otherwise asking for diagnostics also recenters the camera."""
-        chord = self.demo.index('if ((buttons & CAMERA_L) && (buttons & CAMERA_R))')
-        recenter = self.demo.index('recenter = recenter_pressed;')
+        chord = self.input.index('if ((held & CAMERA_L) && (held & CAMERA_R))')
+        recenter = self.input.index('out->recenter = recentered;')
         self.assertGreater(recenter, chord,
-                           'recenter must sit in the chord-not-held branch')
+                           'recenter must sit after the chord early return')
+
+    def test_chord_is_gated_out_of_the_player_facing_build(self):
+        """L+R must not block targeting plus shielding for the player."""
+        gate = self.input.index('#ifndef DOSEI_CLEAN_TEST')
+        chord = self.input.index('if ((held & CAMERA_L) && (held & CAMERA_R))')
+        self.assertGreater(chord, gate)
 
     def test_a_no_longer_toggles_diagnostics(self):
         self.assertNotIn('jo_is_pad1_key_down(JO_KEY_A)', self.main,

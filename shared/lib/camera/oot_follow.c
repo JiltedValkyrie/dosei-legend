@@ -133,6 +133,37 @@ static void     place(const oot_follow_t *camera,
                 + OOT_CAM_Y_OFFSET + height;
 }
 
+static int32_t  clamp(int32_t value, int32_t limit)
+{
+    if (value > limit)
+        return limit;
+    if (value < -limit)
+        return -limit;
+    return value;
+}
+
+void            oot_follow_look(oot_follow_t *camera, int32_t yaw_delta,
+                                int32_t pitch_delta)
+{
+    camera->look_active = true;
+    camera->look_yaw = clamp(camera->look_yaw + yaw_delta,
+                             OOT_LOOK_YAW_LIMIT);
+    camera->look_pitch = clamp(camera->look_pitch + pitch_delta,
+                               OOT_LOOK_PITCH_LIMIT);
+}
+
+void            oot_follow_look_exit(oot_follow_t *camera)
+{
+    camera->look_active = false;
+    camera->look_yaw = 0;
+    camera->look_pitch = 0;
+}
+
+bool            oot_follow_looking(const oot_follow_t *camera)
+{
+    return camera->look_active;
+}
+
 void            oot_follow_recenter(oot_follow_t *camera)
 {
     /* Do not reset yaw here: the swing works from wherever the camera is now.
@@ -151,6 +182,9 @@ void            oot_follow_snap(oot_follow_t *camera,
     camera->pitch = OOT_CAM_PITCH_TARGET;
     camera->swing_timer = 0;
     camera->initialised = true;
+    camera->look_active = false;
+    camera->look_yaw = 0;
+    camera->look_pitch = 0;
 }
 
 void            oot_follow_update(oot_follow_t *camera,
@@ -212,6 +246,19 @@ void            oot_follow_update(oot_follow_t *camera,
                                 XZ_RATE);
     camera->pitch = approach(camera->pitch, OOT_CAM_PITCH_TARGET, PITCH_RATE);
 
+    if (camera->look_active)
+    {
+        /* Aim from a copy: the stored follow state is untouched, so the view
+        ** returns to the ordinary follow camera the moment Z is released. */
+        oot_follow_t aimed = *camera;
+
+        aimed.yaw = (uint16_t)(camera->yaw + camera->look_yaw);
+        aimed.pitch = camera->pitch + camera->look_pitch;
+        place(&aimed, player, eye_out);
+        *yaw_out = aimed.yaw;
+        *pitch_out = legacy_camera ? 0 : -aimed.pitch;
+        return;
+    }
     place(camera, player, eye_out);
     *yaw_out = camera->yaw;
     /* Negated: kokiri_camera_update() adds CAMERA_PITCH_SPEED for Up, so a

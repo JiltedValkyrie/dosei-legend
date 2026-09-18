@@ -43,8 +43,10 @@ meshes live in `build/generated/`. Shared title UI/audio and reusable libraries
 live in `../shared/`; game-specific bank selection stays in `src/music_banks.c`.
 
 See the [current controls table](../README.md#controls-current-build) for the
-standard digital Saturn pad. A jumps; D-pad runs/air-steers; L recenters;
-Start switches title/gameplay. Planned controls are explicitly marked there.
+standard digital Saturn pad. Y jumps; B toggles walk/run; D-pad moves and
+air-steers; hold C for the four N64 C buttons; hold Z for the look camera;
+L recenters; Start switches title/gameplay. Planned controls are explicitly
+marked there. The mapping itself lives in `src/player_input.c`.
 Existing airborne clip is reused; no dedicated takeoff clip yet.
 Current Link/follow behavior is in `src/demo.c`.
 

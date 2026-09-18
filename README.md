@@ -73,17 +73,23 @@ not keyboard keys; keyboard bindings depend on Kronos settings.
 
 | Button | What works now |
 | --- | --- |
-| D-pad | Run relative to camera; steer while airborne |
-| A | Jump from ground; release and press again for another jump. No double-jump |
+| D-pad | Move relative to camera at the selected walk/run speed; steer while airborne |
+| B | Toggle walk/run. Gameplay starts in run; one toggle per press |
+| Y | Jump from ground; release and press again for another jump. No double-jump |
 | L | Recenter camera behind Link; not enemy lock-on |
+| Hold Z + D-pad | Look camera: aim the view, bounded. No movement, no shield |
 | Start | Switch between title and gameplay; not pause yet |
-| R | No action yet; never rotates camera |
-| B / C / X / Y / Z | Not assigned to active gameplay actions yet |
-| L + R | Switch diagnostic overlay views; hidden in clean player-test image |
+| A | Interact. Routed and counted, but no interaction system exists yet |
+| X | Attack. Routed and counted, but no combat system exists yet |
+| R | Shield. Read as held, but no shield system exists yet; never rotates camera |
+| Hold C + D-pad | C-Up/Down/Left/Right. Routed and consumed, but no item system exists yet |
+| L + R | Switch diagnostic overlay views; compiled out of the clean player-test image |
 | L + R + Up | Developer camera comparison: current follow / old camera |
 
-Camera follows automatically. Sword, shield, items, walk modifier, interactions,
-first-person look and pause are still planned, not working controls.
+Camera follows automatically. The A, X, R and C inputs are wired to the input
+layer and visible in the diagnostic overlay, but the interaction, combat, shield
+and item systems they should drive do not exist yet. Pause is still unbuilt, so
+Start returns to the title. Full Z-targeting remains planned.
 
 ## Focused checks
 

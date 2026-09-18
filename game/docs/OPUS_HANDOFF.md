@@ -1,5 +1,136 @@
 # Current directive: OoT gameplay camera and standard Saturn pad controls
 
+## Human-approved control requirements — 2026-09-18
+
+This section is the authoritative control layout. It supersedes the manual-jump
+checkpoint and every older control proposal below. The reference is the N64 OoT
+manual at `game/docs/refs/ref-n64-zelda-oot-manual.pdf`. In that manual these are
+four **C buttons**, not an analog C-stick; on the Saturn pad, holding the physical
+C button turns the D-pad into that four-direction C cluster.
+
+| Saturn input | Required gameplay behavior |
+| --- | --- |
+| D-pad | Camera-relative player movement at the currently selected walk/run speed. |
+| B press | Toggle the persistent movement mode between walk and run. Start gameplay in run mode to preserve the current default. One toggle per physical press; holding B must not repeat. |
+| A | Interact/context action: talk, inspect, open, grab, push/pull, or the action currently offered. A is no longer jump. Do not use it as the general attack button. |
+| X | Attack. This is the sword/primary attack input. |
+| Y | Manual jump. Move the existing tested A-button jump behavior to Y, including the edge latch, grounded/void rejection, ceiling sweep, gravity, and landing behavior. |
+| Hold C + D-pad | Emit N64 C-Up, C-Down, C-Left, or C-Right according to the D-pad direction. Suppress player movement while C is held. These directional inputs are the C-button/item interface; do not treat C as the old walk modifier. |
+| Hold Z + D-pad | Enter look-camera mode and aim the view with the D-pad. Suppress player movement and C-item input in this mode. Releasing Z exits look mode cleanly and returns to the normal follow camera. Z alone is not an item button. |
+| L | OoT Z-target/recenter behavior. Preserve the existing recenter behavior until full targeting lands. L is not camera orbit. |
+| R | Shield only. R is never camera orbit or look. |
+| Start | Start from the title; pause/menu during gameplay. It must not return to the title during ordinary gameplay once pause exists. |
+
+Input priority when chords overlap is: **Z look mode, then C-button mode, then
+ordinary D-pad movement**. Consumed D-pad directions must not leak into Link
+movement. C maps directions literally: C+Up -> C-Up, C+Down -> C-Down,
+C+Left -> C-Left, and C+Right -> C-Right. Expose held state plus clean press
+and release edges so one-shot items do not repeat while held and future held
+items (for example aiming) do not need another input rewrite.
+
+This is a control remap, not permission to invent unfinished combat, inventory,
+interaction, targeting, shield, or pause systems. Wire each input into the real
+behavior when that behavior exists; otherwise keep an explicit pending action
+instead of substituting a diagnostic or unrelated action. In the immediate
+working slice, Y jump, B walk/run, C-direction routing, Z look, and input
+consumption must work now. A/X may remain visible as pending feature hooks until
+interaction and combat are implemented.
+
+Implementation constraints and acceptance checks:
+
+- Keep VBlank sampling and the fixed-step input path. A short B or Y tap must
+  survive a slow rendered frame. Holding either must not retrigger its edge.
+- Walk/run affects grounded locomotion. Keep normalized diagonal travel and
+  select idle/walk/run animation from actual movement, not merely held input.
+  Do not disturb the existing airborne steering or jump physics while remapping.
+- Entering either C or Z modifier mode while a direction is held must stop
+  locomotion; releasing the modifier while the direction remains held resumes
+  movement without a stuck or phantom directional action.
+- Z look must provide bounded yaw and pitch, no player translation, no shield,
+  and no R-orbit fallback. Use the local OoT camera source/manual as the behavior
+  reference and keep all SH-2 runtime math integer/fixed point.
+- Gate or relocate the L+R diagnostics chord. It must not prevent simultaneous
+  targeting/recentering and shielding in the eventual player-facing build.
+- Add focused host tests for button mapping, B edge toggling, Y jump edge and
+  rejection cases, modifier priority/consumption, direction mapping, look-mode
+  exit, normalized walk/run diagonals, and the rule that shoulders never orbit.
+- Build the standard and clean images. Report separately what is wired and what
+  remains pending because its gameplay system does not yet exist. Do not claim
+  camera or N64 parity from host tests or a successful build alone.
+
+## Claude -> Astra: 2026-09-18 control remap implemented
+
+Owner: Claude. Changed files: `game/src/player_input.c/.h` (new),
+`game/src/demo.c`, `game/src/demo.h`, `game/src/main.c`, `game/makefile`,
+`shared/lib/camera/kokiri_camera.c/.h`, `shared/lib/camera/oot_follow.c/.h`,
+`game/tests/test_player_controls.py` (new), `game/tests/fixtures/locomotion_host.c`,
+`game/tests/test_locomotion_timing.py`, `game/tests/test_link_animation.py`,
+`game/tests/test_oot_follow.py`, root `README.md`.
+
+All pad mapping now lives in one place. The VBlank callback takes ONE normalized
+snapshot (`demo_pad_snapshot`) and `player_input_sample()` latches every edge
+from it; the fixed step calls `player_input_step()` once and only applies the
+result. Previously demo.c both built a button mask and read the L+R chord, which
+is what made two consumers able to disagree on a frame.
+
+Wired and working (host-verified, NOT Kronos-verified):
+
+- Y is jump. The tested A-button behavior moved unchanged: same edge latch,
+  `kokiri_collision_jump` grounded/void rejection, ceiling sweep, gravity and
+  landing. A no longer reaches jump at all (`JO_KEY_A` is gone from demo.c).
+- B toggles a persistent walk/run mode, once per physical press. Gameplay starts
+  in run, preserving the shipped default. Walking is `LINK_WALK_SPEED_Q8` = 768,
+  3 units/step (90 units/s); running stays 1408 (165 units/s). Both modes keep
+  the 181/256 diagonal normalization, so a diagonal covers the same distance.
+  Because 3 sits under `link_anim_state`'s RUN_SPEED_MIN of 4, the walk clip is
+  selected from distance actually travelled, not from held input.
+- Hold C + D-pad emits C-Up/C-Down/C-Left/C-Right literally, with held state
+  plus press and release edges per direction, and consumes the D-pad.
+- Hold Z + D-pad enters look mode: bounded aim (yaw +/-16384, pitch +/-12000
+  binang) applied on top of the follow solution and never written back into it,
+  so releasing Z restores exactly the follow view. No translation, no shield, no
+  R orbit. All integer; no new SH-2 float.
+- Priority is Z look, then C mode, then movement. A direction consumed by a
+  modifier never reaches locomotion, entering either modifier with a direction
+  held stops movement, and releasing the modifier resumes movement with no stuck
+  or phantom directional action.
+- L still recenters on a press edge (`oot_follow_recenter`). R is read as held
+  shield state only. Shoulders never orbit: `kokiri_camera_update` masks L/R on
+  the actor path and the mapping never routes them into movement or look.
+- The L+R diagnostics chord moved into `player_input.c` and is now gated by
+  `#ifndef DOSEI_CLEAN_TEST`, so it is compiled out of the clean player-facing
+  disc and cannot block simultaneous targeting plus shielding there.
+
+PENDING, because the gameplay system does not exist yet. Each input is routed,
+edge-clean and counted; none is substituted with unrelated behavior:
+
+- A interact: no interaction/talk/grab system. Counted in
+  `demo_interact_requests`, shown in the overlay as `pend a<n>`.
+- X attack: no combat or sword. Counted in `demo_attack_requests` (`x<n>`).
+- C buttons: no item/inventory interface. The routed direction is held in
+  `demo_last_c_button` (`c<n>`, 1..4 = Up/Down/Left/Right). Routing, consumption
+  and the held/press/release edges are real; only the target is missing.
+- R shield: no shield actor or blocking state; only the held flag exists.
+- Start: no pause menu, so Start still toggles the title. Once pause lands it
+  must stop returning to the title during ordinary gameplay.
+- L: recenter only. Full Z-targeting/lock-on is not implemented.
+
+Verification. 186 host tests pass, 39 of them new in
+`game/tests/test_player_controls.py`, executing the real `player_input.c`,
+`kokiri_camera.c` and `oot_follow.c` through ctypes: button mapping, B edge
+toggling and tap survival across a slow frame, Y jump edges plus title and
+look-mode rejection, modifier priority and D-pad consumption, literal C
+direction mapping, look-mode exit and aim bounds, normalized walk and run
+diagonals, walk clip selection from actual travel, and that shoulders never
+orbit. Stale source-text assertions in three existing test files were repointed
+at the chord's new location rather than deleted. Standard (`build/game.cue`) and
+clean (`build/game-clean.cue`) images both built.
+
+Not verified: none of this is Kronos or controller-feel evidence. The look
+camera's aim rates (420/280 binang per step) are a first bounded choice, not
+matched against OoT's Subj3/look behavior, and the walk speed is a digital-pad
+substitute for stick magnitude. Both need player confirmation in Kronos.
+
 ## Run-to-jump visual sinking
 
 FALL imported root Y 2292 -> -3328 (model units), ~82 world units downward.

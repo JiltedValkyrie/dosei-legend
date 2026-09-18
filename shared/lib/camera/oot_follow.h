@@ -54,7 +54,26 @@ typedef struct
     /* Counts down while a recenter swing is running. OoT divides the
     ** remaining angle by this, so the turn eases out instead of snapping. */
     int32_t     swing_timer;
+    /* Z-look aim, applied on TOP of the follow solution and never written back
+    ** into it, so releasing Z returns to exactly the follow camera that would
+    ** have been there anyway. Both are bounded; neither moves the player. */
+    int32_t     look_yaw;
+    int32_t     look_pitch;
+    bool        look_active;
 }               oot_follow_t;
+
+/* Bounds for the Z-look aim, in binang. Yaw is limited rather than free so the
+** look camera cannot be used as an unbounded orbit. */
+#define OOT_LOOK_YAW_LIMIT      16384
+#define OOT_LOOK_PITCH_LIMIT    12000
+
+/* Aim the look camera by one step's deltas, clamped. */
+void    oot_follow_look(oot_follow_t *camera, int32_t yaw_delta,
+                        int32_t pitch_delta);
+/* Leave look mode: the aim offsets are cleared so the follow camera resumes
+** cleanly with no residual angle. */
+void    oot_follow_look_exit(oot_follow_t *camera);
+bool    oot_follow_looking(const oot_follow_t *camera);
 
 /*
 ** Z-recenter turn length, in 30 Hz gameplay steps.

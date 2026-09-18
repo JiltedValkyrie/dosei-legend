@@ -8,6 +8,7 @@
 #include "oot_follow.h"
 #include "frame_timer.h"
 #include "input_edge.h"
+#include "player_input.h"
 
 camera_position_t demo_camera;
 uint16_t demo_yaw;
@@ -48,10 +49,15 @@ static int last_blink = -1;
 /* Diagnostics chord state. demo_diagnostics_toggled is a one-shot the HUD
  * clears, so the chord edge is detected with the rest of the input rather than
  * sampled a second time in main.c. */
-static bool diagnostics_chord_held;
 bool demo_diagnostics_toggled;
-static input_edge_t start_edge, recenter_edge, jump_edge;
+static input_edge_t start_edge;
 static bool jump_pending;
+/* Pending actions whose gameplay systems do not exist yet. Counted rather than
+ * dropped so the HUD/tests can show the input arrived, and deliberately not
+ * wired to any substitute behavior. */
+unsigned int demo_interact_requests;
+unsigned int demo_attack_requests;
+player_c_button_t demo_last_c_button;
 
 static jo_color sky_color(unsigned int row)
 {
@@ -99,14 +105,32 @@ static bool recover_link_from_void(void)
     return true;
 }
 
+/* Saturn pad -> normalized CAMERA_* bits. Jo's JO_KEY_* values are SGL/CS
+ * bitfield positions; the gameplay code works in its own platform-independent
+ * bit set so the mapping lives in exactly one place. */
+static uint16_t demo_pad_snapshot(void)
+{
+    uint16_t bits = 0;
+#define MAP(key, bit) if (jo_is_pad1_key_pressed(JO_KEY_##key)) bits |= bit
+    MAP(A, CAMERA_A); MAP(B, CAMERA_B); MAP(C, CAMERA_C);
+    MAP(X, CAMERA_X); MAP(Y, CAMERA_Y); MAP(Z, CAMERA_Z);
+    MAP(L, CAMERA_L); MAP(R, CAMERA_R); MAP(START, CAMERA_START);
+    MAP(UP, CAMERA_UP); MAP(DOWN, CAMERA_DOWN);
+    MAP(LEFT, CAMERA_LEFT); MAP(RIGHT, CAMERA_RIGHT);
+#undef MAP
+    return bits;
+}
+
 static void demo_vblank(void)
 {
     /* Jo refreshes held inputs before this callback. Preserve press edges
      * across slow draws instead of relying on its one-VBlank on_keydown. */
     bool connected = jo_is_pad1_available();
     input_edge_sample(&start_edge, connected && jo_is_pad1_key_pressed(JO_KEY_START));
-    input_edge_sample(&recenter_edge, connected && jo_is_pad1_key_pressed(JO_KEY_L));
-    input_edge_sample(&jump_edge, connected && jo_is_pad1_key_pressed(JO_KEY_A));
+    /* One normalized snapshot per VBlank. All button state -- including every
+     * chord -- is read from this single sample, so two consumers can never
+     * disagree about which buttons were down on a given frame. */
+    player_input_sample(connected ? demo_pad_snapshot() : 0);
     /* BDCLMD=0 keeps the border outside the active picture black. */
     JO_VDP2_TVMD &= (unsigned short)~0x0100;
     phase += 60;
@@ -178,18 +202,45 @@ void demo_update(void)
     uint16_t buttons = 0;
     bool recenter = false;
     bool start_pressed = input_edge_consume(&start_edge);
-    bool recenter_pressed = input_edge_consume(&recenter_edge);
-    bool jump_pressed = input_edge_consume(&jump_edge);
     unsigned int now = ticks, elapsed = now - previous_tick, steps;
     jo_img patch;
+    /* One consume per rendered frame. The mapping itself lives in
+     * player_input.c; this function only applies the decisions. */
+    player_input_t input;
+    bool in_gameplay = !title_visible && demo_link_active;
+
+    player_input_step(in_gameplay, &input);
     /* Preserve a tap until a fixed step runs, but never carry title input
-     * into gameplay or queue an airborne press for a later landing. */
-    if (!title_visible && demo_link_active && jump_pressed) jump_pending = true;
+     * into gameplay or queue an airborne press for a later landing. Jump is Y
+     * as of the 2026-09-18 layout; A is the interact button. */
+    if (in_gameplay && input.jump) jump_pending = true;
+    buttons = input.move_buttons;
+    recenter = input.recenter;
+    if (input.diagnostics_toggled) demo_diagnostics_toggled = true;
+    if (input.camera_swap_toggled) oot_follow_set_legacy(!oot_follow_legacy());
+    /* Walk/run is a persistent mode, so it is pushed even on a frame with no
+     * movement: the next step must already run at the selected speed. */
+    kokiri_camera_set_walk(input.move_mode == PLAYER_MOVE_WALK);
+    /* PENDING SYSTEMS. Interaction and combat do not exist yet, so A and X are
+     * recorded and nothing else: substituting some other action here would be
+     * worse than leaving them visibly unimplemented. */
+    if (input.interact_pending) ++demo_interact_requests;
+    if (input.attack_pending) ++demo_attack_requests;
+    /* PENDING SYSTEM. There is no item/inventory interface for the C buttons to
+     * drive, so the routed direction is recorded for the HUD and tests. The
+     * routing, consumption and edges are real; only the target is missing. */
+    if (input.c_pressed != PLAYER_C_NONE) demo_last_c_button = input.c_pressed;
+    if (input.c_released != PLAYER_C_NONE &&
+        demo_last_c_button == input.c_released)
+        demo_last_c_button = PLAYER_C_NONE;
+    /* Look mode aims the follow camera and translates nothing. Movement bits
+     * were already consumed by player_input_step(). */
+    if (input.look_mode)
+        oot_follow_look(&link_follow, input.look_yaw_delta,
+                        input.look_pitch_delta);
+    else if (input.look_exited)
+        oot_follow_look_exit(&link_follow);
     if (jo_is_pad1_available()) {
-#define MAP(key) if (jo_is_pad1_key_pressed(JO_KEY_##key)) buttons |= CAMERA_##key
-        MAP(L); MAP(R); MAP(X); MAP(Y); MAP(Z); MAP(C);
-        MAP(UP); MAP(DOWN); MAP(LEFT); MAP(RIGHT);
-#undef MAP
 #if defined(DOSEI_PERF_PROBE) && (DOSEI_PERF_PROBE == 2 || DOSEI_PERF_PROBE == 3 || DOSEI_PERF_PROBE == 4)
         /* Diagnostic-only autonomous walk. No OS/controller input injection. */
         {
@@ -205,31 +256,13 @@ void demo_update(void)
 #endif
         }
 #endif
-        /* L+R held is the diagnostics chord, and it CONSUMES both buttons:
-         * the recenter and the R camera bit are cleared, so asking for
-         * diagnostics never also recenters the view or triggers whatever R
-         * eventually becomes. A is left free for the action button.
-         *
-         * Held rather than pressed, and edge-detected here, because the pad is
-         * sampled once per update and a chord read independently in two files
-         * would drift apart on the frame one button arrives before the other. */
-        if ((buttons & CAMERA_L) && (buttons & CAMERA_R)) {
-            /* L+R+Up swaps the camera for A/B comparison at one spot, instead
-             * of toggling the overlay. Development only. */
-            bool swap = (buttons & CAMERA_UP) != 0;
-            buttons &= (uint16_t)~(CAMERA_L | CAMERA_R | CAMERA_UP);
-            if (!diagnostics_chord_held) {
-                if (swap) oot_follow_set_legacy(!oot_follow_legacy());
-                else demo_diagnostics_toggled = true;
-            }
-            diagnostics_chord_held = true;
-        } else {
-            diagnostics_chord_held = false;
-            recenter = recenter_pressed;
-        }
         /* Ignore Start while a score switch is running: music_fade_to() would
          * refuse it anyway, and toggling the title regardless would leave the
-         * artwork and the music disagreeing about which state we are in. */
+         * artwork and the music disagreeing about which state we are in.
+         *
+         * PENDING SYSTEM: there is no pause menu yet, so Start still toggles
+         * the title. Once pause exists it must stop returning to the title
+         * during ordinary gameplay. */
         if (start_pressed && !music_busy()) {
             title_visible = !title_visible;
             /* Starting the game puts Link in the world. He spawns from the
@@ -257,6 +290,9 @@ void demo_update(void)
                     link_anim_reset();
                     link_anim_reset_state();
                     kokiri_camera_reset_actor_motion();
+                    /* Enter the world running, the slice's existing default. */
+                    player_input_reset();
+                    kokiri_camera_set_walk(false);
                 }
             }
             if (!title_visible && demo_link_active) {

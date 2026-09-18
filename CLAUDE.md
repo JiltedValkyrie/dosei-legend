@@ -4,8 +4,10 @@
 
 Human directive: after the manual-jump checkpoint, work on `dev` from now on.
 `main` keeps the pushed checkpoint; do not default new development to main.
-Current custom control: A jumps from ground. This supersedes the older planned
-A action/roll assignment until interaction controls are implemented.
+The new 2026-09-18 control directive supersedes that checkpoint: A interact,
+X attack, Y jump, B toggles walk/run, hold C+D-pad supplies the four N64 C
+directions, and hold Z+D-pad looks around. Read the authoritative requirements
+at the top of `game/docs/OPUS_HANDOFF.md` before changing input code.
 
 ## BIG RULE NUMBER 1
 Caveman talk. No waste token. Efficient good. Stop talk between final output. Waste token. Shh.

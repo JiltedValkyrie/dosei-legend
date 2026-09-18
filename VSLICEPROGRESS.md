@@ -1,12 +1,30 @@
 # Vertical slice progress
 
+## Saturn pad control remap (2026-09-18)
+
+- Approved layout landed: D-pad moves, B toggles walk/run, Y jumps, A interacts,
+  X attacks, L recenters, R shields, hold C + D-pad emits the four N64 C
+  buttons, hold Z + D-pad aims a bounded look camera. Start still toggles title.
+- One VBlank snapshot feeds one mapping layer (`game/src/player_input.c`); the
+  fixed step only applies its decisions. Priority is Z, then C, then movement,
+  and a consumed direction never leaks into locomotion.
+- Walk is 3 units/step vs run's 5.5; both normalize diagonals, and the walk clip
+  is chosen from distance actually travelled.
+- PENDING, no system to drive yet: A interact, X attack, R shield, the C item
+  interface, pause on Start, and full Z-targeting. Each is routed and counted in
+  the diagnostic overlay, never substituted with other behavior.
+- L+R diagnostics chord is compiled out of the clean player image so targeting
+  and shielding can be pressed together there.
+- 186 host tests pass (39 new); standard and clean images built. Controller feel
+  and the look-camera rates still need Kronos confirmation.
+
 - Fixed jump/fall visual sinking: remove FALL clip's ~82-world-unit authored
   root descent, keeping rotations. Physics alone owns airborne travel. Added
   actual-skinned-mesh bounds/run-transition regression, not just data parity.
 
 ## Manual jump (custom feature)
 
-- A jumps only from ground; one jump per press, no airborne retry or held repeat.
+- Y jumps only from ground (was A before the 2026-09-18 remap); one jump per press, no airborne retry or held repeat.
 - Existing gravity/air steering/airborne clip; roughly 52-unit jump height.
   Swept head clearance stops upward motion at low ceilings.
 - Host physics checks pass; controller feel still needs runtime confirmation.

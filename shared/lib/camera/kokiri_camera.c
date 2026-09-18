@@ -1,6 +1,17 @@
 #include "kokiri_camera.h"
 
 static int32_t actor_remainder_x, actor_remainder_z;
+static bool actor_walking;
+
+void kokiri_camera_set_walk(bool walk)
+{
+        actor_walking = walk;
+}
+
+bool kokiri_camera_walking(void)
+{
+        return actor_walking;
+}
 
 void kokiri_camera_reset_actor_motion(void)
 {
@@ -42,8 +53,13 @@ void kokiri_camera_update(camera_position_t *position, uint16_t *yaw,
                 dx = (horizontal*cosine + vertical*sine)*speed/65536;
                 dz = (vertical*cosine - horizontal*sine)*speed/65536;
                 if (actor_collision) {
+                        /* Normalized diagonals in both modes: 181/256 is
+                         * 1/sqrt(2), so a diagonal covers the same distance
+                         * per step as a straight one. */
+                        const int32_t base = actor_walking ? LINK_WALK_SPEED_Q8
+                                                           : LINK_RUN_SPEED_Q8;
                         const int32_t rate = horizontal && vertical
-                            ? LINK_RUN_SPEED_Q8 * 181 / 256 : LINK_RUN_SPEED_Q8;
+                            ? base * 181 / 256 : base;
                         actor_remainder_x += (horizontal*cosine + vertical*sine)*rate/256;
                         actor_remainder_z += (vertical*cosine - horizontal*sine)*rate/256;
                         dx = actor_remainder_x / 65536;

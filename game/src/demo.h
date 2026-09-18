@@ -1,5 +1,6 @@
 #ifndef VIEWER_DEMO_H
 #define VIEWER_DEMO_H
+#include "player_input.h"
 #include "kokiri_camera.h"
 bool demo_init(void);
 void demo_update(void);
@@ -22,4 +23,10 @@ extern bool demo_collision_indexed;
 /* Set for one frame when the L+R diagnostics chord is newly held. The HUD
  * clears it. Both buttons are consumed, so the chord cannot also recenter. */
 extern bool demo_diagnostics_toggled;
+/* Inputs whose gameplay systems are not implemented yet (2026-09-18 layout):
+ * A interact, X attack, and the four routed C buttons. Recorded, never
+ * substituted with unrelated behavior. See src/player_input.h. */
+extern unsigned int demo_interact_requests;
+extern unsigned int demo_attack_requests;
+extern player_c_button_t demo_last_c_button;
 #endif

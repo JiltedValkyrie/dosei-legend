@@ -31,7 +31,9 @@ class Follow(ctypes.Structure):
     # the wrong field rather than failing.
     _fields_ = [('distance', ctypes.c_int32), ('yaw', ctypes.c_uint16),
                 ('pitch', ctypes.c_int32), ('initialised', ctypes.c_bool),
-                ('swing_timer', ctypes.c_int32)]
+                ('swing_timer', ctypes.c_int32),
+                ('look_yaw', ctypes.c_int32), ('look_pitch', ctypes.c_int32),
+                ('look_active', ctypes.c_bool)]
 
 
 @unittest.skipUnless(GCC.is_file(), 'host compiler required')
@@ -47,7 +49,10 @@ class OotFollowCamera(unittest.TestCase):
         subprocess.run([str(GCC), '-shared', '-O2', '-o', str(output),
                         '-I' + str(camera),
                         '-I' + str(ROOT.parent / 'shared/lib/collision'),
+                        '-I' + str(ROOT / 'src'),
                         str(camera / 'oot_follow.c'),
+                        str(camera / 'kokiri_camera.c'),
+                        str(ROOT / 'src/player_input.c'),
                         str(ROOT / 'tests/fixtures/locomotion_host.c'), '-lm'],
                        check=True, env=env)
         cls.lib = ctypes.CDLL(str(output))

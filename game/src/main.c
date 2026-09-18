@@ -207,9 +207,17 @@ static void         viewer_hud(void)
             ** -Wbad-function-cast, and this build treats warnings as noise to
             ** stay out of. */
             link_state_t pose = link_anim_state();
-            jo_printf(0, 2, "heap %d%%  anim %d f%d    ",
+            jo_printf(0, 2, "heap %d%%  anim %d f%d %s    ",
                       jo_memory_usage_percent(), (int)pose,
-                      (int)link_anim_frame());
+                      (int)link_anim_frame(),
+                      player_input_move_mode() == PLAYER_MOVE_WALK ? "walk"
+                                                                   : "run");
+            /* The 2026-09-18 inputs whose gameplay systems do not exist yet.
+            ** This is the only evidence that A, X and the routed C buttons
+            ** actually arrive, since none of them can do anything yet. */
+            jo_printf(0, 4, "pend a%d x%d c%d    ",
+                      (int)demo_interact_requests, (int)demo_attack_requests,
+                      (int)demo_last_c_button);
             /* One line, because the question is whether the visible rolling
             ** and the state machine agree -- reading that across two rows is
             ** exactly how a wrong answer gets recorded.

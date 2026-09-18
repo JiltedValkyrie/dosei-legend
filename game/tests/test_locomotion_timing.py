@@ -28,8 +28,11 @@ class LocomotionTiming(unittest.TestCase):
         subprocess.run([str(GCC), '-shared', '-O2', '-o', str(output),
                         '-I' + str(camera),
                         '-I' + str(ROOT.parent / 'shared/lib/collision'),
+                        '-I' + str(ROOT / 'src'),
                         '-I' + str(ROOT / 'build/generated'),
                         str(camera / 'kokiri_camera.c'),
+                        str(camera / 'oot_follow.c'),
+                        str(ROOT / 'src/player_input.c'),
                         str(ROOT / 'src/link_anim_state.c'),
                         str(ROOT / 'build/generated/link_clips.c'),
                         str(ROOT / 'tests/fixtures/locomotion_host.c'), '-lm'],
@@ -117,7 +120,8 @@ class LocomotionTiming(unittest.TestCase):
         text = (ROOT / 'src/demo.c').read_text()
         mask = text.split('uint16_t walk = buttons &', 1)[1].split(';', 1)[0]
         self.assertNotIn('CAMERA_L', mask.replace('CAMERA_LEFT', ''))
-        self.assertIn('recenter = recenter_pressed', text)
+        # The L edge now lives in player_input.c; demo.c applies the result.
+        self.assertIn('recenter = input.recenter;', text)
         # L must recenter, never orbit. It now starts an OoT-style swing
         # instead of assigning demo_yaw directly, so the check is that the
         # press reaches the camera's recenter entry point.
