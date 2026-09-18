@@ -95,6 +95,11 @@ static void         viewer_draw(void)
     frame_timer_frame_begin();
     frame_timer_begin(FRAME_PHASE_MOVEMENT);
     demo_update();
+    if (!kokiri_scene_update()) {
+        scene_ready = false;
+        jo_printf(2, 2, "room load FAILED");
+        return;
+    }
 #if defined(DOSEI_PERF_PROBE) && DOSEI_PERF_PROBE == 1
     /* Repeatable no-input render baseline. Never enabled in normal builds. */
     demo_camera.x = -300; demo_camera.y = 141; demo_camera.z = -260;

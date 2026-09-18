@@ -1,5 +1,19 @@
 # Vertical slice progress
 
+## Latest: textures restored; overlap unresolved
+
+User stopped experiments. Floor/water texture sampling restored; failed
+actor-order probe disabled. [Claude Opus instructions and evidence](game/docs/CLAUDE_OPUS_FLOOR_OCCLUSION.md).
+
+## N64 room streaming and texture warp: prototype, not finished (2026-09-18)
+
+User-approved direction and future-session checkpoint:
+[real N64 rooms, object culling, tunnel loading](game/docs/N64_ROOM_STREAMING.md).
+Experimental room build succeeds in isolated workspace. Root player images not
+promoted. Latest water-order fix and tunnel traversal still unverified; only
+2864 bytes remain below work area in latest probe. Older test/budget claims below
+not validation of this prototype. Next session must read checkpoint before changes.
+
 ## Saturn pad control remap (2026-09-18)
 
 - Approved layout landed: D-pad moves, B toggles walk/run, Y jumps, A interacts,

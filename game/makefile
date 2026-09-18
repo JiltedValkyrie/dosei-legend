@@ -88,6 +88,7 @@ endif
 .PHONY: perf_mode_check
 $(OBJDIR)/main.o $(OBJDIR)/demo.o: perf_mode_check
 $(OBJDIR)/main.o $(OBJDIR)/demo.o $(OBJDIR)/kokiri_sgl.o $(OBJDIR)/frame_timer.o: src/frame_timer.h
+$(OBJDIR)/kokiri_sgl.o: src/scene_actor_order.h src/actor_order.h src/sgl_order_queue.h
 
 # --- keep build products inside this project -------------------------------
 # The stock makefile derives OBJS as $(SRCS:.c=.o) and compiles via a .c.o

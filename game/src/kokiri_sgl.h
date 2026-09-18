@@ -8,6 +8,7 @@
 /** @brief Upload every mesh's textures/CLUTs and bind them to the SGL tables.
  *  @return true on success; on failure jo_core_error() describes the reason. */
 bool            kokiri_scene_load(void);
+bool            kokiri_scene_update(void);
 
 /** @brief VDP1 bytes consumed, valid after kokiri_scene_load(). */
 unsigned int    kokiri_scene_vram_used(void);
@@ -46,6 +47,12 @@ unsigned int    kokiri_scene_accepted_mask(void);
 
 /** @brief Polygons in the lists SGL accepted this frame. */
 unsigned int    kokiri_scene_submitted(void);
+#ifdef DOSEI_ACTOR_ORDER_PROBE
+unsigned int    kokiri_order_changed(void);
+unsigned int    kokiri_order_conflicts(void);
+unsigned int    kokiri_order_frames(void);
+unsigned int    kokiri_order_error(void);
+#endif
 
 #endif /* !__KOKIRI_SGL_H__ */
 

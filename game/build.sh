@@ -41,10 +41,23 @@ cp "$here/disc/ABS.TXT" "$here/disc/BIB.TXT" "$here/disc/CPY.TXT" "$here/build/c
 # on the CD image. Both are cheap and keep game.iso consistent with FOREST.BIN.
 "$python" "$here/tools/build_sgl_area.py" --source "$sgl_source"
 "$python" "$here/tools/build_link_model.py" --flat --animate --oot "$oot" --rom-dir "$roms"
-"$python" "$here/tools/build_sgl_scene.py" --texture-path "${TEXTURE_PATH:-hybrid}" --oot "$oot" --rom-dir "$roms"
+quad_args=()
+if [ -n "${QUAD_OBJ:-}" ]; then
+    quad_args=(--quad-obj "$QUAD_OBJ")
+fi
+if [ "${STREAM_ROOMS:-0}" = 1 ]; then
+    quad_args+=(--stream-rooms)
+fi
+"$python" "$here/tools/build_sgl_scene.py" --texture-path "${TEXTURE_PATH:-hybrid}" --oot "$oot" --rom-dir "$roms" "${quad_args[@]}"
 "$python" "$here/tools/build_demo_assets.py" --oot "$oot"
 "$python" "$here/tools/build_title_paths.py"
-cp "$here/build/generated/kokiri_pixels.bin" "$here/build/cd/KOKIRI.TEX"
+if [ "${STREAM_ROOMS:-0}" = 1 ]; then
+    for room in 0 1 2; do
+        cp "$here/build/generated/R$room.MSH" "$here/build/generated/R$room.TEX" "$here/build/cd/"
+    done
+else
+    cp "$here/build/generated/kokiri_pixels.bin" "$here/build/cd/KOKIRI.TEX"
+fi
 cp "$here/build/generated/link_pixels.bin" "$here/build/cd/LINK.TEX"
 cp "$here/../shared/assets/audio/title/TITLE_PCM.RAW" "$here/build/cd/TITLE.PCM"
 cp "$here/../shared/assets/audio/title/TITLE_LEVELS.RAW" "$here/build/cd/TITLE.LVL"

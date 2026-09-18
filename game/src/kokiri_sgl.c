@@ -36,6 +36,20 @@ static short tile_depth[KOKIRI_TILE_COUNT];
 static unsigned char tile_fog[KOKIRI_TILE_COUNT];
 static unsigned char forest_mesh[KOKIRI_POLYGON_COUNT];
 static unsigned char *forest_palette;
+#ifdef KOKIRI_STREAM_ROOMS
+static unsigned int forest_polygon_count, forest_vertex_count, forest_tile_count;
+static unsigned int forest_object_count, forest_sprite_base;
+static unsigned int resident_bytes, resident_sprites;
+static int forest_room = -1;
+static int requested_room;
+static bool room_gameplay;
+static unsigned char object_visible[KOKIRI_OBJECT_COUNT];
+#else
+#define forest_polygon_count KOKIRI_POLYGON_COUNT
+#define forest_vertex_count KOKIRI_VERTEX_COUNT
+#define forest_tile_count KOKIRI_TILE_COUNT
+#define forest_sprite_base 1
+#endif
 /*
 ** Identity of the closest DISTANCE-stippled polygon seen this prep.
 **
@@ -63,6 +77,10 @@ static bool forest_prepared;
 ** figures -- and must not be read as this frame's work. */
 static bool forest_reused;
 static int prepared_x, prepared_y, prepared_z, prepared_pitch;
+#ifdef DOSEI_ACTOR_ORDER_PROBE
+static void actor_order_prepare(int x, int y, int z, int yaw);
+static void actor_order_queue(void);
+#endif
 static unsigned short prepared_yaw;
 static unsigned int prepared_visible;
 static unsigned char fog_channel[2][17][32];
@@ -76,6 +94,19 @@ static void forest_fog_init(void)
             fog_channel[0][amount][channel] = (unsigned char)(c + (27-c)*a/16);
             fog_channel[1][amount][channel] = (unsigned char)(c + (19-c)*a/16);
         }
+}
+
+/*
+** Per-face flags kept beside the ATTR table, because prep rewrites both the
+** MESHon bit and the sort key every rebuild and cannot read back what the
+** converter authored. Bit 0: the face's own screen-door stipple. Bit 1: the
+** converter keyed it SORT_MAX as a large up-facing floor.
+*/
+static unsigned char forest_face_flags(unsigned int i)
+{
+    const ATTR *attr = &kokiri_pdata.attbl[i];
+    return (unsigned char)(((attr->atrb & MESHon) != 0) |
+                           (((attr->sort & 3u) == SORT_MAX) ? 2u : 0u));
 }
 
 /* Pixel blobs are staged on the CD rather than compiled in: as C arrays they
@@ -213,26 +244,122 @@ static bool         fairy_load(void)
     return true;
 }
 
+#ifdef KOKIRI_STREAM_ROOMS
+static bool room_read(jo_file *file, void *target, unsigned int bytes)
+{
+    return jo_fs_read_next_bytes(file, (char *)target, bytes) == (int)bytes;
+}
+
+static bool room_load(unsigned int room)
+{
+    unsigned int header[8], expected, i;
+    char mesh_name[] = "R0.MSH", pixel_name[] = "R0.TEX";
+    jo_file file;
+    bool ok;
+    if (room > 2) return false;
+    mesh_name[1] += room; pixel_name[1] += room;
+    if (!jo_fs_open(&file, mesh_name)) return false;
+    if (!room_read(&file, header, sizeof(header))) { jo_fs_close(&file); return false; }
+    expected = 32 + header[1]*12 + header[2]*32 + header[3]*44 +
+               ((header[2]+3)&~3u) + header[5]*24;
+    if (header[0] != 0x4b524d31 || !header[1] || !header[2] || !header[3] ||
+        header[1] > KOKIRI_VERTEX_COUNT || header[2] > KOKIRI_POLYGON_COUNT ||
+        header[3] > KOKIRI_TILE_COUNT || header[4] > KOKIRI_PIXEL_BYTES ||
+        header[5] > KOKIRI_OBJECT_COUNT || (unsigned int)file.size != expected ||
+        resident_bytes + header[4] + header[3]*32 > GAME_TEXTURE_BYTES ||
+        resident_sprites + header[3] > JO_MAX_SPRITE) {
+        jo_fs_close(&file); return false;
+    }
+    ok = room_read(&file, kokiri_pdata.pntbl, header[1]*sizeof(POINT)) &&
+         room_read(&file, kokiri_pdata.pltbl, header[2]*sizeof(POLYGON)) &&
+         room_read(&file, kokiri_pdata.attbl, header[2]*sizeof(ATTR)) &&
+         room_read(&file, kokiri_tiles, header[3]*sizeof(kokiri_tile)) &&
+         room_read(&file, kokiri_cluts, header[3]*32) &&
+         room_read(&file, kokiri_objects, (header[2]+3)&~3u) &&
+         room_read(&file, kokiri_bounds, header[5]*sizeof(kokiri_object));
+    jo_fs_close(&file);
+    if (!ok) return false;
+    /* Every bank replaces the same forest slots; Link/fairies stay resident. */
+    vram_used = resident_bytes;
+    sprite_next = resident_sprites;
+    forest_sprite_base = sprite_next;
+    if (!mesh_load(pixel_name,header[4],kokiri_tiles,header[3],
+                   (const unsigned short (*)[16])kokiri_cluts,&kokiri_pdata,header[2]))
+        return false;
+    forest_vertex_count = kokiri_pdata.nbPoint = header[1];
+    forest_polygon_count = kokiri_pdata.nbPolygon = header[2];
+    forest_tile_count = header[3]; forest_object_count = header[5];
+    for (i=0;i<forest_polygon_count;++i)
+        forest_mesh[i] = forest_face_flags(i);
+    for (i=0;i<forest_tile_count;++i) tile_fog[i] = 255;
+    forest_prepared = false;
+    forest_room = (int)room;
+    return true;
+}
+#endif
+
 bool                kokiri_scene_load(void)
 {
     forest_prepared = false;
     forest_fog_init();
+#ifndef KOKIRI_STREAM_ROOMS
     if (!mesh_load(KOKIRI_PIXEL_FILE, KOKIRI_PIXEL_BYTES, kokiri_tiles,
                    KOKIRI_TILE_COUNT, kokiri_cluts, &kokiri_pdata,
                    KOKIRI_POLYGON_COUNT))
         return (false);
+#endif
     if (!mesh_load(LINK_PIXEL_FILE, LINK_PIXEL_BYTES,
                    (const kokiri_tile *)link_tiles, LINK_TILE_COUNT,
                    link_cluts, &link_pdata, LINK_POLYGON_COUNT))
         return (false);
     if (!fairy_load()) return (false);
+#ifdef KOKIRI_STREAM_ROOMS
+    resident_bytes = vram_used;
+    resident_sprites = sprite_next;
+    return room_load(0);
+#else
     {
         unsigned int i;
         for (i = 0; i < KOKIRI_POLYGON_COUNT; ++i)
-            forest_mesh[i] = (kokiri_pdata.attbl[i].atrb & MESHon) != 0;
+            forest_mesh[i] = forest_face_flags(i);
         for (i = 0; i < KOKIRI_TILE_COUNT; ++i) tile_fog[i] = 255;
     }
     return (true);
+#endif
+}
+
+bool kokiri_scene_update(void)
+{
+#ifdef KOKIRI_STREAM_ROOMS
+    unsigned int i;
+    int target = requested_room;
+    if (!demo_link_active || demo_title_is_visible()) { room_gameplay = false; return true; }
+    if (!room_gameplay) { target = 0; room_gameplay = true; }
+    for (i=0;i<KOKIRI_PORTAL_COUNT;++i) {
+        const kokiri_portal *p = &kokiri_portals[i];
+        int32_t sine,cosine;
+        int dx = demo_link.x-p->x, dz = demo_link.z-p->z;
+        int dy = demo_link.y-DEMO_LINK_EYE_HEIGHT-p->y;
+        int side, depth;
+        if (forest_room != p->front && forest_room != p->back) continue;
+        kokiri_camera_sincos(p->yaw,&sine,&cosine);
+        side = (int)(((int64_t)dx*cosine-(int64_t)dz*sine)>>16);
+        depth = (int)(((int64_t)dx*sine+(int64_t)dz*cosine)>>16);
+        /* Original invisible tunnel volume; the central 100-unit band keeps
+         * tiny movements from repeatedly swapping CD banks. */
+        if (dy > -50 && dy < 200 && side > -200 && side < 200 &&
+            ((depth > 50 && depth < 100) || (depth < -50 && depth > -100)))
+            target = depth < 0 ? p->front : p->back;
+    }
+    requested_room = target;
+    if (target != forest_room) {
+        /* Do not overwrite texture RAM while VDP1 still reads last frame.
+         * Defer until draw end instead of spinning inside the game callback. */
+        if (!(JO_VDP1_EDSR & 2)) return true;
+        return room_load((unsigned int)target);
+    }
+#endif
+    return true;
 }
 
 int                 kokiri_scene_mesh_near_depth(void)
@@ -291,12 +418,11 @@ static void         submit(PDATA *pdata, unsigned int bit)
 
 void                kokiri_scene_draw(void)
 {
-    unsigned int i, j, visible = KOKIRI_POLYGON_COUNT;
+    unsigned int i, j, visible = forest_polygon_count;
     int32_t sine, cosine;
     frame_timer_begin(FRAME_PHASE_PREP);
-    /* Geometry/fog depend on the camera, not Link's animation or music.
-     * A stationary camera can reuse the prepared list without rescanning it.
-     * Include Y/pitch as well so future pitch-aware culling stays safe. */
+    /* Geometry/fog depend on the camera. Unaccepted actor-order experiments
+     * are excluded from normal builds. */
     if (forest_prepared && prepared_x == demo_camera.x &&
         prepared_y == demo_camera.y && prepared_z == demo_camera.z &&
         prepared_yaw == demo_yaw && prepared_pitch == demo_pitch) {
@@ -307,14 +433,24 @@ void                kokiri_scene_draw(void)
     forest_reused = false;
     frame_timer_begin(FRAME_PHASE_DEPTH);
     kokiri_camera_sincos(demo_yaw, &sine, &cosine);
-    for (i = 0; i < KOKIRI_VERTEX_COUNT; ++i) {
+#ifdef KOKIRI_STREAM_ROOMS
+    for (i=0;i<forest_object_count;++i) {
+        const kokiri_object *b = &kokiri_bounds[i];
+        int dx = b->minimum[0] > demo_camera.x ? b->minimum[0]-demo_camera.x :
+                 b->maximum[0] < demo_camera.x ? demo_camera.x-b->maximum[0] : 0;
+        int dz = b->minimum[2] > demo_camera.z ? b->minimum[2]-demo_camera.z :
+                 b->maximum[2] < demo_camera.z ? demo_camera.z-b->maximum[2] : 0;
+        object_visible[i] = (int64_t)dx*dx+(int64_t)dz*dz <= FOREST_FAR*FOREST_FAR;
+    }
+#endif
+    for (i = 0; i < forest_vertex_count; ++i) {
         int x = (kokiri_pdata.pntbl[i][0] >> 16) - demo_camera.x;
         int z = (kokiri_pdata.pntbl[i][2] >> 16) - demo_camera.z;
         forest_depth[i] = (short)(((int64_t)x * sine + (int64_t)z * cosine) >> 16);
     }
     frame_timer_end(FRAME_PHASE_DEPTH);
     frame_timer_begin(FRAME_PHASE_PARTITION);
-    for (i = 0; i < KOKIRI_TILE_COUNT; ++i) tile_depth[i] = 32767;
+    for (i = 0; i < forest_tile_count; ++i) tile_depth[i] = 32767;
     mesh_near_depth = 32767;
     mesh_near_far = 32767;
     mesh_near_tile = -1;
@@ -352,7 +488,11 @@ void                kokiri_scene_draw(void)
         ** transformed and submitted every frame for SGL to reject. Using the
         ** FARTHEST vertex keeps any polygon with a vertex still in front,
         ** including one straddling the camera plane. */
-        if (farthest < 0 || nearest > FOREST_FAR) {
+        if (farthest < 0 || nearest > FOREST_FAR
+#ifdef KOKIRI_STREAM_ROOMS
+            || !object_visible[kokiri_objects[i]]
+#endif
+        ) {
             do {
                 --visible;
                 if (i == visible) break;
@@ -367,7 +507,11 @@ void                kokiri_scene_draw(void)
                     if (d2 > farthest) farthest = d2;
                     if (d3 > farthest) farthest = d3;
                 }
-            } while (farthest < 0 || nearest > FOREST_FAR);
+            } while (farthest < 0 || nearest > FOREST_FAR
+#ifdef KOKIRI_STREAM_ROOMS
+                     || !object_visible[kokiri_objects[visible]]
+#endif
+            );
             if (i == visible) break;
             {
                 POLYGON polygon = kokiri_pdata.pltbl[i];
@@ -379,14 +523,37 @@ void                kokiri_scene_draw(void)
                 kokiri_pdata.pltbl[visible] = polygon;
                 kokiri_pdata.attbl[visible] = attr;
                 forest_mesh[visible] = mesh;
+#ifdef KOKIRI_STREAM_ROOMS
+                { unsigned char object = kokiri_objects[i];
+                  kokiri_objects[i] = kokiri_objects[visible]; kokiri_objects[visible] = object; }
+#endif
             }
         }
         {
             ATTR *attr = &kokiri_pdata.attbl[i];
-            unsigned int tile = attr->texno - 1;
+            unsigned int tile = attr->texno - forest_sprite_base;
+            /* SGL sorts on one depth per polygon. A big ground quad reaching
+            ** away from the eye has a CENTRE depth nearer than the actor
+            ** standing on it, so it painted over Link's legs. The converter
+            ** marked large up-facing faces SORT_MAX (bit 1 of forest_mesh);
+            ** keyed on their far corner they fall behind whatever stands on
+            ** them. A marked plane at or above the eye keeps SORT_CEN: a deck
+            ** seen from below must still be able to occlude him. Baked Y is
+            ** negated, so world height is -y. */
+            if (forest_mesh[i] & 2) {
+                int plane = -(kokiri_pdata.pntbl[
+                                  kokiri_pdata.pltbl[i].Vertices[0]][1] >> 16);
+                attr->sort = (attr->sort & ~3u) |
+                             (plane < demo_camera.y - 8 ? SORT_MAX : SORT_CEN);
+            } else
+                attr->sort = (attr->sort & ~3u) | SORT_CEN;
+#ifdef DOSEI_ACTOR_ORDER_PROBE
+            /* Only the parked command-order experiment consumes this tag. */
+            attr->gstb = (unsigned short)(i + 1);
+#endif
             if (nearest < tile_depth[tile]) tile_depth[tile] = nearest;
             attr->atrb &= ~MESHon;
-            if (forest_mesh[i] || nearest > FOREST_FAR * 7 / 8)
+            if ((forest_mesh[i] & 1) || nearest > FOREST_FAR * 7 / 8)
                 attr->atrb |= MESHon;
             /* Record the closest DISTANCE-stippled polygon, with enough to
              * identify it: vertex ids pin the exact surface where a shared
@@ -395,7 +562,7 @@ void                kokiri_scene_draw(void)
              * judgement is applied here -- authored stipple is excluded
              * because it is legitimate at any depth, and everything else is
              * left for the capture to explain. */
-            if ((attr->atrb & MESHon) && !forest_mesh[i] &&
+            if ((attr->atrb & MESHon) && !(forest_mesh[i] & 1) &&
                 nearest < mesh_near_depth) {
                 const unsigned short *v = kokiri_pdata.pltbl[i].Vertices;
                 mesh_near_depth = nearest;
@@ -404,7 +571,7 @@ void                kokiri_scene_draw(void)
                 mesh_near_polygon = (short)i;
                 mesh_near_verts[0] = v[0]; mesh_near_verts[1] = v[1];
                 mesh_near_verts[2] = v[2]; mesh_near_verts[3] = v[3];
-                mesh_near_authored = forest_mesh[i];
+                mesh_near_authored = (forest_mesh[i] & 1) != 0;
             }
             ++i;
         }
@@ -413,7 +580,7 @@ void                kokiri_scene_draw(void)
     frame_timer_begin(FRAME_PHASE_FOG);
     /* Shared tiles use the nearest referencing surface to avoid fogging a
      * nearby floor simply because the same tile occurs on a distant wall. */
-    for (i = 0; i < KOKIRI_TILE_COUNT; ++i) {
+    for (i = 0; i < forest_tile_count; ++i) {
         int amount;
         const unsigned char *rg, *blue;
         volatile unsigned short *palette =
@@ -453,11 +620,14 @@ prepared:
     kokiri_pdata.nbPolygon = visible;
     frame_timer_end(FRAME_PHASE_PREP);
     submit(&kokiri_pdata, 1u);
-    kokiri_pdata.nbPolygon = KOKIRI_POLYGON_COUNT;
+    kokiri_pdata.nbPolygon = forest_polygon_count;
 }
 
 void                kokiri_link_draw(int x, int y, int z, int yaw)
 {
+#ifdef DOSEI_ACTOR_ORDER_PROBE
+    actor_order_prepare(x, y, z, yaw);
+#endif
     /* The converter bakes the Y negation into every POINT table, so world
     ** coordinates reach this matrix as (x, -y, z) -- the same convention the
     ** camera translation in main.c already uses. The caller's yaw is binang;
@@ -472,6 +642,9 @@ void                kokiri_link_draw(int x, int y, int z, int yaw)
         submit(&link_pdata, 2u);
     }
     jo_3d_pop_matrix();
+#ifdef DOSEI_ACTOR_ORDER_PROBE
+    actor_order_queue();
+#endif
 }
 
 typedef struct { short x, y, z; } fairy_home_t;
@@ -533,6 +706,6 @@ unsigned int        kokiri_scene_submitted(void)
     return (submitted);
 }
 
-/*
-** END OF FILE
-*/
+#ifdef DOSEI_ACTOR_ORDER_PROBE
+#include "scene_actor_order.h"
+#endif

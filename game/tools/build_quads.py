@@ -51,7 +51,7 @@ def same_texture(a, b):
     if ta is None or tb is None:
         return False
     return ta == tb and all(a.get(k) == b.get(k) for k in
-                           ('lighting', 'prim', 'transparent', 'cull', 'room'))
+                           ('lighting', 'prim', 'transparent', 'cull', 'room', 'object'))
 
 
 def normal(points):
@@ -124,16 +124,21 @@ def classify(points, texture):
     return SPLIT, (ru, rv)
 
 
-def build(faces):
+def build(faces, preferred_pairs=()):
     """Group triangles into quads and classify them. Returns a list of dicts."""
     used = set()
     out = []
+    preferred = dict(preferred_pairs)
+    reserved = {i for pair in preferred_pairs for i in pair}
     for i, a in enumerate(faces):
         if i in used:
             continue
         ka = {vertex_key(v): v for v in a['vertices']}
         partner = None
-        for j in range(i + 1, min(i + ADJACENT_WINDOW, len(faces))):
+        partners = ([preferred[i]] if i in preferred else
+                    [j for j in range(i + 1, min(i + ADJACENT_WINDOW, len(faces)))
+                     if j not in reserved])
+        for j in partners:
             if j in used or not same_texture(a, faces[j]):
                 continue
             b = faces[j]

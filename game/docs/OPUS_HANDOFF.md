@@ -1,3 +1,19 @@
+# Latest: stop experiments, restore textures, Claude takes overlap fix
+
+Read [exact floor-occlusion handoff](CLAUDE_OPUS_FLOOR_OCCLUSION.md) first.
+User rejected flat shading and still sees floor over Link. Texture sampling
+restored; failed command-order prototype disabled in normal builds. Error500
+in isolated probe means conflicting ordering constraints. Overlap NOT fixed.
+
+# Current rendering directive: real N64 room data
+
+2026-09-18: User approve authored rooms, tunnel-triggered loading, separate
+object culling, and original N64 textures/UVs. Goal: lower resident/drawn budget
+and fix foreground texture stretch. Prototype not finished or player-approved.
+Read [room-streaming plan and exact checkpoint](N64_ROOM_STREAMING.md) first.
+No claim warp fixed; latest water-order change still needs visual proof.
+Control requirements below still apply unchanged.
+
 # Current directive: OoT gameplay camera and standard Saturn pad controls
 
 ## Human-approved control requirements — 2026-09-18

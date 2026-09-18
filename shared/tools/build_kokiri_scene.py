@@ -228,12 +228,15 @@ class DisplayLists:
             assert kind in (0, 2), kind
             for i in range(count):
                 base = entries + i * (8 if kind == 0 else 16)
+                first_face = len(self.faces)
                 raw = self.read(base + (0 if kind == 0 else 8), 8)
                 opaque, translucent = struct.unpack('>II', raw)
                 if opaque:
                     self.walk(opaque)
                 if translucent:
                     self.walk(translucent, True)
+                for face in self.faces[first_face:]:
+                    face['object'] = i
             return
         raise ValueError('Room has no mesh header')
 

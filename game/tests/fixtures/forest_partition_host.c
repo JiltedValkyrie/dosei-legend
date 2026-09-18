@@ -4,6 +4,10 @@
 #define KOKIRI_POLYGON_COUNT 8
 #define KOKIRI_VERTEX_COUNT 32
 #define KOKIRI_TILE_COUNT 8
+#define forest_polygon_count KOKIRI_POLYGON_COUNT
+#define forest_vertex_count KOKIRI_VERTEX_COUNT
+#define forest_tile_count KOKIRI_TILE_COUNT
+#define forest_sprite_base 1
 #define FOREST_FAR 1310
 #define FOREST_FOG_START 655
 #define FRAME_PHASE_PREP 0
@@ -11,8 +15,12 @@
 #define FRAME_PHASE_PARTITION 2
 #define FRAME_PHASE_FOG 3
 #define MESHon 1
-typedef struct { unsigned short Vertices[4]; int id; } POLYGON;
-typedef struct { unsigned short texno, atrb; int id; } ATTR;
+#define SORT_MAX 2
+#define SORT_CEN 3
+#define DEMO_LINK_EYE_HEIGHT 90
+typedef int32_t FIXED;
+typedef struct { int32_t norm[3]; unsigned short Vertices[4]; int id; } POLYGON;
+typedef struct { unsigned short texno, atrb, gstb; unsigned char sort; int id; } ATTR;
 typedef struct {
     int32_t pntbl[32][3]; POLYGON pltbl[8]; ATTR attbl[8]; unsigned nbPolygon;
 } PDATA;
@@ -22,6 +30,9 @@ static unsigned char tile_fog[8], forest_mesh[8], palette_bytes[256];
 static unsigned char *forest_palette = palette_bytes;
 static unsigned short kokiri_cluts[8][16];
 static struct { int x, y, z; } demo_camera;
+static struct { int x, y, z; } demo_link;
+static bool demo_link_active, prepared_link_active;
+static int prepared_link_x, prepared_link_y, prepared_link_z;
 static unsigned short demo_yaw;
 static int demo_pitch;
 static bool forest_prepared;
@@ -41,22 +52,55 @@ void reset_scene(void) {
     forest_fog_init();
     forest_prepared = false;
     demo_camera.x=demo_camera.y=demo_camera.z=demo_pitch=demo_yaw=0;
+    demo_link.x=0; demo_link.y=90; demo_link.z=100; demo_link_active=true;
     for (unsigned i=0; i<8; ++i) {
         kokiri_pdata.pltbl[i].id=i;
         kokiri_pdata.attbl[i].id=i;
         kokiri_pdata.attbl[i].texno=i+1;
         kokiri_pdata.attbl[i].atrb=i&1;
+        kokiri_pdata.attbl[i].sort=0x67;
+        kokiri_pdata.pltbl[i].norm[1]=-65536;
         forest_mesh[i]=i&1; tile_fog[i]=255;
-        for (unsigned j=0;j<4;++j) kokiri_pdata.pltbl[i].Vertices[j]=i*4+j;
+        for (unsigned j=0;j<4;++j) {
+            kokiri_pdata.pltbl[i].Vertices[j]=i*4+j;
+            kokiri_pdata.pntbl[i*4+j][1]=0;
+        }
     }
 }
 void set_depth(int id, int depth) {
     forest_prepared = false;
-    for (int j=0;j<4;++j) kokiri_pdata.pntbl[id*4+j][2]=depth*65536;
+    for (int j=0;j<4;++j) {
+        kokiri_pdata.pntbl[id*4+j][0]=(j==0 || j==3 ? -10 : 10)*65536;
+        kokiri_pdata.pntbl[id*4+j][2]=depth*65536;
+    }
 }
+void set_floor_footprint(int id) {
+    forest_prepared=false;
+    kokiri_pdata.pntbl[id*4][2]=90*65536;
+    kokiri_pdata.pntbl[id*4+1][2]=90*65536;
+    kokiri_pdata.pntbl[id*4+2][2]=110*65536;
+    kokiri_pdata.pntbl[id*4+3][2]=110*65536;
+}
+void set_link_x(int x) { demo_link.x=x; }
 unsigned visible_count(void) { return captured; }
 int fog_level(int id) { return tile_fog[id]; }
 void set_camera_z(int z) { demo_camera.z=z; }
+void set_link_feet(int y) { demo_link.y=y+90; }
+void set_link_active(int active) { demo_link_active=active; }
+void set_surface(int id, int y, int normal_y) {
+    forest_prepared=false;
+    kokiri_pdata.pltbl[id].norm[1]=normal_y;
+    for (int j=0;j<4;++j) kokiri_pdata.pntbl[id*4+j][1]=-y*65536;
+}
+int sort_for_id(int id) {
+    for (int i=0;i<8;++i) if (kokiri_pdata.pltbl[i].id==id)
+        return kokiri_pdata.attbl[i].sort;
+    return -1;
+}
+void set_corner_height(int vertex, int y) {
+    forest_prepared=false;
+    kokiri_pdata.pntbl[vertex][1]=-y*65536;
+}
 int polygon_id(int index) { return kokiri_pdata.pltbl[index].id; }
 int paired(int index) {
     int id=kokiri_pdata.pltbl[index].id;

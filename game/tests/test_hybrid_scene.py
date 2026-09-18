@@ -24,6 +24,94 @@ def face(points, **kwargs):
 
 
 class HybridTests(unittest.TestCase):
+    def floor_group(self, transparent=False):
+        points = [(0,0,0,0,0,255,255,255,255),
+                  (32,0,0,32,0,255,255,255,255),
+                  (0,0,32,0,32,255,255,255,255)]
+        tri = face(points, lighting=False, transparent=transparent,
+                   prim=(155,140,52,179),
+                   texture=texture(colors=[(255,255,255,255)]*256))
+        return dict(points=points, tri=tri, texture=tri['texture'], flat_shaded=True)
+
+    def test_normal_floor_and_water_keep_texture_pattern(self):
+        for transparent in (False, True):
+            group = self.floor_group(transparent)
+            del group['flat_shaded']
+            group['texture']['colors'] = [(x*16,255-x*16,64,255)
+                                          for y in range(16) for x in range(16)]
+            self.assertFalse(hybrid.flat_surface(group))
+            self.assertEqual(hybrid.flat_tile_size(group,16,16), (16,16))
+            clut, pixels = hybrid.render_tile(group,16,16)
+            indices = [i for byte in pixels for i in (byte >> 4, byte & 15)]
+            self.assertGreater(len({clut[i] for i in indices if i}), 1)
+
+    def test_floor_flat_colour_keeps_primitive_tint(self):
+        group = self.floor_group()
+        self.assertTrue(hybrid.flat_surface(group))
+        self.assertEqual(hybrid.flat_colour(group), (155,140,52,255))
+        clut, pixels = hybrid.render_tile(group,8,1)
+        self.assertEqual(len(set(pixels)),1)
+        self.assertNotEqual(pixels[0],0)
+
+    def test_water_has_no_uv_pattern_and_keeps_mesh_flag(self):
+        group = self.floor_group(transparent=True)
+        group['texture']['colors'] = [(0,0,200,255),(0,100,100,255)]*128
+        before = hybrid.render_tile(group,16,16)
+        group['points'] = [p[:3]+(999,-777)+p[5:] for p in group['points']]
+        self.assertEqual(hybrid.render_tile(group,16,16),before)
+        self.assertEqual(len(set(before[1])),1)
+        self.assertTrue(group['tri']['transparent'])
+
+    def test_flat_floor_preserves_cutout_coverage_in_baked_and_shared_tiles(self):
+        group = self.floor_group(transparent=True)
+        group['texture']['colors'] = [(240,20,10,0), (20,240,10,63),
+                                      (10,20,240,64), (200,100,30,255)] * 64
+        # The unflattened wall uses the same UV interpolation and sampler.
+        wall = dict(group, points=[(p[0],p[2],0)+p[3:] for p in group['points']])
+        unpack = lambda data: [i for byte in data for i in (byte >> 4, byte & 15)]
+        for shared in (False, True):
+            with self.subTest(shared=shared):
+                clut, pixels = hybrid.render_tile(group,16,16,shared)
+                _, reference = hybrid.render_tile(wall,16,16,shared)
+                indices, expected = unpack(pixels), unpack(reference)
+                self.assertEqual([i != 0 for i in indices], [i != 0 for i in expected])
+                self.assertIn(0, indices)
+                self.assertTrue(any(indices))
+                self.assertEqual(len({clut[i] for i in indices if i}), 1)
+                self.assertTrue(group['tri']['transparent'])
+
+    def test_only_opaque_flat_tiles_collapse_to_one_row(self):
+        group = self.floor_group(transparent=True)
+        self.assertEqual(hybrid.flat_tile_size(group,64,64), (8,1))
+        group['texture']['colors'][0] = (255,255,255,63)
+        self.assertEqual(hybrid.flat_tile_size(group,64,64), (64,64))
+        group['texture']['colors'][0] = (255,255,255,64)
+        self.assertEqual(hybrid.flat_tile_size(group,64,64), (8,1))
+        group['points'] = [(p[0],p[2],0)+p[3:] for p in group['points']]
+        self.assertEqual(hybrid.flat_tile_size(group,64,64), (64,64))
+
+    def test_cutout_already_one_row_is_not_mistaken_for_opaque(self):
+        group = self.floor_group(transparent=True)
+        group['texture']['colors'] = [(255,255,255,0)] * 8 + [(255,255,255,255)] * 8
+        group['texture']['height'] = 1
+        for shared in (False, True):
+            with self.subTest(shared=shared):
+                _, pixels = hybrid.render_tile(group,8,1,shared)
+                indices = [i for b in pixels for i in (b >> 4, b & 15)]
+                self.assertIn(0, indices)
+                self.assertTrue(any(indices))
+
+    def test_fully_transparent_flat_floor_stays_empty(self):
+        group = self.floor_group(transparent=True)
+        group['texture']['colors'] = [(255,255,255,0)] * 256
+        self.assertEqual(hybrid.flat_tile_size(group,16,16), (16,16))
+        self.assertEqual(hybrid.render_tile(group,16,16)[1], bytes(128))
+
+    def test_wall_stays_textured(self):
+        group = self.floor_group()
+        group['points'] = [(p[0],p[2],0)+p[3:] for p in group['points']]
+        self.assertFalse(hybrid.flat_surface(group))
+
     def setUp(self):
         self.points = [point(0,0,0,0), point(32,0,32,0),
                        point(32,16,32,16), point(0,16,0,16)]
@@ -98,6 +186,13 @@ class HybridTests(unittest.TestCase):
                 self.assertAlmostEqual(p[0],p[3])
                 self.assertAlmostEqual(p[1],p[4])
             self.assertEqual(part['source'],[0,1])
+
+    def test_dense_ground_subdivision_limits_affine_span(self):
+        group = q.build(self.faces)[0]
+        group['kind'] = q.BAKE
+        parts = hybrid.split_ground(group, 8)
+        self.assertEqual(len(parts), 64)
+        self.assertLessEqual(max(part['size'] for part in parts), q.span(self.points)/8)
 
     def test_flat_link_container_uses_actual_small_tile_dimensions(self):
         import tempfile

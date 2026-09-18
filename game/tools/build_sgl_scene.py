@@ -203,6 +203,18 @@ def emit(head, verts, faces, tiles, out_dir, name='kokiri'):
     # also sets end_code_disable unconditionally -> ECdis on every face. The
     # baseline additionally turns mesh on for distance fade, which is a runtime
     # depth test this fixed-view viewer does not implement.
+    # Sort rule: SGL keeps ONE depth key per polygon, so a large floor quad
+    # reaching away from the camera gets a centre depth NEARER than the actor
+    # standing in the middle of it, and paints over his legs. Marking big
+    # up-facing ground faces SORT_MAX keys them on their far corner instead,
+    # which puts them behind everything standing on them. Only the mark is
+    # made here; kokiri_sgl.c restores SORT_CEN for any marked plane that is
+    # not below the eye, because a deck above the camera must still occlude.
+    # Small horizontal faces keep SORT_CEN: their centre is already close to
+    # their true depth, and leaving them alone limits how many floor/floor
+    # pairs this rule can reorder against each other.
+    FLOOR_SORT_SPAN = 64
+    floor_sorted = 0
     lines.append('static ATTR @n@_attributes[@N@_POLYGON_COUNT] = {')
     for face in faces:
         # Animated Link's POINTs rotate with each limb but these normals are
@@ -213,10 +225,23 @@ def emit(head, verts, faces, tiles, out_dir, name='kokiri'):
         atrb = 'CL16Look | No_Gouraud | ECdis'
         if face['mesh']:
             atrb += ' | MESHon'
-        lines.append('    ATTRIBUTE(%s, SORT_CEN | UsePalette | UseNearClip, %d, '
+        sort = 'SORT_CEN'
+        if name != 'link':
+            corners = [baked[i] for i in face['idx']]
+            extent = max(max(c[k] for c in corners) - min(c[k] for c in corners)
+                         for k in (0, 2))
+            # Baked Y is negated, so an up-facing world normal reads negative.
+            if face_normal(baked, face['idx'])[1] <= -int(.85 * 65536) \
+                    and extent > FLOOR_SORT_SPAN:
+                sort = 'SORT_MAX'
+                floor_sorted += 1
+        lines.append('    ATTRIBUTE(%s, %s | UsePalette | UseNearClip, %d, '
                      'No_Palet, No_Gouraud, %s, sprNoflip, No_Option),'
-                     % (plane, tiles[face['tex_off']]['index'], atrb))
+                     % (plane, sort, tiles[face['tex_off']]['index'], atrb))
     lines += ['};', '']
+    if name != 'link':
+        print('  floors  : %d of %d faces keyed SORT_MAX (span > %d)'
+              % (floor_sorted, len(faces), FLOOR_SORT_SPAN))
 
     lines += ['PDATA @n@_pdata = {',
               '    @n@_points, @N@_VERTEX_COUNT,',
@@ -304,7 +329,14 @@ def main():
     ap.add_argument('--oot', type=pathlib.Path,
                     default=pathlib.Path('D:/Workspace-Claude/game-decomps/n64/oot'))
     ap.add_argument('--rom-dir', type=pathlib.Path)
+    ap.add_argument('--quad-obj', type=pathlib.Path,
+                    help='workshop OBJ topology; retain original N64 textures and collision')
+    ap.add_argument('--stream-rooms', action='store_true', help='separate authored room banks')
     args = ap.parse_args()
+    if args.quad_obj and args.texture_path != 'hybrid':
+        ap.error('--quad-obj requires --texture-path hybrid')
+    if args.stream_rooms and args.texture_path != 'hybrid':
+        ap.error('--stream-rooms requires --texture-path hybrid')
     if args.texture_path == 'legacy':
         (args.out / 'texture_manifest.json').unlink(missing_ok=True)
 
@@ -331,8 +363,13 @@ def main():
                 at = collect_tiles(ad, ah, af)
                 actor = dict(tiles=[(t['width'],t['height']) for t in at.values()],
                              polygons=len(af), vertices=len(av))
+            if args.stream_rooms:
+                from build_room_scene import emit_rooms
+                emit_rooms(args,head,actor,face_normal)
+                continue
             head, verts, faces, tiles = convert(args.oot, head, actor, args.out,
-                                               args.texture_path == 'patches', rom_dir=args.rom_dir)
+                                               args.texture_path == 'patches', rom_dir=args.rom_dir,
+                                               quad_obj=args.quad_obj, source_path=args.scene)
         if args.diagnostic_tiles and name == 'kokiri':
             replace_with_checker(tiles)
         blob_bytes = emit(head, verts, faces, tiles, args.out, name)

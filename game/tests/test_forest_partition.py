@@ -47,6 +47,67 @@ class ForestPartition(unittest.TestCase):
             self.assertEqual(sorted(ids), list(range(8)))
             self.assertTrue(all(self.lib.paired(i) for i in range(8)))
 
+    def test_floor_walls_and_overhead_keep_original_world_sort(self):
+        self.lib.reset_scene()
+        for i in range(8):
+            self.lib.set_depth(i, 100)
+            self.lib.set_floor_footprint(i)
+        self.lib.set_surface(0, 0, -65536)  # supporting floor
+        self.lib.set_surface(1, -50, -60000)  # slope below feet
+        self.lib.set_surface(2, 0, 0)  # wall
+        self.lib.set_surface(3, 50, -65536)  # bridge overhead
+        self.lib.kokiri_scene_draw()
+        self.assertEqual(self.lib.sort_for_id(0), 0x67)
+        self.assertEqual(self.lib.sort_for_id(1), 0x67)
+        self.assertEqual(self.lib.sort_for_id(2), 0x67)
+        self.assertEqual(self.lib.sort_for_id(3), 0x67)
+
+    def test_link_height_does_not_reorder_world_faces(self):
+        self.lib.reset_scene()
+        for i in range(8):
+            self.lib.set_depth(i, 100)
+            self.lib.set_floor_footprint(i)
+        self.lib.kokiri_scene_draw()
+        self.assertEqual(self.lib.sort_for_id(0), 0x67)
+        self.lib.set_link_feet(-10)
+        self.lib.kokiri_scene_draw()
+        self.assertTrue(self.lib.scene_reused())
+        self.assertEqual(self.lib.sort_for_id(0), 0x67)
+        self.lib.set_link_feet(40)
+        self.lib.kokiri_scene_draw()
+        self.assertEqual(self.lib.sort_for_id(0), 0x67)
+        self.lib.set_link_active(0)
+        self.lib.kokiri_scene_draw()
+        self.assertTrue(self.lib.scene_reused())
+        self.assertEqual(self.lib.sort_for_id(0), 0x67)
+
+    def test_floor_crossing_above_feet_keeps_centre_sort(self):
+        self.lib.reset_scene()
+        for i in range(8):
+            self.lib.set_depth(i, 100)
+            self.lib.set_floor_footprint(i)
+        self.lib.set_corner_height(2, 1)
+        self.lib.kokiri_scene_draw()
+        self.assertEqual(self.lib.sort_for_id(0), 0x67)
+        self.lib.set_corner_height(2, 0)
+        self.lib.kokiri_scene_draw()
+        self.assertEqual(self.lib.sort_for_id(0), 0x67)
+
+    def test_ground_keeps_centre_sort_as_link_crosses_footprint_edge(self):
+        self.lib.reset_scene()
+        for i in range(8):
+            self.lib.set_depth(i, 100)
+            self.lib.set_floor_footprint(i)
+        self.lib.kokiri_scene_draw()
+        self.assertEqual(self.lib.sort_for_id(0), 0x67)
+        self.lib.set_link_x(11)
+        self.lib.kokiri_scene_draw()
+        self.assertTrue(self.lib.scene_reused())
+        self.assertEqual(self.lib.sort_for_id(0), 0x67)
+        self.lib.set_link_x(10)
+        self.lib.kokiri_scene_draw()
+        self.assertEqual(self.lib.sort_for_id(0), 0x67)
+
     def test_unchanged_view_never_reorders_records(self):
         self.lib.reset_scene()
         for i in range(8):
