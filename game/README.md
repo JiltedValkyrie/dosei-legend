@@ -43,11 +43,9 @@ meshes live in `build/generated/`. Shared title UI/audio and reusable libraries
 live in `../shared/`; game-specific bank selection stays in `src/music_banks.c`.
 
 See the [current controls table](../README.md#controls-current-build) for the
-standard digital Saturn pad. Y jumps; B toggles walk/run; D-pad moves and
-air-steers; hold C for the four N64 C buttons; hold Z for the look camera;
-L targets/recenters; Start leaves title, then opens/closes inventory. A talks
-near a fairy or equips selected inventory gear; B closes a menu. Pickups
-auto-equip. X swings the collected sword; hold R guards with collected shield.
+standard digital Saturn pad; planned controls are marked there and the mapping
+itself lives in `src/player_input.c`.
+
 Slash/recovery and guard use real OoT pose clips. Equipped sword/shield use
 original hand display lists, with an empty sheath and no duplicate back gear.
 Action effects and four child Link attack voices play alongside music. Effects
@@ -56,8 +54,6 @@ Cuttable grass now uses original OoT grass artwork on ground-level sprites.
 Successful Y jump plays child Link's jump voice; existing landing rolls have
 voice/body sounds. Footsteps follow moving walk/run cycles, using one forest
 footstep material. Grass disappears when cut by the active sword swing.
-Planned controls are explicitly
-marked there. The mapping itself lives in `src/player_input.c`.
 Existing airborne clip is reused; no dedicated takeoff clip yet.
 Current Link/follow behavior is in `src/demo.c`.
 
