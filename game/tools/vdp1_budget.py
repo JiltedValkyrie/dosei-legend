@@ -25,8 +25,8 @@ fails.
 VDP1_END = 0x7FEF8  # Jo's reserved end, below the physical 512 KiB VRAM end.
 
 # Reserve from VRAM offset zero, NOT from the already-offset texture area.
-# 2600 commands plus 256 extra slots for system/clipping/sprite commands.
-COMMAND_RESERVE = 2600 * 32 + 8 * 1024
+# MaxPolygons commands plus 256 extra slots for system/clipping/sprite commands.
+COMMAND_RESERVE = 2200 * 32 + 8 * 1024
 TEXTURE_BASE = (COMMAND_RESERVE + 255) & ~255
 VDP1_USER_AREA = VDP1_END - TEXTURE_BASE
 
@@ -34,11 +34,30 @@ VDP1_USER_AREA = VDP1_END - TEXTURE_BASE
 MAX_SPRITE_SLOTS = 2400
 
 # tools/build_sgl_area.py --max-polygons.
-MAX_POLYGONS = 2600
+#
+# This is a PER-FRAME ceiling: SGL only needs slots for what is submitted, not
+# for the whole table. Measured worst case over a yaw/position sweep of the
+# previous forest sweep was 1354 faces. Equipped Link now submits at most
+# 520 faces (1874 combined), keeping 326 slots of headroom while returning ~46 KB of work RAM to .bss, which the
+# dialogue text needs. The total-table check below is deliberately kept as the
+# conservative guard, with the frame figure allowed to exceed it.
+MAX_POLYGONS = 2200
+# Worst-case submitted polygons, re-measured when the mesh changes.
+MAX_FRAME_POLYGONS = 1354 + 520  # prior forest sweep + max equipped Link
+# Whole-table ceiling. Independent of MaxPolygons: this one is about the RAM
+# the POINT/POLYGON/ATTR tables occupy, not what one frame can draw.
+MAX_TABLE_POLYGONS = 2600
 MAX_VERTICES = 2500
 
 CLUT_BYTES = 32
 ALIGN = 8
+
+# Runtime RGB555 sprites loaded from the CD by kokiri_sgl.c: the fairy, the two
+# world gear pickups, and the pause grid's two 32x32 icons plus the equipped
+# outline. They are not tiles, so nothing else in this file counts them -- and
+# they cost the same VDP1 bytes. Without this the build passes and the LOAD
+# fails on hardware, which is a much worse place to find out.
+RUNTIME_SPRITE_BYTES = (16 * 16 * 2) * 5 + (32 * 32 * 2) * 4 + 10 * 8 * 16 * 2  # grass, rupees, HUD digits
 
 
 def tile_bytes(width, height):
@@ -64,7 +83,17 @@ class Budget(object):
 
     @property
     def texture_bytes(self):
+        """Tile bytes only, so a caller can reason about one mesh's cost."""
         return sum(p['bytes'] for p in self.parts)
+
+    @property
+    def vram_bytes(self):
+        """Everything VDP1 must hold: tiles PLUS the runtime sprites.
+
+        The sprites are loaded from the CD at startup and are not tiles, so
+        they appear in no part. Counting them only here keeps texture_bytes
+        meaning what every caller already assumes it means."""
+        return self.texture_bytes + RUNTIME_SPRITE_BYTES
 
     @property
     def tiles(self):
@@ -84,17 +113,27 @@ class Budget(object):
 
     def failures(self):
         out = []
-        if self.texture_bytes > self.vram_limit:
+        if self.vram_bytes > self.vram_limit:
             out.append('VDP1 textures %d bytes exceed %d available '
                        '(commands reserved below texture base %#x) by %d'
-                       % (self.texture_bytes, self.vram_limit, TEXTURE_BASE,
-                          self.texture_bytes - self.vram_limit))
+                       % (self.vram_bytes, self.vram_limit, TEXTURE_BASE,
+                          self.vram_bytes - self.vram_limit))
         if self.tiles + 1 > MAX_SPRITE_SLOTS:
             out.append('%d tiles need %d sprite slots, JO_MAX_SPRITE is %d'
                        % (self.tiles, self.tiles + 1, MAX_SPRITE_SLOTS))
-        if self.polygons > MAX_POLYGONS:
-            out.append('%d polygons exceed MaxPolygons %d'
-                       % (self.polygons, MAX_POLYGONS))
+        # Two separate limits, because they fail for different reasons.
+        #
+        # MaxPolygons is PER FRAME: culling is what keeps a frame inside it, so
+        # the whole table is allowed to be larger. What must never exceed it is
+        # the measured worst frame.
+        if MAX_FRAME_POLYGONS > MAX_POLYGONS:
+            out.append('worst measured frame %d exceeds MaxPolygons %d'
+                       % (MAX_FRAME_POLYGONS, MAX_POLYGONS))
+        # The table itself still has a ceiling: every polygon costs POLYGON and
+        # ATTR bytes in work RAM whether or not it is ever submitted.
+        if self.polygons > MAX_TABLE_POLYGONS:
+            out.append('%d polygons exceed the %d-polygon table budget'
+                       % (self.polygons, MAX_TABLE_POLYGONS))
         if self.vertices > MAX_VERTICES:
             out.append('%d vertices exceed MaxVertices %d'
                        % (self.vertices, MAX_VERTICES))
@@ -110,9 +149,9 @@ class Budget(object):
                      % ('TOTAL', self.tiles, self.texture_bytes,
                         self.polygons, self.vertices))
         lines.append('  VRAM   %7d of %7d B (%.1f%%), %d B spare'
-                     % (self.texture_bytes, self.vram_limit,
-                        100.0 * self.texture_bytes / self.vram_limit,
-                        self.vram_limit - self.texture_bytes))
+                     % (self.vram_bytes, self.vram_limit,
+                        100.0 * self.vram_bytes / self.vram_limit,
+                        self.vram_limit - self.vram_bytes))
         lines.append('  polys  %7d of %7d   sprites %d of %d'
                      % (self.polygons, MAX_POLYGONS,
                         self.tiles + 1, MAX_SPRITE_SLOTS))

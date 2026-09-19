@@ -13,3 +13,10 @@ uint16_t kokiri_camera_facing(int32_t dx, int32_t dz)
 {
     return (uint16_t)slAtan(toFIXED(dz), toFIXED(dx));
 }
+
+/* gameplay.c is platform free, so the Saturn build supplies its heading helper
+** here. The host tests bind the same name to libm. */
+uint16_t gameplay_facing(int32_t dx, int32_t dz)
+{
+    return kokiri_camera_facing(dx, dz);
+}

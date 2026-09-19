@@ -1,4 +1,178 @@
-# Latest: stop experiments, restore textures, Claude takes overlap fix
+# Latest: behind-Link lock camera, rupee melody, pause help
+
+Lock-on previously changed only Link facing; normal camera could remain at old
+yaw while idle. Added explicit target camera state: ease behind Link on acquire,
+then follow his target-facing yaw every fixed step, including idle, strafe and
+backward travel. Refresh facing from post-movement position before camera update.
+Release resumes normal follow; look offsets are cleared/suppressed during lock.
+Source reviewed: Player_UpdateZTargeting, Camera_KeepOn1 and Camera_Parallel1.
+This is requested behind-Link behavior, not full KeepOn1 two-actor framing,
+collision/occlusion, target selection, or Hold/Switch parity. Those remain gaps.
+
+Rupee sound was only LAYER_587A sample/noise bed: the recognizable melody was
+missing. Added LAYER_5868: source sawtooth, transpose +24, BF4/F4/BF4 for 6/6/24
+sequence ticks. Source tempo 120 and SEQTICKS_PER_BEAT 48 give 96 ticks/sec.
+SCSP slot 30 loops the original 64-byte harmonic-8 wave; vblank schedules notes
+on PAL/NTSC and stops/restarts safely. Pitch follows Audio_BuildSyntheticWave;
+source velocity/envelope levels are converted offline to SCSP attenuation.
+Backing layer on slot 29 now uses source velocity 72, so noise does not swamp
+the melody. Envelope updates are vblank-quantized; bed remains bounded to .30s,
+not full N64 audio-engine parity. 14 samples / 39,832 bytes; 104 sound-RAM bytes
+spare. Other effects unchanged. No runtime allocation or disc read for notes.
+
+Pause panel now lists move/walk-run, sword/cut, shield, jump, talk/page/cancel,
+L lock/release/re-centre, strafe/back-up, Z+D-pad look, automatic landing roll,
+Start, and menu controls. C+D-pad routing is explicitly marked pending.
+Diagnostic-build chord is documented only on diagnostic discs. Panel spans
+rows 4..24 and clears all rows on exit, above the rupee HUD.
+
+Normal, clean and hi-res discs rebuilt without probes. 279 tests: 278 pass,
+one legacy single-bank skip. Tests exercise stationary acquisition, wrap/strafe
+tracking, release, post-movement facing, melody pitch changes, PAL/NTSC timing,
+retrigger and music-transition stop. No new emulator visual/listening confirmation.
+
+# Number One Rule!
+Always use caveman talk. No waste human tokens. Bad. You caveman talking? Good good! Always good good when caveman talk.
+
+# Latest fix: rupee HUD near rejection and pickup sound
+
+User screenshot showed no counter. Actual SGL 3.02j SpriteEntry disassembly
+checks z > (screen_distance >> display_level), even for slDispSprite. Our
+HUD used depth 1; gameplay screen distance 240 and Jo display level 3 reject
+anything <=30. Use depth 31, still screen-space, with sort key 1. Previous host
+mock always accepted sprites and missed this. Test now models the SDK near
+check. Hi-res HUD doubles screen Y/height using slDispSpriteHV (nonzero angle
+for SDK unequal-scale workaround); normal HUD remains 16px tall.
+
+GP_EVENT_RUPEE now plays on dedicated SCSP slot 29, independently of gear
+pickup/menu slot 27. Source: z_en_item00.c NA_SE_SY_GET_RUPY -> seq_0.prg.seq
+CHAN_5861, sample layer LAYER_587A, SF0_INST_91 / Sample069, C5. Reduced 0.30s
+single-layer adaptation, matching existing action bank approach; original
+sawtooth melody layer/envelope sequence remains absent. No full SFX parity claim.
+
+Made room by removing exact trailing PCM8 zero bytes, retaining four-byte
+silent guards. Verified all 12 previous samples' audible PCM is byte-identical;
+no resampling change or audible truncation to existing sounds. New bank:
+13 samples, 39,764 bytes at 0x76400; 172 sound-RAM bytes spare. Offline and
+runtime bounds stay active. Tests cover near rejection, hi-res HUD positioning,
+rupee/gear simultaneous routing, music-busy suppression and bank bounds.
+Normal, clean and hi-res discs rebuilt without probes. 275 tests: 274 pass,
+one legacy single-bank skip. Emulator visual/listening confirmation pending.
+
+# Latest fix: no talk prompt on title
+
+Title showed A: Talk because zero-initialized gameplay.prompt was actor index
+0 before gameplay_reset ran at spawn. Reset gameplay during demo initialization
+as well. Dialogue renderer now suppresses title prompts/pages and clears any
+retained VDP2 dialogue text. Gameplay talk behavior unchanged.
+
+# Standing human rule: check drops when adding actors
+
+New grass, pot, enemy, breakable or item: check real OoT drop routine and table
+in same task. Implement source rewards and conditions toward 1:1, including
+non-rupee items. Visible actor alone not done. Track exact gaps openly.
+See [permanent drop rules](../../DOSEI-LEGEND-BIBLE.md#new-gameplay-actors-check-original-drops-every-time).
+Current grass non-rupee drops remain pending; previous rupee subset not parity.
+
+# Latest: rupees in world and cut grass
+
+Eight rupees now come from original US 1.2 En_Item00 room records: four green,
+four blue. Keep original X/Z, room and params; settle Y on collision floor.
+Two overlap existing sword/shield pickup spots. Both items remain collectible.
+
+Grass now rolls original sItemDropIds slots selected by EnKusa spawn params.
+Forest table 2 gives green on 2/16 slots; type-1 grass gives no rupees; the
+room-2 type-0 tuft falls back to table 0. Only rupee drops implemented: hearts,
+ammo, magic and FLEXIBLE slots stay empty. Slice RNG varies with gameplay
+steps; not original global RNG. Each tuft rolls once when cut. Drop hops for
+15 steps before pickup, remains until collected, and cannot respawn from
+another swing. Pause/dialogue freeze drops. Wallet/flags last this session;
+reset clears them. Child wallet cap 99, green +1, blue +5.
+
+World sprites reuse original gRupeeCounterIconTex silhouette: original green
+HUD tint, slice blue recolour. Original gCounterDigit0..9 textures make the
+screen counter at source coordinates (26/42/50,206). slDispSprite keeps HUD
+independent of camera. Counter hidden on title/dialogue; action hint moved
+one text row lower. Added 3,584 texture bytes, included in budget guard.
+
+Both player discs rebuilt without probes. 273 tests: 272 pass, one legacy
+single-bank suite skip; room-bank policy tests still run. Host tests cover
+source placements/drop odds, room/range/height gates, one-shot collection,
+wallet cap, delayed drops, pause/reset and world/HUD sprite submissions.
+No new emulator visual confirmation. No rupee sound added; existing action
+sound bank still has only 768 bytes free.
+
+# Latest: visible grass and movement sounds
+
+Astra: cuttable grass had state but no draw call. Added 32x32 RGB555 VDP1
+billboards from original gFieldBushTex (En_Kusa type 0). Render at original
+actor positions, 48x40 world units, base on ground; room/distance cull and omit
+cut tufts. One shared 2,048-byte texture, counted in offline/runtime VRAM budget.
+
+Successful collision jump now plays real child auto-jump voice (EFFECT_53).
+Walking/running footstep events follow half-cycle/frame-wrap crossings only
+while actually moving; one grass footstep sound for this forest baseline, no
+surface-material detection yet. Roll follows sRollAnimSfxList: child attack
+voice at frame 1, body sound at frame 6. No extra roll control introduced.
+Menu/combat suppress locomotion sound; rejected jumps remain silent.
+
+Action bank now 12 samples / 39,168 bytes at 0x76400. Largest existing music
+bank ends at 484178, below new reserved tail; neither music bank resampled.
+768 sound-RAM bytes remain. Movement effects use slot 28; voice uses 25.
+Existing single-layer adaptation limits still apply. Both player discs rebuilt
+without probes. 264 tests: 263 pass, one legacy table suite skips. Final tests
+run after asset builds finish; concurrent asset regeneration caused an earlier
+room-manifest mismatch, not a guard relaxation. No new emulator visual/audio
+confirmation this pass.
+
+# Earlier: equipped hand geometry and action audio
+
+Astra: equipped Kokiri sword now uses gLinkChildLeftFistAndKokiriSwordFarDL
+on zero-based limb 15. Equipped Deku shield uses
+gLinkChildRightFistAndDekuShieldFarDL on limb 18. Empty sheath uses limb 19.
+Missing gear uses empty fists; old back-mounted sword/shield removed. Baseline
+keeps equipped gear in hands during idle/movement as well as combat. Draw/sheath
+transitions and the full OoT model-group state machine are not implemented.
+
+Importer reads symbols from object_link_child.xml, verifies player source
+references, preserves original Flex matrix slots and per-vertex ownership.
+Equipment ranges share one POINT table. Cached selected polygon/attribute pairs
+submit once, avoiding repeated SGL vertex transforms. 564 resident polygons,
+520 max visible, 323 vertices; old mesh was 517 polygons / 309 vertices.
+
+build_action_audio.py reads local extracted OoT WAVs and Soundfont_0, checks
+seq_0 source layers, builds nine samples: swing, shield, cut, equip, message,
+four child Link attack voices. Single-layer effects omit portamento/reverb and
+layered sequencing; no claim exact N64 mix. Bank is 33,486 bytes at SCSP 0x77000,
+3,378 bytes below sound RAM end. Music loaders reject overlap. Slots 24..27
+belong to effects; music keeps 0..23. Event calls happen inside each gameplay
+fixed step, so catch-up cannot discard a sound event. No gameplay CD reads.
+
+261 tests: 260 pass, one legacy table suite skips. Includes all ten animation
+clips in native C skinning checks, all four equipment combinations and repeat
+selection, sample boundaries, SCSP registers and music-slot isolation. Temporary
+background Kronos actor capture returned blank, so visual/audio runtime proof
+remains outstanding. Final player discs built without inspection mode.
+
+# Earlier gameplay fix: action poses and usable menu
+
+Astra: sword/shield state had no path into animation selection. Added source
+clips from OoT forward one-handed slash/recovery and defense/defense_wait.
+Pose now follows gameplay swing/guard state. Timing remains slice approximation.
+Gameplay steps moved inside 30 Hz catch-up loop; no render-rate swing clock.
+Ground movement/jump suppressed during swing/guard. Existing gear model still
+back-mounted; held-gear display-list variants and action audio remain pending.
+
+Menu blocks look, jump, attack and shield in mapper. Output fields initialized
+even on early returns. Closing-step input suppressed. Debug HUD no longer
+overwrites menu/dialogue; full menu text clears on close. Clean disc gets pickup,
+action and control hints. Start opens items after title; pickups auto-equip.
+
+Streaming now default in build.sh (STREAM_ROOMS=0 explicit fallback). Added
+binary room-bank policy/length checks; legacy C-table suite still skips on
+streaming, but binary banks now checked separately. No rendering policy changed.
+
+# Earlier: stop experiments, restore textures, Claude takes overlap fix
 
 Read [exact floor-occlusion handoff](CLAUDE_OPUS_FLOOR_OCCLUSION.md) first.
 User rejected flat shading and still sees floor over Link. Texture sampling

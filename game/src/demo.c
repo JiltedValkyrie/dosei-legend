@@ -5,10 +5,13 @@
 #include "texture_probe.h"
 #include "title_paths.h"
 #include "link_anim_state.h"
+#include "action_audio.h"
 #include "oot_follow.h"
 #include "frame_timer.h"
 #include "input_edge.h"
 #include "player_input.h"
+#include "gameplay.h"
+#include "kokiri_sgl.h"
 
 camera_position_t demo_camera;
 uint16_t demo_yaw;
@@ -52,6 +55,14 @@ static int last_blink = -1;
 bool demo_diagnostics_toggled;
 static input_edge_t start_edge;
 static bool jump_pending;
+/* Action intents latched from the sampled input, consumed once per fixed step
+ * exactly like jump_pending. A short X tap must survive a slow rendered frame. */
+static bool attack_pending;
+static bool interact_pending;
+static bool cancel_pending;
+static bool pause_pending;
+static int8_t menu_step;
+static bool shield_held;
 /* Pending actions whose gameplay systems do not exist yet. Counted rather than
  * dropped so the HUD/tests can show the input arrived, and deliberately not
  * wired to any substitute behavior. */
@@ -145,6 +156,8 @@ bool demo_init(void)
     jo_img strip;
     jo_color *sky;
     unsigned int sky_lines, sky_row;
+    /* Zero-filled BSS gives prompt/target index 0, not the no-actor sentinel. */
+    gameplay_reset();
     if (!collision || length <= 0 || length % sizeof(*collision)) return false;
     kokiri_collision_init(collision, length / sizeof(*collision));
     /* Bucket the 1692 collision triangles by XZ so walking does not rescan all
@@ -221,11 +234,14 @@ void demo_update(void)
     /* Walk/run is a persistent mode, so it is pushed even on a frame with no
      * movement: the next step must already run at the selected speed. */
     kokiri_camera_set_walk(input.move_mode == PLAYER_MOVE_WALK);
-    /* PENDING SYSTEMS. Interaction and combat do not exist yet, so A and X are
-     * recorded and nothing else: substituting some other action here would be
-     * worse than leaving them visibly unimplemented. */
+    /* Keep diagnostics, and latch actions until the next fixed step. */
     if (input.interact_pending) ++demo_interact_requests;
     if (input.attack_pending) ++demo_attack_requests;
+    attack_pending = attack_pending || input.attack_pending;
+    interact_pending = interact_pending || input.interact_pending;
+    cancel_pending = cancel_pending || input.cancel_pending;
+    if (input.menu_step) menu_step = input.menu_step;
+    shield_held = input.shield_held;
     /* PENDING SYSTEM. There is no item/inventory interface for the C buttons to
      * drive, so the routed direction is recorded for the HUD and tests. The
      * routing, consumption and edges are real; only the target is missing. */
@@ -256,13 +272,17 @@ void demo_update(void)
 #endif
         }
 #endif
-        /* Ignore Start while a score switch is running: music_fade_to() would
-         * refuse it anyway, and toggling the title regardless would leave the
-         * artwork and the music disagreeing about which state we are in.
+        /* Start leaves the title exactly once. After that it belongs to the
+         * pause inventory and must never walk back to the title during
+         * ordinary play, so the press is forwarded to gameplay instead.
          *
-         * PENDING SYSTEM: there is no pause menu yet, so Start still toggles
-         * the title. Once pause exists it must stop returning to the title
-         * during ordinary gameplay. */
+         * Ignore it while a score switch is running: music_fade_to() would
+         * refuse it anyway, and toggling regardless would leave the artwork
+         * and the music disagreeing about which state we are in. */
+        if (start_pressed && !title_visible) {
+            pause_pending = true;
+            start_pressed = false;
+        }
         if (start_pressed && !music_busy()) {
             title_visible = !title_visible;
             /* Starting the game puts Link in the world. He spawns from the
@@ -291,6 +311,7 @@ void demo_update(void)
                     link_anim_reset_state();
                     kokiri_camera_reset_actor_motion();
                     /* Enter the world running, the slice's existing default. */
+                    gameplay_reset();
                     player_input_reset();
                     kokiri_camera_set_walk(false);
                 }
@@ -327,74 +348,139 @@ void demo_update(void)
                                    CAMERA_RIGHT);
         int32_t unused_pitch = 0;
         bool recovered = false;
-        if (recenter) {
-            /* Camera_Parallel1's Z-recenter turn: about 0.2 s, eased out,
-             * rather than cutting the view there in one frame. */
-            oot_follow_recenter(&link_follow);
-        }
         while (steps--) {
-            bool grounded;
-            int32_t step_x = demo_link.x, step_z = demo_link.z;
-            int32_t dx, dz, moved, fell;
-            if (jump_pending) {
-                kokiri_collision_jump(&demo_link, &link_velocity_y_q8,
-                                      &link_fall_remainder_q8);
-                jump_pending = false;
+            /* L is both OoT's Z-target and the slice's recenter. Targeting gets
+             * the press first: recentring on the same press would swing the view
+             * away from the actor just locked, or away from the one just dropped. */
+            {
+                gameplay_input_t action = {0};
+                bool blocked_before = gameplay_blocks_world();
+                action.room = (uint8_t)kokiri_scene_room();
+                action.x = demo_link.x;
+                action.y = demo_link.y - DEMO_LINK_EYE_HEIGHT;
+                action.z = demo_link.z;
+                action.yaw = demo_link_yaw;
+                action.attack = attack_pending;
+                action.shield = shield_held;
+                action.target = recenter;
+                action.interact = interact_pending;
+                action.cancel = cancel_pending;
+                action.pause = pause_pending;
+                /* One slot per press: the menu cursor steps on the D-pad's own
+                 * press edges, so holding a direction cannot run down the list. */
+                action.menu_step = menu_step;
+                action.grounded = link_velocity_y_q8 == 0;
+                gameplay_step(&action);
+                action_audio_events(gameplay.events);
+                oot_follow_target(&link_follow, gameplay.face_locked);
+                attack_pending = false;
+                interact_pending = false;
+                cancel_pending = false;
+                pause_pending = false;
+                menu_step = 0;
+                /* Tell the mapper who owns B before the next sample. */
+                player_input_set_dialogue(gameplay_blocks_world());
+                if (blocked_before || gameplay_blocks_world()) {
+                    /* A box holds the world still: no camera-relative walk, no
+                     * jump queued behind the text, no recenter on the close. */
+                    walk = 0;
+                    jump_pending = false;
+                    recenter = false;
+                }
+                if (gameplay.events & (GP_EVENT_TARGET_ON | GP_EVENT_TARGET_OFF))
+                    recenter = false;
+                /* Pause freezes the world outright. A text box only stops input --
+                 * gravity and the camera keep easing under it, which is what OoT
+                 * does -- but the inventory stops the fixed step entirely, so a
+                 * paused Link cannot fall, slide or drift while the menu is up. */
+                if (gameplay_is_paused())
+                    break;
+                if (gameplay.swing || gameplay.shielding) {
+                    walk = 0;
+                    jump_pending = false;
+                }
             }
-            kokiri_camera_update(&demo_link, &demo_yaw, &unused_pitch, walk,
-                                 false, true);
-            grounded = kokiri_collision_fall(&demo_link, &link_velocity_y_q8,
-                                              &link_fall_remainder_q8);
-            /* Actual travel length, not the largest axis: diagonal running
-             * must select the same clip and cadence as straight running. */
-            dx = demo_link.x - step_x;
-            if (dx < 0) dx = -dx;
-            dz = demo_link.z - step_z;
-            if (dz < 0) dz = -dz;
-            moved = 0;
-            while ((moved + 1) * (moved + 1) <= dx * dx + dz * dz)
-                ++moved;
+            if (recenter) {
+                /* Camera_Parallel1's Z-recenter turn: about 0.2 s, eased out,
+                 * rather than cutting the view there in one frame. */
+                oot_follow_recenter(&link_follow);
+            }
+            recenter = false;
+            {
+                bool grounded;
+                int32_t step_x = demo_link.x, step_z = demo_link.z;
+                int32_t dx, dz, moved, fell;
+                if (jump_pending) {
+                    if (kokiri_collision_jump(&demo_link, &link_velocity_y_q8,
+                                               &link_fall_remainder_q8))
+                        action_audio_events(GP_EVENT_JUMP);
+                    jump_pending = false;
+                }
+                kokiri_camera_update(&demo_link, &demo_yaw, &unused_pitch, walk,
+                                     false, true);
+                grounded = kokiri_collision_fall(&demo_link, &link_velocity_y_q8,
+                                                  &link_fall_remainder_q8);
+                /* Actual travel length, not the largest axis: diagonal running
+                 * must select the same clip and cadence as straight running. */
+                dx = demo_link.x - step_x;
+                if (dx < 0) dx = -dx;
+                dz = demo_link.z - step_z;
+                if (dz < 0) dz = -dz;
+                moved = 0;
+                while ((moved + 1) * (moved + 1) <= dx * dx + dz * dz)
+                    ++moved;
 
-            if (grounded) {
-                /* The peak still holds the height he left the ground from, so
-                 * this is the whole drop. It is only meaningful on the step he
-                 * lands; link_anim_update() ignores it otherwise. */
-                fell = link_fall_peak_y - demo_link.y;
-                if (fell < 0) fell = 0;
-                link_safe_position = demo_link;
-                link_safe_position_valid = true;
-            } else {
-                fell = 0;
-                if (demo_link.y > link_fall_peak_y)
+                if (grounded) {
+                    /* The peak still holds the height he left the ground from, so
+                     * this is the whole drop. It is only meaningful on the step he
+                     * lands; link_anim_update() ignores it otherwise. */
+                    fell = link_fall_peak_y - demo_link.y;
+                    if (fell < 0) fell = 0;
+                    link_safe_position = demo_link;
+                    link_safe_position_valid = true;
+                } else {
+                    fell = 0;
+                    if (demo_link.y > link_fall_peak_y)
+                        link_fall_peak_y = demo_link.y;
+                    if (recover_link_from_void())
+                        recovered = true;
+                }
+                link_anim_update(moved, grounded, fell, false);
+                if (!gameplay_blocks_world() && !gameplay.swing && !gameplay.shielding)
+                    action_audio_events(link_anim_motion_events());
+                link_anim_combat(gameplay_is_talking() ? 0 : gameplay.swing,
+                                 gameplay.shielding);
+                /* Follow him while he is on the ground, so the next departure
+                 * measures from where he actually left. Left alone while airborne,
+                 * which is what makes the landing drop the full fall. */
+                if (grounded)
                     link_fall_peak_y = demo_link.y;
-                if (recover_link_from_void())
-                    recovered = true;
-            }
-            link_anim_update(moved, grounded, fell, false);
-            /* Follow him while he is on the ground, so the next departure
-             * measures from where he actually left. Left alone while airborne,
-             * which is what makes the landing drop the full fall. */
-            if (grounded)
-                link_fall_peak_y = demo_link.y;
 
-            /* The camera advances per FIXED STEP, not per draw.
-             *
-             * Driving it from the draw callback made every easing rate depend
-             * on the frame rate: a 6-step turn takes 0.2 s at 30 Hz but 0.75 s
-             * at 8 FPS, and OoT's rates are defined per update. Facing is
-             * recomputed here so the camera follows the step it just took. */
-            if (demo_link.x != step_x || demo_link.z != step_z)
-                demo_link_yaw = kokiri_camera_facing(demo_link.x - step_x,
-                                                     demo_link.z - step_z);
-            if (recovered) {
-                /* Recovery must not ease: a camera left down in the void
-                 * would show empty space on the way back. */
-                oot_follow_snap(&link_follow, &demo_link, demo_link_yaw);
-                recovered = false;
+                /* The camera advances per FIXED STEP, not per draw.
+                 *
+                 * Driving it from the draw callback made every easing rate depend
+                 * on the frame rate: a 6-step turn takes 0.2 s at 30 Hz but 0.75 s
+                 * at 8 FPS, and OoT's rates are defined per update. Facing is
+                 * recomputed here so the camera follows the step it just took. */
+                if (gameplay.face_locked) {
+                    /* Recompute after movement: both Link and camera track the
+                     * target from this step's position, not the previous one. */
+                    gameplay_update_facing(demo_link.x, demo_link.z);
+                    demo_link_yaw = gameplay.face_yaw;
+                }
+                else if (demo_link.x != step_x || demo_link.z != step_z)
+                    demo_link_yaw = kokiri_camera_facing(demo_link.x - step_x,
+                                                         demo_link.z - step_z);
+                if (recovered) {
+                    /* Recovery must not ease: a camera left down in the void
+                     * would show empty space on the way back. */
+                    oot_follow_snap(&link_follow, &demo_link, demo_link_yaw);
+                    recovered = false;
+                }
+                oot_follow_update(&link_follow, &demo_link, demo_link_yaw,
+                                  demo_link.x != step_x || demo_link.z != step_z,
+                                  &demo_camera, &demo_yaw, &demo_pitch);
             }
-            oot_follow_update(&link_follow, &demo_link, demo_link_yaw,
-                              demo_link.x != step_x || demo_link.z != step_z,
-                              &demo_camera, &demo_yaw, &demo_pitch);
         }
         /* Pose once for the frame, after the catch-up steps have settled on a
          * final state -- not inside the loop, and not in the draw callback.

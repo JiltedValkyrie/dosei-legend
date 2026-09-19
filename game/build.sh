@@ -45,13 +45,16 @@ quad_args=()
 if [ -n "${QUAD_OBJ:-}" ]; then
     quad_args=(--quad-obj "$QUAD_OBJ")
 fi
-if [ "${STREAM_ROOMS:-0}" = 1 ]; then
+if [ "${STREAM_ROOMS:-1}" = 1 ]; then
     quad_args+=(--stream-rooms)
 fi
 "$python" "$here/tools/build_sgl_scene.py" --texture-path "${TEXTURE_PATH:-hybrid}" --oot "$oot" --rom-dir "$roms" "${quad_args[@]}"
+"$python" "$here/tools/build_actors.py" --oot "$oot" --rom-dir "$roms"
+"$python" "$here/tools/build_dialogue.py" --oot "$oot"
+"$python" "$here/tools/build_action_audio.py" --oot "$oot"
 "$python" "$here/tools/build_demo_assets.py" --oot "$oot"
 "$python" "$here/tools/build_title_paths.py"
-if [ "${STREAM_ROOMS:-0}" = 1 ]; then
+if [ "${STREAM_ROOMS:-1}" = 1 ]; then
     for room in 0 1 2; do
         cp "$here/build/generated/R$room.MSH" "$here/build/generated/R$room.TEX" "$here/build/cd/"
     done
@@ -59,6 +62,7 @@ else
     cp "$here/build/generated/kokiri_pixels.bin" "$here/build/cd/KOKIRI.TEX"
 fi
 cp "$here/build/generated/link_pixels.bin" "$here/build/cd/LINK.TEX"
+cp "$here/build/generated/ACTIONS.PCM" "$here/build/cd/ACTIONS.PCM"
 cp "$here/../shared/assets/audio/title/TITLE_PCM.RAW" "$here/build/cd/TITLE.PCM"
 cp "$here/../shared/assets/audio/title/TITLE_LEVELS.RAW" "$here/build/cd/TITLE.LVL"
 cp "$here/levels/kokiri/assets/audio/KOKIRI_PCM.RAW" "$here/build/cd/FOREST.PCM"

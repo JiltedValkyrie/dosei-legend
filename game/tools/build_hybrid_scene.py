@@ -15,7 +15,8 @@ from PIL import Image
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[2] / 'shared/tools'))
 import build_kokiri_scene as source
 import build_quads as quads
-from vdp1_budget import Budget, tile_bytes, MAX_POLYGONS, MAX_VERTICES
+from vdp1_budget import (Budget, tile_bytes, MAX_POLYGONS, MAX_VERTICES,
+                         RUNTIME_SPRITE_BYTES)
 
 OOT_DEFAULT = pathlib.Path('D:/Workspace-Claude/game-decomps/n64/oot')
 
@@ -280,7 +281,7 @@ def convert(oot, head, actor, out_dir, patches_only=False, rom_dir=None,
         bakes = refine_room_ground(bakes, pieces, actor)
     # Start with 16x16 bakes. Spend remaining space on the worst *directional*
     # density, not a blanket resolution increase. Always keep a 4 KiB margin.
-    available = budget.vram_limit-budget.texture_bytes-4096
+    available = budget.vram_limit-budget.vram_bytes-4096
     sizes = [[16,16] for g in bakes]
     available -= len(bakes)*tile_bytes(16,16)
     if available < 0:
@@ -309,8 +310,12 @@ def convert(oot, head, actor, out_dir, patches_only=False, rom_dir=None,
     # Real deduplication often frees tens of KiB beyond the conservative first
     # pass. Spend that on walkable ground near the starting play area, rather
     # than leaving the close-view patch at the old effective density.
-    remaining = budget.vram_limit - sum(tile_bytes(t['width'],t['height'])
-                                        for t in tiles.values()) - actor_bytes(actor) - 4096
+    # Counts the runtime RGB555 sprites too. This pass re-totals the tiles by
+    # hand instead of reading Budget.texture_bytes, so it used to miss anything
+    # that is not a tile and spend VRAM the sprite loader was going to need.
+    remaining = (budget.vram_limit - sum(tile_bytes(t['width'], t['height'])
+                                         for t in tiles.values())
+                 - actor_bytes(actor) - RUNTIME_SPRITE_BYTES - 4096)
     floors = []
     for i, (group, tile) in enumerate(pieces):
         if flat_surface(group):

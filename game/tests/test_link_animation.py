@@ -191,12 +191,12 @@ class SkinningReproducesTheBakedPose(unittest.TestCase):
             keep, animetion, 0x3200, 0, blm.LIMB_COUNT)
         placed = blm.walk_skeleton(limbs, rotations, root)
 
-        faces = blm.collect_faces(data, keep, placed)
+        faces, original = blm.collect_equipment(data, keep, placed, blm.OOT_DEFAULT)
         blm.apply_primitive_colour(faces)
         scale = 0.0145
         faces = blm.scale_faces(faces, scale)
         faces = blm.drop_degenerate(faces)
-        faces, shift = blm.ground_and_centre(faces)
+        _, shift = blm.ground_and_centre(blm.scale_faces(original, scale))
 
         # Recompose the limb matrices independently, the way link_anim.c does:
         # an explicit child/sibling walk that accumulates each joint offset in

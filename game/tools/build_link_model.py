@@ -26,6 +26,7 @@ import pathlib
 import re
 import struct
 import sys
+import xml.etree.ElementTree as ET
 
 OOT_DEFAULT = pathlib.Path('D:/Workspace-Claude/game-decomps/n64/oot')
 ROM_MD5 = '57a9719ad547c516342e1a15d5c28c3d'
@@ -284,6 +285,54 @@ def apply_primitive_colour(faces):
     return tinted
 
 
+GEAR_LISTS = (
+    ('left_empty', 15, 'gLinkChildLeftFistFarDL'),
+    ('left_sword', 15, 'gLinkChildLeftFistAndKokiriSwordFarDL'),
+    ('right_empty', 18, 'gLinkChildRightHandClosedFarDL'),
+    ('right_shield', 18, 'gLinkChildRightFistAndDekuShieldFarDL'),
+    ('sheath', 19, 'gLinkChildSheathFarDL'),
+)
+
+
+def collect_equipment(data, keep, placed, oot):
+    """z_player_lib.c hand/sheathed-sword DL variants; retain Flex slot layout.
+
+    Replay the whole skeleton for each replacement so preceding material and
+    matrix state is real. Only the replaced limb's faces join the resident mesh.
+    """
+    xml = ET.parse(oot / 'assets/xml/objects/object_link_child.xml')
+    offsets = {e.attrib['Name']: int(e.attrib['Offset'], 0)
+               for e in xml.iter('DList')}
+    source = (oot / 'src/code/z_player_lib.c').read_text()
+    base = collect_faces(data, keep, placed)
+    faces = [dict(f, group='body') for f in base if f['limb'] not in (15, 18, 19)]
+    for group, limb, symbol in GEAR_LISTS:
+        if symbol not in source:
+            raise ValueError('Player equipment list no longer referenced: ' + symbol)
+        selected = [(i, m, o, (0x06000000 | offsets[symbol]) if i == limb else dl)
+                    for i, m, o, dl in placed]
+        faces.extend(dict(f, group=group) for f in collect_faces(data, keep, selected)
+                     if f['limb'] == limb)
+    return faces, base
+
+
+def emit_equipment(out, faces):
+    groups = ['body'] + [g for g, _, _ in GEAR_LISTS]
+    lines = ['/* Generated: contiguous equipment DL ranges, shared POINT table. */',
+             '#ifndef LINK_EQUIPMENT_H', '#define LINK_EQUIPMENT_H']
+    for group in groups:
+        ids = [i for i, f in enumerate(faces) if f['group'] == group]
+        if not ids or ids != list(range(ids[0], ids[-1] + 1)):
+            raise ValueError('Non-contiguous gear group: ' + group)
+        lines += ['#define LINK_%s_FIRST %d' % (group.upper(), ids[0]),
+                  '#define LINK_%s_COUNT %d' % (group.upper(), len(ids))]
+    counts = {g: sum(f['group'] == g for f in faces) for g in groups}
+    maximum = counts['body'] + max(counts['left_empty'], counts['left_sword']) + \
+        max(counts['right_empty'], counts['right_shield']) + counts['sheath']
+    lines += ['#define LINK_VISIBLE_POLYGONS %d' % maximum, '#endif']
+    (out / 'link_equipment.h').write_text('\n'.join(lines) + '\n')
+
+
 def flatten_faces(faces):
     """Flatten body materials, preserving the complete head's textures.
 
@@ -401,8 +450,13 @@ def write_model(faces, out_path, skinned=False):
         # A face collapsed to one colour needs no resolution: the smallest
         # tile VDP1 addresses carries it exactly as well as a 16x16 would, and
         # the difference is VRAM the ground needs.
-        source_texture = face.get('texture')
-        flat = source_texture is not None and source_texture.get('width') == 1 and source_texture.get('height') == 1
+        # Human directive: every character -- Link, NPCs and enemies -- is
+        # plain-shaded, EXCEPT hair and face. Those live in the head limb's
+        # display list, so the head keeps real texture and everything else
+        # (tunic, skin, belt, boots, sword, shield) collapses to one colour.
+        # Cutout alpha inside a flattened material is lost; nothing outside the
+        # head currently relies on it.
+        flat = face.get('limb') != HEAD_LIMB
         if flat:
             # One lit colour per flat face, deduplicated after RGB555 conversion.
             # Keep eye/mouth artwork on the normal textured path.
@@ -467,6 +521,12 @@ CLIPS = (
     ('fall',    'gPlayerAnim_link_normal_fall',                 0,   12, 3),
     ('landing', 'gPlayerAnim_link_normal_landing',              0,   21, 1),
     ('roll',    'gPlayerAnim_link_normal_landing_roll',         0,   32, 1),
+    # z_player.c D_80854190[PLAYER_MWA_FORWARD_SLASH_1H], then recovery.
+    ('slash',   'gPlayerAnim_link_fighter_normal_kiru',         0,    5, 1),
+    ('recover', 'gPlayerAnim_link_fighter_normal_kiru_end',     0,    8, 1),
+    # PLAYER_ANIMGROUP_defense / defense_wait, one-handed equipment group.
+    ('guard',   'gPlayerAnim_link_normal_defense',              0,    2, 1),
+    ('guard_wait', 'gPlayerAnim_link_normal_defense_wait',      0,   20, 1),
 )
 
 # Rotations keep their full 16-bit binang precision. The clip tables share the
@@ -618,15 +678,20 @@ def main():
     frames, root, rotations = read_animation(keep, animetion, args.animation,
                                              args.frame, LIMB_COUNT)
     placed = walk_skeleton(limbs, rotations, root)
-    faces = collect_faces(data, keep, placed)
+    faces, original = collect_equipment(data, keep, placed, args.oot)
     flattened = flatten_faces(faces) if args.flat else 0
     tinted = apply_primitive_colour(faces)
     faces = scale_faces(faces, args.scale)
     if not args.animate:
         faces = drop_degenerate(faces)
-    faces, shift = ground_and_centre(faces)
+    # Held blade changes mesh extents, never Link's collision/bind origin.
+    _, shift = ground_and_centre(scale_faces(original, args.scale))
+    for face in faces:
+        face['vertices'] = [tuple(v[i] + shift[i] for i in range(3)) + tuple(v[3:])
+                            for v in face['vertices']]
     positions, tiles, skin_limbs, skin_locals = write_model(
         faces, args.out, skinned=args.animate)
+    emit_equipment(args.out.parent, faces)
 
     clips = baked = 0
     if args.animate:

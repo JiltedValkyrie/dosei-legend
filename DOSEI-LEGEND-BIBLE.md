@@ -1,5 +1,27 @@
 # Dosei Legend engineering rules
 
+## New gameplay actors: check original drops every time
+
+Human rule (2026-09-18): add grass, pots, enemies, breakable props, pickups,
+or other gameplay actors, check real OoT drop code and tables in same task.
+Aim for 1:1 behavior. Visible actor alone not complete.
+
+- Read actor spawn params, drop routine, selected table and collectible flags.
+  Follow indirect/random/FLEXIBLE drops into shared item code too.
+- Implement source rewards: rupees, hearts, ammo, magic, items, or no drop.
+  Match probabilities, quantities, conditions, cut/break/defeat trigger,
+  pickup effect, lifetime and respawn rules where applicable.
+- Check inventory, health, age, quest and room conditions from source. No
+  invented rewards or silently empty slots for unsupported item types.
+- Record source symbols and implemented behavior. If hardware or missing
+  systems prevent parity, name exact gap in handoff/progress notes; keep it
+  pending. Never call a rupee-only subset the full original drop behavior.
+- Verify meaningful cases: source table selection, reward/no-reward branches,
+  conditional drops and no duplicate collection. Check visible drop/pickup too.
+
+Current grass gap: only rupee slots implemented. Hearts, ammo, magic and
+FLEXIBLE resolution still pending; empty slots are a known approximation.
+
 ## Renderer repairs: reproduce movement before changing the pipeline
 
 Read [the foreground-warp failure record](game/docs/FOREGROUND_WARP_FAILURE_2026-09-18.md)

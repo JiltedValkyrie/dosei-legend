@@ -19,6 +19,7 @@
 
 #include "link_anim_state.h"
 #include "link_clips.h"
+#include "gameplay.h"
 
 /* Thresholds in this file are world units per 30 Hz step, matching the
 ** movement constants in kokiri_camera.h rather than OoT's own speeds. */
@@ -45,6 +46,37 @@ static bool             was_grounded = true;
 /* Diagnostics only; see the declarations in link_anim_state.h. */
 static int32_t          last_fall;
 static unsigned int     landings;
+static unsigned int     combat_clip, combat_frame, guard_steps;
+static bool             combat_active;
+static uint32_t         motion_events;
+
+uint32_t link_anim_motion_events(void) { return motion_events; }
+
+void link_anim_combat(unsigned int swing_remaining, bool shielding)
+{
+    combat_active = swing_remaining != 0 || shielding;
+    if (swing_remaining) {
+        unsigned int elapsed = GP_SWING_STEPS - swing_remaining;
+        /* Slice timing, not frame-exact OoT: slash reaches its last frame at
+         * the first live step; recovery starts after the live window. */
+        if (elapsed <= GP_SWING_HIT_LAST) {
+            combat_clip = LINK_CLIP_SLASH;
+            combat_frame = elapsed < GP_SWING_HIT_FIRST ? elapsed : 4;
+        } else {
+            combat_clip = LINK_CLIP_RECOVER;
+            combat_frame = (elapsed - GP_SWING_HIT_LAST - 1) *
+                (link_clips[LINK_CLIP_RECOVER].count - 1) /
+                (GP_SWING_STEPS - GP_SWING_HIT_LAST - 2);
+        }
+        guard_steps = 0;
+    } else if (shielding) {
+        combat_clip = guard_steps < 2 ? LINK_CLIP_GUARD : LINK_CLIP_GUARD_WAIT;
+        combat_frame = guard_steps < 2 ? guard_steps :
+            (guard_steps - 2) % link_clips[LINK_CLIP_GUARD_WAIT].count;
+        if (guard_steps < 1000) ++guard_steps;
+        else guard_steps = 2;
+    } else guard_steps = 0;
+}
 
 /* Clip frame counts, so a one-shot knows when it has finished. Kept in step
 ** with CLIPS in build_link_model.py through link_clips[]. */
@@ -81,12 +113,22 @@ static bool             is_one_shot(link_state_t s)
 static void             advance(void)
 {
     unsigned int length = clip_length(clip_for_state(state));
+    unsigned int previous_frame = frame;
     phase_ninths += state == LINK_STATE_FALL ? 2 : 6;
     if (state == LINK_STATE_FALL && phase_ninths >= (length - 1) * 9)
         phase_ninths = (length - 1) * 9;
     else if (!is_one_shot(state) && phase_ninths >= length * 9)
         phase_ninths %= length * 9;
     frame = phase_ninths / 9;
+    if (state == LINK_STATE_WALK || state == LINK_STATE_RUN) {
+        unsigned int contact = length / 2;
+        if ((previous_frame < contact && frame >= contact) || frame < previous_frame)
+            motion_events |= GP_EVENT_FOOTSTEP;
+    } else if (state == LINK_STATE_ROLL) {
+        /* OoT sRollAnimSfxList: voice at frame 1, body/floor sound at 6. */
+        if (previous_frame < 1 && frame >= 1) motion_events |= GP_EVENT_ROLL_VOICE;
+        if (previous_frame < 6 && frame >= 6) motion_events |= GP_EVENT_ROLL;
+    }
 }
 
 static void             enter(link_state_t next)
@@ -102,6 +144,8 @@ void                    link_anim_update(int32_t speed, bool grounded,
                                          int32_t fall_units, bool roll_pressed)
 {
     bool    landed = grounded && !was_grounded;
+
+    motion_events = 0;
 
     was_grounded = grounded;
     if (landed)
@@ -175,16 +219,19 @@ link_state_t            link_anim_state(void)
 
 unsigned int            link_anim_clip(void)
 {
+    if (combat_active) return combat_clip;
     return clip_for_state(state);
 }
 
 unsigned int            link_anim_frame(void)
 {
+    if (combat_active) return combat_frame;
     return frame;
 }
 
 unsigned int            link_anim_fraction(void)
 {
+    if (combat_active) return 0;
     return (phase_ninths % 9) * 256 / 9;
 }
 
@@ -202,6 +249,9 @@ void                    link_anim_reset_state(void)
     phase_ninths = 0;
     last_fall = 0;
     landings = 0;
+    combat_active = false;
+    motion_events = 0;
+    guard_steps = 0;
     /* Spawning is a fall onto the floor; that first contact is a real landing
     ** and should read as one rather than being swallowed. */
     was_grounded = false;

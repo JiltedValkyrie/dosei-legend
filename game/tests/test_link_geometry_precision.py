@@ -119,7 +119,7 @@ int32_t link_points[LINK_SKIN_VERTICES][3];
         class Clip(ctypes.Structure):
             _fields_ = [('first',ctypes.c_uint16),('count',ctypes.c_uint16)]
         limbs = (Limb*21).in_dll(self.lib,'link_limbs')
-        clips = (Clip*6).in_dll(self.lib,'link_clips')
+        clips = (Clip*type(self).define('LINK_CLIP_COUNT')).in_dll(self.lib,'link_clips')
         total = max(c.first+c.count for c in clips)
         roots = ((ctypes.c_int16*3)*total).in_dll(self.lib,'link_root')
         rotations = ((ctypes.c_int16*63)*total).in_dll(self.lib,'link_rotations')

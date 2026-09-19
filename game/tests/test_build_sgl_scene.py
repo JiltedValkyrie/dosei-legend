@@ -103,9 +103,31 @@ class ConversionTest(unittest.TestCase):
 @unittest.skipUnless((ROOT / 'build/generated' / 'kokiri_scene.c').is_file(),
                      'generated tables not built')
 class GeneratedOutputTest(unittest.TestCase):
+    """Guards over the single-bank C tables.
+
+    STREAM_ROOMS=1 replaces kokiri_scene.c with per-room BINARY banks (R0/R1/
+    R2.MSH), so these text-parsing guards have nothing to read. They are
+    skipped rather than deleted, and rather than being rewritten to assert
+    something weaker: the render-policy, near-clip and blob-length rules they
+    protect still matter, and they still run on the non-streaming build.
+
+    KNOWN GAP: no equivalent guard covers the room banks yet. Whichever build
+    ships needs one.
+    """
+
     @classmethod
     def setUpClass(cls):
         gen = ROOT / 'build/generated'
+        # The streaming build still writes kokiri_scene.c, but as a STUB:
+        # empty arrays that room_load() fills from the CD. Test for the
+        # KOKIRI_STREAM_ROOMS marker in the header rather than for the file,
+        # or the stub is parsed as if it were the real table and every guard
+        # here reports zero faces instead of skipping.
+        header = (gen / 'kokiri_scene.h').read_text()
+        if '#define KOKIRI_STREAM_ROOMS' in header:
+            raise unittest.SkipTest(
+                'streaming build: geometry is in binary room banks, not '
+                'kokiri_scene.c -- these guards do not cover it')
         cls.scene_c = (gen / 'kokiri_scene.c').read_text()
         cls.header = (gen / 'kokiri_scene.h').read_text()
         cls.pixels = (gen / 'kokiri_pixels.bin').read_bytes()

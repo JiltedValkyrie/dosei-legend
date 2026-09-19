@@ -33,7 +33,7 @@ class Follow(ctypes.Structure):
                 ('pitch', ctypes.c_int32), ('initialised', ctypes.c_bool),
                 ('swing_timer', ctypes.c_int32),
                 ('look_yaw', ctypes.c_int32), ('look_pitch', ctypes.c_int32),
-                ('look_active', ctypes.c_bool)]
+                ('look_active', ctypes.c_bool), ('targeting', ctypes.c_bool)]
 
 
 @unittest.skipUnless(GCC.is_file(), 'host compiler required')
@@ -77,6 +77,36 @@ class OotFollowCamera(unittest.TestCase):
                 ctypes.byref(cam), ctypes.byref(player), facing, moving,
                 ctypes.byref(eye), ctypes.byref(yaw), ctypes.byref(pitch))
         return cam, eye, yaw.value, pitch.value
+
+    def test_lock_turns_behind_stationary_link_then_tracks_every_step(self):
+        cam,eye=Follow(),Position()
+        player=Position(0,90,0)
+        yaw,pitch=ctypes.c_uint16(),ctypes.c_int32()
+        self.lib.oot_follow_snap(ctypes.byref(cam),ctypes.byref(player),0)
+        self.lib.oot_follow_look(ctypes.byref(cam),5000,5000)
+        self.lib.oot_follow_target(ctypes.byref(cam),True)
+        self.assertFalse(cam.look_active)
+        for i in range(6):
+            self.lib.oot_follow_update(ctypes.byref(cam),ctypes.byref(player),16384,False,
+                                      ctypes.byref(eye),ctypes.byref(yaw),ctypes.byref(pitch))
+            if i == 0: self.assertTrue(0 < yaw.value < 16384)
+        self.assertEqual(yaw.value,16384)
+        self.assertLess(eye.x,player.x)
+        self.assertLessEqual(abs(eye.z-player.z),1)
+        # Track across a wrap/large heading change; Normal1 rear-half hold must
+        # not apply, whether moving or standing. Eye stays behind facing.
+        for heading,moving in ((50000,True),(65000,False),(500,True)):
+            player.x += 10
+            self.lib.oot_follow_update(ctypes.byref(cam),ctypes.byref(player),heading,moving,
+                                      ctypes.byref(eye),ctypes.byref(yaw),ctypes.byref(pitch))
+            self.assertEqual(yaw.value,heading)
+            a=heading*2*math.pi/65536
+            dot=(eye.x-player.x)*math.sin(a)+(eye.z-player.z)*math.cos(a)
+            self.assertLess(dot,-90)
+        self.lib.oot_follow_target(ctypes.byref(cam),False)
+        self.lib.oot_follow_update(ctypes.byref(cam),ctypes.byref(player),16000,False,
+                                  ctypes.byref(eye),ctypes.byref(yaw),ctypes.byref(pitch))
+        self.assertEqual(yaw.value,500) # release resumes ordinary idle hold
 
     def test_distance_matches_the_scaled_decomp_values(self):
         """200/300 raw, scaled by OUR Link's height of 62, not OoT's 44.

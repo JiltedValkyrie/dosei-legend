@@ -127,6 +127,55 @@ class LocomotionTiming(unittest.TestCase):
         # press reaches the camera's recenter entry point.
         self.assertIn('oot_follow_recenter(&link_follow)', text)
 
+    def test_combat_poses_follow_action_clock_and_release(self):
+        self.lib.link_anim_reset_state()
+        self.lib.link_anim_update(0, True, 0, False)
+        idle = self.lib.link_anim_clip()
+        poses = []
+        for remaining in range(14, 0, -1):
+            self.lib.link_anim_combat(remaining, False)
+            poses.append((self.lib.link_anim_clip(), self.lib.link_anim_frame()))
+        self.assertNotEqual(poses[0][0], idle)
+        self.assertGreater(len(set(poses)), 6)
+        self.assertNotEqual(poses[0][0], poses[-1][0])
+        self.lib.link_anim_combat(0, False)
+        self.assertEqual(self.lib.link_anim_clip(), idle)
+
+        self.lib.link_anim_combat(0, True)
+        raising = self.lib.link_anim_clip()
+        for _ in range(5):
+            self.lib.link_anim_combat(0, True)
+        self.assertNotEqual(self.lib.link_anim_clip(), raising)
+        self.lib.link_anim_combat(0, False)
+        self.assertEqual(self.lib.link_anim_clip(), idle)
+
+    def test_motion_sound_events_do_not_repeat_on_same_frame_or_at_rest(self):
+        self.lib.link_anim_reset_state()
+        for _ in range(50): self.lib.link_anim_update(0, True, 0, False)
+        for _ in range(30):
+            self.lib.link_anim_update(0, True, 0, False)
+            self.assertEqual(self.lib.link_anim_motion_events(), 0)
+        steps = []
+        for tick in range(60):
+            self.lib.link_anim_update(6, True, 0, False)
+            if self.lib.link_anim_motion_events() & (1<<16): steps.append(tick)
+        self.assertEqual(len(steps),4)
+        self.assertTrue(all(b-a == 15 for a,b in zip(steps,steps[1:])))
+        for _ in range(25):
+            self.lib.link_anim_update(6, False, 0, False)
+            self.assertEqual(self.lib.link_anim_motion_events(),0)
+
+    def test_roll_sounds_fire_once_at_source_frames(self):
+        self.lib.link_anim_reset_state()
+        self.lib.link_anim_update(0, False, 0, False)
+        self.lib.link_anim_update(6, True, 100, False)
+        events = []
+        for _ in range(35):
+            self.lib.link_anim_update(0, True, 0, False)
+            flags=self.lib.link_anim_motion_events()
+            if flags: events.append((self.lib.link_anim_frame(),flags))
+        self.assertEqual(events,[(1,1<<17),(6,1<<15)])
+
     def test_r_does_not_reach_gameplay_orbit(self):
         text = (ROOT / 'src/demo.c').read_text()
         mask = text.split('uint16_t walk = buttons &', 1)[1].split(';', 1)[0]

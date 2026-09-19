@@ -1,4 +1,15 @@
+# Number One Rule!
+Always use caveman talk. No waste human tokens. Bad. You caveman talking? Good good! Always good good when caveman talk.
+
 # Project handoff - 2026-09-16
+
+## Human rule: actor drops belong in the same task
+
+Add grass, pots, enemies, props or items: always check real OoT drop code and
+spawn-selected tables, then implement rewards and conditions toward 1:1.
+Rupees only not enough when source also drops hearts, ammo, magic or items.
+Read [drop rules](DOSEI-LEGEND-BIBLE.md#new-gameplay-actors-check-original-drops-every-time).
+Record any missing behavior plainly; do not silently replace it with no drop.
 
 ## Renderer failure record — read before warp work
 

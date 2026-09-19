@@ -26,6 +26,8 @@
 #include "vdp1_layout.h"
 #include "demo.h"
 #include "link_anim_state.h"
+#include "kokiri_actors.h"
+#include "gameplay.h"
 
 /* Original forest renderer: radius (4367) * 60%. Requested visibility is
  * half of that range. Keep crossing polygons using their nearest vertex. */
@@ -114,6 +116,17 @@ static unsigned char forest_face_flags(unsigned int i)
 #define KOKIRI_PIXEL_FILE   "KOKIRI.TEX"
 #define LINK_PIXEL_FILE     "LINK.TEX"
 #define FAIRY_PIXEL_FILE    "FAIRY.RGB"
+/* Gear pickup icons: the original inventory artwork, one 16x16 RGB555 sprite
+** each. A billboard, not a chest actor -- it costs 512 bytes of VDP1 VRAM and
+** no polygons, where a chest would need a second imported model. */
+#define SWORD_PIXEL_FILE    "SWORD.RGB"
+#define SHIELD_PIXEL_FILE   "SHIELD.RGB"
+/* Pause grid art, at Kaleido's own EQUIP_GRID_QUAD_TEX_SIZE of 32. */
+#define MENU_SWORD_FILE     "SWORDM.RGB"
+#define MENU_SHIELD_FILE    "SHIELM.RGB"
+#define MENU_EQUIP_FILE     "EQUIP.RGB"
+#define MENU_TEX_SIZE       32
+#define MENU_PIXEL_BYTES    (MENU_TEX_SIZE * MENU_TEX_SIZE * 2)
 #define FAIRY_WIDTH         16
 #define FAIRY_HEIGHT        16
 #define FAIRY_PIXEL_BYTES   (FAIRY_WIDTH * FAIRY_HEIGHT * 2)
@@ -125,6 +138,11 @@ static unsigned int  kokiri_rejected;
 static unsigned int  kokiri_accepted_mask;
 static unsigned int  submitted;
 static unsigned int  fairy_sprite;
+static unsigned int  grass_sprite;
+static unsigned int  rupee_sprite[2], digit_sprite[10];
+static unsigned int  pickup_sprite[KOKIRI_PICKUP_COUNT];
+static unsigned int  menu_sprite[GP_SLOT_COUNT];
+static unsigned int  menu_equip_sprite;
 
 /* SGL addresses sprite character data in 8-byte units. */
 #define VRAM_UNITS(bytes)   ((bytes) >> 3)
@@ -218,7 +236,11 @@ static bool         mesh_load(const char *file, unsigned int pixel_bytes,
     return (true);
 }
 
-static bool         fairy_load(void)
+/* Upload one 16x16 RGB555 billboard and hand back its sprite slot.
+** Shared by the fairies and the gear pickups: same size, same colour mode,
+** same budget check, so there is one place that can get the VRAM wrong. */
+static bool         sprite_load_rect(const char *file, unsigned int *slot,
+                                unsigned int width, unsigned int height, unsigned int bytes)
 {
     unsigned char *pixel_vram = (unsigned char *)JO_VDP1_VRAM
                                 + GAME_TEXTURE_BASE + vram_used;
@@ -226,21 +248,65 @@ static bool         fairy_load(void)
     char *loaded;
     int length = 0;
 
-    if (vram_used + FAIRY_PIXEL_BYTES > GAME_TEXTURE_BYTES ||
+    if (vram_used + bytes > GAME_TEXTURE_BYTES ||
         sprite_next >= JO_MAX_SPRITE)
         return false;
-    loaded = jo_fs_read_file_ptr(FAIRY_PIXEL_FILE, pixel_vram, &length);
-    if (!loaded || length != FAIRY_PIXEL_BYTES) return false;
-    fairy_sprite = sprite_next++;
-    texture = &__jo_sprite_def[fairy_sprite];
-    texture->width = FAIRY_WIDTH;
-    texture->height = FAIRY_HEIGHT;
+    loaded = jo_fs_read_file_ptr(file, pixel_vram, &length);
+    if (!loaded || (unsigned int)length != bytes) return false;
+    *slot = sprite_next++;
+    texture = &__jo_sprite_def[*slot];
+    texture->width = (unsigned short)width;
+    texture->height = (unsigned short)height;
     texture->adr = (unsigned short)VRAM_UNITS((unsigned int)pixel_vram
                                               - JO_VDP1_VRAM);
-    texture->size = JO_MULT_BY_32(FAIRY_WIDTH & 0x1f8) | FAIRY_HEIGHT;
-    __jo_sprite_pic[fairy_sprite].color_mode = COL_32K;
-    __jo_sprite_pic[fairy_sprite].data = pixel_vram;
-    vram_used += FAIRY_PIXEL_BYTES;
+    texture->size = JO_MULT_BY_32(width & 0x1f8) | height;
+    __jo_sprite_pic[*slot].color_mode = COL_32K;
+    __jo_sprite_pic[*slot].data = pixel_vram;
+    vram_used += bytes;
+    return true;
+}
+
+static bool sprite_load(const char *file, unsigned int *slot,
+                        unsigned int side, unsigned int bytes)
+{
+    return sprite_load_rect(file, slot, side, side, bytes);
+}
+
+static bool         billboard_load(const char *file, unsigned int *slot)
+{
+    return sprite_load(file, slot, FAIRY_WIDTH, FAIRY_PIXEL_BYTES);
+}
+
+static bool         fairy_load(void)
+{
+    unsigned int i;
+    if (!billboard_load(FAIRY_PIXEL_FILE, &fairy_sprite))
+        return false;
+    if (!sprite_load("GRASS.RGB", &grass_sprite, 32, 32 * 32 * 2))
+        return false;
+    if (!billboard_load("RUPEEG.RGB", &rupee_sprite[0]) ||
+        !billboard_load("RUPEEB.RGB", &rupee_sprite[1])) return false;
+    for (i = 0; i < 10; ++i) {
+        char file[] = "DIGIT0.RGB";
+        file[5] = (char)('0' + i);
+        if (!sprite_load_rect(file, &digit_sprite[i], 8, 16, 256)) return false;
+    }
+    /* Pickup order matches kokiri_pickups[], which the converter emits in the
+    ** PICKUPS order: sword first, then shield. */
+    for (i = 0; i < KOKIRI_PICKUP_COUNT; ++i) {
+        const char *file = (kokiri_pickups[i].item == GP_SWORD)
+                           ? SWORD_PIXEL_FILE : SHIELD_PIXEL_FILE;
+        if (!billboard_load(file, &pickup_sprite[i]))
+            return false;
+    }
+    /* Pause grid: the same two items at 32x32 plus the real equipped outline. */
+    if (!sprite_load(MENU_SWORD_FILE, &menu_sprite[GP_SLOT_SWORD],
+                     MENU_TEX_SIZE, MENU_PIXEL_BYTES) ||
+        !sprite_load(MENU_SHIELD_FILE, &menu_sprite[GP_SLOT_SHIELD],
+                     MENU_TEX_SIZE, MENU_PIXEL_BYTES) ||
+        !sprite_load(MENU_EQUIP_FILE, &menu_equip_sprite,
+                     MENU_TEX_SIZE, MENU_PIXEL_BYTES))
+        return false;
     return true;
 }
 
@@ -413,6 +479,21 @@ static void         submit(PDATA *pdata, unsigned int bit)
     {
         kokiri_accepted_mask |= bit;
         submitted += pdata->nbPolygon;
+    }
+}
+
+#include "link_equipment.h"
+static POLYGON equipped_polygons[LINK_VISIBLE_POLYGONS];
+static ATTR equipped_attributes[LINK_VISIBLE_POLYGONS];
+static unsigned int equipped_count;
+static unsigned int equipped_mask = 255;
+
+static void link_part(unsigned int first, unsigned int count)
+{
+    unsigned int i;
+    for (i = 0; i < count; ++i) {
+        equipped_polygons[equipped_count] = link_pdata.pltbl[first+i];
+        equipped_attributes[equipped_count++] = link_pdata.attbl[first+i];
     }
 }
 
@@ -639,7 +720,27 @@ void                kokiri_link_draw(int x, int y, int z, int yaw)
     {
         jo_3d_translate_matrix(x, -y, z);
         jo_3d_rotate_matrix_y((yaw * 360) >> 16);
-        submit(&link_pdata, 2u);
+        if (equipped_mask != gameplay.equipped) {
+            equipped_count = 0;
+            link_part(LINK_BODY_FIRST, LINK_BODY_COUNT);
+            if (gameplay.equipped & GP_SWORD) {
+                link_part(LINK_LEFT_SWORD_FIRST, LINK_LEFT_SWORD_COUNT);
+                link_part(LINK_SHEATH_FIRST, LINK_SHEATH_COUNT);
+            } else link_part(LINK_LEFT_EMPTY_FIRST, LINK_LEFT_EMPTY_COUNT);
+            if (gameplay.equipped & GP_SHIELD)
+                link_part(LINK_RIGHT_SHIELD_FIRST, LINK_RIGHT_SHIELD_COUNT);
+            else link_part(LINK_RIGHT_EMPTY_FIRST, LINK_RIGHT_EMPTY_COUNT);
+            equipped_mask = gameplay.equipped;
+        }
+        /* One submission: submitting each variant separately would transform
+         * the full POINT table repeatedly and exhaust SGL's vertex work area. */
+        {
+            PDATA equipped = link_pdata;
+            equipped.pltbl = equipped_polygons;
+            equipped.attbl = equipped_attributes;
+            equipped.nbPolygon = equipped_count;
+            submit(&equipped, 2u);
+        }
     }
     jo_3d_pop_matrix();
 #ifdef DOSEI_ACTOR_ORDER_PROBE
@@ -647,17 +748,11 @@ void                kokiri_link_draw(int x, int y, int z, int yaw)
 #endif
 }
 
-typedef struct { short x, y, z; } fairy_home_t;
-
-/* Base child-day actor list: the Kokiri children plus Mido and Saria. Their
- * bodies are intentionally absent for now; fairies mark their eventual homes. */
-static const fairy_home_t fairy_homes[] = {
-    {-292,   0, -430}, {  45,   0, -272}, {-608, 120, 1022},
-    {-1472,-80, -294}, { 669,   0,  521}, { 853, 100, -311},
-    {-678,   1, -179}, { -10, 180,  -22}, {1522,   0,  105},
-    {  18, -80,  873},
-};
-
+/* Base child-day actor list: the eight Kokiri children plus Mido and Saria.
+ * kokiri_npcs[] is generated by tools/build_actors.py straight from the US 1.2
+ * room actor lists, so identity, position and facing are the original ones and
+ * no coordinate here is authored. Their bodies do not exist yet; the fairies
+ * still mark each home until the NPC models land. */
 static int          fairy_wave(unsigned int angle, int amplitude)
 {
     return (int)(((int64_t)slSin((ANGLE)angle) * amplitude) >> 16);
@@ -666,14 +761,14 @@ static int          fairy_wave(unsigned int angle, int amplitude)
 void                kokiri_fairies_draw(unsigned int tick)
 {
     unsigned int i;
-    for (i = 0; i < sizeof(fairy_homes) / sizeof(fairy_homes[0]); ++i) {
+    for (i = 0; i < KOKIRI_NPC_COUNT; ++i) {
         unsigned int angle = tick * (97 + i * 3) + i * 6011;
         FIXED pos[5];
         SPR_ATTR attr = SPR_ATTRIBUTE(0, No_Palet, No_Gouraud, ECdis,
                                       sprNoflip | FUNC_Sprite);
-        int x = fairy_homes[i].x + fairy_wave(angle, 18);
-        int y = fairy_homes[i].y + 58 + fairy_wave(angle * 2 + 9000, 9);
-        int z = fairy_homes[i].z + fairy_wave(angle + 16384, 14);
+        int x = kokiri_npcs[i].x + fairy_wave(angle, 18);
+        int y = kokiri_npcs[i].y + 58 + fairy_wave(angle * 2 + 9000, 9);
+        int z = kokiri_npcs[i].z + fairy_wave(angle + 16384, 14);
         int32_t sine, cosine;
         kokiri_camera_sincos(demo_yaw, &sine, &cosine);
         if ((((int64_t)(x - demo_camera.x) * sine +
@@ -688,6 +783,205 @@ void                kokiri_fairies_draw(unsigned int tick)
         attr.texno = (Uint16)fairy_sprite;
         attr.atrb |= (FAIRY_COLMODE_RGB & 7) << 3;
         if (slPutSprite(pos, &attr, 0) == FALSE) ++kokiri_rejected;
+    }
+}
+
+void                kokiri_pickups_draw(unsigned int tick)
+{
+    unsigned int i;
+    for (i = 0; i < KOKIRI_PICKUP_COUNT; ++i) {
+        const kokiri_pickup_t *pickup = &kokiri_pickups[i];
+        unsigned int angle = tick * 140 + i * 21845;
+        FIXED pos[5];
+        SPR_ATTR attr = SPR_ATTRIBUTE(0, No_Palet, No_Gouraud, ECdis,
+                                      sprNoflip | FUNC_Sprite);
+        int x = pickup->x;
+        /* Float it clear of the grass and bob, so a pickup lying on a busy
+        ** ground texture still reads as an object rather than a decal. */
+        int y = pickup->y + 46 + fairy_wave(angle, 7);
+        int z = pickup->z;
+        int32_t sine, cosine;
+        if (gameplay_pickup_taken(i))
+            continue;
+        kokiri_camera_sincos(demo_yaw, &sine, &cosine);
+        if ((((int64_t)(x - demo_camera.x) * sine +
+              (int64_t)(z - demo_camera.z) * cosine) >> 16) > FOREST_FAR)
+            continue;
+
+        pos[0] = toFIXED(x);
+        pos[1] = toFIXED(-y);
+        pos[2] = toFIXED(z);
+        /* Twice the fairy's size: these are the one thing the player is being
+        ** asked to go and find. */
+        pos[3] = toFIXED(2);
+        pos[4] = toFIXED(2);
+        attr.texno = (Uint16)pickup_sprite[i];
+        attr.atrb |= (FAIRY_COLMODE_RGB & 7) << 3;
+        if (slPutSprite(pos, &attr, 0) == FALSE) ++kokiri_rejected;
+    }
+}
+
+unsigned int kokiri_scene_room(void)
+{
+#ifdef KOKIRI_STREAM_ROOMS
+    return forest_room < 0 ? 0 : (unsigned int)forest_room;
+#else
+    return 0;
+#endif
+}
+
+static void rupee_world(int x, int y, int z, unsigned int room,
+                        unsigned int value, unsigned int age, unsigned int tick)
+{
+    int dx = x - demo_camera.x, dz = z - demo_camera.z;
+    FIXED pos[5];
+    SPR_ATTR attr = SPR_ATTRIBUTE(0, No_Palet, No_Gouraud, ECdis,
+                                  sprNoflip | FUNC_Sprite);
+#ifdef KOKIRI_STREAM_ROOMS
+    if (room != (unsigned int)forest_room) return;
+#endif
+    if (dx * dx + dz * dz > FOREST_FAR * FOREST_FAR) return;
+    /* Source icon as a 24px billboard. New grass drops hop for half a second. */
+    y += 14;
+    if (age < GP_DROP_DELAY) y += (int)(age * (GP_DROP_DELAY - age)) / 2;
+    else { int bob = (int)((tick >> 1) & 15); y += bob < 8 ? bob : 15 - bob; }
+    pos[0] = x * 65536; pos[1] = -y * 65536; pos[2] = z * 65536;
+    pos[3] = pos[4] = 98304;
+    attr.texno = (Uint16)rupee_sprite[value == 5 ? 1 : 0];
+    attr.atrb |= (FAIRY_COLMODE_RGB & 7) << 3;
+    if (slPutSprite(pos, &attr, 0) == FALSE) ++kokiri_rejected;
+}
+
+void kokiri_rupees_draw(unsigned int tick)
+{
+    unsigned int i;
+    for (i = 0; i < KOKIRI_RUPEE_COUNT; ++i) {
+        const kokiri_rupee_t *r = &kokiri_rupees[i];
+        if (!gameplay_rupee_taken(i))
+            rupee_world(r->x,r->y,r->z,r->room,r->value,GP_DROP_DELAY,tick);
+    }
+    for (i = 0; i < KOKIRI_GRASS_COUNT; ++i) {
+        const kokiri_prop_t *g = &kokiri_grass[i];
+        if (gameplay.grass_rupee[i])
+            rupee_world(g->x,g->y,g->z,g->room,gameplay.grass_rupee[i],gameplay.grass_age[i],tick);
+    }
+}
+
+static void rupee_hud_sprite(unsigned int sprite, int x, int width)
+{
+    FIXED pos[5];
+    SPR_ATTR attr = SPR_ATTRIBUTE(0, No_Palet, No_Gouraud, ECdis,
+                                  sprNoflip | FUNC_Sprite);
+    /* slDispSprite ignores the world matrix. Coordinates are screen-centred. */
+    pos[0] = (x - JO_TV_WIDTH_2 + width/2) * 65536;
+    pos[1] = (206 - JO_TV_HEIGHT_2 + 8) * 65536;
+    /* SGL SpriteEntry rejects z <= screen_distance >> display_level.
+     * Gameplay uses 240 and Jo initializes level 3: near = 30, not zero.
+     * Depth 31 gives sort key 1, ahead of the world, without near rejection. */
+    pos[2] = 31 * 65536;
+    pos[3] = pos[4] = 65536;
+    attr.texno = (Uint16)sprite;
+    attr.atrb |= (FAIRY_COLMODE_RGB & 7) << 3;
+#ifdef DOSEI_HIRES
+    /* Screen-space sprites bypass the world's vertical scale. */
+    pos[1] = (206 * 2 - JO_TV_HEIGHT_2 + 16) * 65536;
+    pos[4] = 2 * 65536;
+    if (slDispSpriteHV(pos, &attr, 1) == FALSE) ++kokiri_rejected;
+#else
+    if (slDispSprite(pos, &attr, 0) == FALSE) ++kokiri_rejected;
+#endif
+}
+
+void kokiri_rupee_hud_draw(void)
+{
+    if (gameplay_is_talking()) return; /* dialogue owns the lower screen */
+    rupee_hud_sprite(rupee_sprite[0], 26, 16);
+    rupee_hud_sprite(digit_sprite[gameplay.rupees / 10], 42, 8);
+    rupee_hud_sprite(digit_sprite[gameplay.rupees % 10], 50, 8);
+}
+
+void                kokiri_grass_draw(void)
+{
+    unsigned int i;
+    for (i = 0; i < KOKIRI_GRASS_COUNT; ++i) {
+        const kokiri_prop_t *grass = &kokiri_grass[i];
+        int32_t dx = grass->x - demo_camera.x;
+        int32_t dz = grass->z - demo_camera.z;
+        FIXED pos[5];
+        SPR_ATTR attr = SPR_ATTRIBUTE(0, No_Palet, No_Gouraud, ECdis,
+                                      sprNoflip | FUNC_Sprite);
+        if (gameplay_grass_cut(i)) continue;
+#ifdef KOKIRI_STREAM_ROOMS
+        if (grass->room != forest_room) continue;
+#endif
+        if (dx * dx + dz * dz > FOREST_FAR * FOREST_FAR) continue;
+        /* 48x40 world units, centre raised by half-height: base on authored
+         * floor, not hovering like pickups. Integer-only runtime conversion. */
+        pos[0] = (int32_t)grass->x * 65536;
+        pos[1] = -(int32_t)(grass->y + 20) * 65536;
+        pos[2] = (int32_t)grass->z * 65536;
+        pos[3] = 98304;
+        pos[4] = 81920;
+        attr.texno = (Uint16)grass_sprite;
+        attr.atrb |= (FAIRY_COLMODE_RGB & 7) << 3;
+        if (slPutSprite(pos, &attr, 0) == FALSE) ++kokiri_rejected;
+    }
+}
+
+/*
+** Pause equipment grid, laid out with Kaleido Scope's own numbers.
+**
+** z_kaleido_scope.h: EQUIP_GRID_CELL_WIDTH/HEIGHT are 32 and
+** EQUIP_GRID_QUAD_TEX_SIZE is 32, and z_kaleido_scope.c builds the rows from
+** y = (EQUIP_TYPE_MAX * CELL_HEIGHT) / 2 - 6, stepping down one cell per equip
+** type -- swords on row 0, shields on row 1, which is the order the slots are
+** in here. The original reserves the left column for upgrades; the slice has
+** none, so its equips start at the same column the real grid's do.
+**
+** These are flat screen sprites over the frozen world, which is how the
+** original draws them too: textured quads, not a background layer.
+*/
+#define KOKIRI_MENU_PLANE   240     /* main.c SCREEN_DISTANCE */
+#define EQUIP_CELL          32
+#define EQUIP_QUAD_MARGIN   2
+#define EQUIP_ROWS          2
+#define EQUIP_COLUMN_X      (-EQUIP_CELL)
+#define EQUIP_ORIGIN_Y      ((EQUIP_ROWS * EQUIP_CELL) / 2 - 6)
+
+static void         menu_quad(unsigned int sprite, int x, int y, int side)
+{
+    FIXED pos[5];
+    SPR_ATTR attr = SPR_ATTRIBUTE(0, No_Palet, No_Gouraud, ECdis,
+                                  sprNoflip | FUNC_Sprite);
+    /* Screen-space quad. At z = -screen distance one world unit is one screen
+    ** pixel, so Kaleido's pixel grid transfers unchanged, and nothing in the
+    ** world can sort in front of it. */
+    pos[0] = toFIXED(x);
+    pos[1] = toFIXED(y);
+    pos[2] = toFIXED(-KOKIRI_MENU_PLANE);
+    pos[3] = toFIXED(side) / MENU_TEX_SIZE;
+    pos[4] = toFIXED(side) / MENU_TEX_SIZE;
+    attr.texno = (Uint16)sprite;
+    attr.atrb |= (FAIRY_COLMODE_RGB & 7) << 3;
+    if (slPutSprite(pos, &attr, 0) == FALSE) ++kokiri_rejected;
+}
+
+void                kokiri_menu_draw(void)
+{
+    unsigned int slot;
+    if (!gameplay_is_paused())
+        return;
+    for (slot = 0; slot < GP_SLOT_COUNT; ++slot) {
+        uint8_t item = gameplay_slot_item(slot);
+        int x = EQUIP_COLUMN_X;
+        int y = EQUIP_ORIGIN_Y - (int)slot * EQUIP_CELL;
+        if (!(gameplay.owned & item))
+            continue;               /* nothing owned, nothing to draw */
+        menu_quad(menu_sprite[slot], x, y,
+                  EQUIP_CELL - 2 * EQUIP_QUAD_MARGIN);
+        /* The real EQUIPPED marker sits over the equipped quad. */
+        if (gameplay.equipped & item)
+            menu_quad(menu_equip_sprite, x, y, EQUIP_CELL);
     }
 }
 

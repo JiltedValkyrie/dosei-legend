@@ -34,6 +34,14 @@ bool            kokiri_scene_mesh_near_authored(void);
 
 /** @brief Draw ambient fairies at the original Kokiri NPC homes. */
 void            kokiri_fairies_draw(unsigned int tick);
+/* Gear pickup billboards, drawn only while the item is still uncollected. */
+void            kokiri_pickups_draw(unsigned int tick);
+void            kokiri_grass_draw(void);
+unsigned int    kokiri_scene_room(void);
+void            kokiri_rupees_draw(unsigned int tick);
+void            kokiri_rupee_hud_draw(void);
+/* Pause equipment grid, drawn over the frozen world. */
+void            kokiri_menu_draw(void);
 
 /** @brief Submissions SGL refused this frame. Non-zero means some faces never
  *  reached VDP1, so the picture is incomplete. */

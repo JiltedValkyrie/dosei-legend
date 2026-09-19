@@ -1,5 +1,76 @@
 # Vertical slice progress
 
+## Lock camera, rupee melody and pause controls (2026-09-18)
+
+- Target camera now eases behind Link on acquire and tracks target-facing yaw
+  while idle/strafe/backing up. Facing refreshed after movement. Release returns
+  to normal follow. Full KeepOn1 framing/collision still pending.
+- Added missing source rupee melody, BF4/F4/BF4 +24, over quieter backing layer.
+  Looping source wave uses 64 bytes; 96-tick/sec sequence scheduled at vblank.
+  Bank 39,832 bytes, 104 spare. Envelope/sample-duration approximation remains.
+- Pause lists gameplay, lock/re-centre, look, roll and menu controls. C items
+  explicitly pending; diagnostics chord shown only in diagnostic builds.
+- Normal, clean and hi-res discs rebuilt. 278 tests pass, one skip.
+  Emulator visual/listening confirmation still pending.
+
+## Rupee HUD and pickup feedback repair (2026-09-18)
+
+- Counter was rejected by SGL: screen-space sprite depth 1 was inside near
+  limit 30. Depth 31 fixes submission; host test now checks actual SDK limit.
+- Hi-res HUD doubles screen Y/height explicitly.
+- Rupee collection routes original OoT sample layer to dedicated SCSP slot 29.
+  Reduced single-layer chime; full original layered sequence still absent.
+- Exact silent tails trimmed to fit bank: existing audible PCM unchanged.
+  39,764 bytes; 172 sound-RAM bytes remain.
+- Normal, clean and hi-res discs rebuilt. 274 tests pass, one skip.
+  Emulator visual/listening confirmation still pending.
+
+## Rupees and grass drops (2026-09-18)
+
+- Eight original room rupees; green +1, blue +5, child wallet caps at 99.
+- Cut grass rolls rupee subset of real source drop tables. Hidden until cut,
+  visible hop before pickup, no repeated credit. Non-rupee drops still absent.
+- Original rupee HUD art and digits; world billboards share icon silhouette.
+  Source green tint, blue recolour. +3,584 VDP1 bytes, guarded offline.
+- Both discs rebuilt. 273 tests: 272 pass, one skip. No new emulator capture.
+
+## Grass sprites and movement audio (2026-09-18)
+
+- Original OoT grass cutout now renders as VDP1 sprite at each grass actor.
+  Room/distance culling, shared texture, and cut-state hiding implemented.
+- Successful jump voice, roll voice/body sounds, walking/running footsteps
+  wired to physics/animation events. Idle, blocked movement and airborne travel
+  produce no footsteps. Forest uses one footstep material for now.
+- Music unchanged. Action bank 39,168 bytes; 768 sound-RAM bytes spare.
+- Both player discs rebuilt. 264 tests: 263 pass, one skip. No new emulator
+  visual/listening confirmation.
+
+## Equipped limbs and sound effects (2026-09-18)
+
+- Original OoT hand display lists now show equipped sword/shield on correct
+  bones. No gear before pickup; no duplicate back sword/shield. Equipped gear
+  stays in hands for baseline play. Full draw/sheath transitions still absent.
+- Swing, guard, cut, equip and dialogue/menu effects wired to events; sword
+  attacks rotate four real child Link voice samples. Effects are reduced
+  single-layer sample adaptations, not complete N64 sequencing.
+- Separate SCSP slots/tail bank preserve music resources; offline/runtime
+  boundary guards retained. 33,486-byte effect bank fits with 3,378 bytes spare.
+- 261 tests: 260 pass, one skip. Background Kronos capture blank; runtime visual
+  and listening confirmation still needed. Player discs contain no probe mode.
+
+## Combat/menu repair (2026-09-18)
+
+- Sword and shield state now drive imported OoT slash/recovery and guard poses.
+  Previous code only chose locomotion clips, so combat had no visible pose.
+  Slice attack timing remains approximate; held-gear geometry and SFX pending.
+- Gameplay action clock now runs per 30 Hz step, including catch-up. Menu input
+  blocks look/action leakage; closing frame suppresses movement/jump. Debug HUD
+  no longer paints over dialogue/inventory. Menu clears its full text area.
+- Clean player display includes pickup/equip instructions, controls and action
+  feedback. Streaming enabled by default; binary room-bank policy checks added.
+- 256 tests: 255 pass, one legacy single-bank suite skips; separate binary-bank
+  check passes. In-emulator action/menu visual verification still outstanding.
+
 ## Latest: textures restored; overlap unresolved
 
 User stopped experiments. Floor/water texture sampling restored; failed

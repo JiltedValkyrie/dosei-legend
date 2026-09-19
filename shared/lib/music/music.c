@@ -169,7 +169,10 @@ static unsigned char *read_levels(const music_bank_t *target)
 
 bool music_fade_to(const music_bank_t *target, unsigned int fade_frames)
 {
-    if (!target || state != MUSIC_IDLE || bank == target) return false;
+    if (!target || target->sample_base > MUSIC_SAMPLE_LIMIT ||
+        target->pcm_bytes > MUSIC_SAMPLE_LIMIT - target->sample_base ||
+        target->voices > MUSIC_MAX_VOICES ||
+        state != MUSIC_IDLE || bank == target) return false;
     incoming = target;
     fade_length = fade_frames ? fade_frames : 1;
     transition_start = vblanks;
@@ -315,13 +318,15 @@ bool music_init(const music_bank_t *first)
     volatile unsigned short *ram = (volatile unsigned short *)0x25a00000UL;
     int got;
 
-    if (!first) return false;
+    if (!first || first->sample_base > MUSIC_SAMPLE_LIMIT ||
+        first->pcm_bytes > MUSIC_SAMPLE_LIMIT - first->sample_base ||
+        first->voices > MUSIC_MAX_VOICES) return false;
     bank = first;
     levels = read_levels(bank);
     if (!levels) return false;
     if (!jo_fs_open(&file, bank->pcm_file)) { jo_free(levels); return false; }
     if ((unsigned int)file.size != bank->pcm_bytes ||
-        bank->sample_base + (unsigned int)file.size > 0x80000) {
+        bank->sample_base + (unsigned int)file.size > MUSIC_SAMPLE_LIMIT) {
         jo_fs_close(&file); jo_free(levels); return false;
     }
     staging = jo_malloc(LOAD_CHUNK);

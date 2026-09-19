@@ -15,8 +15,12 @@
 #include "kokiri_sgl.h"
 #include "music.h"
 #include "music_banks.h"
+#include "action_audio.h"
 #include "demo.h"
+#include "gameplay.h"
+#include "kokiri_dialogue.h"
 #include "link_anim_state.h"
+#include "link_clips.h"
 #include "frame_timer.h"
 #include "oot_follow.h"
 
@@ -40,6 +44,9 @@ static bool         music_ready;
 static bool         debug_visible;
 static unsigned int rejected_total;
 static void         viewer_hud(void);
+static void         dialogue_box(void);
+static void         inventory_menu(void);
+static void         action_hint(void);
 #ifdef DOSEI_TEXTURE_PROBE
 #include "texture_probe.h"
 static unsigned int probe_frame;
@@ -118,7 +125,13 @@ static void         viewer_draw(void)
         demo_camera.y = demo_link.y - DEMO_LINK_EYE_HEIGHT + 77;
         demo_pitch = -1820;
         demo_link_yaw = 0;
-        link_anim_pose((tick / 300) % 3, (tick / 3) % 20, 0);
+        {
+            unsigned int gear = (tick / 180) % 4;
+            unsigned int clip = !(gear & GP_SWORD) ? LINK_CLIP_IDLE : LINK_CLIP_SLASH;
+            if ((gear & GP_SHIELD) && (tick / 90) % 2) clip = LINK_CLIP_GUARD_WAIT;
+            gameplay.owned = gameplay.equipped = gear;
+            link_anim_pose(clip, (tick / 3) % link_clips[clip].count, 0);
+        }
     }
 #endif
     frame_timer_end(FRAME_PHASE_MOVEMENT);
@@ -137,7 +150,11 @@ static void         viewer_draw(void)
     frame_timer_begin(FRAME_PHASE_SCENE);
 #if !defined(DOSEI_PERF_PROBE) || DOSEI_PERF_PROBE != 3
     kokiri_scene_draw();
+    kokiri_grass_draw();
+    kokiri_rupees_draw(demo_clock());
     kokiri_fairies_draw(demo_clock());
+    kokiri_pickups_draw(demo_clock());
+    kokiri_menu_draw();
 #endif
     frame_timer_end(FRAME_PHASE_SCENE);
     /* Link is submitted after the forest so the per-frame counters, which
@@ -150,9 +167,164 @@ static void         viewer_draw(void)
         frame_timer_end(FRAME_PHASE_LINK);
     }
     rejected_total += kokiri_scene_rejected();
-    viewer_hud();
+    dialogue_box();
+    inventory_menu();
+    if (!gameplay_blocks_world()) viewer_hud();
+    action_hint();
+    if (!demo_title_is_visible()) kokiri_rupee_hud_draw();
     frame_timer_frame_end();
     frame_timer_begin(FRAME_PHASE_SYNC);
+}
+
+/*
+** Text box and the A: Talk prompt.
+**
+** Drawn on the clean player disc as well as the diagnostic one -- this is
+** gameplay, not debug text -- so it sits outside viewer_hud()'s early returns.
+** VDP2 retains what is printed, so both the box and the prompt clear their own
+** rows on the frame they stop being shown, or the last page stays on screen.
+*/
+#define DIALOGUE_ROW    20
+#define DIALOGUE_ROWS   (DIALOGUE_MAX_LINES + 2)
+#define PROMPT_ROW      18
+
+static void         dialogue_box(void)
+{
+    static bool was_talking;
+    static int  last_prompt = -1;
+    unsigned int i;
+
+    /* Title flythrough has no interaction. Clear retained VDP2 text too,
+     * so returning here cannot leave an old prompt or page on screen. */
+    if (demo_title_is_visible()) {
+        if (last_prompt != -1)
+            jo_printf(1, PROMPT_ROW, "%-38s", "");
+        if (was_talking) {
+            for (i = 0; i < DIALOGUE_ROWS; ++i)
+                jo_printf(0, DIALOGUE_ROW + i, "%-40s", "");
+        }
+        last_prompt = -1;
+        was_talking = false;
+        return;
+    }
+    if (!gameplay_is_talking()) {
+        if (was_talking) {
+            for (i = 0; i < DIALOGUE_ROWS; ++i)
+                jo_printf(0, DIALOGUE_ROW + i, "%-40s", "");
+            was_talking = false;
+        }
+        /* A: Talk, only while a speaker is actually in reach and in front. */
+        if (gameplay.prompt != last_prompt) {
+            last_prompt = gameplay.prompt;
+            if (gameplay.prompt >= 0)
+                jo_printf(1, PROMPT_ROW, "%-38s", "A: Talk");
+            else
+                jo_printf(1, PROMPT_ROW, "%-38s", "");
+        }
+        return;
+    }
+    if (last_prompt != -1) {
+        last_prompt = -1;
+        jo_printf(1, PROMPT_ROW, "%-38s", "");
+    }
+    was_talking = true;
+    jo_printf(1, DIALOGUE_ROW, "%-38s", gameplay_speaker_name());
+    for (i = 0; i < DIALOGUE_MAX_LINES; ++i) {
+        const char *line = i < gameplay_page_lines() ? gameplay_page_line(i) : "";
+        jo_printf(1, DIALOGUE_ROW + 1 + i, "%-38s", line ? line : "");
+    }
+    jo_printf(1, DIALOGUE_ROW + 1 + DIALOGUE_MAX_LINES, "%-38s",
+              "A: next   B: close");
+}
+
+/*
+** Pause inventory. Player-facing, so it draws on the clean disc too.
+**
+** VDP2 retains printed text, so the whole panel is cleared on the frame it
+** closes -- otherwise the menu stays burned over the world. Every slot is
+** listed whether owned or not: a missing item has to be readable, and say
+** where to get it, or the player has no way to learn the sword exists.
+*/
+#define MENU_ROW    4
+#define MENU_ROWS   21
+
+static void         inventory_menu(void)
+{
+    static bool was_paused;
+    unsigned int slot;
+    int row = MENU_ROW;
+
+    if (!gameplay_is_paused()) {
+        if (was_paused) {
+            for (slot = 0; slot < MENU_ROWS; ++slot)
+                jo_printf(0, MENU_ROW + slot, "%-40s", "");
+            was_paused = false;
+        }
+        return;
+    }
+    was_paused = true;
+    jo_printf(2, row++, "%-36s", "-- ITEMS --");
+    row++;
+    for (slot = 0; slot < GP_SLOT_COUNT; ++slot) {
+        uint8_t item = gameplay_slot_item(slot);
+        const char *state = !(gameplay.owned & item) ? "Find in forest"
+                          : (gameplay.equipped & item) ? "EQUIPPED" : "Owned";
+        jo_printf(2, row++, "%c %-14s %-18s",
+                  slot == gameplay.cursor ? '>' : ' ',
+                  gameplay_slot_name(slot), state);
+        /* Only an owned item gets its use button: printing "X: swing" next to
+         * a sword the player has never found would be a lie. */
+        jo_printf(4, row++, "%-34s",
+                  (gameplay.owned & item) ? gameplay_slot_use(slot) : "");
+    }
+    row++;
+    jo_printf(2, row++, "%-36s", "CONTROLS");
+    jo_printf(2, row++, "%-36s", "D-pad move   B walk/run");
+    jo_printf(2, row++, "%-36s", "X swing/cut  Hold R shield");
+    jo_printf(2, row++, "%-36s", "Y jump       A talk/next page");
+    jo_printf(2, row++, "%-36s", "B closes dialogue");
+    jo_printf(2, row++, "%-36s", "L lock target / release lock");
+    jo_printf(2, row++, "%-36s", "L re-centre when no target");
+    jo_printf(2, row++, "%-36s", "Locked: D-pad strafe/back up");
+    jo_printf(2, row++, "%-36s", "Hold Z + D-pad: look (unlocked)");
+    jo_printf(2, row++, "%-36s", "Hold C + D-pad: C items (pending)");
+    jo_printf(2, row++, "%-36s", "Roll: automatic after landing");
+    jo_printf(2, row++, "%-36s", "Start opens/closes items");
+    jo_printf(2, row++, "%-36s", "MENU: D-pad pick A equip B back");
+#ifndef DOSEI_CLEAN_TEST
+    jo_printf(2, row++, "%-36s", "L+R debug; +Up camera compare");
+#endif
+}
+
+/* Persistent state survives fixed-step catch-up; one-step events may not. */
+static void action_hint(void)
+{
+    static unsigned int changed_at;
+    static unsigned int last_owned, last_cuts;
+    static const char *notice = "";
+    unsigned int now = demo_clock();
+    if (demo_title_is_visible()) return;
+    if (gameplay.owned != last_owned) {
+        notice = (gameplay.owned & GP_SWORD) && !(last_owned & GP_SWORD)
+            ? "Sword equipped! X: swing" : "Shield equipped! Hold R: guard";
+        last_owned = gameplay.owned;
+        changed_at = now;
+    }
+    if (gameplay.cut_count != last_cuts) {
+        last_cuts = gameplay.cut_count;
+        notice = "Grass cut!";
+        changed_at = now;
+    }
+    if (gameplay_blocks_world()) {
+        jo_printf(1, 28, "%-38s", "");
+        return;
+    }
+    jo_printf(1, 28, "%-38s",
+        gameplay.swing ? "Sword swing" : gameplay.shielding ? "Shield raised" :
+        (*notice && now - changed_at < 180) ? notice :
+        !(gameplay.owned & GP_SWORD) ? "Find sword west. Start: items/help" :
+        !(gameplay.owned & GP_SHIELD) ? "X sword. Shield north. Start: help" :
+        "X sword R shield L target Start items");
 }
 
 static void         viewer_hud(void)
@@ -223,6 +395,15 @@ static void         viewer_hud(void)
             jo_printf(0, 4, "pend a%d x%d c%d    ",
                       (int)demo_interact_requests, (int)demo_attack_requests,
                       (int)demo_last_c_button);
+            /* Gear/target/sword readout. sw and sh are owned+equipped, tgt is
+             * the locked kokiri_npcs index, sg the swing steps left with a '*'
+             * while the blade is live, cut the tufts cleared so far. */
+            jo_printf(0, 5, "sw%d sh%d tgt%-3d sg%d%c cut%-2d  ",
+                      (gameplay.equipped & GP_SWORD) ? 1 : 0,
+                      (gameplay.equipped & GP_SHIELD) ? 1 : 0,
+                      (int)gameplay.target, (int)gameplay.swing,
+                      gameplay_sword_active() ? '*' : (gameplay.shielding ? 'R' : ' '),
+                      (int)gameplay.cut_count);
             /* One line, because the question is whether the visible rolling
             ** and the state machine agree -- reading that across two rows is
             ** exactly how a wrong answer gets recorded.
@@ -336,6 +517,10 @@ void                jo_main(void)
     scene_ready = kokiri_scene_load();
     scene_ready = scene_ready && demo_init();
     music_ready = scene_ready && music_init(&music_bank_title);
+    if (music_ready && !action_audio_init()) {
+        scene_ready = false;
+        jo_printf(2, 3, "action audio load FAILED");
+    }
 
     jo_core_add_callback(viewer_draw);
     jo_core_run();

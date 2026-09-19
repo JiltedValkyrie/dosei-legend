@@ -86,6 +86,17 @@ class PlayerControls(unittest.TestCase):
 
     # --- button mapping ---------------------------------------------------
 
+    def test_menu_blocks_world_and_consumes_attack_jump_look(self):
+        self.lib.player_input_set_dialogue(True)
+        self.hold(UP | X | Y | Z | R | B)
+        for field in ('move_buttons', 'attack', 'jump', 'shield', 'look_mode'):
+            self.assertEqual(getattr(self.lib, 'control_' + field)(), 0, field)
+        self.assertFalse(self.lib.control_walking())
+        self.lib.player_input_set_dialogue(False)
+        self.hold(0)
+        self.assertFalse(self.lib.control_attack())
+        self.assertFalse(self.lib.control_jump())
+
     def test_y_is_jump_and_a_is_not(self):
         self.tap(Y)
         self.assertTrue(self.lib.control_jump())

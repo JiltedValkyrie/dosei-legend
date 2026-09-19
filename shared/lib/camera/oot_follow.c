@@ -172,6 +172,17 @@ void            oot_follow_recenter(oot_follow_t *camera)
     camera->initialised = true;
 }
 
+void            oot_follow_target(oot_follow_t *camera, bool active)
+{
+    if (active && !camera->targeting)
+        oot_follow_recenter(camera);
+    if (!active && camera->targeting)
+        camera->swing_timer = 0;
+    camera->targeting = active;
+    if (active)
+        oot_follow_look_exit(camera);
+}
+
 void            oot_follow_snap(oot_follow_t *camera,
                                 const camera_position_t *player,
                                 uint16_t facing)
@@ -185,6 +196,7 @@ void            oot_follow_snap(oot_follow_t *camera,
     camera->look_active = false;
     camera->look_yaw = 0;
     camera->look_pitch = 0;
+    camera->targeting = false;
 }
 
 void            oot_follow_update(oot_follow_t *camera,
@@ -228,6 +240,13 @@ void            oot_follow_update(oot_follow_t *camera,
             camera->yaw = (uint16_t)(camera->yaw + (int16_t)step);
         --camera->swing_timer;
     }
+    else if (camera->targeting) {
+        /* Link already faces the target. Keep the eye on that same axis even
+         * while idle, strafing, or backing up. Normal1's rear-half suppression
+         * and move-only yaw tracking must never apply to an active lock.
+         * This is a behind-Link adaptation, not full KeepOn1 two-actor framing. */
+        camera->yaw = player_facing;
+    }
     else if (moving) {
         /* D-pad travel is camera-relative. Chasing facing in the rear half
          * makes Down a moving 180-degree target: rounding flips the chosen
@@ -246,7 +265,7 @@ void            oot_follow_update(oot_follow_t *camera,
                                 XZ_RATE);
     camera->pitch = approach(camera->pitch, OOT_CAM_PITCH_TARGET, PITCH_RATE);
 
-    if (camera->look_active)
+    if (camera->look_active && !camera->targeting)
     {
         /* Aim from a copy: the stored follow state is untouched, so the view
         ** returns to the ordinary follow camera the moment Z is released. */

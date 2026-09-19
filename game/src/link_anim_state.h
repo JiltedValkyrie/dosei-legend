@@ -33,6 +33,11 @@ void                link_anim_reset_state(void);
 ** he fell, measured at the moment he lands, and drives OoT's landing choice. */
 void                link_anim_update(int32_t speed, bool grounded,
                                      int32_t fall_units, bool roll_pressed);
+/* Combat presentation follows the gameplay clock, never render cadence. */
+void                link_anim_combat(unsigned int swing_remaining,
+                                     bool shielding);
+/* One-step sound events from actual locomotion clip frame crossings. */
+uint32_t            link_anim_motion_events(void);
 
 /* What to draw now. */
 link_state_t        link_anim_state(void);

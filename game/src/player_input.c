@@ -13,6 +13,7 @@
 
 static volatile uint16_t    held_snapshot;
 static player_move_mode_t   move_mode;
+static bool                 dialogue_open;
 static input_edge_t         edge_walk_toggle;   /* B */
 static input_edge_t         edge_jump;          /* Y */
 static input_edge_t         edge_interact;      /* A */
@@ -21,6 +22,9 @@ static input_edge_t         edge_recenter;      /* L */
 /* One edge per C direction, so holding C+Up does not repeat and a future held
 ** item (aiming) needs no further input rewrite. */
 static input_edge_t         edge_c[4];
+/* Menu cursor edges: the raw D-pad, taken before the modifier routing, so a
+** paused game can step the list without C or Z having any say. */
+static input_edge_t         edge_menu[4];
 /* Release counters for the C directions. A rising-edge latch counts presses, so
 ** releases are counted with their own pair of counters rather than by inverting
 ** the input (which would report a phantom release before the first press). */
@@ -41,11 +45,13 @@ void player_input_reset(void)
     held_snapshot = 0;
     /* Run, not walk: this preserves the speed the slice already shipped. */
     move_mode = PLAYER_MOVE_RUN;
+    dialogue_open = false;
     edge_walk_toggle = edge_jump = edge_interact = edge_attack =
         edge_recenter = (input_edge_t){0};
     for (i = 0; i < 4; ++i)
     {
         edge_c[i] = (input_edge_t){0};
+        edge_menu[i] = (input_edge_t){0};
         c_release_produced[i] = c_release_consumed[i] = 0;
         c_direction_held[i] = false;
     }
@@ -65,6 +71,8 @@ void player_input_sample(uint16_t held)
     input_edge_sample(&edge_interact, (held & CAMERA_A) != 0);
     input_edge_sample(&edge_attack, (held & CAMERA_X) != 0);
     input_edge_sample(&edge_recenter, (held & CAMERA_L) != 0);
+    for (i = 0; i < 4; ++i)
+        input_edge_sample(&edge_menu[i], (held & c_direction_bit[i]) != 0);
     for (i = 0; i < 4; ++i)
     {
         bool down = c_mode && (held & c_direction_bit[i]) != 0;
@@ -115,6 +123,9 @@ void player_input_step(bool in_gameplay, player_input_t *out)
     out->shield_held = false;
     out->diagnostics_toggled = false;
     out->camera_swap_toggled = false;
+    out->cancel_pending = false;
+    out->menu_step = 0;
+    out->move_mode = move_mode;
 
     if (!in_gameplay)
     {
@@ -147,13 +158,39 @@ void player_input_step(bool in_gameplay, player_input_t *out)
 #endif
 
     out->shield_held = (held & CAMERA_R) != 0;
-    /* B toggles the persistent mode once per physical press. */
-    if (toggled)
+    out->cancel_pending = toggled;
+    /* Menu cursor: up/left step back, down/right step forward, one slot per
+    ** physical press. Taken from the raw D-pad so the pause menu still works
+    ** with C or Z held, and consumed here so a press never reaches both the
+    ** menu and locomotion. */
+    out->menu_step = 0;
+    for (i = 0; i < 4; ++i)
+    {
+        if (!input_edge_consume(&edge_menu[i]))
+            continue;
+        if (!dialogue_open)
+            continue;
+        out->menu_step = (c_direction_bit[i] == CAMERA_UP ||
+                          c_direction_bit[i] == CAMERA_LEFT) ? -1 : 1;
+    }
+    /* B toggles the persistent mode once per physical press -- unless a text
+    ** box has the pad, where the same press closes the box instead. One press
+    ** never does both. */
+    if (toggled && !dialogue_open)
         move_mode = move_mode == PLAYER_MOVE_RUN ? PLAYER_MOVE_WALK
                                                  : PLAYER_MOVE_RUN;
     out->move_mode = move_mode;
     out->interact_pending = interacted;
     out->attack_pending = attacked;
+
+    if (dialogue_open)
+    {
+        out->attack_pending = false;
+        out->shield_held = false;
+        out->look_exited = look_was_active;
+        look_was_active = false;
+        return;
+    }
 
     if (look)
     {
@@ -198,6 +235,11 @@ void player_input_step(bool in_gameplay, player_input_t *out)
     out->move_buttons = dpad;
     out->jump = jumped;
     out->recenter = recentered;
+}
+
+void    player_input_set_dialogue(bool open)
+{
+    dialogue_open = open;
 }
 
 player_move_mode_t player_input_move_mode(void)

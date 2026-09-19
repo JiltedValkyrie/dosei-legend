@@ -17,6 +17,8 @@
 
 #include <stdbool.h>
 #include <stdint.h>
+/* Tail reserved for resident action PCM; music never writes beyond this. */
+#define MUSIC_SAMPLE_LIMIT 0x76400
 
 /* Layouts the generated score headers already use, so their tables can be
  * pointed at directly rather than copied. */

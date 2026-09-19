@@ -1,4 +1,5 @@
 import sys
+import struct
 import unittest
 from pathlib import Path
 
@@ -33,3 +34,9 @@ class DemoAssets(unittest.TestCase):
         self.assertEqual(len(fairy), 16 * 16 * 2)
         self.assertIn(b'\0\0', fairy)
         self.assertTrue(any(fairy))
+        grass = (ROOT / 'build/cd/GRASS.RGB').read_bytes()
+        self.assertEqual(len(grass), 32 * 32 * 2)
+        pixels = struct.unpack('>1024H', grass)
+        self.assertIn(0, pixels)
+        self.assertGreater(sum(p != 0 for p in pixels), 100)
+        self.assertTrue(all(p == 0 or p & 0x8000 for p in pixels))

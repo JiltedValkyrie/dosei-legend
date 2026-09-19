@@ -60,6 +60,8 @@ typedef struct
     bool                jump;               /* Y */
     bool                recenter;           /* L, unless consumed by a chord */
     /* Pending: no system implemented yet. */
+    bool                cancel_pending;     /* B press, before walk/run uses it */
+    int8_t              menu_step;          /* D-pad while a menu/box owns it */
     bool                interact_pending;   /* A */
     bool                attack_pending;     /* X */
     bool                shield_held;        /* R */
@@ -82,6 +84,10 @@ void    player_input_sample(uint16_t held);
 /* Consume one fixed step's worth of decisions. `in_gameplay` false discards
 ** queued actions so title input never leaks into the world. */
 void    player_input_step(bool in_gameplay, player_input_t *out);
+/* A text box or the pause menu owns the pad: B closes it instead of toggling
+** walk/run, the D-pad reports menu_step instead of movement, and no movement,
+** jump, attack or guard leaves the mapper while it is open. */
+void    player_input_set_dialogue(bool open);
 /* Current persistent mode, for HUD/tests. */
 player_move_mode_t player_input_move_mode(void);
 

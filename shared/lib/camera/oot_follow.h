@@ -26,7 +26,7 @@
 ** screen. At 62 the scale is 0.6260, giving 125.2 to 187.8 units of distance
 ** and a 12.5-unit at-offset.
 **
-** This is the normal follow mode only. Parallel/KeepOn targeting, first-person
+** Includes a behind-Link targeting adaptation. Full Parallel/KeepOn, first-person
 ** and the swing/collision behaviour are separate Camera_* functions and are
 ** NOT implemented here; see OPUS_HANDOFF.md for what remains.
 */
@@ -60,6 +60,7 @@ typedef struct
     int32_t     look_yaw;
     int32_t     look_pitch;
     bool        look_active;
+    bool        targeting;     /* behind-Link lock, independent of movement */
 }               oot_follow_t;
 
 /* Bounds for the Z-look aim, in binang. Yaw is limited rather than free so the
@@ -93,6 +94,8 @@ bool    oot_follow_looking(const oot_follow_t *camera);
 ** OOT_CAM_SWING_STEPS instead of cutting there. Does not reset yaw -- the
 ** turn starts from wherever the camera currently is. */
 void    oot_follow_recenter(oot_follow_t *camera);
+/* Enter with eased turn; track facing every step until released. */
+void    oot_follow_target(oot_follow_t *camera, bool active);
 
 /* Place the camera behind `facing` immediately, with no easing. Used on spawn
 ** and after a void recovery, where easing would show empty space. */
