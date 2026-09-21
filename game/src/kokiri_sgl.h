@@ -8,6 +8,18 @@
 /** @brief Upload every mesh's textures/CLUTs and bind them to the SGL tables.
  *  @return true on success; on failure jo_core_error() describes the reason. */
 bool            kokiri_scene_load(void);
+
+/* Load one (scene, room) VDP1 geometry bank: S<scene>R<room>.MSH/.TEX. */
+bool            kokiri_scene_load_bank(unsigned int scene, unsigned int room);
+
+/* Stage a prerendered interior's 320x240 backdrop on VDP2 (S<scene>R<room>.RGB)
+** and put the sprite layer IN FRONT of it, so Link draws over the picture
+** instead of behind it. Ordinary scenes restore the title-style order, where
+** the scroll screen sits in front so the title artwork can overlay the world. */
+bool            kokiri_scene_load_backdrop(unsigned int scene, unsigned int room);
+
+/* True while a prerendered backdrop is being shown instead of geometry. */
+bool            kokiri_scene_backdrop_active(void);
 bool            kokiri_scene_update(void);
 
 /** @brief VDP1 bytes consumed, valid after kokiri_scene_load(). */

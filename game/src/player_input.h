@@ -58,7 +58,12 @@ typedef struct
     player_c_button_t   c_released;
     /* Wired behavior. */
     bool                jump;               /* Y */
-    bool                recenter;           /* L, unless consumed by a chord */
+    bool                recenter;           /* L press edge, unless consumed by a chord */
+    /* L HELD, unless consumed by a chord. Hold targeting needs the button's
+    ** state every step, not just its press edge: the lock lasts exactly as
+    ** long as L is down. Whether a press recentres is decided in gameplay.c,
+    ** because it depends on whether the hold became a lock-on. */
+    bool                target_held;
     /* Pending: no system implemented yet. */
     bool                cancel_pending;     /* B press, before walk/run uses it */
     int8_t              menu_step;          /* D-pad while a menu/box owns it */

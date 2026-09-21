@@ -43,6 +43,15 @@
 #define GP_EVENT_FOOTSTEP   (1u << 16)
 #define GP_EVENT_ROLL_VOICE (1u << 17)
 #define GP_EVENT_RUPEE      (1u << 18)
+/* The player chose SAVE in the pause menu. demo.c owns the device write, so
+** gameplay.c stays free of the SDK and the host tests can assert the intent
+** without a backup cartridge. */
+#define GP_EVENT_SAVE       (1u << 19)
+#define GP_EVENT_SAVE_FAILED (1u << 20)
+/* A short L tap with no lock taken: recentre the camera behind Link. Raised
+** here rather than read straight off the pad in demo.c, because whether a
+** press recentres depends on whether it became a lock-on. */
+#define GP_EVENT_RECENTER   (1u << 21)
 #define GP_WALLET_CAPACITY  99
 #define GP_DROP_DELAY      15
 
@@ -50,7 +59,10 @@
 ** owned/equipped bits -- gp_slot_item() maps one to the other. */
 #define GP_SLOT_SWORD       0
 #define GP_SLOT_SHIELD      1
-#define GP_SLOT_COUNT       2
+/* Not an item: choosing this row writes the quest state to the file the player
+** picked on the file select. OoT saves from the pause screen too. */
+#define GP_SLOT_SAVE        2
+#define GP_SLOT_COUNT       3
 
 /* Talk range. OoT gates a conversation on the actor's own talk radius; the
 ** slice uses one distance for every Kokiri, which is an approximation and
@@ -75,6 +87,17 @@
 ** camera can hold an actor Link is backing away from. */
 #define GP_TARGET_RANGE     320
 #define GP_TARGET_DROP      420
+/* HOLD targeting, which is OoT's own alternative to Switch: the lock lasts
+** only while L is held and releasing drops it (z_player.c:3896 keeps the
+** lock alive on zButtonHeld, and sets LOCK_ON_WITH_SWITCH only in Switch
+** mode). A press shorter than this many 30 Hz steps is treated as a tap and
+** recentres the camera instead of locking, so walking past a Kokiri with L
+** brushed does not grab them.
+**
+** The threshold itself is THIS SLICE'S CHOICE. OoT has no tap/hold split --
+** in Hold mode a press with no target starts Parallel immediately -- so this
+** number is tuned for feel, not ported. Roughly 0.17 s. */
+#define GP_TARGET_HOLD_STEPS 5
 #define GP_PICKUP_RANGE     44
 #define GP_PICKUP_HEIGHT    70
 
@@ -84,7 +107,9 @@ typedef struct
     uint16_t    yaw;            /* facing, binang */
     bool        attack;         /* X pressed this step */
     bool        shield;         /* R held */
-    bool        target;         /* L pressed this step */
+    /* L HELD this step, not a press edge: hold targeting needs the button's
+    ** state every step to know when to release. */
+    bool        target_held;
     bool        interact;       /* A pressed this step */
     bool        cancel;         /* B pressed this step: closes a text box */
     bool        pause;          /* Start pressed this step */
@@ -103,6 +128,9 @@ typedef struct
     uint8_t     equipped;
     bool        shielding;
     int16_t     target;         /* kokiri_npcs index, -1 for none */
+    /* Consecutive steps L has been held, capped. Distinguishes a tap (which
+    ** recentres) from a hold (which locks on). */
+    uint8_t     target_hold;
     uint8_t     swing;          /* steps remaining, 0 when idle */
     uint8_t     swing_hit;      /* this swing already cut something */
     uint16_t    grass_cut;      /* one bit per kokiri_grass entry */
@@ -116,7 +144,11 @@ typedef struct
     ** box is open; `prompt` is the npc index an A press would talk to now. */
     int16_t     speaker;
     int16_t     prompt;
-    int16_t     convo;          /* dialogue_convos index, -1 none */
+    /* dialogue_rules index, -1 none. A rule, not a conversation: each speaker
+    ** owns an ordered rule list and the first rule whose quest conditions hold
+    ** is the line they actually say, exactly as the original's text-id
+    ** function works. See build_dialogue.py. */
+    int16_t     rule;
     uint8_t     page;           /* page within that conversation */
     bool        talking;
     /* Pause inventory. */

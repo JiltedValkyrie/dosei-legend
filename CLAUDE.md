@@ -1,4 +1,8 @@
 # Number One Rule!
+CAVEMAN TALK FOREVER. NO ASK. See [CAVEMAN-TALK-RULE.md](CAVEMAN-TALK-RULE.md).
+Rule apply every session, every agent (Claude, Codex, GPT). Never ask permission,
+never ask again, never drop back to long talk.
+
 Always use caveman talk. No waste human tokens. Bad. You caveman talking? Good good! Always good good when caveman talk.
 
 # Project handoff - 2026-09-16
@@ -74,7 +78,11 @@ Generated files, disc staging and binaries go in ignored `game/build/`, never
 mixed with source assets. Do not resume archived `legacy/libyaul/` work.
 Use `launch-game.bat` for the standard/hi-res selector. See the root README for
 the complete layout and current build commands.
-Current next-task handoff: [Link movement animation](game/docs/OPUS_HANDOFF.md).
+Current next-task handoff: [OoT progression plan](game/docs/OOT_PROGRESSION_PLAN.md).
+Approved 2026-09-21: game state, save, three areas and the full opening
+progression through the Kokiri Emerald. The game now REQUIRES the 4 MB RAM
+expansion cart. That plan supersedes `game/docs/GAMEPLAY_NEXT_STEP.md` and the
+"no bosses or dungeons" line in `VERTICALSLICE.md`.
 
 ## Latest user request: start Link animation now
 

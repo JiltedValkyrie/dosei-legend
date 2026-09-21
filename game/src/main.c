@@ -23,6 +23,10 @@
 #include "link_clips.h"
 #include "frame_timer.h"
 #include "oot_follow.h"
+#include "ram_cart.h"
+#include "save_device.h"
+#include "file_select.h"
+#include "scene_flow.h"
 
 /*
 ** Baseline camera, in the scene's native source space.
@@ -47,6 +51,7 @@ static void         viewer_hud(void);
 static void         dialogue_box(void);
 static void         inventory_menu(void);
 static void         action_hint(void);
+static void         file_select_screen(void);
 #ifdef DOSEI_TEXTURE_PROBE
 #include "texture_probe.h"
 static unsigned int probe_frame;
@@ -135,25 +140,70 @@ static void         viewer_draw(void)
     }
 #endif
     frame_timer_end(FRAME_PHASE_MOVEMENT);
-    slSetScreenDist(toFIXED(demo_title_is_visible() ? 180 : SCREEN_DISTANCE));
+    /* A prerendered interior must be drawn at the SAME field of view the
+     * backdrop was rendered with, or the 3D and the picture disagree about
+     * scale and Link drifts away from the room as he crosses it. The distance
+     * is computed offline from the room's own bgCam fov; see
+     * tools/build_scene_table.py.
+     *
+     * Shifted by hand rather than through toFIXED(): that macro multiplies by
+     * a double, and on an FPU-less SH-2 a non-constant argument pulls in the
+     * software-float helpers (DOSEI-LEGEND-BIBLE.md). The constants below are
+     * folded at compile time and stay safe. */
+    if (kokiri_scene_backdrop_active() && scene_flow_entry()->cam_dist > 0)
+        slSetScreenDist((FIXED)((int32_t)scene_flow_entry()->cam_dist << 16));
+    else
+        slSetScreenDist(toFIXED(demo_title_is_visible() ? 180 : SCREEN_DISTANCE));
     music_service();
 #ifdef DOSEI_TEXTURE_PROBE
     texture_probe();
 #endif
+    /*
+    ** Screen-space X flip: the world was rendered MIRRORED until this existed.
+    **
+    ** The converter bakes vertices as (x, -y, z) so SGL's Y-down projection
+    ** comes out upright. Negating one axis flips handedness, and the camera
+    ** maths never compensated: working it through, the projection's effective
+    ** screen-right is (cos yaw, 0, -sin yaw), which is the exact NEGATION of
+    ** the true right-handed right vector (f x up) = (-cos yaw, 0, sin yaw).
+    ** So every scene -- Kokiri Forest included -- was a mirror image of the
+    ** original, and nothing could reveal it until Link's house arrived with a
+    ** prerendered backdrop to compare against. Projecting the house's real
+    ** collision onto its own backdrop put the door on the wrong side; with the
+    ** sign corrected, the exit polygons land exactly on the doorway.
+    **
+    ** Applied FIRST so it multiplies in outermost and negates the projected X
+    ** of everything at once -- geometry, Link and the billboards -- rather
+    ** than needing every world coordinate, facing and model negated
+    ** separately. Depth and the yaw sense are untouched, because only the
+    ** screen X is wrong.
+    **
+    ** Y is doubled in the same call for the hi-res variant.
+    */
 #ifdef DOSEI_HIRES
-    /* Double only projected Y, keeping the same framing at 320x480i. */
-    slScale(toFIXED(1), toFIXED(2), toFIXED(1));
+    slScale(toFIXED(-1), toFIXED(2), toFIXED(1));
+#else
+    slScale(toFIXED(-1), toFIXED(1), toFIXED(1));
 #endif
     slRotX((ANGLE)(0u-demo_pitch));
     slRotY((ANGLE)(0u-demo_yaw));
     jo_3d_translate_matrix(-demo_camera.x, demo_camera.y, -demo_camera.z);
     frame_timer_begin(FRAME_PHASE_SCENE);
 #if !defined(DOSEI_PERF_PROBE) || DOSEI_PERF_PROBE != 3
-    kokiri_scene_draw();
-    kokiri_grass_draw();
-    kokiri_rupees_draw(demo_clock());
-    kokiri_fairies_draw(demo_clock());
-    kokiri_pickups_draw(demo_clock());
+    /* A prerendered interior IS its backdrop: it has no geometry, and the
+     * resident VDP1 bank still holds whichever forest room was loaded last, so
+     * drawing the world here would paint the forest over the room.
+     *
+     * The forest's actors go with it. They filter by ROOM, and an interior is
+     * a different SCENE whose room 0 would otherwise match -- a Kokiri fairy
+     * would bob around inside Link's house. */
+    if (!kokiri_scene_backdrop_active()) {
+        kokiri_scene_draw();
+        kokiri_grass_draw();
+        kokiri_rupees_draw(demo_clock());
+        kokiri_fairies_draw(demo_clock());
+        kokiri_pickups_draw(demo_clock());
+    }
     kokiri_menu_draw();
 #endif
     frame_timer_end(FRAME_PHASE_SCENE);
@@ -169,9 +219,11 @@ static void         viewer_draw(void)
     rejected_total += kokiri_scene_rejected();
     dialogue_box();
     inventory_menu();
+    file_select_screen();
     if (!gameplay_blocks_world()) viewer_hud();
     action_hint();
-    if (!demo_title_is_visible()) kokiri_rupee_hud_draw();
+    if (!demo_title_is_visible() && !demo_file_select_is_visible())
+        kokiri_rupee_hud_draw();
     frame_timer_frame_end();
     frame_timer_begin(FRAME_PHASE_SYNC);
 }
@@ -194,9 +246,10 @@ static void         dialogue_box(void)
     static int  last_prompt = -1;
     unsigned int i;
 
-    /* Title flythrough has no interaction. Clear retained VDP2 text too,
-     * so returning here cannot leave an old prompt or page on screen. */
-    if (demo_title_is_visible()) {
+    /* Title flythrough and the file select have no interaction. Clear retained
+     * VDP2 text too, so returning here cannot leave an old prompt or page on
+     * screen -- and so a stale prompt cannot print over the file list. */
+    if (demo_title_is_visible() || demo_file_select_is_visible()) {
         if (last_prompt != -1)
             jo_printf(1, PROMPT_ROW, "%-38s", "");
         if (was_talking) {
@@ -246,7 +299,9 @@ static void         dialogue_box(void)
 ** where to get it, or the player has no way to learn the sword exists.
 */
 #define MENU_ROW    4
-#define MENU_ROWS   21
+/* Rows the panel occupies and therefore must clear on close. Three item rows
+** now, each with its own use line, so this grew by two with the save row. */
+#define MENU_ROWS   23
 
 static void         inventory_menu(void)
 {
@@ -267,15 +322,27 @@ static void         inventory_menu(void)
     row++;
     for (slot = 0; slot < GP_SLOT_COUNT; ++slot) {
         uint8_t item = gameplay_slot_item(slot);
-        const char *state = !(gameplay.owned & item) ? "Find in forest"
-                          : (gameplay.equipped & item) ? "EQUIPPED" : "Owned";
+        const char *state;
+        if (slot == GP_SLOT_SAVE) {
+            /* Not an item row: it reports the last save attempt instead of an
+             * owned/equipped state, and says plainly when one failed. */
+            int report = demo_save_report();
+            state = !save_device_ready() ? "NO BACKUP RAM"
+                  : report < 0 ? ""
+                  : report ? "SAVED" : "SAVE FAILED";
+        } else {
+            state = !(gameplay.owned & item) ? "Find in forest"
+                  : (gameplay.equipped & item) ? "EQUIPPED" : "Owned";
+        }
         jo_printf(2, row++, "%c %-14s %-18s",
                   slot == gameplay.cursor ? '>' : ' ',
                   gameplay_slot_name(slot), state);
         /* Only an owned item gets its use button: printing "X: swing" next to
-         * a sword the player has never found would be a lie. */
+         * a sword the player has never found would be a lie. The save row
+         * always shows its own, because it is always usable. */
         jo_printf(4, row++, "%-34s",
-                  (gameplay.owned & item) ? gameplay_slot_use(slot) : "");
+                  (slot == GP_SLOT_SAVE || (gameplay.owned & item))
+                      ? gameplay_slot_use(slot) : "");
     }
     row++;
     jo_printf(2, row++, "%-36s", "CONTROLS");
@@ -283,8 +350,9 @@ static void         inventory_menu(void)
     jo_printf(2, row++, "%-36s", "X swing/cut  Hold R shield");
     jo_printf(2, row++, "%-36s", "Y jump       A talk/next page");
     jo_printf(2, row++, "%-36s", "B closes dialogue");
-    jo_printf(2, row++, "%-36s", "L lock target / release lock");
-    jo_printf(2, row++, "%-36s", "L re-centre when no target");
+    jo_printf(2, row++, "%-36s", "Hold L: lock on + strafe");
+    jo_printf(2, row++, "%-36s", "Release L: release lock");
+    jo_printf(2, row++, "%-36s", "Tap L: re-centre camera");
     jo_printf(2, row++, "%-36s", "Locked: D-pad strafe/back up");
     jo_printf(2, row++, "%-36s", "Hold Z + D-pad: look (unlocked)");
     jo_printf(2, row++, "%-36s", "Hold C + D-pad: C items (pending)");
@@ -303,7 +371,7 @@ static void action_hint(void)
     static unsigned int last_owned, last_cuts;
     static const char *notice = "";
     unsigned int now = demo_clock();
-    if (demo_title_is_visible()) return;
+    if (demo_title_is_visible() || demo_file_select_is_visible()) return;
     if (gameplay.owned != last_owned) {
         notice = (gameplay.owned & GP_SWORD) && !(last_owned & GP_SWORD)
             ? "Sword equipped! X: swing" : "Shield equipped! Hold R: guard";
@@ -501,6 +569,67 @@ static void         viewer_hud(void)
               demo_collision_indexed ? "ON" : "off (full scan)");
 }
 
+/*
+** File select.
+**
+** Gameplay text, not debug text, so it is drawn on the clean player disc too.
+** VDP2 retains what is printed, so the screen clears its own rows on the frame
+** it stops being shown -- otherwise the file list would sit on top of the
+** forest after a file is chosen.
+*/
+#define FS_ROW      6
+#define FS_ROWS     (FILE_SELECT_ROWS * 2 + 6)
+
+static void         file_select_screen(void)
+{
+    static bool   was_visible;
+    unsigned int  row;
+
+    if (!demo_file_select_is_visible()) {
+        if (was_visible) {
+            for (row = 0; row < FS_ROWS; ++row)
+                jo_printf(0, (int)(FS_ROW + row), "                                      ");
+            was_visible = false;
+        }
+        return;
+    }
+    was_visible = true;
+
+    jo_printf(4, FS_ROW, "SELECT A FILE");
+    for (row = 0; row < FILE_SELECT_ROWS; ++row) {
+        int line = (int)(FS_ROW + 2 + row * 2);
+        bool here = (file_select.cursor == row);
+        /* In erase mode the erase row itself is not selectable, so it is drawn
+        ** without a cursor rather than left looking chosen. */
+        if (file_select.mode == FILE_SELECT_ERASE_PICK &&
+            row == FILE_SELECT_ROW_ERASE)
+            here = false;
+        jo_printf(2, line, "%s %-12s", here ? ">" : " ",
+                  file_select_row_label(row));
+        jo_printf(2, line + 1, "     %-32s", file_select_row_detail(row));
+    }
+
+    row = FS_ROW + 2 + FILE_SELECT_ROWS * 2;
+    switch (file_select.mode) {
+        case FILE_SELECT_ERASE_CONFIRM:
+            jo_printf(2, (int)row, "ERASE %s? A: YES   B: NO          ",
+                      file_select_row_label(file_select.erase_slot));
+            break;
+        case FILE_SELECT_ERASE_PICK:
+            jo_printf(2, (int)row, "PICK A FILE TO ERASE. B: BACK    ");
+            break;
+        default:
+            jo_printf(2, (int)row, "A: PLAY   B: TITLE               ");
+            break;
+    }
+    /* Only ever shown when a device call actually refused. */
+    jo_printf(2, (int)row + 2, "%s",
+              file_select.device_failed ? "CANNOT USE THAT FILE          "
+                                        : "                              ");
+    if (!save_device_ready())
+        jo_printf(2, (int)row + 3, "NO BACKUP MEMORY: CANNOT SAVE");
+}
+
 void                jo_main(void)
 {
     jo_core_init(JO_COLOR_Black);
@@ -513,6 +642,26 @@ void                jo_main(void)
     jo_core_set_screens_order(JO_NBG0_SCREEN, JO_NBG1_SCREEN, JO_SPRITE_SCREEN,
                              JO_RBG0_SCREEN, JO_NBG2_SCREEN, JO_NBG3_SCREEN);
     slSetScreenDist(toFIXED(SCREEN_DISTANCE));
+
+    /* The 4 MB cart is required. Stop here rather than loading and failing an
+    ** allocation later, where the real cause would be invisible. The second
+    ** bank must be claimed before anything allocates, or the early allocations
+    ** crowd the first bank while half the cart sits unused. */
+    if (!ram_cart_claim_second_bank()) {
+        jo_printf(2, 10, "4 MB RAM EXPANSION CART REQUIRED");
+        jo_printf(2, 12, "This game needs the 4 MB (32 Mbit)");
+        jo_printf(2, 13, "Saturn RAM expansion cartridge.");
+        jo_printf(2, 15, "In Kronos: set Cartridge/Type to");
+        jo_printf(2, 16, "the 32 Mbit DRAM cart (type 7).");
+        jo_core_run();
+        return;
+    }
+
+    /* Backup RAM is mounted before anything can ask to load a file. A console
+    ** with no usable internal memory is still playable, so this is reported
+    ** rather than fatal -- unlike the missing cart above. */
+    if (!save_device_init())
+        jo_printf(2, 26, "no backup memory: cannot save");
 
     scene_ready = kokiri_scene_load();
     scene_ready = scene_ready && demo_init();

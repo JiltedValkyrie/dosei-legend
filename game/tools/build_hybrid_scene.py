@@ -21,12 +21,17 @@ from vdp1_budget import (Budget, tile_bytes, MAX_POLYGONS, MAX_VERTICES,
 OOT_DEFAULT = pathlib.Path('D:/Workspace-Claude/game-decomps/n64/oot')
 
 
-def load_faces(oot, rom_dir=None):
-    segments = source.extract(oot, rom_dir)
+def load_faces(oot, rom_dir=None, prefix='spot04'):
+    """Every display-list face of one scene's rooms, tagged with its room.
+
+    `prefix` selects the scene. It used to be hardcoded to spot04; the slice
+    now needs Link's house as well, and every OoT scene is read identically.
+    """
+    segments = source.extract(oot, rom_dir, prefix=prefix)
     faces = []
     for name, data in segments.items():
         if 'room' in name:
-            display = source.DisplayLists(segments['spot04_scene'], data)
+            display = source.DisplayLists(segments[prefix + '_scene'], data)
             display.room()
             for face in display.faces:
                 face['room'] = name
@@ -179,8 +184,8 @@ def render_tile(group, width, height, shared=False):
 
 
 def convert(oot, head, actor, out_dir, patches_only=False, rom_dir=None,
-            quad_obj=None, source_path=None, room=None):
-    source_faces = load_faces(oot, rom_dir)
+            quad_obj=None, source_path=None, room=None, prefix='spot04'):
+    source_faces = load_faces(oot, rom_dir, prefix=prefix)
     preferred, workshop = [], None
     if quad_obj:
         from workshop_quads import preferred_pairs
@@ -193,11 +198,16 @@ def convert(oot, head, actor, out_dir, patches_only=False, rom_dir=None,
         groups = [g for g in groups if g['tri']['room'] == room]
     split = max((g for g in groups if g['kind'] == quads.SPLIT),
                 key=lambda g:g['size'], default=max(groups,key=lambda g:g['size']))
+    # Diagnostic landmark only: the flattest quad nearest the village
+    # clearing, used for texture_probe.h. A scene with no baked ground quad --
+    # a small interior, for instance -- falls back to the largest group rather
+    # than aborting the build over a probe coordinate.
     ground = min((g for g in groups if g['kind'] == quads.BAKE and
                   abs(quads.normal(g['points'])[1]) > .85 * math.sqrt(sum(
                       n*n for n in quads.normal(g['points'])))),
                  key=lambda g:sum((sum(p[k] for p in g['points'])/len(g['points']) -
-                                   (-300,0,0)[k])**2 for k in range(3)))
+                                   (-300,0,0)[k])**2 for k in range(3)),
+                 default=max(groups, key=lambda g: g['size']))
     # Patch mode retains original triangles elsewhere, useful for a visual A/B.
     if patches_only:
         selected = set(split['source'] + ground['source'])

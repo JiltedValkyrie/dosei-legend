@@ -71,6 +71,8 @@ int control_c_released(void) { return mapped.c_released; }
 int control_jump(void) { return mapped.jump; }
 int control_recenter(void) { return mapped.recenter; }
 int control_interact(void) { return mapped.interact_pending; }
+int control_cancel(void)   { return mapped.cancel_pending; }
+int control_menu_step(void){ return mapped.menu_step; }
 int control_attack(void) { return mapped.attack_pending; }
 int control_shield(void) { return mapped.shield_held; }
 

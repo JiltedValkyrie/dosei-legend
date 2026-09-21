@@ -23,7 +23,16 @@ from extract_title_source import yaz0
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def extract(root, rom_dir=None):
+def extract(root, rom_dir=None, prefix='spot04', expect=None):
+    """Every segment of one scene: `<prefix>_scene` plus its `<prefix>_room_N`.
+
+    `prefix` used to be hardcoded to spot04. It is a parameter now because the
+    slice needs Link's house, the Lost Woods, the Deku Tree and the shop as
+    well, and each of those is an ordinary OoT scene read exactly the same way.
+    `expect` is the segment count the caller believes the scene has; passing it
+    turns a mis-typed prefix or a missing room into an immediate failure rather
+    than a scene that silently loads short.
+    """
     config = root / 'baseroms/ntsc-1.2'
     roms = [p for p in (Path(rom_dir) if rom_dir else config).glob('*.z64') if hashlib.md5(p.read_bytes()).hexdigest()
             == '57a9719ad547c516342e1a15d5c28c3d']
@@ -34,13 +43,18 @@ def extract(root, rom_dir=None):
     with (config / 'segments.csv').open() as f:
         for index, row in enumerate(csv.DictReader(f)):
             name = row['Name']
-            if name != 'spot04_scene' and not name.startswith('spot04_room_'):
+            if name != prefix + '_scene' and not re.fullmatch(
+                    re.escape(prefix) + r'_room_\d+', name):
                 continue
             start, end, physical, packed_end = struct.unpack_from('>4I', rom, dma + index * 16)
             data = yaz0(rom[physical:packed_end]) if packed_end else rom[physical:physical + end - start]
             assert len(data) == end - start
             segments[name] = bytes(data)
-    assert len(segments) == 4
+    assert segments, 'no segments matched prefix %r' % prefix
+    if expect is not None:
+        assert len(segments) == expect, (
+            'scene %s: expected %d segments, found %d'
+            % (prefix, expect, len(segments)))
     return segments
 
 
@@ -286,6 +300,115 @@ def bake(face, size=16):
     indices = [i+1 if p[3] >= 64 else 0 for i,p in zip(quantized.tobytes(), pixels)]
     raw = bytes((indices[i] << 4) | indices[i+1] for i in range(0, len(indices), 2))
     return struct.pack('>16H', *clut) + raw
+
+
+def scene_header(scene):
+    """Every scene header command, keyed by opcode, in file order."""
+    out = {}
+    for pos in range(0, 0x400, 8):
+        if scene[pos] == 0x14:
+            break
+        out.setdefault(scene[pos], []).append(scene[pos:pos + 8])
+    return out
+
+
+def _segment_offset(command):
+    return int.from_bytes(command[4:8], 'big') & 0xFFFFFF
+
+
+def spawn_points(scene):
+    """Link's start poses: header command 0x00, 16-byte ActorEntry each.
+
+    These are where the original puts the player for each entrance, so a new
+    game beginning in Link's bed is a spawn index, not an authored coordinate.
+    """
+    header = scene_header(scene)
+    if 0x00 not in header:
+        return []
+    command = header[0x00][0]
+    base = _segment_offset(command)
+    out = []
+    for i in range(command[1]):
+        _, x, y, z, _, yaw, _, params = struct.unpack_from('>H6hH', scene,
+                                                           base + 16 * i)
+        out.append(dict(x=x, y=y, z=z, yaw=yaw & 0xFFFF, params=params))
+    return out
+
+
+def entrance_spawns(scene, count):
+    """Header command 0x06: (spawn, room) per entrance offset into this scene.
+
+    There is no count in the header, so the caller says how many entries it
+    expects to read. Reading past the real list returns neighbouring data, so
+    a wrong count is the caller's error to avoid, not something detectable here.
+    """
+    header = scene_header(scene)
+    if 0x06 not in header:
+        return []
+    base = _segment_offset(header[0x06][0])
+    return [(scene[base + 2 * i], scene[base + 2 * i + 1]) for i in range(count)]
+
+
+def exit_list(scene, count):
+    """Header command 0x13: entrance id per exit slot.
+
+    SurfaceType.exitIndex is ONE-BASED into this list, so a polygon carrying
+    exitIndex 2 leaves through exit_list()[1]. Verified against the original:
+    spot04's exitIndex 4 resolves to 0x272 (ENTR_LINKS_HOUSE_1) and
+    link_home's exitIndex 2 resolves to 0x211 (ENTR_KOKIRI_FOREST_3), which is
+    the two-way door between them.
+
+    Like the entrance list this has no stored count.
+    """
+    header = scene_header(scene)
+    if 0x13 not in header:
+        return []
+    base = _segment_offset(header[0x13][0])
+    return [struct.unpack_from('>H', scene, base + 2 * i)[0]
+            for i in range(count)]
+
+
+def collision_surfaces(scene):
+    """Per-polygon surface fields alongside the geometry.
+
+    collision_triangles() returns geometry only and stays that way, so
+    FOREST.COL is unchanged and its consumers are untouched. This is the
+    richer read, needed because the dungeon and the scene transitions live in
+    fields that were being discarded.
+
+    Bit layout is SURFACETYPE0/1 from the decomp's include/bgcheck.h:219 --
+    data[0]: bgCamIndex 0..7, exitIndex 8..12, floorType 13..17,
+             wallType 21..25, floorProperty 26..29
+    data[1]: material 0..3, floorEffect 4..5, lightSetting 6..10, echo 11..16
+    Only the fields the slice uses are decoded; the rest stay in the source.
+    """
+    for pos in range(0, 0x400, 8):
+        if scene[pos] == 0x14:
+            break
+        if scene[pos] != 3:
+            continue
+        header = _segment_offset(scene[pos:pos + 8])
+        nv = struct.unpack_from('>H', scene, header + 12)[0]
+        vp = struct.unpack_from('>I', scene, header + 16)[0] & 0xFFFFFF
+        count = struct.unpack_from('>H', scene, header + 20)[0]
+        pp = struct.unpack_from('>I', scene, header + 24)[0] & 0xFFFFFF
+        types = struct.unpack_from('>I', scene, header + 28)[0] & 0xFFFFFF
+        vertices = [struct.unpack_from('>3h', scene, vp + 6 * i)
+                    for i in range(nv)]
+        out = []
+        for i in range(count):
+            poly = struct.unpack_from('>4H4h', scene, pp + 16 * i)
+            data0, data1 = struct.unpack_from('>2I', scene, types + 8 * poly[0])
+            out.append(dict(
+                vertices=[vertices[v & 0x1FFF] for v in poly[1:4]],
+                normal=[round(n / 2) for n in poly[4:7]],
+                exit=(data0 >> 8) & 0x1F,
+                floor_type=(data0 >> 13) & 0x1F,
+                wall_type=(data0 >> 21) & 0x1F,
+                material=data1 & 0x0F))
+        assert out
+        return out
+    raise ValueError('No collision header in US 1.2 scene')
 
 
 def collision_triangles(scene):

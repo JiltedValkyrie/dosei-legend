@@ -29,6 +29,8 @@ GP_EVENT_TALK_CLOSE = 512
 GP_EVENT_MENU_OPEN = 1024
 GP_EVENT_MENU_CLOSE = 2048
 GP_EVENT_EQUIP = 4096
+GP_SLOT_SAVE = 2
+GP_EVENT_RECENTER = 1 << 21
 
 
 @unittest.skipUnless(GCC.is_file() and (GENERATED / 'kokiri_actors.c').is_file()
@@ -45,17 +47,29 @@ class Gameplay(unittest.TestCase):
                         '-I' + str(GENERATED), '-I' + str(ROOT / 'src'),
                         str(ROOT / 'tests/fixtures/gameplay_host.c'),
                         str(ROOT / 'src/gameplay.c'),
+                        str(ROOT / 'src/save_state.c'),
+                        str(ROOT / 'src/save_file.c'),
                         str(GENERATED / 'kokiri_actors.c'),
                         str(GENERATED / 'kokiri_dialogue.c')],
                        check=True, env=env, cwd=str(ROOT))
         cls.lib = ctypes.CDLL(str(output))
         cls.lib.gp_page_line.restype = ctypes.c_char_p
         cls.lib.gp_speaker_name.restype = ctypes.c_char_p
+        cls.lib.gp_slot_name.restype = ctypes.c_char_p
+        cls.lib.gp_slot_use.restype = ctypes.c_char_p
+        for name in ('save_mido_demands_met', 'gameplay_pickup_taken',
+                     'gameplay_grass_cut', 'gameplay_rupee_taken',
+                     'save_get_item_get_inf', 'save_get_collectible'):
+            getattr(cls.lib, name).restype = ctypes.c_bool
         cls.lib.gp_pickup_at.restype = None
         for name in ('gp_pickup_at', 'gp_grass_at', 'gp_npc_at'):
             getattr(cls.lib, name).restype = None
 
     def setUp(self):
+        # gameplay_reset() deliberately does NOT clear the save: quest flags
+        # outlive a scene by design. Each test therefore starts a fresh file
+        # too, or flags set by one test would leak into the next.
+        self.lib.save_new_game()
         self.lib.gameplay_reset()
         self.lib.gp_room(0)
 
@@ -146,14 +160,31 @@ class Gameplay(unittest.TestCase):
         self.assertEqual(self.lib.gp_rupees(),before+1)
         self.assertEqual(self.lib.gp_drop(0),0)
 
-    def test_pause_freezes_drop_and_reset_clears_wallet_and_flags(self):
+    def test_pause_freezes_the_drop(self):
         gx,gy,gz = self.spawn_grass_rupee()
         self.lib.gp_step_full(gx,gy,gz,0,0,0,0,0,1,0,1,0)
         for _ in range(20): self.step(gx,gy,gz)
         self.assertEqual(self.lib.gp_drop_age(0),0)
+
+    def test_reset_clears_the_uncollected_drop_but_keeps_the_wallet(self):
+        """This test used to assert that a reset emptied the wallet.
+
+        That expectation was the bug the human hit: gameplay_reset() runs when
+        entering a scene, which is after a save has been loaded, so wiping the
+        wallet there threw away collected rupees. A reset now clears only the
+        volatile per-scene state; only save_new_game() empties the wallet.
+        """
+        gx,gy,gz = self.spawn_grass_rupee()
+        for _ in range(20): self.step(gx,gy,gz)
+        carried = self.lib.gp_rupees()
+        self.assertGreater(carried, 0)
         self.lib.gameplay_reset()
-        self.assertEqual(self.lib.gp_rupees(),0)
-        self.assertEqual(self.lib.gp_drop(0),0)
+        self.assertEqual(self.lib.gp_rupees(), carried)
+        # The uncut-grass drop itself is volatile, so it does go.
+        self.assertEqual(self.lib.gp_drop(0), 0)
+        self.lib.save_new_game()
+        self.lib.gameplay_reset()
+        self.assertEqual(self.lib.gp_rupees(), 0)
         self.assertFalse(self.lib.gameplay_rupee_taken(0))
 
     # --- inventory -------------------------------------------------------
@@ -243,47 +274,107 @@ class Gameplay(unittest.TestCase):
         self.step(hx, hy, hz, shield=1, attack=1)
         self.assertFalse(self.lib.gp_shielding())
 
-    # --- targeting -------------------------------------------------------
-    def test_target_press_locks_the_nearest_npc_in_front(self):
+    # --- targeting (HOLD, not switch) ------------------------------------
+    # OoT's own alternative to Switch targeting: the lock lasts exactly as long
+    # as L is held (z_player.c:3896 keeps it alive on zButtonHeld and sets
+    # LOCK_ON_WITH_SWITCH only in Switch mode). A press shorter than
+    # GP_TARGET_HOLD_STEPS is a tap and recentres instead of locking, so
+    # brushing L while running past a Kokiri does not grab them. The tap/hold
+    # threshold is this slice's own choice, not ported from OoT.
+    GP_TARGET_HOLD_STEPS = 5
+
+    def hold_target(self, x, y, z, steps=None, yaw=0):
+        """Hold L for `steps` steps at one spot."""
+        if steps is None:
+            steps = self.GP_TARGET_HOLD_STEPS
+        for _ in range(steps):
+            self.step(x, y, z, yaw=yaw, target=1)
+
+    def test_holding_l_locks_the_nearest_npc_in_front(self):
         nx, ny, nz = self.npc(0)
-        self.step(nx, ny, nz - 200, yaw=0, target=1)
+        self.hold_target(nx, ny, nz - 200)
         self.assertGreaterEqual(self.lib.gp_target(), 0)
         self.assertTrue(self.lib.gp_events() & GP_EVENT_TARGET_ON)
         self.assertTrue(self.lib.gp_face_locked())
 
-    def test_target_press_again_releases(self):
+    def test_a_short_tap_does_not_lock_anything(self):
+        """The reported annoyance: a brief L press near a Kokiri grabbed them."""
+        nx, ny, nz = self.npc(0)
+        for _ in range(self.GP_TARGET_HOLD_STEPS - 1):
+            self.step(nx, ny, nz - 200, yaw=0, target=1)
+            self.assertEqual(-1, self.lib.gp_target())
+            self.assertFalse(self.lib.gp_face_locked())
+        self.assertFalse(self.lib.gp_events() & GP_EVENT_TARGET_ON)
+
+    def test_a_short_tap_recentres_the_camera_instead(self):
         nx, ny, nz = self.npc(0)
         self.step(nx, ny, nz - 200, yaw=0, target=1)
-        self.step(nx, ny, nz - 200, yaw=0, target=1)
-        self.assertEqual(self.lib.gp_target(), -1)
+        self.step(nx, ny, nz - 200, yaw=0, target=0)        # released early
+        self.assertTrue(self.lib.gp_events() & GP_EVENT_RECENTER)
+        self.assertEqual(-1, self.lib.gp_target())
+
+    def test_releasing_a_hold_drops_the_lock(self):
+        nx, ny, nz = self.npc(0)
+        self.hold_target(nx, ny, nz - 200)
+        self.assertGreaterEqual(self.lib.gp_target(), 0)
+        self.step(nx, ny, nz - 200, yaw=0, target=0)
+        self.assertEqual(-1, self.lib.gp_target())
         self.assertTrue(self.lib.gp_events() & GP_EVENT_TARGET_OFF)
         self.assertFalse(self.lib.gp_face_locked())
 
-    def test_nothing_in_front_locks_nothing(self):
-        self.step(6000, 0, 6000, yaw=0, target=1)
-        self.assertEqual(self.lib.gp_target(), -1)
-
-    def test_walking_far_away_drops_the_lock(self):
+    def test_releasing_a_hold_that_locked_does_not_also_recentre(self):
+        """Recentring after a lock would swing the view off the actor the
+        player was just looking at."""
         nx, ny, nz = self.npc(0)
+        self.hold_target(nx, ny, nz - 200)
+        self.step(nx, ny, nz - 200, yaw=0, target=0)
+        self.assertFalse(self.lib.gp_events() & GP_EVENT_RECENTER)
+
+    def test_the_lock_persists_for_as_long_as_l_is_held(self):
+        nx, ny, nz = self.npc(0)
+        self.hold_target(nx, ny, nz - 200)
+        for _ in range(30):
+            self.step(nx, ny, nz - 200, yaw=0, target=1)
+            self.assertGreaterEqual(self.lib.gp_target(), 0)
+            self.assertTrue(self.lib.gp_face_locked())
+
+    def test_holding_l_with_nothing_in_front_locks_nothing_and_no_recentre(self):
+        self.hold_target(6000, 0, 6000)
+        self.assertEqual(-1, self.lib.gp_target())
+        self.assertFalse(self.lib.gp_face_locked())
+        self.step(6000, 0, 6000, yaw=0, target=0)
+        # It was a hold, not a tap, so it is not the recentre gesture either.
+        self.assertFalse(self.lib.gp_events() & GP_EVENT_RECENTER)
+
+    def test_a_held_l_acquires_an_actor_turned_toward_later(self):
+        """Holding L and turning to face someone picks them up, rather than
+        needing a fresh press."""
+        nx, ny, nz = self.npc(0)
+        self.hold_target(6000, 0, 6000)
+        self.assertEqual(-1, self.lib.gp_target())
         self.step(nx, ny, nz - 200, yaw=0, target=1)
         self.assertGreaterEqual(self.lib.gp_target(), 0)
-        self.step(nx, ny, nz - 900, yaw=0)
-        self.assertEqual(self.lib.gp_target(), -1)
+
+    def test_walking_far_away_drops_the_lock_even_while_held(self):
+        nx, ny, nz = self.npc(0)
+        self.hold_target(nx, ny, nz - 200)
+        self.assertGreaterEqual(self.lib.gp_target(), 0)
+        self.step(nx, ny, nz - 900, yaw=0, target=1)
+        self.assertEqual(-1, self.lib.gp_target())
 
     def test_locked_facing_refreshes_from_post_movement_position(self):
-        nx,ny,nz=self.npc(0)
-        self.step(nx,ny,nz-200,target=1)
-        self.assertEqual(self.lib.gp_target(),0)
-        self.lib.gameplay_update_facing(nx-100,nz)
-        self.assertLessEqual(abs(self.lib.gp_face_yaw()-16384),1)
+        nx, ny, nz = self.npc(0)
+        self.hold_target(nx, ny, nz - 200)
+        self.assertEqual(0, self.lib.gp_target())
+        self.lib.gameplay_update_facing(nx - 100, nz)
+        self.assertLessEqual(abs(self.lib.gp_face_yaw() - 16384), 1)
 
     def test_locked_facing_points_at_the_target(self):
         nx, ny, nz = self.npc(0)
-        self.step(nx, ny, nz - 200, yaw=0, target=1)
+        self.hold_target(nx, ny, nz - 200)
         # Target is due north of Link, so the held heading is ~0 binang.
         yaw = self.lib.gp_face_yaw()
         self.assertTrue(yaw < 600 or yaw > 65536 - 600, yaw)
-
 
     # --- dialogue --------------------------------------------------------
     def talk_spot(self, index=0):
@@ -417,14 +508,45 @@ class Gameplay(unittest.TestCase):
         self.assertFalse(self.lib.gp_paused())
 
     def test_dpad_moves_the_cursor_and_wraps(self):
+        # Driven from GP_SLOT_COUNT rather than a hardcoded two, so adding a
+        # row cannot leave this test silently checking only part of the menu.
+        slots = self.lib.gp_slot_count()
+        self.assertGreaterEqual(slots, 3)       # sword, shield, save
         self.menu(pause=1)
         self.assertEqual(self.lib.gp_cursor(), 0)
-        self.menu(menu_step=1)
-        self.assertEqual(self.lib.gp_cursor(), 1)
-        self.menu(menu_step=1)
-        self.assertEqual(self.lib.gp_cursor(), 0)
+        for expected in list(range(1, slots)) + [0]:
+            self.menu(menu_step=1)
+            self.assertEqual(self.lib.gp_cursor(), expected)
         self.menu(menu_step=-1)
-        self.assertEqual(self.lib.gp_cursor(), 1)
+        self.assertEqual(self.lib.gp_cursor(), slots - 1)
+
+    def test_the_save_row_raises_a_save_request_and_equips_nothing(self):
+        """gameplay.c must not touch the backup device itself: it raises the
+        intent and demo.c performs the write, so this is assertable without a
+        cartridge."""
+        GP_EVENT_SAVE = 1 << 19
+        self.menu(pause=1)
+        while self.lib.gp_cursor() != GP_SLOT_SAVE:
+            self.menu(menu_step=1)
+        self.menu(interact=1)
+        self.assertTrue(self.lib.gp_events() & GP_EVENT_SAVE)
+        self.assertFalse(self.lib.gp_events() & GP_EVENT_EQUIP)
+        self.assertFalse(self.lib.gp_events() & GP_EVENT_DENIED)
+        self.assertEqual(0, self.lib.gp_equipped())
+
+    def test_the_save_row_has_no_item_but_still_has_a_name_and_a_use(self):
+        self.assertEqual(0, self.lib.gp_slot_item(GP_SLOT_SAVE))
+        self.assertTrue(self.lib.gp_slot_name(GP_SLOT_SAVE))
+        self.assertTrue(self.lib.gp_slot_use(GP_SLOT_SAVE))
+
+    def test_equipping_a_real_slot_still_raises_equip_not_save(self):
+        GP_EVENT_SAVE = 1 << 19
+        sx, sy, sz, _ = self.pickup(0)
+        self.step(sx, sy, sz)
+        self.menu(pause=1)
+        self.menu(interact=1)
+        self.assertTrue(self.lib.gp_events() & GP_EVENT_EQUIP)
+        self.assertFalse(self.lib.gp_events() & GP_EVENT_SAVE)
 
     def test_a_equips_an_owned_slot(self):
         sx, sy, sz, _ = self.pickup(0)
@@ -465,6 +587,203 @@ class Gameplay(unittest.TestCase):
         self.assertTrue(self.lib.gp_talking())
         self.menu(x, y, z, pause=1)
         self.assertTrue(self.lib.gp_paused())
+
+    # --- quest-correct dialogue ------------------------------------------
+    # These are the regression tests for the bug the human reported: NPCs
+    # speaking lines from later in the game. Each speaker's text-id function is
+    # extracted as an ordered rule list, and the FIRST rule whose conditions
+    # hold wins, so a fresh save must never reach a later-quest line.
+
+    KOKIRI_NPC_MIDO = 1
+    KOKIRI_NPC_SARIA = 2
+
+    # save_state.h
+    EQUIP_TYPE_SWORD = 0
+    EQUIP_TYPE_SHIELD = 1
+    EQUIP_VALUE_SWORD_KOKIRI = 1
+    EQUIP_VALUE_SHIELD_DEKU = 1
+    QUEST_KOKIRI_EMERALD = 18
+    EVENTCHKINF_MIDO_STOOD_ASIDE_KOKIRI = 0x04
+    INFTABLE_MIDO_REFUSED_ONCE = 0x0C
+    INFTABLE_SARIA_GREETED_LINK = 0x00
+
+    def npc_of_kind(self, kind):
+        for i in range(self.lib.gp_npc_count()):
+            if self.lib.gp_npc_kind(i) == kind:
+                return i
+        self.fail('no NPC of kind %d placed' % kind)
+
+    def talk_to(self, index):
+        """Open a FRESH box on one speaker and report the message chosen.
+
+        Closing first matters: with a box already open an A press advances or
+        closes it instead of re-selecting a rule, so a second talk_to() would
+        report the previous speaker's message.
+        """
+        x, y, z = self.talk_spot(index)
+        while self.lib.gp_talking():
+            self.step(x, y, z, yaw=0, cancel=1)
+        self.step(x, y, z, yaw=0)
+        self.step(x, y, z, yaw=0, interact=1)
+        self.assertTrue(self.lib.gp_talking())
+        return self.lib.gp_rule_text_id()
+
+    def test_mido_says_his_fresh_file_line_not_the_post_emerald_one(self):
+        """The reported bug. 0x1045 needs the Kokiri Emerald; 0x102F is the
+        real no-flag baseline -- 'you can't go see the Great Deku Tree without
+        a sword and a shield' (z_en_md.c:419-447)."""
+        mido = self.npc_of_kind(self.KOKIRI_NPC_MIDO)
+        self.assertEqual(0x102F, self.talk_to(mido))
+
+    def test_saria_says_her_fresh_file_line(self):
+        """0x1002 requires INFTABLE_SARIA_GREETED_LINK; 0x1001 is the real
+        baseline (z_en_sa.c)."""
+        saria = self.npc_of_kind(self.KOKIRI_NPC_SARIA)
+        self.assertEqual(0x1001, self.talk_to(saria))
+
+    def test_mido_line_advances_once_he_has_refused_once(self):
+        mido = self.npc_of_kind(self.KOKIRI_NPC_MIDO)
+        self.lib.save_set_inf_table(self.INFTABLE_MIDO_REFUSED_ONCE)
+        self.assertEqual(0x1030, self.talk_to(mido))
+
+    def test_mido_gate_line_needs_gear_equipped_not_merely_owned(self):
+        """0x1033 is the line that makes Mido stand aside, and z_en_md.c:437
+        tests CUR_EQUIP_VALUE -- owning the gear is not enough."""
+        mido = self.npc_of_kind(self.KOKIRI_NPC_MIDO)
+        self.lib.save_give_equip(self.EQUIP_TYPE_SWORD,
+                                 self.EQUIP_VALUE_SWORD_KOKIRI)
+        self.lib.save_give_equip(self.EQUIP_TYPE_SHIELD,
+                                 self.EQUIP_VALUE_SHIELD_DEKU)
+        self.assertEqual(0x102F, self.talk_to(mido))
+        self.lib.save_set_equip(self.EQUIP_TYPE_SWORD,
+                                self.EQUIP_VALUE_SWORD_KOKIRI)
+        self.lib.save_set_equip(self.EQUIP_TYPE_SHIELD,
+                                self.EQUIP_VALUE_SHIELD_DEKU)
+        self.assertEqual(0x1033, self.talk_to(mido))
+
+    def test_mido_says_the_post_emerald_line_only_with_the_emerald(self):
+        mido = self.npc_of_kind(self.KOKIRI_NPC_MIDO)
+        self.lib.save_give_quest_item(self.QUEST_KOKIRI_EMERALD)
+        self.assertEqual(0x1045, self.talk_to(mido))
+
+    def test_higher_priority_rule_wins_over_a_later_one(self):
+        """Both guards hold at once; the Emerald rule comes first in the
+        original ladder, so it must win."""
+        mido = self.npc_of_kind(self.KOKIRI_NPC_MIDO)
+        self.lib.save_set_event_chk_inf(
+            self.EVENTCHKINF_MIDO_STOOD_ASIDE_KOKIRI)
+        self.assertEqual(0x1034, self.talk_to(mido))
+        self.lib.save_give_quest_item(self.QUEST_KOKIRI_EMERALD)
+        self.assertEqual(0x1045, self.talk_to(mido))
+
+    def test_setting_one_speakers_flag_does_not_move_another_speaker(self):
+        mido = self.npc_of_kind(self.KOKIRI_NPC_MIDO)
+        saria = self.npc_of_kind(self.KOKIRI_NPC_SARIA)
+        self.lib.save_set_inf_table(self.INFTABLE_MIDO_REFUSED_ONCE)
+        self.assertEqual(0x1001, self.talk_to(saria))
+        self.assertEqual(0x1030, self.talk_to(mido))
+
+    # --- surviving a save and reload -------------------------------------
+    # The human reported: pick up the sword and shield, save, reload -- both
+    # gone. gameplay_reset() runs when entering a scene, which is AFTER the
+    # file select has loaded a file, and it was writing the session's empty
+    # gear back over the save it had just restored.
+
+    def test_gear_survives_a_scene_reset(self):
+        """A reset must restore gear from the save, not wipe it."""
+        for index in range(2):
+            x, y, z, _ = self.pickup(index)
+            self.step(x, y, z)
+        self.assertEqual(GP_SWORD | GP_SHIELD, self.lib.gp_owned())
+        self.lib.gameplay_reset()
+        self.assertEqual(GP_SWORD | GP_SHIELD, self.lib.gp_owned())
+        self.assertEqual(GP_SWORD | GP_SHIELD, self.lib.gp_equipped())
+        self.assertTrue(self.lib.save_mido_demands_met())
+
+    def test_a_taken_pickup_does_not_reappear_after_a_reset(self):
+        x, y, z, _ = self.pickup(0)
+        self.step(x, y, z)
+        self.lib.gameplay_reset()
+        self.assertTrue(self.lib.gameplay_pickup_taken(0))
+        # Standing on it again must not re-raise the pickup event.
+        self.step(x, y, z)
+        self.assertFalse(self.lib.gp_events() & GP_EVENT_PICKUP)
+
+    def test_rupees_survive_a_scene_reset(self):
+        x, y, z, value, room = self.rupee(0)
+        self.lib.gp_room(room)
+        self.step(x, y, z)
+        self.assertEqual(value, self.lib.gp_rupees())
+        self.lib.gameplay_reset()
+        self.lib.gp_room(room)
+        self.assertEqual(value, self.lib.gp_rupees())
+        # And the rupee itself stays collected rather than respawning.
+        self.step(x, y, z)
+        self.assertEqual(value, self.lib.gp_rupees())
+
+    def test_a_new_game_still_starts_empty_handed(self):
+        """The fix must not make a fresh file inherit the last one's gear."""
+        for index in range(2):
+            x, y, z, _ = self.pickup(index)
+            self.step(x, y, z)
+        self.lib.save_new_game()
+        self.lib.gameplay_reset()
+        self.assertEqual(0, self.lib.gp_owned())
+        self.assertEqual(0, self.lib.gp_equipped())
+        self.assertEqual(0, self.lib.gp_rupees())
+        self.assertFalse(self.lib.gameplay_pickup_taken(0))
+        self.assertFalse(self.lib.save_mido_demands_met())
+
+    def test_cut_grass_is_deliberately_not_persisted(self):
+        """OoT keeps grass in the temp half of the scene flags, which it never
+        saves, so regrowing across a reload is the original's behaviour."""
+        gx, gy, gz = self.spawn_grass_rupee()
+        self.assertTrue(self.lib.gameplay_grass_cut(0))
+        self.lib.gameplay_reset()
+        self.assertFalse(self.lib.gameplay_grass_cut(0))
+
+    def test_gear_survives_an_actual_save_and_reload(self):
+        """The human's exact report, end to end through the real serialiser.
+
+        Collect the sword and shield, write the save block the way the pause
+        menu's SAVE does, wipe everything as returning to the title and loading
+        a file would, then read the block back and re-enter the scene.
+        """
+        SAVE_FILE_BYTES = 220
+        for index in range(2):
+            x, y, z, _ = self.pickup(index)
+            self.step(x, y, z)
+        rupee_x, rupee_y, rupee_z, value, room = self.rupee(0)
+        self.lib.gp_room(room)
+        self.step(rupee_x, rupee_y, rupee_z)
+        self.assertEqual(GP_SWORD | GP_SHIELD, self.lib.gp_owned())
+        # Snapshot rather than assume: the authored gear pickups sit on spots
+        # the original already drops an En_Item00 rupee on, so walking to them
+        # collects those too and the wallet is more than this one rupee.
+        purse = self.lib.gp_rupees()
+        self.assertGreaterEqual(purse, value)
+
+        block = ctypes.create_string_buffer(SAVE_FILE_BYTES)
+        self.lib.gp_save_pack(block)
+
+        # Everything gone, as it is after a return to the title.
+        self.lib.save_new_game()
+        self.lib.gameplay_reset()
+        self.assertEqual(0, self.lib.gp_owned())
+
+        self.assertEqual(0, self.lib.gp_save_unpack(bytes(block.raw), SAVE_FILE_BYTES))
+        self.lib.gameplay_reset()           # entering the scene, as on load
+        self.lib.gp_room(room)
+
+        self.assertEqual(GP_SWORD | GP_SHIELD, self.lib.gp_owned())
+        self.assertEqual(GP_SWORD | GP_SHIELD, self.lib.gp_equipped())
+        self.assertEqual(purse, self.lib.gp_rupees())
+        self.assertTrue(self.lib.save_mido_demands_met())
+        # Neither the gear nor the rupee is lying on the floor again.
+        self.assertTrue(self.lib.gameplay_pickup_taken(0))
+        self.assertTrue(self.lib.gameplay_pickup_taken(1))
+        self.step(rupee_x, rupee_y, rupee_z)
+        self.assertEqual(purse, self.lib.gp_rupees())
 
 
 if __name__ == '__main__':

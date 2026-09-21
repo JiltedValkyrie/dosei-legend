@@ -1,5 +1,16 @@
 # Dosei Legend — vertical slice scope
 
+> **Superseded for gameplay scope, 2026-09-21.** The human approved the full OoT
+> opening progression: Kokiri Forest, Lost Woods, the Great Deku Tree and Gohma,
+> through to the Kokiri Emerald, with real quest flags, backup-RAM saves, full
+> cutscene playback, real ROM models and hearts/damage/death. The game now
+> requires the 4 MB RAM expansion cart. See
+> [game/docs/OOT_PROGRESSION_PLAN.md](game/docs/OOT_PROGRESSION_PLAN.md).
+>
+> The "Exclusions" section below no longer applies to bosses, dungeons or quest
+> systems. Everything else here — the presentation baseline, the testing limits
+> and the anti-overtesting rules — still stands.
+
 ## Goal
 
 A playable Sega Saturn adaptation of the N64 Kokiri Forest baseline: recognizable
@@ -27,9 +38,14 @@ do not claim all forest NPC scripting is done when only one conversation exists.
 
 ## Exclusions
 
-No bosses, dungeons, full overworld or complete-game quest systems. No optimization
+Still excluded: the full overworld beyond Kokiri Forest, Lost Woods, the Great
+Deku Tree and the Kokiri shop; anything after the Kokiri Emerald. No optimization
 campaign, exhaustive soak tests, exact music-switch timing target, or launch-level
 polish as prerequisites for the slice.
+
+**No longer excluded** (superseded 2026-09-21): bosses, dungeons and quest
+systems. Gohma and the Great Deku Tree are in scope, as is the quest-flag and
+save infrastructure they need.
 
 ## Priorities
 

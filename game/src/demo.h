@@ -5,6 +5,11 @@
 bool demo_init(void);
 void demo_update(void);
 bool demo_title_is_visible(void);
+/* True while the file select owns the pad. The world does not step and the
+** gameplay HUD must stay off, same as the title. */
+bool demo_file_select_is_visible(void);
+/* Outcome of the last pause-menu save: -1 none yet, 0 failed, 1 succeeded. */
+int demo_save_report(void);
 unsigned int demo_clock(void);
 extern camera_position_t demo_camera;
 extern uint16_t demo_yaw;
