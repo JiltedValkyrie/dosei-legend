@@ -621,6 +621,9 @@ static void         viewer_hud(void)
 static void         file_select_screen(void)
 {
     static bool   was_visible;
+    /* True while the "Open this file?" panel is up, so the list behind it is
+    ** cleared once on entry and redrawn once on the way back out. */
+    static bool   was_open;
     unsigned int  row;
 
     if (!demo_file_select_is_visible()) {
@@ -628,10 +631,45 @@ static void         file_select_screen(void)
             for (row = 0; row < FS_ROWS; ++row)
                 jo_printf(0, (int)(FS_ROW + row), "                                      ");
             was_visible = false;
+            was_open = false;
         }
         return;
     }
     was_visible = true;
+
+    /* "Open this file?" takes over the whole panel, as it does on N64: the
+    ** list is not left visible behind it, so the file being opened is the only
+    ** thing on screen and there is no second cursor to misread. */
+    if (file_select.mode == FILE_SELECT_OPEN_CONFIRM) {
+        unsigned int slot = file_select_open_slot();
+        unsigned int line;
+
+        /* Clear the list once on the way in. VDP2 retains text, so redoing it
+        ** every frame would only cost time and flicker the panel. */
+        if (!was_open) {
+            for (line = 0; line < FS_ROWS; ++line)
+                jo_printf(0, (int)(FS_ROW + line),
+                          "                                      ");
+            was_open = true;
+        }
+        jo_printf(4, FS_ROW, "OPEN THIS FILE?");
+        jo_printf(4, FS_ROW + 2, "%-12s", file_select_row_label(slot));
+        jo_printf(4, FS_ROW + 3, "%-32s", file_select_row_detail(slot));
+        for (line = 0; line < FILE_SELECT_OPEN_ROWS; ++line)
+            jo_printf(4, (int)(FS_ROW + 5 + line), "%s %-6s",
+                      file_select.open_row == line ? ">" : " ",
+                      file_select_open_label(line));
+        jo_printf(2, FS_ROW + 5 + FILE_SELECT_OPEN_ROWS + 1,
+                  "A: DECIDE   B: CANCEL            ");
+        return;
+    }
+    /* Back from the panel: wipe it before the list is drawn over it, or its
+    ** longer lines stay behind the shorter ones. */
+    if (was_open) {
+        for (row = 0; row < FS_ROWS; ++row)
+            jo_printf(0, (int)(FS_ROW + row), "                                      ");
+        was_open = false;
+    }
 
     jo_printf(4, FS_ROW, "SELECT A FILE");
     for (row = 0; row < FILE_SELECT_ROWS; ++row) {

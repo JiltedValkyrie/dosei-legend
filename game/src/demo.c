@@ -15,6 +15,7 @@
 #include "scene_flow.h"
 #include "save_state.h"
 #include "save_device.h"
+#include "game_mode.h"
 #include "kokiri_sgl.h"
 
 camera_position_t demo_camera;
@@ -41,11 +42,16 @@ static oot_follow_t link_follow;
 #define LINK_VOID_DROP 180
 /* Half-fade length for the title->forest switch, in vblanks. */
 #define DEMO_MUSIC_FADE_FRAMES 10
-static bool title_visible = true;
-/* The file select sits between the title and play: Start leaves the title to
+/* Which screen we are on now lives in game_mode.c, which also says which screen
+ * may follow which. These two read it rather than tracking it a second time:
+ * the pair of booleans they replaced could encode a state -- both set -- that
+ * nothing prevented and nothing could draw.
+ *
+ * The file select sits between the title and play: Start leaves the title to
  * it, and only choosing a file there puts Link in the world. It owns the pad
  * while it is up, exactly as the pause menu does. */
-static bool file_select_visible;
+#define title_visible       (game_mode() == GAME_MODE_TITLE)
+#define file_select_visible (game_mode() == GAME_MODE_FILE_SELECT)
 /* Which file the player is playing, so SAVE in the pause menu writes back to
  * the slot they chose rather than to a fixed one. */
 static uint8_t active_slot;
@@ -205,8 +211,13 @@ static bool         take_door(void)
     if (index < 0)
         return (false);
     door = &scene_doors[index];
-    if (!scene_flow_load(door->target, door->spawn))
-        return (false);          /* disc read failed: stay where we are */
+    game_mode_set(GAME_MODE_LOADING);
+    if (!scene_flow_load(door->target, door->spawn)) {
+        /* Disc read failed: stay where we are, and go back to playing there
+         * rather than leaving the mode stuck mid-load. */
+        game_mode_set(GAME_MODE_PLAY);
+        return (false);
+    }
     /* Record where the player now is, so a save made here reloads here. */
     save_state.scene_id = (uint8_t)scene_flow_entry()->save_scene;
     save_state.entrance = (uint8_t)door->spawn;
@@ -215,6 +226,7 @@ static bool         take_door(void)
     gameplay_reset();
     if (scene_flow_is_interior())
         interior_camera();
+    game_mode_set(GAME_MODE_PLAY);
     return (true);
 }
 
@@ -237,6 +249,7 @@ static void         enter_world(void)
         gameplay_reset();
         if (scene_flow_is_interior())
             interior_camera();
+        game_mode_set(GAME_MODE_PLAY);
         return;
     }
     /* Falling back to the old behaviour keeps a disc-read failure playable
@@ -267,6 +280,10 @@ static void         enter_world(void)
          * behind Link instead of easing there for seconds. */
         snap_camera_to_link();
     }
+    /* The scene read failed and the fallback spawn is all we have. Still enter
+     * PLAY: leaving the game in LOADING would freeze the pad in a mode with no
+     * screen behind it, which is worse than the wrong scene. */
+    game_mode_set(GAME_MODE_PLAY);
 }
 
 /* One file-select step, driven by the same latched edges the menu uses. While
@@ -286,8 +303,7 @@ static void         file_select_tick(void)
     pause_pending = false;
     chosen = file_select_step(&pick);
     if (chosen == FILE_SELECT_BACK) {
-        file_select_visible = false;
-        title_visible = true;
+        game_mode_set(GAME_MODE_TITLE);
         /* Hand the pad back, or B would keep cancelling instead of toggling
         ** walk/run once play starts. enter_world() does this through
         ** player_input_reset(); the title path has to do it itself. */
@@ -295,7 +311,7 @@ static void         file_select_tick(void)
         return;
     }
     if (chosen == FILE_SELECT_START_NEW || chosen == FILE_SELECT_START_LOAD) {
-        file_select_visible = false;
+        game_mode_set(GAME_MODE_LOADING);
         active_slot = file_select.slot;
         save_reported = false;
         enter_world();
@@ -485,8 +501,7 @@ void demo_update(void)
          * dropping straight into the forest, so a new game and a continue are
          * distinguishable and a save can be chosen. */
         if (start_pressed && title_visible && !music_busy()) {
-            title_visible = false;
-            file_select_visible = true;
+            game_mode_set(GAME_MODE_FILE_SELECT);
             /* The D-pad's menu edges are consumed AFTER player_input_step()'s
              * not-in-gameplay early return, so they pile up unconsumed while
              * the title is showing. Clear them here or a direction held during

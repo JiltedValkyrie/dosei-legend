@@ -91,6 +91,7 @@ fi
 "$python" "$here/tools/build_dialogue.py" --oot "$oot"
 "$python" "$here/tools/build_action_audio.py" --oot "$oot"
 "$python" "$here/tools/build_demo_assets.py" --oot "$oot"
+"$python" "$here/tools/build_cutscenes.py" --oot "$oot"
 "$python" "$here/tools/build_title_paths.py"
 if [ "${STREAM_ROOMS:-1}" = 1 ]; then
     # One bank per (scene, room). Only scenes whose rooms are real geometry
