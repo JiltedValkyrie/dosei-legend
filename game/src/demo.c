@@ -11,6 +11,10 @@
 #include "input_edge.h"
 #include "player_input.h"
 #include "gameplay.h"
+#include "file_select.h"
+#include "scene_flow.h"
+#include "save_state.h"
+#include "save_device.h"
 #include "kokiri_sgl.h"
 
 camera_position_t demo_camera;
@@ -38,9 +42,19 @@ static oot_follow_t link_follow;
 /* Half-fade length for the title->forest switch, in vblanks. */
 #define DEMO_MUSIC_FADE_FRAMES 10
 static bool title_visible = true;
-/* 256 cells of offsets plus one uint16 id per triangle/cell overlap. */
-#define COLLISION_INDEX_BYTES (16 * 1024)
-static void *collision_index;
+/* The file select sits between the title and play: Start leaves the title to
+ * it, and only choosing a file there puts Link in the world. It owns the pad
+ * while it is up, exactly as the pause menu does. */
+static bool file_select_visible;
+/* Which file the player is playing, so SAVE in the pause menu writes back to
+ * the slot they chose rather than to a fixed one. */
+static uint8_t active_slot;
+/* Last save attempt, for the pause panel. Persistent, not a one-step event:
+ * the player needs to still see it after the step that raised it. */
+static bool save_reported, save_succeeded;
+/* The collision index itself lives in scene_flow.c, which owns the collision
+** data and rebuilds the index whenever a scene is loaded. This is only the
+** diagnostic mirror the HUD prints. */
 bool demo_collision_indexed;
 static unsigned short *prompt;
 static volatile unsigned int ticks;
@@ -63,6 +77,8 @@ static bool cancel_pending;
 static bool pause_pending;
 static int8_t menu_step;
 static bool shield_held;
+/* L held. Not an edge: hold targeting needs the button state every step. */
+static bool target_held;
 /* Pending actions whose gameplay systems do not exist yet. Counted rather than
  * dropped so the HUD/tests can show the input arrived, and deliberately not
  * wired to any substitute behavior. */
@@ -116,6 +132,176 @@ static bool recover_link_from_void(void)
     return true;
 }
 
+/* Put Link in the world. Called when the file select settles on a file, for
+ * both a new game and a continue -- the spawn is the same, only the quest
+ * state behind it differs.
+ *
+ * He spawns from the same collision search the free camera used, so he stands
+ * on a real floor rather than at an assumed height. */
+/* Plant the follow camera behind Link without easing.
+ *
+ * The ONLY places that advance the camera are this snap and the one call
+ * inside the fixed step; tests/test_oot_follow.py checks that, because a
+ * second call per draw would double-advance the easing rates. */
+static void         snap_camera_to_link(void)
+{
+    oot_follow_snap(&link_follow, &demo_link, demo_link_yaw);
+    oot_follow_update(&link_follow, &demo_link, demo_link_yaw, false,
+                      &demo_camera, &demo_yaw, &demo_pitch);
+}
+
+/* Put Link at one of a scene's ROM spawn points and make the camera agree.
+ * `scene` is a table index; `spawn` indexes that scene's spawn list. */
+static void         place_at_spawn(unsigned int scene, unsigned int spawn)
+{
+    const scene_spawn_t *point = scene_flow_spawn(scene, spawn);
+
+    /* demo_link.y is the collision/eye position; the spawn records his FEET,
+     * which is what the original stores. */
+    demo_link.x = point->x;
+    demo_link.y = point->y + DEMO_LINK_EYE_HEIGHT;
+    demo_link.z = point->z;
+    demo_link_yaw = point->yaw;
+    link_velocity_y_q8 = 0;
+    link_fall_remainder_q8 = 0;
+    link_fall_peak_y = demo_link.y;
+    link_safe_position = demo_link;
+    link_safe_position_valid = true;
+    demo_link_active = true;
+    link_anim_reset();
+    link_anim_reset_state();
+    kokiri_camera_reset_actor_motion();
+    snap_camera_to_link();
+}
+
+/* A prerendered interior is shown from the one viewpoint its backdrop was
+ * rendered from, so the camera is planted rather than eased. Values come from
+ * the room's bgCam entry; see tools/build_scene_table.py.
+ *
+ * The pitch is negated because OoT stores a downward look as a POSITIVE x
+ * rotation while this project's demo_pitch is negative for downward (the
+ * diagnostic probes use -1820 for a slight downward tilt). */
+static void         interior_camera(void)
+{
+    const scene_entry_t *entry = scene_flow_entry();
+
+    demo_camera.x = entry->cam_x;
+    demo_camera.y = entry->cam_y;
+    demo_camera.z = entry->cam_z;
+    demo_yaw = entry->cam_yaw;
+    demo_pitch = -(int32_t)(int16_t)entry->cam_pitch;
+}
+
+/* Walk Link through a doorway: load the far scene and stand him on its spawn.
+ * Returns true when a transition happened, so the caller can abandon the rest
+ * of the step rather than moving him around in a scene that just unloaded. */
+static bool         take_door(void)
+{
+    int                 index;
+    const scene_door_t *door;
+
+    index = scene_flow_door_at(demo_link.x, demo_link.y - DEMO_LINK_EYE_HEIGHT,
+                               demo_link.z);
+    if (index < 0)
+        return (false);
+    door = &scene_doors[index];
+    if (!scene_flow_load(door->target, door->spawn))
+        return (false);          /* disc read failed: stay where we are */
+    /* Record where the player now is, so a save made here reloads here. */
+    save_state.scene_id = (uint8_t)scene_flow_entry()->save_scene;
+    save_state.entrance = (uint8_t)door->spawn;
+    place_at_spawn(door->target, door->spawn);
+    /* Per-scene state goes; the save (gear, rupees, quest flags) does not. */
+    gameplay_reset();
+    if (scene_flow_is_interior())
+        interior_camera();
+    return (true);
+}
+
+static void         enter_world(void)
+{
+    unsigned int scene = scene_flow_index_for_save(save_state.scene_id);
+
+    /* Follow the transition with the score. music_fade_to() refuses while a
+     * switch is running, so a repeated press cannot stack transitions.
+     *
+     * PENDING: the forest theme plays indoors too. The original has its own
+     * interior music and this slice has no bank for it yet. */
+    music_fade_to(&music_bank_kokiri, DEMO_MUSIC_FADE_FRAMES);
+    /* The file select has already set up the save -- a new file in Link's
+     * house, or a loaded one wherever it was saved -- so the scene to enter
+     * comes from there rather than being assumed to be the forest. */
+    if (scene_flow_load(scene, save_state.entrance)) {
+        save_state.scene_id = (uint8_t)scene_flow_entry()->save_scene;
+        place_at_spawn(scene, save_state.entrance);
+        gameplay_reset();
+        if (scene_flow_is_interior())
+            interior_camera();
+        return;
+    }
+    /* Falling back to the old behaviour keeps a disc-read failure playable
+     * rather than dropping the player into an empty world. */
+    if (!demo_link_active && kokiri_collision_spawn(&demo_link)) {
+        demo_link_yaw = demo_yaw;
+        link_velocity_y_q8 = 0;
+        link_fall_remainder_q8 = 0;
+        link_fall_peak_y = demo_link.y;
+        link_safe_position = demo_link;
+        link_safe_position_valid = true;
+        demo_link_active = true;
+        /* Spawn standing, not mid-clip from a previous session. Both calls are
+         * needed: one clears the cached pose, the other the locomotion state
+         * that selects it. */
+        link_anim_reset();
+        link_anim_reset_state();
+        kokiri_camera_reset_actor_motion();
+        /* gameplay_reset() clears per-scene state only. The quest state was
+         * set by the file select -- save_new_game() for a new file, or the
+         * loaded save for a continue -- so it must NOT be touched here. */
+        gameplay_reset();
+        player_input_reset();
+        kokiri_camera_set_walk(false);
+    }
+    if (demo_link_active) {
+        /* A title shot may be far across the map. Enter gameplay directly
+         * behind Link instead of easing there for seconds. */
+        snap_camera_to_link();
+    }
+}
+
+/* One file-select step, driven by the same latched edges the menu uses. While
+ * it is up the world does not step at all. */
+static void         file_select_tick(void)
+{
+    file_select_input   pick = {0};
+    file_select_result  chosen;
+
+    pick.up = menu_step < 0;
+    pick.down = menu_step > 0;
+    pick.confirm = interact_pending;
+    pick.cancel = cancel_pending;
+    menu_step = 0;
+    interact_pending = false;
+    cancel_pending = false;
+    pause_pending = false;
+    chosen = file_select_step(&pick);
+    if (chosen == FILE_SELECT_BACK) {
+        file_select_visible = false;
+        title_visible = true;
+        /* Hand the pad back, or B would keep cancelling instead of toggling
+        ** walk/run once play starts. enter_world() does this through
+        ** player_input_reset(); the title path has to do it itself. */
+        player_input_set_dialogue(false);
+        return;
+    }
+    if (chosen == FILE_SELECT_START_NEW || chosen == FILE_SELECT_START_LOAD) {
+        file_select_visible = false;
+        active_slot = file_select.slot;
+        save_reported = false;
+        enter_world();
+    }
+}
+
 /* Saturn pad -> normalized CAMERA_* bits. Jo's JO_KEY_* values are SGL/CS
  * bitfield positions; the gameplay code works in its own platform-independent
  * bit set so the mapping lives in exactly one place. */
@@ -151,24 +337,21 @@ static void demo_vblank(void)
 bool demo_init(void)
 {
     int length = 0, row;
-    collision_triangle_t *collision = (collision_triangle_t *)jo_fs_read_file("FOREST.COL", &length);
     jo_file file;
     jo_img strip;
     jo_color *sky;
     unsigned int sky_lines, sky_row;
     /* Zero-filled BSS gives prompt/target index 0, not the no-actor sentinel. */
     gameplay_reset();
-    if (!collision || length <= 0 || length % sizeof(*collision)) return false;
-    kokiri_collision_init(collision, length / sizeof(*collision));
-    /* Bucket the 1692 collision triangles by XZ so walking does not rescan all
-     * of them. Movement runs up to 8 swept queries per update (two axes x four
-     * 4-unit steps) and each query previously touched every triangle, which is
-     * why moving cost far more frame time than turning. Failure is survivable:
-     * the queries fall back to the original full scan. */
-    collision_index = jo_malloc(COLLISION_INDEX_BYTES);
-    if (collision_index)
-        demo_collision_indexed = kokiri_collision_index(collision_index,
-                                                   COLLISION_INDEX_BYTES);
+    /* Collision belongs to a SCENE now, not to the forest alone, so it is
+     * loaded by scene_flow_load() when a scene is entered. The title's attract
+     * flight needs the forest's collision under it, so load that one here. */
+    if (!scene_flow_load(SCENE_SPOT04, 0)) return false;
+    /* The XZ collision index is built by scene_flow_load(), and REBUILT on
+     * every scene change -- it describes one scene's triangles, so keeping a
+     * stale one after walking into the house made movement fall back to
+     * scanning all 1692 triangles per query. */
+    demo_collision_indexed = scene_collision_indexed;
     if (!kokiri_collision_spawn(&demo_camera)) return false;
     /* Raise the starting eye without bypassing walls/ceilings. */
     kokiri_collision_move(&demo_camera, 0, 24, 0);
@@ -220,7 +403,18 @@ void demo_update(void)
     /* One consume per rendered frame. The mapping itself lives in
      * player_input.c; this function only applies the decisions. */
     player_input_t input;
-    bool in_gameplay = !title_visible && demo_link_active;
+    /* The file select needs the pad too, and Link is not active yet while it is
+     * up. player_input_step() zeroes every action and returns early when this
+     * is false -- AFTER consuming the press edges -- so leaving the file select
+     * out of it swallowed A, B and the D-pad entirely and nothing on the screen
+     * could be chosen. */
+    bool in_gameplay = !title_visible && (demo_link_active || file_select_visible);
+
+    /* It owns the pad exactly the way a text box does: D-pad moves the cursor,
+     * A confirms, B cancels, and B must not also toggle walk/run. Set before
+     * the step, because the step is what reads it. */
+    if (file_select_visible)
+        player_input_set_dialogue(true);
 
     player_input_step(in_gameplay, &input);
     /* Preserve a tap until a fixed step runs, but never carry title input
@@ -228,7 +422,10 @@ void demo_update(void)
      * as of the 2026-09-18 layout; A is the interact button. */
     if (in_gameplay && input.jump) jump_pending = true;
     buttons = input.move_buttons;
-    recenter = input.recenter;
+    /* input.recenter is the raw L press edge and is deliberately NOT used to
+     * recentre any more: gameplay.c raises GP_EVENT_RECENTER for a tap that
+     * took no lock. Kept sampled so the edge is consumed each frame. */
+    (void)input.recenter;
     if (input.diagnostics_toggled) demo_diagnostics_toggled = true;
     if (input.camera_swap_toggled) oot_follow_set_legacy(!oot_follow_legacy());
     /* Walk/run is a persistent mode, so it is pushed even on a frame with no
@@ -242,6 +439,7 @@ void demo_update(void)
     cancel_pending = cancel_pending || input.cancel_pending;
     if (input.menu_step) menu_step = input.menu_step;
     shield_held = input.shield_held;
+    target_held = input.target_held;
     /* PENDING SYSTEM. There is no item/inventory interface for the C buttons to
      * drive, so the routed direction is recorded for the HUD and tests. The
      * routing, consumption and edges are real; only the target is missing. */
@@ -283,46 +481,19 @@ void demo_update(void)
             pause_pending = true;
             start_pressed = false;
         }
-        if (start_pressed && !music_busy()) {
-            title_visible = !title_visible;
-            /* Starting the game puts Link in the world. He spawns from the
-             * same collision search the free camera used, so he stands on a
-             * real floor rather than at an assumed height. */
-            /* Follow the title with the score, both ways. music_fade_to()
-             * refuses while a switch is running, so held or repeated presses
-             * cannot stack transitions. The fade length is the caller's
-             * choice, not baked into the player. */
-            music_fade_to(title_visible ? &music_bank_title
-                                        : &music_bank_kokiri,
-                          DEMO_MUSIC_FADE_FRAMES);
-            if (!title_visible && !demo_link_active) {
-                if (kokiri_collision_spawn(&demo_link)) {
-                    demo_link_yaw = demo_yaw;
-                    link_velocity_y_q8 = 0;
-                    link_fall_remainder_q8 = 0;
-                    link_fall_peak_y = demo_link.y;
-                    link_safe_position = demo_link;
-                    link_safe_position_valid = true;
-                    demo_link_active = true;
-                    /* Spawn standing, not mid-clip from a previous session.
-                     * Both calls are needed: one clears the cached pose, the
-                     * other the locomotion state that selects it. */
-                    link_anim_reset();
-                    link_anim_reset_state();
-                    kokiri_camera_reset_actor_motion();
-                    /* Enter the world running, the slice's existing default. */
-                    gameplay_reset();
-                    player_input_reset();
-                    kokiri_camera_set_walk(false);
-                }
-            }
-            if (!title_visible && demo_link_active) {
-                /* A title shot may be far across the map. Enter gameplay
-                 * directly behind Link instead of easing there for seconds. */
-                oot_follow_snap(&link_follow, &demo_link, demo_link_yaw);
-                oot_follow_update(&link_follow, &demo_link, demo_link_yaw,
-                                  false, &demo_camera, &demo_yaw, &demo_pitch);
-            }
+        /* Start on the title hands over to the file select rather than
+         * dropping straight into the forest, so a new game and a continue are
+         * distinguishable and a save can be chosen. */
+        if (start_pressed && title_visible && !music_busy()) {
+            title_visible = false;
+            file_select_visible = true;
+            /* The D-pad's menu edges are consumed AFTER player_input_step()'s
+             * not-in-gameplay early return, so they pile up unconsumed while
+             * the title is showing. Clear them here or a direction held during
+             * the title jumps the cursor on the first frame. */
+            player_input_reset();
+            file_select_open();
+            start_pressed = false;
         }
     }
     /* 30 Hz gameplay; movement uses time-scaled native world units.
@@ -330,7 +501,14 @@ void demo_update(void)
     steps = elapsed / 2;
     if (steps > 4) { steps = 4; previous_tick = now - now % 2; }
     else previous_tick += steps * 2;
-    if (title_visible) {
+    if (file_select_visible) {
+        /* The screen owns the pad; nothing in the world advances behind it.
+         * The title camera keeps drifting so the backdrop is not frozen. */
+        jump_pending = false;
+        attack_pending = false;
+        title_showcase_camera(now);
+        file_select_tick();
+    } else if (title_visible) {
         jump_pending = false;
         /* This is an authored title shot, so controller movement does not
          * knock it off its route. Start above has already switched state by
@@ -362,7 +540,7 @@ void demo_update(void)
                 action.yaw = demo_link_yaw;
                 action.attack = attack_pending;
                 action.shield = shield_held;
-                action.target = recenter;
+                action.target_held = target_held;
                 action.interact = interact_pending;
                 action.cancel = cancel_pending;
                 action.pause = pause_pending;
@@ -371,6 +549,15 @@ void demo_update(void)
                 action.menu_step = menu_step;
                 action.grounded = link_velocity_y_q8 == 0;
                 gameplay_step(&action);
+                if (gameplay.events & GP_EVENT_SAVE) {
+                    /* Record the outcome. A save that quietly failed is the
+                     * worst result for the player, so the panel says which
+                     * happened rather than assuming success. */
+                    save_succeeded = save_device_write(active_slot);
+                    save_reported = true;
+                    if (!save_succeeded)
+                        gameplay.events |= GP_EVENT_SAVE_FAILED;
+                }
                 action_audio_events(gameplay.events);
                 oot_follow_target(&link_follow, gameplay.face_locked);
                 attack_pending = false;
@@ -380,15 +567,20 @@ void demo_update(void)
                 menu_step = 0;
                 /* Tell the mapper who owns B before the next sample. */
                 player_input_set_dialogue(gameplay_blocks_world());
+                /* gameplay.c decides whether an L press was a tap or a
+                 * hold, because only it knows if the hold became a lock-on.
+                 * A press that locked on must never also recentre, or the
+                 * view swings away from the actor just acquired. */
+                recenter = (gameplay.events & GP_EVENT_RECENTER) != 0;
                 if (blocked_before || gameplay_blocks_world()) {
                     /* A box holds the world still: no camera-relative walk, no
-                     * jump queued behind the text, no recenter on the close. */
+                     * jump queued behind the text, no recenter on the close.
+                     * Clearing AFTER the event read, or a tap consumed by a
+                     * text box would still swing the camera. */
                     walk = 0;
                     jump_pending = false;
                     recenter = false;
                 }
-                if (gameplay.events & (GP_EVENT_TARGET_ON | GP_EVENT_TARGET_OFF))
-                    recenter = false;
                 /* Pause freezes the world outright. A text box only stops input --
                  * gravity and the camera keep easing under it, which is what OoT
                  * does -- but the inventory stops the fixed step entirely, so a
@@ -477,9 +669,25 @@ void demo_update(void)
                     oot_follow_snap(&link_follow, &demo_link, demo_link_yaw);
                     recovered = false;
                 }
-                oot_follow_update(&link_follow, &demo_link, demo_link_yaw,
-                                  demo_link.x != step_x || demo_link.z != step_z,
-                                  &demo_camera, &demo_yaw, &demo_pitch);
+                /* A prerendered interior keeps the one viewpoint its
+                 * backdrop was drawn from; easing a follow camera around
+                 * inside it would slide the room off the picture. */
+                if (scene_flow_is_interior())
+                    interior_camera();
+                else
+                    oot_follow_update(&link_follow, &demo_link, demo_link_yaw,
+                                      demo_link.x != step_x || demo_link.z != step_z,
+                                      &demo_camera, &demo_yaw, &demo_pitch);
+                /* Checked after the move, so standing ON the doorway is what
+                 * triggers it -- the same collision triangle the original
+                 * uses. Abandons the rest of the catch-up: the scene those
+                 * remaining steps belonged to is no longer loaded. */
+                demo_collision_indexed = scene_collision_indexed;
+                if (take_door()) {
+                    walk = 0;
+                    jump_pending = false;
+                    break;
+                }
             }
         }
         /* Pose once for the frame, after the catch-up steps have settled on a
@@ -497,7 +705,11 @@ void demo_update(void)
     }
     patch.width = 84; patch.height = 14; patch.data = prompt;
     /* Only upload on a blink transition, not every rendered frame. */
-    if (last_blink != (int)((now / 30) & 1)) {
+    /* The blinking PRESS START prompt is uploaded into NBG1, the same layer a
+     * prerendered interior's backdrop uses. In the forest NBG1 is off so this
+     * was invisible; inside a room the layer is on, so the prompt printed over
+     * the picture. It belongs to the title and nowhere else. */
+    if (title_visible && last_blink != (int)((now / 30) & 1)) {
     last_blink = (now / 30) & 1;
     if (last_blink) {
         unsigned short empty[84] = {0};
@@ -506,7 +718,24 @@ void demo_update(void)
         for (row = 173; row < 187; ++row) jo_set_background_sprite(&patch, 118, row);
     } else jo_set_background_sprite(&patch, 118, 173);
     }
-    slScrAutoDisp(NBG0ON | (title_visible ? NBG1ON : 0));
+    /* NBG1 carries the title artwork AND a prerendered interior's backdrop --
+     * they are never on screen together. Switching it off whenever the title
+     * is hidden is why the backdrop appeared for a frame and then vanished:
+     * kokiri_scene_load_backdrop() uploads it, and the very next demo_update()
+     * turned the layer off again. */
+    slScrAutoDisp(NBG0ON |
+                  ((title_visible || kokiri_scene_backdrop_active()) ? NBG1ON : 0));
+}
+
+/* -1 no attempt yet this session, 0 failed, 1 succeeded. */
+int demo_save_report(void)
+{
+    return (!save_reported ? -1 : (save_succeeded ? 1 : 0));
+}
+
+bool demo_file_select_is_visible(void)
+{
+    return (file_select_visible);
 }
 
 bool demo_title_is_visible(void)

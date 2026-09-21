@@ -170,6 +170,37 @@ class PlayerControls(unittest.TestCase):
         self.tap(Y)
         self.assertTrue(self.lib.control_jump())
 
+    def test_a_menu_that_owns_the_pad_gets_cursor_confirm_and_cancel(self):
+        """The file select relies on exactly this. It is not "in gameplay" --
+        Link does not exist yet -- so it has to be passed in_gameplay=True and
+        claim the pad, or player_input_step() zeroes every action and returns
+        early. Getting this wrong made A, B and the D-pad do nothing on the
+        file select while the screen itself drew correctly."""
+        self.lib.player_input_set_dialogue(True)
+        self.tap(A)
+        self.assertTrue(self.lib.control_interact())
+        self.tap(B)
+        self.assertTrue(self.lib.control_cancel())
+        # B must not also flip walk/run while a menu owns it.
+        self.assertFalse(self.lib.control_walking())
+        self.tap(DOWN)
+        self.assertEqual(1, self.lib.control_menu_step())
+        self.tap(UP)
+        self.assertEqual(-1, self.lib.control_menu_step())
+        self.lib.player_input_set_dialogue(False)
+
+    def test_not_in_gameplay_yields_no_menu_input_at_all(self):
+        """Why the caller must pass in_gameplay=True for a menu: with it false
+        the early return discards these even though the pad was claimed."""
+        self.lib.player_input_set_dialogue(True)
+        self.lib.control_tap(A, 4)
+        self.lib.control_step(False)
+        self.assertFalse(self.lib.control_interact())
+        self.lib.control_tap(DOWN, 4)
+        self.lib.control_step(False)
+        self.assertEqual(0, self.lib.control_menu_step())
+        self.lib.player_input_set_dialogue(False)
+
     def test_title_input_is_discarded_not_queued(self):
         self.lib.control_tap(Y, 4)
         self.lib.control_step(False)          # still on the title
@@ -261,8 +292,17 @@ class PlayerControls(unittest.TestCase):
     # --- Z look mode ------------------------------------------------------
 
     def test_look_aims_with_the_dpad_and_moves_nothing(self):
+        # Looking RIGHT DECREASES yaw. With the camera's +Y-up, +Z-forward
+        # convention, screen right is (f x up) = -X, so increasing yaw swings
+        # the view left. This assertion used to expect the opposite, from when
+        # the renderer itself was mirrored; see main.c's screen X flip.
         self.hold(Z | RIGHT)
+        self.assertLess(self.lib.control_look_yaw(), 0)
+        self.lib.control_reset()
+        self.hold(Z | LEFT)
         self.assertGreater(self.lib.control_look_yaw(), 0)
+        self.lib.control_reset()
+        self.hold(Z | RIGHT)
         self.assertEqual(self.lib.control_look_pitch(), 0)
         self.assertEqual(self.lib.control_move_buttons(), 0)
         self.lib.control_reset()

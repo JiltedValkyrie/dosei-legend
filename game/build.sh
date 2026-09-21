@@ -85,14 +85,18 @@ fi
 if [ -n "${AUTHORED_OBJ:-}" ]; then
     "$python" "$here/tools/build_authored_scene.py" --obj "$AUTHORED_OBJ" ${AUTHORED_UV_FROM:+--uv-from "$AUTHORED_UV_FROM"} ${AUTHORED_ATLAS:+--atlas "$AUTHORED_ATLAS"}          ${AUTHORED_UNITS_PER_TEXEL:+--units-per-texel "$AUTHORED_UNITS_PER_TEXEL"}         ${AUTHORED_MAX_TILE:+--max-tile "$AUTHORED_MAX_TILE"}         ${AUTHORED_SPLIT_SPAN:+--split-span "$AUTHORED_SPLIT_SPAN"}         ${AUTHORED_MAX_DEPTH:+--max-depth "$AUTHORED_MAX_DEPTH"}         ${AUTHORED_POLYGON_CAP:+--polygon-cap "$AUTHORED_POLYGON_CAP"}
 fi
+"$python" "$here/tools/build_scene_table.py" --oot "$oot" --rom-dir "$roms"
+"$python" "$here/tools/build_scene_backdrops.py" --oot "$oot" --rom-dir "$roms"
 "$python" "$here/tools/build_actors.py" --oot "$oot" --rom-dir "$roms"
 "$python" "$here/tools/build_dialogue.py" --oot "$oot"
 "$python" "$here/tools/build_action_audio.py" --oot "$oot"
 "$python" "$here/tools/build_demo_assets.py" --oot "$oot"
 "$python" "$here/tools/build_title_paths.py"
 if [ "${STREAM_ROOMS:-1}" = 1 ]; then
-    for room in 0 1 2; do
-        cp "$here/build/generated/R$room.MSH" "$here/build/generated/R$room.TEX" "$here/build/cd/"
+    # One bank per (scene, room). Only scenes whose rooms are real geometry
+    # have banks; OoT interiors are prerendered backdrops and have none.
+    for bank in "$here"/build/generated/S*R*.MSH "$here"/build/generated/S*R*.TEX; do
+        [ -e "$bank" ] && cp "$bank" "$here/build/cd/"
     done
 else
     cp "$here/build/generated/kokiri_pixels.bin" "$here/build/cd/KOKIRI.TEX"

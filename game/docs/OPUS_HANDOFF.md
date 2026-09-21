@@ -1,3 +1,202 @@
+# Phase 0 build verification (Astra, 2026-09-21)
+
+## Build steps for Claude
+
+Run from the repository root in **PowerShell**:
+
+```powershell
+$env:OS = 'Windows_NT'
+.\game\build.bat
+```
+
+The SDK uses `OS=Windows_NT` to select its Windows SH-2 compiler. An empty
+`OS` selects the Linux compiler and fails. `build.bat` calls the PowerShell
+wrapper, which runs MSYS2 Bash and `build.sh`; MSYS2 is still required.
+For hi-res, use `.\game\build.bat -Variant hires`.
+
+If MSYS2 fails with `couldn't create signal pipe, Win32 error 5`, retry the
+same command through the agent's approved outside-sandbox execution mechanism.
+That error occurred before compilation in Astra's sandbox; the approved retry
+succeeded. It does not require switching compilers or editing build scripts.
+
+The build runs `build_sgl_area.py --verify --map` after linking. Check the final
+boundary result and process exit code, not the preliminary boundary printed
+before compilation. Normal outputs: `game/build/game.iso` and
+`game/build/game.cue`. Launch with `game/run-kronos.bat` when runtime testing.
+
+## Verified result
+
+Claude: `game\build.bat` from PowerShell succeeded (exit 0), using the Windows
+Jo SH-2 compiler. Backup and cart objects linked; normal `game.iso` / `game.cue`
+rebuilt. Final `build_sgl_area.py --verify --map build/game.map` passed:
+`.bss` ends at `0x060ac830`, SGL starts at `0x060b2640`, gap **24,080 bytes**.
+MSYS2 needed execution outside the sandbox because signal-pipe creation was
+denied inside it. No build-script or gameplay-source changes made by Astra.
+Dialogue left untouched. Kronos cart/no-cart boot behavior remains untested;
+Phase 0 is not yet runtime-verified.
+
+VRAM clarification: 173,104 bytes spare was one room's intermediate budget,
+not a whole-game minimum. The build also reports room budgets with only 4,944
+and 5,744 bytes spare before the later Link conversion. Do not plan new assets
+against 173 KB of guaranteed headroom. Sound report remains 104 bytes spare.
+
+# Current work plan: OoT progression (approved 2026-09-21)
+
+Read [OOT_PROGRESSION_PLAN.md](OOT_PROGRESSION_PLAN.md) before starting gameplay
+work. Human approved a much larger scope than the old slice: real game state and
+quest flags, Saturn backup-RAM saves with file select, Kokiri Forest + Lost Woods
++ Great Deku Tree + Gohma through to the Kokiri Emerald, full cutscene playback,
+real ROM models for NPCs and enemies, and hearts/damage/death.
+
+**The game now REQUIRES the 4 MB RAM expansion cart.** Kronos needs
+`Cartridge/Type = 7`. Note that Jo only registers the first 2 MB of it.
+
+That plan supersedes `GAMEPLAY_NEXT_STEP.md` and the "no bosses, dungeons" line
+in `VERTICALSLICE.md`. Nothing in it is implemented yet; Phase 0 is the start.
+
+Known bug it fixes first: `tools/build_dialogue.py` hardcodes Mido to text
+`0x1045` (post-Kokiri-Emerald) and Saria to `0x1002`. Correct no-flag baselines
+are `0x102F` and `0x1001`. The En_Ko child ids are already correct.
+
+## Phase 0 done, Phase 1 started (Claude, 2026-09-21)
+
+Phase 0 landed. Astra confirmed the normal build links and the boundary check
+passes with the backup module compiled in: **24,080 bytes gap, `.bss` ends
+`0x060ac830`**. Kronos boot still untested by either of us.
+
+Corrected budget note, from Astra: VDP1 spare VRAM is **per resident room and
+very uneven** — the roomiest room reports ~173 KB spare, the tightest only
+**~5 KB**. Plan new textures against the worst room. The plan doc's budget
+table has been fixed; my earlier ~173 KB figure was the wrong room.
+
+Phase 1 in progress. New `src/save_state.c/.h`: platform-free persistent quest
+state — `event_chk_inf`/`inf_table`/`item_get_inf` with the original
+`flag >> 4` / `1 << (flag & 15)` addressing, per-scene chest/switch/clear/
+collect words, quest items, hearts in OoT's 0x10-per-heart units, owned-vs-
+equipped gear, and `save_new_game()` mirroring `Sram_InitNewSave` (three
+hearts). Added to `SRCS`, so **the image needs rebuilding again**.
+
+`save_mido_demands_met()` deliberately tests the *equipped* values, because
+`z_en_md.c:437` uses `CUR_EQUIP_VALUE`, not `ALL_EQUIP_VALUE`.
+
+19 new host tests in `tests/test_save_state.py`, including a full Kokiri →
+Kokiri Emerald flag-chain replay. Suite now **298 tests, 297 pass, 1 legacy
+skip** (was 279). Nothing existing changed behaviour.
+
+### Dialogue bug fixed at the source (Claude, 2026-09-21)
+
+Thanks for the build instructions — `$env:OS = 'Windows_NT'` then
+`.\game\build.bat` works for me now, so I can build and verify myself.
+
+`build_dialogue.py` is rewritten. It no longer takes one constant per speaker;
+it parses each text-id function's **whole guarded-return ladder** and emits it
+as an ordered rule list, which the runtime evaluates against `save_state`. The
+runtime takes the first rule whose conditions all hold — which is exactly what
+a ladder of early returns does, so no condition ever needs negating and a
+later-quest line can never win on a fresh file.
+
+Supported guard shapes: `GET_EVENTCHKINF`, `GET_INFTABLE`, `GET_ITEMGETINF`,
+`CHECK_QUEST_ITEM`, `CUR_EQUIP_VALUE(t) == v`, `!` negation, `&&` conjunction,
+ternary returns, and nested if/else. Flag numbers are resolved from
+`include/save.h` and `include/item.h`, never typed in. **Any shape the parser
+does not recognise is a hard build failure** — a silently dropped guard is
+precisely how the original bug happened, so it must not be possible to ship one.
+`--verify` prints the per-speaker fresh-file text id.
+
+Result, straight from the build log: **Mido 0x102F** (was 0x1045) and
+**Saria 0x1001** (was 0x1002). The eleven child ids are unchanged, and the
+parser additionally found `ENKO_TYPE_CHILD_11` (0x103E), which the old
+hardcoded table did not have. `ENKO_TYPE_CHILD_FADO` is reported as ignored
+(it belongs to another scene) rather than guessed at.
+
+Tables grew from 13 conversations / 78 lines to 14 speakers / 45 rules /
+35 conditions / 79 pages / **191 lines** — all original US 1.2 script, every
+quest variant now present.
+
+Runtime: `gameplay.convo` became `gameplay.rule` (a `dialogue_rules` index, not
+a conversation index), with `rule_for()` + `cond_holds()` in `gameplay.c`.
+`sync_gear_to_save()` mirrors the session's GP_SWORD/GP_SHIELD bits into the
+save's equip values, because Mido's gate reads `save_cur_equip_value()` — gear
+the player holds but the save has not been told about would leave him blocking
+the path forever. Called on pickup, on menu equip, and on `gameplay_reset()`.
+
+Tests: **305 total, 304 pass, 1 legacy skip.** Seven new dialogue regression
+tests assert Mido's fresh-file line, Saria's, the refused-once line, that the
+0x1033 gate line needs gear *equipped* rather than merely owned, that the
+post-Emerald line appears only with the Emerald, that an earlier rule beats a
+later one when both guards hold, and that one speaker's flag does not move
+another's line.
+
+Writing those tests surfaced a real gap: nothing reset persistent state between
+tests, so flags leaked. That is the persistence working as intended —
+`gameplay_reset()` deliberately does not clear the save. Test `setUp` now calls
+`save_new_game()` as well.
+
+### Rebuild button in the launcher, and the OS fix (Claude, 2026-09-21)
+
+Human directive: stop rebuilding from the agent side every change; they will
+build. `launch-game.bat` now has a **Rebuild...** button beside Run selected.
+It opens a dialog with a tickbox per image (the one selected in the list starts
+ticked, plus "All three"/"None"), streams the build log live, and reports each
+image as OK or FAILED. Close is disabled while a build runs, because closing
+mid-build would orphan the compiler and leave a half-written image. New file:
+`tools/launcher/build-dialog.ps1`.
+
+**`$env:OS` is fixed centrally**, in `tools/launcher/build-game.ps1`. The SDK
+makefile picks its SH-2 compiler on `$(OS)`; an empty value selects the Linux
+toolchain and dies with "Exec format error". MSYS2 does not reliably pass it
+through, so the wrapper now sets it explicitly. Verified by building with
+`$env:OS = ''` first: exit 0. So `game\build.bat`, the Rebuild button and a
+plain terminal build all work with no environment setup — the
+`$env:OS = 'Windows_NT'` line in the earlier instructions above is no longer
+needed (harmless if kept).
+
+`kronos-launcher.ps1 -SmokeTest` constructs the new dialog without starting a
+compiler and still passes.
+
+Two bugs found by the human running it, both fixed:
+
+1. **A good build reported FAILED.** A `Process` from `Start-Process -PassThru`
+   has no populated `ExitCode` until the handle is waited on, even once
+   `HasExited` is true -- it reads `$null`, which compares unequal to 0. The
+   dialog now calls `WaitForExit()`/`Refresh()` first (immediate, since it has
+   already exited) and reports an unreadable status distinctly rather than
+   guessing either way. Verified: `ExitCode` is `0` after the wait.
+2. **The log was unreadable.** The build prints one ~1200-character compiler
+   invocation per source file. The dialog now filters by default via
+   `Test-BuildLogLine` -- a top-level function so it can be tested rather than
+   eyeballed -- keeping every summary, warning, error, both boundary checks and
+   the final image path, and dropping only the compiler command lines, the SDK
+   makefile's recipe-override chatter and Pillow deprecation warnings. A real
+   166-line log filters to 113 useful lines. "Show full log" restores the raw
+   text, which is kept in full. The smoke test asserts a sample of lines that
+   must be kept and must be dropped.
+
+### Standing rule: rebuild all three discs every time
+
+Human directive, 2026-09-21: normal, clean player test and hi-res all get
+rebuilt on every change, not just the normal image. A stale clean or hi-res
+disc silently tests old code, and the clean disc is the player-test one.
+
+```powershell
+$env:OS = 'Windows_NT'
+.\game\build.bat                    # normal -> game.iso
+.\game\build.bat -Variant clean     # clean player test -> game-clean.iso
+.\game\build.bat -Variant hires     # 320x480i -> game-hires.iso
+```
+
+All three verified by me after the dialogue change, exit 0, final boundary gaps:
+normal **18,176**, clean **20,912**, hi-res **17,952** bytes below the work
+area. (Dialogue text cost about 4.4 KB of the earlier 22,576.) Read the boundary
+line printed *after* linking, not the preliminary one.
+
+**Known limitation, not hidden:** `gameplay_reset()` currently clears saved gear
+too, which is right only while the two authored ground pickups are the sole
+source and reset means "entering the world". Phase 3 scene transitions must make
+gear survive a transition; the commented line in `gameplay_reset()` is what has
+to change. Also still open: Kronos boot with and without the cart, which neither
+of us has run.
+
 # Latest: behind-Link lock camera, rupee melody, pause help
 
 Lock-on previously changed only Link facing; normal camera could remain at old

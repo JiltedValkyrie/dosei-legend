@@ -1,5 +1,54 @@
 # Dosei Legend engineering rules
 
+## World coordinates and handedness -- the permanent reference
+
+This is the convention the whole game uses. Get it wrong and the world renders
+MIRRORED, which is exactly what happened: every scene, Kokiri Forest included,
+was a mirror image of the original until 2026-09-21. Nothing revealed it for
+weeks, because a third-person camera in a forest has no absolute reference.
+Link's house did: it is a prerendered room, so its backdrop IS ground truth,
+and projecting the room's own collision onto it put the door on the wrong side.
+
+### The convention
+
+World space is the ORIGINAL's, straight from the ROM, and is never rewritten:
+
+    +X, +Y up, +Z          right-handed, as OoT stores it
+    yaw is binang, 0 looks along +Z, and is measured atan2(dx, dz)
+
+For a camera with forward `f` and up `+Y`, the on-screen right vector is
+
+    right = f x up = (-cos yaw, 0, sin yaw)
+
+Note the signs. At yaw 0 the camera looks along +Z and **screen right is -X**.
+Writing `(cos yaw, 0, -sin yaw)` instead -- the negation -- is the mistake that
+caused the mirror, and it was made independently in three places: the renderer,
+the movement basis and the look camera.
+
+Consequences that follow from it, all of which are now correct:
+
+  * Pressing RIGHT moves Link along `(-cos yaw, sin yaw)`.
+  * Looking RIGHT DECREASES the camera yaw, because increasing yaw rotates the
+    forward vector from +Z toward +X, which is toward screen LEFT.
+  * A vertex baked as `(x, -y, z)` for SGL's Y-down projection is in a
+    LEFT-handed space. That flip is why `src/main.c` applies
+    `slScale(-1, 1, 1)` before the rotations: it negates projected X once, for
+    geometry, Link and billboards together, instead of requiring every world
+    coordinate, facing and model vertex to be negated separately.
+
+### How to check it, rather than reason about it
+
+Do not argue from the matrix maths; it is easy to get a sign wrong twice and
+convince yourself. Project a prerendered room's real collision triangles onto
+its own backdrop and look:
+
+    the exit polygons must land on the doorway
+    the collision boxes must land on the bed, the table and the mat
+
+`game/tools/build_scene_backdrops.py --png` writes the backdrop; the room's
+collision comes from `shared/tools/build_kokiri_scene.py collision_surfaces()`.
+If those line up, the convention is right. If they mirror, it is not.
+
 ## New gameplay actors: check original drops every time
 
 Human rule (2026-09-18): add grass, pots, enemies, breakable props, pickups,

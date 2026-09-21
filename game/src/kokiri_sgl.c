@@ -21,6 +21,7 @@
 #include "frame_timer.h"
 
 #include "kokiri_scene.h"
+#include "scene_table.h"
 #include "link_scene.h"
 #include "kokiri_sgl.h"
 #include "vdp1_layout.h"
@@ -338,14 +339,105 @@ static bool room_read(jo_file *file, void *target, unsigned int bytes)
     return jo_fs_read_next_bytes(file, (char *)target, bytes) == (int)bytes;
 }
 
-static bool room_load(unsigned int room)
+/* One bank per (scene, room): S<scene>R<room>.MSH/.TEX on the disc.
+**
+** The names carry the scene now because the slice has more than one. Only a
+** ROOM_SHAPE_TYPE_NORMAL scene has banks at all -- OoT's interiors are
+** prerendered backdrops with no geometry, so they have none. */
+static bool room_load_bank(unsigned int scene, unsigned int room);
+
+/* True while a prerendered interior's backdrop is on screen. The geometry
+** draw is skipped entirely then: an interior HAS no geometry, and the resident
+** bank still holds whatever forest room was loaded last. */
+static bool backdrop_active;
+
+bool kokiri_scene_backdrop_active(void)
+{
+    return (backdrop_active);
+}
+
+/* Screen priority. jo_core_set_screens_order gives its first argument
+** priority 7, the front, and decrements. Text stays in front either way.
+**
+**   world:    NBG0 text, NBG1, sprites   -- the title artwork overlays the
+**             forest, which is what the attract flight needs.
+**   interior: NBG0 text, sprites, NBG1   -- the backdrop is the room, so Link
+**             and everything else must draw OVER it.
+*/
+static void screens_for_backdrop(bool interior)
+{
+    /* Braces are required, not style: jo_core_set_screens_order is a macro
+    ** whose definition ends in a semicolon (jo/core.h:191), so a braceless
+    ** `if (x) MACRO(); else` expands with a stray empty statement that closes
+    ** the if and orphans the else. */
+    if (interior) {
+        jo_core_set_screens_order(JO_NBG0_SCREEN, JO_SPRITE_SCREEN,
+                                  JO_NBG1_SCREEN, JO_RBG0_SCREEN,
+                                  JO_NBG2_SCREEN, JO_NBG3_SCREEN);
+    } else {
+        jo_core_set_screens_order(JO_NBG0_SCREEN, JO_NBG1_SCREEN,
+                                  JO_SPRITE_SCREEN, JO_RBG0_SCREEN,
+                                  JO_NBG2_SCREEN, JO_NBG3_SCREEN);
+    }
+}
+
+/* The backdrop shares NBG1 with the title artwork -- they are never both on
+** screen -- so whichever was uploaded last is what NBG1 holds. demo.c reloads
+** the title image when it returns to the title for that reason. */
+bool kokiri_scene_load_backdrop(unsigned int scene, unsigned int room)
+{
+    char        name[] = "S0R0.RGB";
+    jo_file     file;
+    jo_img      strip;
+    int         row;
+    bool        ok = true;
+
+    if (scene > 9 || room > 9) return false;
+    name[1] += scene; name[3] += room;
+    if (!jo_fs_open(&file, name)) return false;
+    if (file.size != 320 * 240 * 2) { jo_fs_close(&file); return false; }
+    strip.width = 320; strip.height = 1;
+    strip.data = (jo_color *)jo_malloc(320 * 2);
+    if (!strip.data) { jo_fs_close(&file); return false; }
+    jo_clear_background(0);
+    for (row = 0; row < 240; ++row) {
+        if (jo_fs_read_next_bytes(&file, (char *)strip.data, 320 * 2) != 320 * 2) {
+            ok = false;
+            break;
+        }
+        jo_set_background_sprite(&strip, 0, row);
+    }
+    jo_fs_close(&file);
+    jo_free(strip.data);
+    if (!ok) return false;
+    backdrop_active = true;
+    screens_for_backdrop(true);
+    return true;
+}
+
+bool kokiri_scene_load_bank(unsigned int scene, unsigned int room)
+{
+    if (backdrop_active) {
+        backdrop_active = false;
+        /* Wipe the picture, not just switch the layer off. NBG1 retains
+        ** whatever was uploaded, so the interior would otherwise flash over
+        ** the forest for any frame where the layer is briefly enabled -- and
+        ** NBG1 is enabled again the moment the title screen appears. */
+        jo_clear_background(0);
+        screens_for_backdrop(false);
+    }
+    return room_load_bank(scene, room);
+}
+
+static bool room_load_bank(unsigned int scene, unsigned int room)
 {
     unsigned int header[8], expected, i;
-    char mesh_name[] = "R0.MSH", pixel_name[] = "R0.TEX";
+    char mesh_name[] = "S0R0.MSH", pixel_name[] = "S0R0.TEX";
     jo_file file;
     bool ok;
-    if (room > 2) return false;
-    mesh_name[1] += room; pixel_name[1] += room;
+    if (scene > 9 || room > 9) return false;
+    mesh_name[1] += scene; pixel_name[1] += scene;
+    mesh_name[3] += room;  pixel_name[3] += room;
     if (!jo_fs_open(&file, mesh_name)) return false;
     if (!room_read(&file, header, sizeof(header))) { jo_fs_close(&file); return false; }
     expected = 32 + header[1]*12 + header[2]*32 + header[3]*44 +
@@ -404,7 +496,10 @@ bool                kokiri_scene_load(void)
 #ifdef KOKIRI_STREAM_ROOMS
     resident_bytes = vram_used;
     resident_sprites = sprite_next;
-    return room_load(0);
+    /* Kokiri Forest for now: it is the only scene with mesh banks. Link's
+    ** house is a prerendered backdrop and needs the VDP2 path instead, which
+    ** is the next piece of work. */
+    return room_load_bank(SCENE_SPOT04, 0);
 #else
     {
         unsigned int i;
@@ -444,7 +539,7 @@ bool kokiri_scene_update(void)
         /* Do not overwrite texture RAM while VDP1 still reads last frame.
          * Defer until draw end instead of spinning inside the game callback. */
         if (!(JO_VDP1_EDSR & 2)) return true;
-        return room_load((unsigned int)target);
+        return room_load_bank(SCENE_SPOT04, (unsigned int)target);
     }
 #endif
     return true;

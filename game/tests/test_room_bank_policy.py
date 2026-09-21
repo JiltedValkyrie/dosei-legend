@@ -11,9 +11,12 @@ GEN = pathlib.Path(__file__).resolve().parents[1] / 'build/generated'
 class RoomBankPolicy(unittest.TestCase):
     def test_all_banks_match_source_policy_and_lengths(self):
         for room in json.loads((GEN / 'rooms_manifest.json').read_text())['rooms']:
-            with self.subTest(room=room['id']):
-                mesh = (GEN / ('R%d.MSH' % room['id'])).read_bytes()
-                tex = (GEN / ('R%d.TEX' % room['id'])).read_bytes()
+            # Banks are per (scene, room) now that the slice has more than
+            # one scene; only scenes whose rooms are real geometry have banks.
+            stem = 'S%dR%d' % (room['scene'], room['id'])
+            with self.subTest(bank=stem):
+                mesh = (GEN / (stem + '.MSH')).read_bytes()
+                tex = (GEN / (stem + '.TEX')).read_bytes()
                 magic, nv, nf, nt, np, no, _, _ = struct.unpack_from('>8I', mesh)
                 self.assertEqual(magic, 0x4b524d31)
                 self.assertEqual((nv, nf, nt, np, no), tuple(room[k] for k in
@@ -21,7 +24,7 @@ class RoomBankPolicy(unittest.TestCase):
                 self.assertEqual(len(tex), np)
                 self.assertEqual(len(mesh), 32 + nv*12 + nf*20 + nf*12 +
                                  nt*12 + nt*32 + (nf+3)//4*4 + no*24)
-                faces = json.loads((GEN / ('room%d' % room['id']) /
+                faces = json.loads((GEN / stem.lower() /
                                     'texture_manifest.json').read_text())['faces']
                 self.assertEqual(len(faces), nf)
                 attr = 32 + nv*12 + nf*20

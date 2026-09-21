@@ -118,6 +118,7 @@ void player_input_step(bool in_gameplay, player_input_t *out)
     out->c_released = PLAYER_C_NONE;
     out->jump = false;
     out->recenter = false;
+    out->target_held = false;
     out->interact_pending = false;
     out->attack_pending = false;
     out->shield_held = false;
@@ -199,7 +200,11 @@ void player_input_step(bool in_gameplay, player_input_t *out)
         horizontal = !!(dpad & CAMERA_RIGHT) - !!(dpad & CAMERA_LEFT);
         vertical = !!(dpad & CAMERA_UP) - !!(dpad & CAMERA_DOWN);
         out->look_mode = true;
-        out->look_yaw_delta = horizontal * PLAYER_LOOK_YAW_SPEED;
+        /* NEGATED, same handedness correction as the movement basis. With a
+        ** +Y-up, +Z-forward camera, screen right is (f x up) = -X, so
+        ** INCREASING yaw swings the view to the left. Pressing right must
+        ** therefore decrease it. */
+        out->look_yaw_delta = -horizontal * PLAYER_LOOK_YAW_SPEED;
         out->look_pitch_delta = vertical * PLAYER_LOOK_PITCH_SPEED;
         out->shield_held = false;
         look_was_active = true;
@@ -235,6 +240,10 @@ void player_input_step(bool in_gameplay, player_input_t *out)
     out->move_buttons = dpad;
     out->jump = jumped;
     out->recenter = recentered;
+    /* Set only on the path that reaches here: the diagnostics chord and the
+    ** dialogue branch both return early, so L consumed by either never reads
+    ** as a targeting hold. */
+    out->target_held = (held & CAMERA_L) != 0;
 }
 
 void    player_input_set_dialogue(bool open)

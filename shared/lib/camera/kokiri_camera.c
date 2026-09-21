@@ -35,9 +35,22 @@ void kokiri_camera_update(camera_position_t *position, uint16_t *yaw,
         }
 
         /* Unsigned angle wraps at one revolution. Opposite buttons cancel. */
-        if (buttons & CAMERA_L) *yaw = (uint16_t)(*yaw - CAMERA_TURN_SPEED);
-        if (buttons & CAMERA_R) *yaw = (uint16_t)(*yaw + CAMERA_TURN_SPEED);
-        const int horizontal = !!(buttons & CAMERA_RIGHT) - !!(buttons & CAMERA_LEFT);
+        /* Swapped with the same handedness correction as the movement basis
+         * below: increasing yaw swings the view LEFT, so the right shoulder
+         * has to decrease it. This is the legacy free-camera path, used only
+         * when Link is inactive; gameplay gives L and R to targeting and the
+         * shield. */
+        if (buttons & CAMERA_L) *yaw = (uint16_t)(*yaw + CAMERA_TURN_SPEED);
+        if (buttons & CAMERA_R) *yaw = (uint16_t)(*yaw - CAMERA_TURN_SPEED);
+        /* NEGATED. The camera-relative basis below builds its lateral axis as
+         * (cos yaw, -sin yaw), which is the WRONG-handed right vector -- the
+         * same sign error the renderer had before main.c's screen X flip. With
+         * a +Y-up, +Z-forward camera the true right is (f x up) =
+         * (-cos yaw, sin yaw), so pressing right used to walk Link left across
+         * the screen. Negating the axis here flips BOTH the dx and dz terms
+         * at once, and leaves the `horizontal && vertical` diagonal tests
+         * unaffected because those only care whether it is non-zero. */
+        const int horizontal = !!(buttons & CAMERA_LEFT) - !!(buttons & CAMERA_RIGHT);
         const int vertical = !!(buttons & CAMERA_UP) - !!(buttons & CAMERA_DOWN);
         int32_t dx = 0, dz = 0;
         const int32_t dy = (!!(buttons & CAMERA_X)-!!(buttons & CAMERA_Z))*CAMERA_MOVE_SPEED;

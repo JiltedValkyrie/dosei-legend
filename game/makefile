@@ -6,13 +6,18 @@
 #
 
 JO_COMPILE_WITH_VIDEO_MODULE = 0
-JO_COMPILE_WITH_BACKUP_MODULE = 0
+# Backup RAM holds the save files. See docs/OOT_PROGRESSION_PLAN.md phase 2.
+JO_COMPILE_WITH_BACKUP_MODULE = 1
 JO_COMPILE_WITH_TGA_MODULE = 0
 JO_COMPILE_WITH_AUDIO_MODULE = 0
 JO_COMPILE_WITH_3D_MODULE = 1
 JO_COMPILE_WITH_PSEUDO_MODE7_MODULE = 0
 JO_COMPILE_WITH_EFFECTS_MODULE = 0
 JO_COMPILE_WITH_FAST_BUT_LESS_ACCURATE_MATH = 0
+# The 4 MB RAM expansion cart is REQUIRED, not optional: the game refuses to run
+# without it (src/ram_cart.c). On by default in the SDK makefile; stated here so
+# it cannot be switched off by accident.
+JO_COMPILE_WITH_RAM_CARD_MODULE = 1
 JO_DEBUG = 1
 HIRES ?= 0
 CLEAN_TEST ?= 0
@@ -53,7 +58,7 @@ JO_MAX_SPRITE = 2400
 # smaller arena still leaves several times the real figure.
 JO_GLOBAL_MEMORY_SIZE_FOR_MALLOC ?= 180224
 
-SRCS = src/main.c src/kokiri_sgl.c ../shared/lib/music/music.c src/music_banks.c src/demo.c src/player_input.c src/gameplay.c src/action_audio.c src/demo_camera.c src/demo_collision.c src/demo_follow.c src/link_anim.c src/link_anim_state.c src/frame_timer.c build/generated/kokiri_scene.c build/generated/kokiri_textures.c build/generated/link_scene.c build/generated/link_textures.c build/generated/link_clips.c build/generated/kokiri_actors.c build/generated/kokiri_dialogue.c
+SRCS = src/main.c src/ram_cart.c src/save_state.c src/save_file.c src/save_device.c src/file_select.c src/scene_flow.c src/kokiri_sgl.c ../shared/lib/music/music.c src/music_banks.c src/demo.c src/player_input.c src/gameplay.c src/action_audio.c src/demo_camera.c src/demo_collision.c src/demo_follow.c src/link_anim.c src/link_anim_state.c src/frame_timer.c build/generated/kokiri_scene.c build/generated/kokiri_textures.c build/generated/link_scene.c build/generated/link_textures.c build/generated/link_clips.c build/generated/scene_table.c build/generated/kokiri_actors.c build/generated/kokiri_dialogue.c
 override ASSETS_DIR = ./build/cd
 
 JO_ENGINE_SRC_DIR = ../../joengine/jo_engine

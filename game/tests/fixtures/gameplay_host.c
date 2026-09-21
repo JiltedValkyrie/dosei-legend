@@ -6,6 +6,8 @@
 #include <stdint.h>
 #include "../../src/gameplay.h"
 #include "kokiri_actors.h"
+#include "kokiri_dialogue.h"
+#include "../../src/save_file.h"
 
 uint16_t gameplay_facing(int32_t dx, int32_t dz)
 {
@@ -18,6 +20,7 @@ uint16_t gameplay_facing(int32_t dx, int32_t dz)
 int gp_owned(void)      { return gameplay.owned; }
 int gp_equipped(void)   { return gameplay.equipped; }
 int gp_target(void)     { return gameplay.target; }
+int gp_target_hold(void){ return gameplay.target_hold; }
 int gp_swing(void)      { return gameplay.swing; }
 int gp_events(void)     { return (int)gameplay.events; }
 int gp_cut_count(void)  { return gameplay.cut_count; }
@@ -72,7 +75,8 @@ void gp_step_full(int x, int y, int z, int yaw, int attack, int shield,
     in.menu_step = (int8_t)menu_step;
     in.x = x; in.y = y; in.z = z; in.yaw = (uint16_t)yaw;
     in.attack = attack != 0; in.shield = shield != 0;
-    in.target = target != 0; in.interact = interact != 0;
+    /* Hold targeting: this is L HELD for the step, not a press edge. */
+    in.target_held = target != 0; in.interact = interact != 0;
     in.grounded = grounded != 0; in.cancel = cancel != 0;
     gameplay_step(&in);
 }
@@ -86,12 +90,24 @@ void gp_step(int x, int y, int z, int yaw, int attack, int shield,
 
 int gp_paused(void) { return gameplay_is_paused() ? 1 : 0; }
 int gp_cursor(void) { return gameplay.cursor; }
+int gp_slot_count(void) { return GP_SLOT_COUNT; }
+int gp_slot_item(int slot) { return (int)gameplay_slot_item((unsigned)slot); }
+const char *gp_slot_name(int s) { return gameplay_slot_name((unsigned)s); }
+const char *gp_slot_use(int s)  { return gameplay_slot_use((unsigned)s); }
 
 int gp_talking(void)     { return gameplay_is_talking() ? 1 : 0; }
 int gp_prompt(void)      { return gameplay.prompt; }
 int gp_speaker(void)     { return gameplay.speaker; }
 int gp_page(void)        { return gameplay.page; }
-int gp_convo(void)       { return gameplay.convo; }
+int gp_convo(void)       { return gameplay.rule; }
+/* Which original message the selected rule points at. This is the check that
+** matters for quest-correct dialogue: the rule index alone does not say
+** whether Mido is about to speak his fresh-file line or a later-quest one. */
+int gp_rule_text_id(void)
+{
+    if (gameplay.rule < 0) return -1;
+    return (int)dialogue_rules[gameplay.rule].text_id;
+}
 int gp_page_lines(void)  { return (int)gameplay_page_lines(); }
 
 const char *gp_page_line(int i)   { return gameplay_page_line((unsigned)i); }
@@ -99,3 +115,12 @@ const char *gp_speaker_name(void) { return gameplay_speaker_name(); }
 
 int gp_npc_param(int i)  { return kokiri_npcs[i].param; }
 int gp_npc_kind(int i)   { return kokiri_npcs[i].kind; }
+int gp_npc_count(void)   { return KOKIRI_NPC_COUNT; }
+
+/* The real serialiser, so a test can perform the same save and load the pause
+** menu and the file select do, without a backup device. */
+void gp_save_pack(unsigned char *out) { save_file_pack(&save_state, out); }
+int  gp_save_unpack(const unsigned char *in, unsigned int bytes)
+{
+    return (int)save_file_unpack(&save_state, in, bytes);
+}

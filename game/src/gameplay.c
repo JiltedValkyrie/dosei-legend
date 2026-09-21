@@ -1,6 +1,7 @@
 #include "gameplay.h"
 #include "kokiri_actors.h"
 #include "kokiri_dialogue.h"
+#include "save_state.h"
 
 gameplay_t          gameplay;
 
@@ -31,6 +32,9 @@ static int32_t      yaw_delta(uint16_t from, uint16_t to)
     return (int32_t)(int16_t)(uint16_t)(to - from);
 }
 
+static void         sync_gear_to_save(void);
+static void         sync_gear_from_save(void);
+
 void                gameplay_reset(void)
 {
     unsigned int i;
@@ -38,6 +42,7 @@ void                gameplay_reset(void)
     gameplay.equipped = 0;
     gameplay.shielding = false;
     gameplay.target = -1;
+    gameplay.target_hold = 0;
     gameplay.swing = 0;
     gameplay.swing_hit = 0;
     gameplay.grass_cut = 0;
@@ -49,7 +54,7 @@ void                gameplay_reset(void)
     gameplay.swing_count = 0;
     gameplay.speaker = -1;
     gameplay.prompt = -1;
-    gameplay.convo = -1;
+    gameplay.rule = -1;
     gameplay.page = 0;
     gameplay.talking = false;
     gameplay.paused = false;
@@ -57,10 +62,17 @@ void                gameplay_reset(void)
     gameplay.rupees = 0;
     gameplay.rupee_taken = 0;
     gameplay.drop_rng = 0x12345678u;
+    /* owned/equipped/rupees/pickup_taken/rupee_taken are restored from the
+    ** save by sync_gear_from_save() at the end of this function. */
     for (i = 0; i < 16; ++i) {
         gameplay.grass_rupee[i] = 0;
         gameplay.grass_age[i] = 0;
     }
+    /* Reset means "entering a scene", and it runs AFTER the file select has
+    ** either started a new game or loaded a save. So gear, rupees and taken
+    ** pickups are read FROM the save here. Writing to it instead is what made
+    ** loading a file wipe the sword and shield it had just restored. */
+    sync_gear_from_save();
 }
 
 bool                gameplay_grass_cut(unsigned int index)
@@ -92,6 +104,9 @@ static void grant_rupee(unsigned int value)
 {
     unsigned int total = gameplay.rupees + value;
     gameplay.rupees = total > GP_WALLET_CAPACITY ? GP_WALLET_CAPACITY : total;
+    /* The wallet is saved state: the Deku Shield costs 40 rupees, so losing
+    ** the count on a reload would undo real progress. */
+    save_state.rupees = gameplay.rupees;
     gameplay.events |= GP_EVENT_RUPEE;
 }
 
@@ -102,6 +117,9 @@ static void collect_rupees(const gameplay_input_t *in)
         const kokiri_rupee_t *r = &kokiri_rupees[i];
         if (!gameplay_rupee_taken(i) && rupee_near(in, r->x, r->y, r->z, r->room)) {
             gameplay.rupee_taken |= (uint16_t)(1u << i);
+            /* Per-scene collectible flag, where OoT keeps them, so a rupee
+            ** already picked up does not reappear after a save and reload. */
+            save_set_collectible(save_state.scene_id, i);
             grant_rupee(r->value);
         }
     }
@@ -117,6 +135,63 @@ static void collect_rupees(const gameplay_input_t *in)
             gameplay.grass_rupee[i] = 0;
         }
     }
+}
+
+/* Gear, rupees and one-off pickups live in the SAVE. gameplay_t holds them as
+** GP_* bits and a small wallet only because the per-step actions read them
+** constantly and a bitmask is cheaper than four accessor calls.
+**
+** The save is the owner; these two functions keep the cache agreeing with it.
+** Direction matters and getting it wrong is how a loaded file lost its sword
+** and shield: gameplay_reset() runs when entering a scene, which is AFTER a
+** file has been loaded, so it must read FROM the save. Only the places where
+** gear actually changes -- a pickup, or equipping in the menu -- write TO it.
+**
+** Mido's gate is decided by save_cur_equip_value(), so the two must not drift
+** in either direction. */
+static void         sync_gear_to_save(void)
+{
+    save_give_equip(EQUIP_TYPE_SWORD,
+                    (gameplay.owned & GP_SWORD) ? EQUIP_VALUE_SWORD_KOKIRI : 0);
+    save_give_equip(EQUIP_TYPE_SHIELD,
+                    (gameplay.owned & GP_SHIELD) ? EQUIP_VALUE_SHIELD_DEKU : 0);
+    save_set_equip(EQUIP_TYPE_SWORD,
+                   (gameplay.equipped & GP_SWORD) ? EQUIP_VALUE_SWORD_KOKIRI : 0);
+    save_set_equip(EQUIP_TYPE_SHIELD,
+                   (gameplay.equipped & GP_SHIELD) ? EQUIP_VALUE_SHIELD_DEKU : 0);
+    save_state.rupees = gameplay.rupees;
+}
+
+static void         sync_gear_from_save(void)
+{
+    unsigned int    i;
+
+    gameplay.owned = 0;
+    gameplay.equipped = 0;
+    if (save_all_equip_value(EQUIP_TYPE_SWORD) == EQUIP_VALUE_SWORD_KOKIRI)
+        gameplay.owned |= GP_SWORD;
+    if (save_all_equip_value(EQUIP_TYPE_SHIELD) == EQUIP_VALUE_SHIELD_DEKU)
+        gameplay.owned |= GP_SHIELD;
+    if (save_cur_equip_value(EQUIP_TYPE_SWORD) == EQUIP_VALUE_SWORD_KOKIRI)
+        gameplay.equipped |= GP_SWORD;
+    if (save_cur_equip_value(EQUIP_TYPE_SHIELD) == EQUIP_VALUE_SHIELD_DEKU)
+        gameplay.equipped |= GP_SHIELD;
+    gameplay.rupees = (uint8_t)(save_state.rupees > GP_WALLET_CAPACITY
+                                ? GP_WALLET_CAPACITY : save_state.rupees);
+    /* A pickup already taken must not reappear on the floor after a reload. */
+    gameplay.pickup_taken = 0;
+    if (save_get_item_get_inf(ITEMGETINF_GROUND_SWORD))
+        gameplay.pickup_taken |= 1u;
+    if (save_get_item_get_inf(ITEMGETINF_GROUND_SHIELD))
+        gameplay.pickup_taken |= 2u;
+    /* Room rupees are per-scene collectible flags, exactly as OoT stores them,
+    ** so a collected rupee stays collected across a save. Cut grass is NOT
+    ** persisted: OoT keeps grass in the temp half of the scene flags, which it
+    ** deliberately never saves, so regrowing is the original's behaviour. */
+    gameplay.rupee_taken = 0;
+    for (i = 0; i < KOKIRI_RUPEE_COUNT && i < 16; ++i)
+        if (save_get_collectible(save_state.scene_id, i))
+            gameplay.rupee_taken |= (uint16_t)(1u << i);
 }
 
 bool                gameplay_sword_active(void)
@@ -149,6 +224,11 @@ static void         collect_pickups(const gameplay_input_t *in)
         gameplay.pickup_taken |= (uint8_t)(1u << i);
         gameplay.owned |= pickup->item;
         gameplay.equipped |= pickup->item;
+        /* Record the pickup itself, not just the gear: otherwise a reloaded
+        ** file puts the sword back on the floor to be collected again. */
+        save_set_item_get_inf(i == 0 ? ITEMGETINF_GROUND_SWORD
+                                     : ITEMGETINF_GROUND_SHIELD);
+        sync_gear_to_save();
         gameplay.events |= GP_EVENT_PICKUP;
     }
 }
@@ -192,25 +272,63 @@ void gameplay_update_facing(int32_t x, int32_t z)
 /* L presses toggle the lock. OoT supports Switch and Hold; this slice uses
 ** a simple Switch-style toggle. L is also the recenter button, and
 ** demo.c only recenters when no lock was taken or dropped. */
+static void         drop_target(void)
+{
+    if (gameplay.target >= 0)
+        gameplay.events |= GP_EVENT_TARGET_OFF;
+    gameplay.target = -1;
+    gameplay.face_locked = false;
+}
+
+/* HOLD targeting, the setting OoT itself offers as the alternative to Switch.
+**
+** L held past GP_TARGET_HOLD_STEPS locks onto the nearest actor in front and
+** keeps the lock only while it stays held; releasing drops it. A press shorter
+** than that is a tap and recentres the camera instead, so brushing L while
+** running past a Kokiri no longer grabs them -- which is what made Switch-style
+** toggling annoying in the forest.
+**
+** The lock also drops once the actor is past GP_TARGET_DROP, as before. */
 static void         update_target(const gameplay_input_t *in)
 {
+    if (!in->target_held) {
+        /* Released. A short press that never became a lock is the recentre
+        ** gesture; one that did lock just ends, with no recentre, or the view
+        ** would swing away from the actor the player was just looking at. */
+        if (gameplay.target_hold > 0 &&
+            gameplay.target_hold < GP_TARGET_HOLD_STEPS &&
+            gameplay.target < 0)
+            gameplay.events |= GP_EVENT_RECENTER;
+        gameplay.target_hold = 0;
+        drop_target();
+        return;
+    }
+
+    if (gameplay.target_hold < GP_TARGET_HOLD_STEPS)
+        ++gameplay.target_hold;
+
+    if (gameplay.target_hold < GP_TARGET_HOLD_STEPS) {
+        /* Still inside the tap window: nothing is locked yet, so Link keeps
+        ** facing wherever he is travelling. */
+        gameplay.face_locked = false;
+        return;
+    }
+
     if (gameplay.target >= 0) {
         const kokiri_npc_t *npc = &kokiri_npcs[gameplay.target];
-        if (in->target ||
-            planar_squared(in->x, in->z, npc->x, npc->z) >
+        if (planar_squared(in->x, in->z, npc->x, npc->z) >
             (int32_t)GP_TARGET_DROP * GP_TARGET_DROP) {
-            gameplay.target = -1;
-            gameplay.face_locked = false;
-            gameplay.events |= GP_EVENT_TARGET_OFF;
+            drop_target();
             return;
         }
         gameplay.face_yaw = gameplay_facing(npc->x - in->x, npc->z - in->z);
         gameplay.face_locked = true;
         return;
     }
-    gameplay.face_locked = false;
-    if (!in->target)
-        return;
+
+    /* Held long enough and nothing locked yet: try to acquire. Retried every
+    ** step while held, so holding L and turning toward an actor picks them up
+    ** rather than requiring a fresh press. */
     gameplay.target = find_target(in);
     if (gameplay.target >= 0) {
         const kokiri_npc_t *npc = &kokiri_npcs[gameplay.target];
@@ -219,6 +337,8 @@ static void         update_target(const gameplay_input_t *in)
         gameplay.face_yaw = gameplay_facing(npc->x - in->x, npc->z - in->z);
         gameplay.face_locked = true;
         gameplay.events |= GP_EVENT_TARGET_ON;
+    } else {
+        gameplay.face_locked = false;
     }
 }
 
@@ -294,6 +414,8 @@ static const struct { uint8_t item; const char *name; const char *use; }
                     slot_table[GP_SLOT_COUNT] = {
     { GP_SWORD,  "Kokiri Sword", "X: swing" },
     { GP_SHIELD, "Deku Shield",  "Hold R: guard" },
+    /* item 0: there is nothing to equip on this row. */
+    { 0,         "Save",         "A: save to your file" },
 };
 
 uint8_t             gameplay_slot_item(unsigned int slot)
@@ -353,8 +475,14 @@ static void         update_menu(const gameplay_input_t *in)
     }
     if (in->interact) {
         uint8_t item = gameplay_slot_item(gameplay.cursor);
-        if (gameplay.owned & item) {
+        if (gameplay.cursor == GP_SLOT_SAVE) {
+            /* Only the request is raised here. demo.c performs the device
+            ** write and reports a failure back, because a save that silently
+            ** did nothing is the worst outcome for the player. */
+            gameplay.events |= GP_EVENT_SAVE;
+        } else if (gameplay.owned & item) {
             gameplay.equipped |= item;
+            sync_gear_to_save();
             gameplay.events |= GP_EVENT_EQUIP;
         } else {
             /* Nothing to equip: say so rather than pretending it worked. */
@@ -386,25 +514,85 @@ static int16_t      convo_for(unsigned int npc)
     return -1;
 }
 
+/* One extracted guard, evaluated against the save. */
+static bool         cond_holds(const dialogue_cond_t *cond)
+{
+    bool held;
+
+    switch (cond->kind) {
+        case DIALOGUE_COND_EVENT:
+            held = save_get_event_chk_inf(cond->flag);
+            break;
+        case DIALOGUE_COND_INFTABLE:
+            held = save_get_inf_table(cond->flag);
+            break;
+        case DIALOGUE_COND_ITEMGET:
+            held = save_get_item_get_inf(cond->flag);
+            break;
+        case DIALOGUE_COND_QUEST:
+            held = save_check_quest_item(cond->flag);
+            break;
+        case DIALOGUE_COND_EQUIP:
+            /* CUR_EQUIP_VALUE, not ALL_EQUIP_VALUE: Mido's gate turns on what
+            ** is equipped, not what is merely owned. */
+            held = (save_cur_equip_value(cond->flag) == cond->value);
+            break;
+        default:
+            return false;
+    }
+    return (cond->expect ? held : !held);
+}
+
+/* The line a speaker actually says right now: the FIRST rule whose conditions
+** all hold. That ordering is the whole point -- it is what the original's
+** ladder of early returns does, so a later-quest line can never win on a fresh
+** file. Returns a dialogue_rules index, or -1 when the speaker has nothing. */
+static int16_t      rule_for(unsigned int npc)
+{
+    int16_t convo = convo_for(npc);
+    const dialogue_convo_t *entry;
+    unsigned int i, c;
+
+    if (convo < 0)
+        return -1;
+    entry = &dialogue_convos[convo];
+    for (i = 0; i < entry->rules; ++i) {
+        const dialogue_rule_t *rule = &dialogue_rules[entry->first_rule + i];
+        bool matched = true;
+        for (c = 0; c < rule->conds; ++c) {
+            if (!cond_holds(&dialogue_conds[rule->first_cond + c])) {
+                matched = false;
+                break;
+            }
+        }
+        if (matched)
+            return (int16_t)(entry->first_rule + i);
+    }
+    /* Every speaker's list ends in an unconditional rule, so falling out here
+    ** means the extracted table is malformed rather than the quest being in an
+    ** unexpected state. Say nothing rather than show a wrong line. */
+    return -1;
+}
+
 unsigned int        gameplay_page_lines(void)
 {
-    const dialogue_convo_t *convo;
-    if (!gameplay.talking || gameplay.convo < 0)
+    const dialogue_rule_t *rule;
+    if (!gameplay.talking || gameplay.rule < 0)
         return 0;
-    convo = &dialogue_convos[gameplay.convo];
-    if (gameplay.page >= convo->pages)
+    rule = &dialogue_rules[gameplay.rule];
+    if (gameplay.page >= rule->pages)
         return 0;
-    return dialogue_pages[convo->first_page + gameplay.page].lines;
+    return dialogue_pages[rule->first_page + gameplay.page].lines;
 }
 
 const char         *gameplay_page_line(unsigned int line)
 {
-    const dialogue_convo_t *convo;
+    const dialogue_rule_t *rule;
     const dialogue_page_t *page;
     if (line >= gameplay_page_lines())
         return 0;
-    convo = &dialogue_convos[gameplay.convo];
-    page = &dialogue_pages[convo->first_page + gameplay.page];
+    rule = &dialogue_rules[gameplay.rule];
+    page = &dialogue_pages[rule->first_page + gameplay.page];
     return dialogue_lines[page->first_line + line];
 }
 
@@ -456,33 +644,33 @@ static int16_t      find_speaker(const gameplay_input_t *in)
 static void         update_talk(const gameplay_input_t *in)
 {
     if (gameplay.talking) {
-        const dialogue_convo_t *convo = &dialogue_convos[gameplay.convo];
+        const dialogue_rule_t *rule = &dialogue_rules[gameplay.rule];
         gameplay.prompt = -1;
         if (in->cancel) {
             gameplay.talking = false;
             gameplay.speaker = -1;
-            gameplay.convo = -1;
+            gameplay.rule = -1;
             gameplay.events |= GP_EVENT_TALK_CLOSE;
             return;
         }
         if (!in->interact)
             return;
-        if (gameplay.page + 1 < convo->pages) {
+        if (gameplay.page + 1 < rule->pages) {
             ++gameplay.page;
             gameplay.events |= GP_EVENT_TALK_PAGE;
             return;
         }
         gameplay.talking = false;
         gameplay.speaker = -1;
-        gameplay.convo = -1;
+        gameplay.rule = -1;
         gameplay.events |= GP_EVENT_TALK_CLOSE;
         return;
     }
     gameplay.prompt = find_speaker(in);
     if (!in->interact || gameplay.prompt < 0)
         return;
-    gameplay.convo = convo_for((unsigned int)gameplay.prompt);
-    if (gameplay.convo < 0)
+    gameplay.rule = rule_for((unsigned int)gameplay.prompt);
+    if (gameplay.rule < 0)
         return;
     gameplay.speaker = gameplay.prompt;
     gameplay.page = 0;

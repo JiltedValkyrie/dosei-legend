@@ -87,7 +87,31 @@ class LocomotionTiming(unittest.TestCase):
         text = (ROOT / 'src/demo.c').read_text()
         self.assertNotIn('jo_is_pad1_key_down(JO_KEY_START)', text)
         self.assertIn('input_edge_sample(&start_edge', text)
-        self.assertIn('if (start_pressed && !music_busy())', text)
+        self.assertIn('input_edge_consume(&start_edge', text)
+        # Start now hands the title over to the file select rather than going
+        # straight to the forest, so the guarded line reads differently than it
+        # used to. What still matters is that the transition is refused while a
+        # score switch is running, or the artwork and the music would disagree
+        # about which state we are in.
+        self.assertIn('!music_busy()', text)
+        self.assertIn('file_select_open()', text)
+
+    def test_the_file_select_is_included_in_the_gameplay_input_gate(self):
+        """player_input_step() zeroes every action and returns early when
+        in_gameplay is false, AFTER consuming the press edges. The file select
+        runs before Link exists, so leaving it out of that gate swallowed A, B
+        and the D-pad and nothing on the screen could be chosen -- while the
+        screen itself still drew correctly, which made it look like a menu bug.
+
+        This is a source check because the wiring lives in demo.c, which has no
+        host harness; the player_input side is covered in test_player_controls.
+        """
+        text = (ROOT / 'src/demo.c').read_text()
+        self.assertIn(
+            'bool in_gameplay = !title_visible && (demo_link_active || file_select_visible);',
+            text)
+        # It must also claim the pad, or B toggles walk/run instead of cancelling.
+        self.assertIn('player_input_set_dialogue(true)', text)
 
     def test_diagonal_and_rotated_speed_match(self):
         for buttons, yaw in ((0x9000, 0), (0x1000, 8192), (0x9000, 5000)):
@@ -120,8 +144,14 @@ class LocomotionTiming(unittest.TestCase):
         text = (ROOT / 'src/demo.c').read_text()
         mask = text.split('uint16_t walk = buttons &', 1)[1].split(';', 1)[0]
         self.assertNotIn('CAMERA_L', mask.replace('CAMERA_LEFT', ''))
-        # The L edge now lives in player_input.c; demo.c applies the result.
-        self.assertIn('recenter = input.recenter;', text)
+        # L is HOLD targeting now, so whether a press recentres depends on
+        # whether the hold became a lock-on -- which only gameplay.c knows.
+        # demo.c therefore reads the decision as an event instead of taking
+        # the raw press edge, and the raw edge is explicitly not used.
+        self.assertIn('recenter = (gameplay.events & GP_EVENT_RECENTER) != 0;',
+                      text)
+        self.assertIn('(void)input.recenter;', text)
+        self.assertIn('action.target_held = target_held;', text)
         # L must recenter, never orbit. It now starts an OoT-style swing
         # instead of assigning demo_yaw directly, so the check is that the
         # press reaches the camera's recenter entry point.

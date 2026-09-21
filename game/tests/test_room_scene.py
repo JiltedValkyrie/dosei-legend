@@ -53,13 +53,14 @@ class GeneratedRoomsTests(unittest.TestCase):
         meta = json.loads((gen/'rooms_manifest.json').read_text())
         coverage = []
         for room in meta['rooms']:
-            detail = json.loads((gen/('room%d/texture_manifest.json'%room['id'])).read_text())
+            stem = 'S%dR%d' % (room['scene'], room['id'])
+            detail = json.loads((gen/(stem.lower()+'/texture_manifest.json')).read_text())
             coverage.append({s for f in detail['faces'] for s in f['source']})
-            blob = (gen/('R%d.MSH'%room['id'])).read_bytes()
+            blob = (gen/(stem+'.MSH')).read_bytes()
             magic,nv,np,nt,nb,no,_,_ = struct.unpack_from('>8I',blob)
             self.assertEqual(magic,0x4b524d31)
             self.assertEqual(len(blob),32+nv*12+np*32+nt*44+((np+3)&~3)+no*24)
-            self.assertEqual(nb,(gen/('R%d.TEX'%room['id'])).stat().st_size)
+            self.assertEqual(nb,(gen/(stem+'.TEX')).stat().st_size)
             self.assertLessEqual(np+517,2600)
             self.assertLessEqual(nv+309,2500)
             self.assertLessEqual(sum(p['bytes'] for p in room['budget'])+512,detail['vram_limit'])

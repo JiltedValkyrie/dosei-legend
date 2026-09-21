@@ -27,6 +27,38 @@ function Test-Image($entry) {
     return 'Ready'
 }
 
+# The game requires the 4 MB (32 Mbit) RAM expansion cart and refuses to boot
+# without it, so the emulator has to be told to fit one. Kronos keeps this in its
+# own ini under the [1.0] group as a flattened "Cartridge\Type" key;
+# CART_DRAM32MBIT is 7 (Kronos/yabause/src/sys/memory/include/cs0.h).
+# Only that one key is touched. Start-Variant already refuses to run while
+# Kronos is open, so there is no live session to clobber the file on exit.
+function Set-KronosCartridge {
+    $ini = Join-Path $env:LOCALAPPDATA 'kronos/kronos.ini'
+    if (!(Test-Path -LiteralPath $ini -PathType Leaf)) {
+        Write-Warning "Kronos ini not found at $ini. Set Cartridge/Type to the 32 Mbit DRAM cart by hand, or the game will refuse to boot."
+        return
+    }
+    $lines = @(Get-Content -LiteralPath $ini)
+    if ($lines -contains 'Cartridge\Type=7') { return }
+    $out = New-Object System.Collections.Generic.List[string]
+    $written = $false
+    foreach ($line in $lines) {
+        if ($line -match '^Cartridge\\Type=') {
+            if (!$written) { $out.Add('Cartridge\Type=7'); $written = $true }
+            continue
+        }
+        $out.Add($line)
+        # Append to the versioned group the rest of the settings live in.
+        if (!$written -and $line -match '^\[1\.0\]\s*$') {
+            $out.Add('Cartridge\Type=7'); $written = $true
+        }
+    }
+    if (!$written) { $out.Add('Cartridge\Type=7') }
+    Set-Content -LiteralPath $ini -Value $out -Encoding utf8
+    Write-Host 'Kronos cartridge set to the 4 MB (32 Mbit) DRAM expansion.'
+}
+
 function Start-Variant($entry) {
     $state = Test-Image $entry
     if ($state -ne 'Ready') { throw $state }
@@ -37,6 +69,7 @@ function Start-Variant($entry) {
     if (Get-Process -Name kronos -ErrorAction SilentlyContinue) {
         throw 'Kronos is already running. Close it before starting another variant.'
     }
+    Set-KronosCartridge
     $oldPath = $env:PATH
     try {
         if ($paths.kronos_dlls) { $env:PATH = $paths.kronos_dlls + ';' + $env:PATH }
@@ -55,6 +88,7 @@ Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 [Windows.Forms.Application]::EnableVisualStyles()
 . (Join-Path $PSScriptRoot 'config-dialog.ps1')
+. (Join-Path $PSScriptRoot 'build-dialog.ps1')
 if ($Variant) {
     try { Start-Variant ($variants | Where-Object Id -eq $Variant) }
     catch { [Windows.Forms.MessageBox]::Show($_.Exception.Message, 'Kronos launcher') | Out-Null; exit 1 }
@@ -63,7 +97,7 @@ if ($Variant) {
 
 $form = New-Object Windows.Forms.Form
 $form.Text = 'Dosei Legend - Kronos variants'
-$form.ClientSize = New-Object Drawing.Size(820, 410)
+$form.ClientSize = New-Object Drawing.Size(980, 410)
 $form.StartPosition = 'CenterScreen'
 $form.FormBorderStyle = 'FixedDialog'
 $form.MaximizeBox = $false
@@ -80,7 +114,7 @@ $form.Controls.Add($menu)
 
 $list = New-Object Windows.Forms.ListView
 $list.Location = New-Object Drawing.Point(16, 32)
-$list.Size = New-Object Drawing.Size(788, 204)
+$list.Size = New-Object Drawing.Size(948, 204)
 $list.View = 'Details'
 $list.FullRowSelect = $true
 $list.MultiSelect = $false
@@ -91,12 +125,12 @@ foreach ($column in @(@('Variant', 275), @('Status', 190), @('Image built (local
 $form.Controls.Add($list)
 $details = New-Object Windows.Forms.Label
 $details.Location = New-Object Drawing.Point(16, 248)
-$details.Size = New-Object Drawing.Size(788, 90)
+$details.Size = New-Object Drawing.Size(948, 90)
 $form.Controls.Add($details)
 $status = New-Object Windows.Forms.Label
 $status.Location = New-Object Drawing.Point(16, 350)
 $status.Size = New-Object Drawing.Size(490, 48)
-$status.Text = 'Runs existing images only. Close Kronos between comparisons.'
+$status.Text = 'Rebuild builds the images; Run starts Kronos. Close Kronos between comparisons.'
 $form.Controls.Add($status)
 $refresh = New-Object Windows.Forms.Button
 $refresh.Text = 'Refresh'
@@ -105,9 +139,14 @@ $refresh.Size = New-Object Drawing.Size(110, 36)
 $form.Controls.Add($refresh)
 $launch = New-Object Windows.Forms.Button
 $launch.Text = 'Run selected'
-$launch.Location = New-Object Drawing.Point(646, 350)
+$launch.Location = New-Object Drawing.Point(812, 350)
 $launch.Size = New-Object Drawing.Size(158, 36)
 $form.Controls.Add($launch)
+$rebuild = New-Object Windows.Forms.Button
+$rebuild.Text = 'Rebuild...'
+$rebuild.Location = New-Object Drawing.Point(646, 350)
+$rebuild.Size = New-Object Drawing.Size(158, 36)
+$form.Controls.Add($rebuild)
 
 function Update-Selection {
     $launch.Enabled = $false
@@ -145,6 +184,20 @@ $runAction = {
 }
 $launch.Add_Click($runAction)
 $list.Add_DoubleClick($runAction)
+$rebuild.Add_Click({
+    $preselect = 'normal'
+    if ($list.SelectedItems.Count) { $preselect = $list.SelectedItems[0].Tag.Id }
+    try {
+        $outcome = Show-BuildDialog -Owner $form -Project $project -Preselect $preselect
+        # Timestamps and Ready/Missing state change with every build.
+        Update-List
+        if ($outcome.Failed.Count) {
+            $status.Text = 'Build FAILED: ' + ($outcome.Failed -join ', ')
+        } elseif ($outcome.Built.Count) {
+            $status.Text = 'Built: ' + ($outcome.Built -join ', ') + '. Run one to test it.'
+        }
+    } catch { [Windows.Forms.MessageBox]::Show($_.Exception.Message, 'Rebuild') | Out-Null }
+})
 $form.AcceptButton = $launch
 $form.Add_Shown({ Update-Selection })
 Update-List
@@ -162,6 +215,10 @@ if ($SmokeTest) {
     if ($details.Text -notlike '*game-clean.cue*') { throw 'Clean selection details missing' }
     Write-Output 'GUI controls, hi-res and clean selection passed; no emulator launched.'
     Show-ConfigDialog $form -TestOnly
+    $null = $rebuild.Handle
+    if (!$rebuild.Enabled) { throw 'Rebuild button disabled' }
+    $null = Show-BuildDialog -Owner $form -Project $project -Preselect 'clean' -TestOnly
+    Write-Output 'Rebuild dialog constructed; no compiler started.'
     $form.Dispose()
     exit 0
 }
