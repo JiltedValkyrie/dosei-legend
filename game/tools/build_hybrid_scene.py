@@ -4,6 +4,7 @@ Collision is deliberately not regenerated. Render positions remain in source
 space until build_sgl_scene.emit() bakes the Saturn Y conversion.
 """
 import collections
+import os
 import json
 import math
 import pathlib
@@ -221,6 +222,29 @@ def convert(oot, head, actor, out_dir, patches_only=False, rom_dir=None,
     selected = {i for _,i in sorted(candidates)[:50]}
     if room is not None:
         groups = [part for g in groups for part in room_ground(g)]
+        # Isolated near-camera split experiment, opt-in only. DOSEI_SPLIT_TEST
+        # holds source triangle ids ("580,581"); the one group built from
+        # exactly those triangles is replaced by its 2x2 children. Everything
+        # else, including that group's parent tile in a normal build, is
+        # untouched, so split off/on discs differ only in this surface.
+        target = os.environ.get('DOSEI_SPLIT_TEST')
+        if target:
+            want = [int(v) for v in target.split(',') if v.strip()]
+            picked = [g for g in groups if list(g['source']) == want and
+                      len(g['points']) == 4]
+            # Rooms are converted one at a time, so no match here is normal
+            # and only means this room is untouched. A surface the ordinary
+            # ground pass already subdivided arrives as several pieces; all of
+            # them are refined, which is what "one more level on this surface"
+            # means once the baseline already split it.
+            if picked:
+                divisions = int(os.environ.get('DOSEI_SPLIT_DIVISIONS', '2'))
+                chosen = set(id(g) for g in picked)
+                groups = [part for g in groups for part in
+                          (split_ground(g, divisions) if id(g) in chosen else [g])]
+                print('split test: %s source %s, %d piece(s) -> %d children'
+                      % (room, want, len(picked), len(picked)*divisions*divisions),
+                      flush=True)
     else:
         groups = [piece for i,g in enumerate(groups) for piece in (
             split_ground(g, 8 if g['source'] == ground['source'] else 2)

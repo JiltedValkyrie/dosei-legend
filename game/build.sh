@@ -39,16 +39,52 @@ cp "$here/disc/ABS.TXT" "$here/disc/BIB.TXT" "$here/disc/CPY.TXT" "$here/build/c
 
 # Regenerate the SGL tables from the original scene, then stage the 4bpp blob
 # on the CD image. Both are cheap and keep game.iso consistent with FOREST.BIN.
-"$python" "$here/tools/build_sgl_area.py" --source "$sgl_source"
+"$python" "$here/tools/build_sgl_area.py" --source "$sgl_source" --max-polygons "${SGL_MAX_POLYGONS:-2200}"
 "$python" "$here/tools/build_link_model.py" --flat --animate --oot "$oot" --rom-dir "$roms"
 quad_args=()
 if [ -n "${QUAD_OBJ:-}" ]; then
     quad_args=(--quad-obj "$QUAD_OBJ")
 fi
+# The level is the original ROM triangles, streamed per room so huts and rooms
+# stay separate banks. The single authored mesh is off by default; point
+# AUTHORED_OBJ at an OBJ to use that import path instead.
+: "${AUTHORED_OBJ:=none}"
+if [ "$AUTHORED_OBJ" = none ] || [ ! -f "$here/$AUTHORED_OBJ" ]; then
+    AUTHORED_OBJ=
+fi
+# Settings proven for that mesh: one tile per face at ~10 world units per texel,
+# a 2400-entry polygon table (1635 forest + 564 Link) and a draw distance that
+# covers the whole town instead of one room bank.
+if [ -n "$AUTHORED_OBJ" ]; then
+    : "${AUTHORED_UNITS_PER_TEXEL:=10}"
+    : "${SGL_MAX_POLYGONS:=2400}"
+    : "${FOREST_FAR:=2600}"
+    : "${MALLOC_ARENA:=180224}"
+    set -- "FOREST_FAR=$FOREST_FAR"            "JO_GLOBAL_MEMORY_SIZE_FOR_MALLOC=$MALLOC_ARENA" "$@"
+fi
+
+# The authored mesh replaces the whole resident scene, so it cannot use
+# the per-room banks: force the single-scene path whenever AUTHORED_OBJ is set.
+if [ -n "${AUTHORED_OBJ:-}" ]; then
+    STREAM_ROOMS=0
+    # The authored scene overwrites the forest tables anyway, so the base run
+    # only has to produce Link and vdp1_layout.h. Use the cheap legacy texture
+    # path: the hybrid one would spend (and overrun) the budget on a forest
+    # that is about to be replaced.
+    TEXTURE_PATH=legacy
+fi
 if [ "${STREAM_ROOMS:-1}" = 1 ]; then
     quad_args+=(--stream-rooms)
 fi
+if [ -n "${AUTHORED_OBJ:-}" ]; then
+    quad_args+=(--skip-scene)
+fi
 "$python" "$here/tools/build_sgl_scene.py" --texture-path "${TEXTURE_PATH:-hybrid}" --oot "$oot" --rom-dir "$roms" "${quad_args[@]}"
+# Overwrite the generated forest with the authored import. Link's tables and
+# vdp1_layout.h come from the run above and are left alone.
+if [ -n "${AUTHORED_OBJ:-}" ]; then
+    "$python" "$here/tools/build_authored_scene.py" --obj "$AUTHORED_OBJ" ${AUTHORED_UV_FROM:+--uv-from "$AUTHORED_UV_FROM"} ${AUTHORED_ATLAS:+--atlas "$AUTHORED_ATLAS"}          ${AUTHORED_UNITS_PER_TEXEL:+--units-per-texel "$AUTHORED_UNITS_PER_TEXEL"}         ${AUTHORED_MAX_TILE:+--max-tile "$AUTHORED_MAX_TILE"}         ${AUTHORED_SPLIT_SPAN:+--split-span "$AUTHORED_SPLIT_SPAN"}         ${AUTHORED_MAX_DEPTH:+--max-depth "$AUTHORED_MAX_DEPTH"}         ${AUTHORED_POLYGON_CAP:+--polygon-cap "$AUTHORED_POLYGON_CAP"}
+fi
 "$python" "$here/tools/build_actors.py" --oot "$oot" --rom-dir "$roms"
 "$python" "$here/tools/build_dialogue.py" --oot "$oot"
 "$python" "$here/tools/build_action_audio.py" --oot "$oot"
@@ -69,14 +105,20 @@ cp "$here/levels/kokiri/assets/audio/KOKIRI_PCM.RAW" "$here/build/cd/FOREST.PCM"
 cp "$here/levels/kokiri/assets/audio/KOKIRI_LEVELS.RAW" "$here/build/cd/FOREST.LVL"
 
 cd "$here"
+# jo_engine_makefile picks its toolchain from $(OS), which does not reach make
+# from every shell that can run this script; it then falls back to the LINUX
+# binaries and dies with "Exec format error". Compiler/WINDOWS is already
+# required above, so name that toolchain outright instead of letting make guess.
 "${dependencies[1]}/usr/bin/make.exe" "${mode_args[@]}" \
     "JO_ENGINE_SRC_DIR=${dependencies[0]}/jo_engine" \
     "COMPILER_DIR=${dependencies[0]}/Compiler" \
-    "SHELL=${dependencies[1]}/usr/bin/bash.exe" "PYTHON=$python" "$@"
+    "SHELL=${dependencies[1]}/usr/bin/bash.exe" "PYTHON=$python" \
+    "CC=$compiler/bin/sh-elf-gcc.exe" "CONV=$compiler/bin/sh-elf-objcopy.exe" \
+    "CUE_MAKER=JoEngineCueMaker.exe" "$@"
 
 # The work area is laid out from the top of work RAM downwards, so .bss must
 # end below its base. Only the map just produced can prove that.
-if ! "$python" "$here/tools/build_sgl_area.py" --source "$sgl_source" --verify --map "$here/build/$variant.map"; then
+if ! "$python" "$here/tools/build_sgl_area.py" --source "$sgl_source" --max-polygons "${SGL_MAX_POLYGONS:-2200}" --verify --map "$here/build/$variant.map"; then
     echo "boundary check failed: removing the image so it cannot be run" >&2
     rm -f "$here/build/$variant.iso" "$here/build/$variant.cue" "$here/build/$variant.elf" "$here/build/$variant.raw"
     exit 1

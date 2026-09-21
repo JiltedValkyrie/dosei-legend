@@ -31,6 +31,12 @@ int             kokiri_scene_mesh_near_tile(void);
 int             kokiri_scene_mesh_near_polygon(void);
 unsigned short  kokiri_scene_mesh_near_vertex(unsigned int corner);
 bool            kokiri_scene_mesh_near_authored(void);
+#ifdef DOSEI_WARP_PROBE
+/* Warp probe readout, measurement only. 0..5 nearest polygon
+** (depth, far, world extent, tile, v0, v1); 6..12 worst projected-span
+** candidate (score, depth, far, extent, tile, v0, v1). */
+int             kokiri_warp_probe(unsigned int field);
+#endif
 
 /** @brief Draw ambient fairies at the original Kokiri NPC homes. */
 void            kokiri_fairies_draw(unsigned int tick);

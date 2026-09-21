@@ -1,0 +1,42 @@
+# Blender 5.2.2 LTS MTL File: 'KokiriForest.blend'
+# www.blender.org
+
+newmtl flags_0
+Ns 0.000000
+Ka 1.000000 1.000000 1.000000
+Ks 0.000000 0.000000 0.000000
+Ke 0.000000 0.000000 0.000000
+Ni 1.500000
+d 1.000000
+illum 1
+map_Kd D:/Workspace-Claude/saturn-homebrew/dosei-legend/workspace/meshes/3fd66b9e8dab/exports/20260918-141138-c52ebf55/atlas.png
+
+newmtl flags_1
+Ns 0.000000
+Ka 1.000000 1.000000 1.000000
+Ks 0.000000 0.000000 0.000000
+Ke 0.000000 0.000000 0.000000
+Ni 1.500000
+d 1.000000
+illum 1
+map_Kd D:/Workspace-Claude/saturn-homebrew/dosei-legend/workspace/meshes/3fd66b9e8dab/exports/20260918-141138-c52ebf55/atlas.png
+
+newmtl flags_2
+Ns 0.000000
+Ka 1.000000 1.000000 1.000000
+Ks 0.000000 0.000000 0.000000
+Ke 0.000000 0.000000 0.000000
+Ni 1.500000
+d 1.000000
+illum 1
+map_Kd D:/Workspace-Claude/saturn-homebrew/dosei-legend/workspace/meshes/3fd66b9e8dab/exports/20260918-141138-c52ebf55/atlas.png
+
+newmtl flags_3
+Ns 0.000000
+Ka 1.000000 1.000000 1.000000
+Ks 0.000000 0.000000 0.000000
+Ke 0.000000 0.000000 0.000000
+Ni 1.500000
+d 1.000000
+illum 1
+map_Kd D:/Workspace-Claude/saturn-homebrew/dosei-legend/workspace/meshes/3fd66b9e8dab/exports/20260918-141138-c52ebf55/atlas.png

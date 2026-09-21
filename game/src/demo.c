@@ -257,12 +257,12 @@ void demo_update(void)
     else if (input.look_exited)
         oot_follow_look_exit(&link_follow);
     if (jo_is_pad1_available()) {
-#if defined(DOSEI_PERF_PROBE) && (DOSEI_PERF_PROBE == 2 || DOSEI_PERF_PROBE == 3 || DOSEI_PERF_PROBE == 4)
+#if defined(DOSEI_PERF_PROBE) && (DOSEI_PERF_PROBE == 2 || DOSEI_PERF_PROBE == 3 || DOSEI_PERF_PROBE == 4 || DOSEI_PERF_PROBE == 5)
         /* Diagnostic-only autonomous walk. No OS/controller input injection. */
         {
             static bool entered;
             if (!entered && now > 120) { start_pressed = true; entered = true; }
-            buttons = DOSEI_PERF_PROBE == 3 ? 0 :
+            buttons = (DOSEI_PERF_PROBE == 3 || DOSEI_PERF_PROBE == 5) ? 0 :
                       (((now / 180) & 1) ? CAMERA_DOWN : CAMERA_UP);
 #if DOSEI_PERF_PROBE == 4
             /* Background visual regression: real running/jump physics, no OS

@@ -332,6 +332,10 @@ def main():
     ap.add_argument('--quad-obj', type=pathlib.Path,
                     help='workshop OBJ topology; retain original N64 textures and collision')
     ap.add_argument('--stream-rooms', action='store_true', help='separate authored room banks')
+    ap.add_argument('--skip-scene', action='store_true',
+                    help='emit only Link and vdp1_layout.h; the forest tables '
+                         'are supplied by build_authored_scene.py instead, so '
+                         'the generated scene must not spend the budget')
     args = ap.parse_args()
     if args.quad_obj and args.texture_path != 'hybrid':
         ap.error('--quad-obj requires --texture-path hybrid')
@@ -350,6 +354,9 @@ def main():
 
     total_polygons = 0
     for source, name in ((args.scene, 'kokiri'), (args.model, 'link')):
+        if args.skip_scene and name == 'kokiri':
+            print('kokiri  : skipped, authored scene supplies the forest')
+            continue
         if not source.is_file():
             print('%-8s: %s not present, skipped' % (name, source))
             continue

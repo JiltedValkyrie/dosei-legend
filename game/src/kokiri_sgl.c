@@ -29,9 +29,15 @@
 #include "kokiri_actors.h"
 #include "gameplay.h"
 
-/* Original forest renderer: radius (4367) * 60%. Requested visibility is
- * half of that range. Keep crossing polygons using their nearest vertex. */
+/* Original forest renderer: radius (4367) * 60%, halved for the room banks.
+** The authored single-mesh scene spans the whole town in one list, so that
+** halved distance cuts visible ground away in front of the camera; the build
+** raises it through DOSEI_FOREST_FAR instead of hiding the choice here. */
+#ifdef DOSEI_FOREST_FAR
+#define FOREST_FAR (DOSEI_FOREST_FAR)
+#else
 #define FOREST_FAR (4367 * 6 / 10 / 2)
+#endif
 #define FOREST_FOG_START (FOREST_FAR / 2)
 static short forest_depth[KOKIRI_VERTEX_COUNT];
 static short tile_depth[KOKIRI_TILE_COUNT];
@@ -73,6 +79,22 @@ static short mesh_near_tile = -1;
 static short mesh_near_polygon = -1;      /* index into the ORIGINAL table */
 static unsigned short mesh_near_verts[4];
 static bool mesh_near_authored;
+#ifdef DOSEI_WARP_PROBE
+/* Warp probe (measurement only, no rendering change).
+**
+** Two candidates are tracked per prep because the nearest polygon is not
+** necessarily the one that warps: a face whose PROJECTED span is large for its
+** depth stretches its texture most. The span estimate is world extent scaled
+** by 256/nearest depth -- a ratio, not pixels; it only has to rank faces.
+** Vertex ids are the stable identity: the partition swaps polygon slots, so an
+** index cannot be followed through a turn. */
+static int  warp_near_depth = 32767, warp_near_far, warp_near_extent;
+static short warp_near_tile = -1;
+static unsigned short warp_near_verts[4];
+static int  warp_span_score, warp_span_depth, warp_span_far, warp_span_extent;
+static short warp_span_tile = -1;
+static unsigned short warp_span_verts[4];
+#endif
 static bool forest_prepared;
 /* True when this frame reused the prepared list instead of rebuilding it. The
 ** depth/partition/fog timers are then STALE -- they hold the last rebuild's
@@ -497,6 +519,28 @@ static void link_part(unsigned int first, unsigned int count)
     }
 }
 
+#ifdef DOSEI_WARP_PROBE
+int kokiri_warp_probe(unsigned int field)
+{
+    switch (field) {
+    case 0: return warp_near_depth;
+    case 1: return warp_near_far;
+    case 2: return warp_near_extent;
+    case 3: return warp_near_tile;
+    case 4: return warp_near_verts[0];
+    case 5: return warp_near_verts[1];
+    case 6: return warp_span_score;
+    case 7: return warp_span_depth;
+    case 8: return warp_span_far;
+    case 9: return warp_span_extent;
+    case 10: return warp_span_tile;
+    case 11: return warp_span_verts[0];
+    case 12: return warp_span_verts[1];
+    default: return 0;
+    }
+}
+#endif
+
 void                kokiri_scene_draw(void)
 {
     unsigned int i, j, visible = forest_polygon_count;
@@ -533,6 +577,10 @@ void                kokiri_scene_draw(void)
     frame_timer_begin(FRAME_PHASE_PARTITION);
     for (i = 0; i < forest_tile_count; ++i) tile_depth[i] = 32767;
     mesh_near_depth = 32767;
+#ifdef DOSEI_WARP_PROBE
+    warp_near_depth = 32767; warp_near_tile = -1;
+    warp_span_score = 0; warp_span_tile = -1;
+#endif
     mesh_near_far = 32767;
     mesh_near_tile = -1;
     mesh_near_polygon = -1;
@@ -633,6 +681,56 @@ void                kokiri_scene_draw(void)
             attr->gstb = (unsigned short)(i + 1);
 #endif
             if (nearest < tile_depth[tile]) tile_depth[tile] = nearest;
+#ifdef DOSEI_WARP_PROBE
+            {
+                const unsigned short *v = kokiri_pdata.pltbl[i].Vertices;
+                int extent = 0, axis, corner, range = 32767;
+                for (axis = 0; axis < 3; ++axis) {
+                    int low = kokiri_pdata.pntbl[v[0]][axis] >> 16, high = low;
+                    for (corner = 1; corner < 4; ++corner) {
+                        int value = kokiri_pdata.pntbl[v[corner]][axis] >> 16;
+                        if (value < low) low = value;
+                        if (value > high) high = value;
+                    }
+                    if (high - low > extent) extent = high - low;
+                }
+                /* True distance to the eye, not the forward component.
+                ** Ranking on depth alone promoted faces standing far to the
+                ** side whose forward distance happened to be tiny, which is
+                ** not what the near view shows. */
+                for (corner = 0; corner < 4; ++corner) {
+                    int dx = (kokiri_pdata.pntbl[v[corner]][0] >> 16) - demo_camera.x;
+                    int dy = -(kokiri_pdata.pntbl[v[corner]][1] >> 16) - demo_camera.y;
+                    int dz = (kokiri_pdata.pntbl[v[corner]][2] >> 16) - demo_camera.z;
+                    int ax = dx < 0 ? -dx : dx, ay = dy < 0 ? -dy : dy;
+                    int az = dz < 0 ? -dz : dz, hi, mid, lo, estimate;
+                    hi = ax > ay ? ax : ay; if (az > hi) hi = az;
+                    lo = ax < ay ? ax : ay; if (az < lo) lo = az;
+                    mid = ax + ay + az - hi - lo;
+                    /* Cheap integer length: max + (mid+lo)/3, within a few
+                    ** percent and monotonic, which is all a ranking needs. */
+                    estimate = hi + (mid + lo) / 3;
+                    if (estimate < range) range = estimate;
+                }
+                if (farthest < 0) range = 32767;
+                if (range < warp_near_depth) {
+                    warp_near_depth = range; warp_near_far = nearest;
+                    warp_near_extent = extent; warp_near_tile = (short)tile;
+                    warp_near_verts[0]=v[0]; warp_near_verts[1]=v[1];
+                    warp_near_verts[2]=v[2]; warp_near_verts[3]=v[3];
+                }
+                if (range > 0 && range < 32767 && nearest < FOREST_FAR) {
+                    int score = extent * 256 / range;
+                    if (score > warp_span_score) {
+                        warp_span_score = score; warp_span_depth = range;
+                        warp_span_far = nearest; warp_span_extent = extent;
+                        warp_span_tile = (short)tile;
+                        warp_span_verts[0]=v[0]; warp_span_verts[1]=v[1];
+                        warp_span_verts[2]=v[2]; warp_span_verts[3]=v[3];
+                    }
+                }
+            }
+#endif
             attr->atrb &= ~MESHon;
             if ((forest_mesh[i] & 1) || nearest > FOREST_FAR * 7 / 8)
                 attr->atrb |= MESHon;

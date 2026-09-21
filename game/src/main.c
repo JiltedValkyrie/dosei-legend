@@ -112,6 +112,24 @@ static void         viewer_draw(void)
     demo_camera.x = -300; demo_camera.y = 141; demo_camera.z = -260;
     demo_yaw = 0; demo_pitch = 0;
 #endif
+#if defined(DOSEI_PERF_PROBE) && DOSEI_PERF_PROBE == 5
+    /* Warp A/B: one fixed pose facing the long room-0 wall quad
+    ** (world corners x -1994..-1634, z -167..1233, y 160..649), so a split-off
+    ** and a split-on disc can be compared at the identical camera. Diagnostic
+    ** only; never in a normal disc. */
+    /* Pin Link where the moving capture showed the offending wall quad
+    ** filling the near view and let the real follow camera settle behind him,
+    ** so split-off and split-on discs render the same gameplay view. */
+    if (demo_link_active && !demo_title_is_visible()) {
+        demo_link.x = -43; demo_link.y = 90; demo_link.z = -14;
+        demo_link_yaw = 16384;
+        /* Astra's settled gap pose, camera included: the follow camera reaches
+        ** a different yaw when Link is simply placed here, so the eye is
+        ** pinned too rather than approximated. */
+        demo_camera.x = -139; demo_camera.y = 71; demo_camera.z = -90;
+        demo_yaw = 9356; demo_pitch = 0;
+    }
+#endif
 #if defined(DOSEI_PERF_PROBE) && DOSEI_PERF_PROBE == 3
     /* Actor inspection only: original animations, slowly orbiting camera.
      * No controller injection or focus needed. Never in a normal disc. */
@@ -462,6 +480,26 @@ static void         viewer_hud(void)
                   kokiri_scene_mesh_near_far(),
                   (unsigned int)kokiri_scene_mesh_near_vertex(0),
                   (unsigned int)kokiri_scene_mesh_near_vertex(1));
+#ifdef DOSEI_WARP_PROBE
+        /* Probe rows: nearest polygon, then the worst projected-span
+        ** candidate. Vertex ids identify the surface through a turn. */
+        jo_printf(0, 10, "nr r%d f%d e%d t%d v%d,%d   ",
+                  kokiri_warp_probe(0), kokiri_warp_probe(1),
+                  kokiri_warp_probe(2), kokiri_warp_probe(3),
+                  kokiri_warp_probe(4), kokiri_warp_probe(5));
+        jo_printf(0, 11, "sp s%d r%d f%d e%d t%d v%d,%d  ",
+                  kokiri_warp_probe(6), kokiri_warp_probe(7),
+                  kokiri_warp_probe(8), kokiri_warp_probe(9),
+                  kokiri_warp_probe(10), kokiri_warp_probe(11),
+                  kokiri_warp_probe(12));
+        /* Submission accounting at the probe pose: refusals this frame, the
+        ** running total, and how many forest polygons were handed to SGL.
+        ** Zero refusals does not prove every face was drawn; a non-zero count
+        ** does prove something was dropped. */
+        jo_printf(0, 12, "rej%d tot%d sub%d   ",
+                  (int)kokiri_scene_rejected(), (int)rejected_total,
+                  (int)kokiri_scene_submitted());
+#endif
         return;
     }
     jo_printf(0, 0, "Jo/SGL Kokiri viewer");

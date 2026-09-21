@@ -47,7 +47,11 @@ JO_MAX_SPRITE = 2400
 # itself allocates only small blocks (font, fs read buffers). 176 KB leaves
 # roughly ten times the measured demand; the A-button overlay prints
 # jo_memory_usage_percent() so the real figure can be checked in Kronos.
-JO_GLOBAL_MEMORY_SIZE_FOR_MALLOC = 180224
+# Overridable: the authored quad scene needs a bigger SGL polygon table, and
+# both live below the same boundary. Measured demand is ~11 KB (the A-button
+# overlay prints jo_memory_usage_percent(), which reads 6% of 176 KB), so a
+# smaller arena still leaves several times the real figure.
+JO_GLOBAL_MEMORY_SIZE_FOR_MALLOC ?= 180224
 
 SRCS = src/main.c src/kokiri_sgl.c ../shared/lib/music/music.c src/music_banks.c src/demo.c src/player_input.c src/gameplay.c src/action_audio.c src/demo_camera.c src/demo_collision.c src/demo_follow.c src/link_anim.c src/link_anim_state.c src/frame_timer.c build/generated/kokiri_scene.c build/generated/kokiri_textures.c build/generated/link_scene.c build/generated/link_textures.c build/generated/link_clips.c build/generated/kokiri_actors.c build/generated/kokiri_dialogue.c
 override ASSETS_DIR = ./build/cd
@@ -80,13 +84,21 @@ endif
 ifeq ($(TEXTURE_PROBE),1)
 _CCFLAGS += -DDOSEI_TEXTURE_PROBE
 endif
-ifneq ($(filter 1 2 3 4,$(PERF_PROBE)),)
+ifneq ($(FOREST_FAR),)
+_CCFLAGS += -DDOSEI_FOREST_FAR=$(FOREST_FAR)
+endif
+ifeq ($(WARP_PROBE),1)
+_CCFLAGS += -DDOSEI_WARP_PROBE
+endif
+ifneq ($(filter 1 2 3 4 5,$(PERF_PROBE)),)
 _CCFLAGS += -DDOSEI_PERF_PROBE=$(PERF_PROBE)
 endif
 
 # Never retain a fixed-view callback in a subsequent normal build.
 .PHONY: perf_mode_check
-$(OBJDIR)/main.o $(OBJDIR)/demo.o: perf_mode_check
+# kokiri_sgl.o carries the warp probe, so it must recompile too or a
+# probe build could linger in a later normal disc.
+$(OBJDIR)/main.o $(OBJDIR)/demo.o $(OBJDIR)/kokiri_sgl.o: perf_mode_check
 $(OBJDIR)/main.o $(OBJDIR)/demo.o $(OBJDIR)/kokiri_sgl.o $(OBJDIR)/frame_timer.o: src/frame_timer.h
 $(OBJDIR)/kokiri_sgl.o: src/scene_actor_order.h src/actor_order.h src/sgl_order_queue.h
 
