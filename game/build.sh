@@ -91,6 +91,13 @@ fi
 "$python" "$here/tools/build_dialogue.py" --oot "$oot"
 "$python" "$here/tools/build_action_audio.py" --oot "$oot"
 "$python" "$here/tools/build_demo_assets.py" --oot "$oot"
+# The dream's Hyrule Field: flat shaded, no tiles, so it costs no VDP1
+# texture VRAM and can be resident during the opening alongside nothing else.
+if [ "${STREAM_ROOMS:-1}" = 1 ] && \
+   [ -f "$here/levels/hyrule/assets/static/hyrulefield.obj" ]; then
+    "$python" "$here/tools/build_flat_scene.py" \
+        --obj "$here/levels/hyrule/assets/static/hyrulefield.obj"
+fi
 "$python" "$here/tools/build_cutscenes.py" --oot "$oot"
 "$python" "$here/tools/build_title_paths.py"
 if [ "${STREAM_ROOMS:-1}" = 1 ]; then

@@ -473,7 +473,11 @@ static bool room_load_bank(unsigned int scene, unsigned int room)
     if (!room_read(&file, header, sizeof(header))) { jo_fs_close(&file); return false; }
     expected = 32 + header[1]*12 + header[2]*32 + header[3]*44 +
                ((header[2]+3)&~3u) + header[5]*24;
-    if (header[0] != 0x4b524d31 || !header[1] || !header[2] || !header[3] ||
+    /* A bank with no tiles is flat shaded: every face carries its own colour
+    ** in its ATTR and there is no pixel file at all. The dream's Hyrule Field
+    ** is built that way, so header[3] of zero is a kind of bank, not a
+    ** malformed one. */
+    if (header[0] != 0x4b524d31 || !header[1] || !header[2] ||
         header[1] > KOKIRI_VERTEX_COUNT || header[2] > KOKIRI_POLYGON_COUNT ||
         header[3] > KOKIRI_TILE_COUNT || header[4] > KOKIRI_PIXEL_BYTES ||
         header[5] > KOKIRI_OBJECT_COUNT || (unsigned int)file.size != expected ||
@@ -494,7 +498,10 @@ static bool room_load_bank(unsigned int scene, unsigned int room)
     vram_used = resident_bytes;
     sprite_next = resident_sprites;
     forest_sprite_base = sprite_next;
-    if (!mesh_load(pixel_name,header[4],kokiri_tiles,header[3],
+    /* Nothing to upload for a flat bank: its ATTRs already hold their colours
+    ** and mesh_load() would only patch texno/colno over them. */
+    if (header[3] &&
+        !mesh_load(pixel_name,header[4],kokiri_tiles,header[3],
                    (const unsigned short (*)[16])kokiri_cluts,&kokiri_pdata,header[2]))
         return false;
     forest_vertex_count = kokiri_pdata.nbPoint = header[1];

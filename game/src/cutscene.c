@@ -53,6 +53,19 @@ static int scene_for_cutscene(unsigned int scene)
 }
 
 /*
+** The dream rides across Hyrule Field, which is a bank of its own.
+**
+** SPOT00 has no scene_table entry: it is never walked into, only flown over,
+** so the cutscene asks for the bank by number. It is flat shaded -- every
+** face carries its own colour and there are no tiles at all -- so it costs
+** nothing of the VDP1 texture area that the streamed forest fills, which is
+** what makes a second environment affordable during the opening.
+**
+** Built by tools/build_flat_scene.py from levels/hyrule/assets/static.
+*/
+#define CUTSCENE_FIELD_BANK 3
+
+/*
 ** Navi's flight uses the ordinary streamed rooms.
 **
 ** A single authored bank of the whole zone was tried instead -- the flight
@@ -150,7 +163,9 @@ bool cutscene_start(unsigned int id)
     if (id == CUTSCENE_SLEEP)
         music_silence(CUTSCENE_FADE_FRAMES);
     game_mode_set(GAME_MODE_LOADING);
-    {
+    if (cs->scene == CUTSCENE_SCENE_SPOT00) {
+        state.scene_loaded = kokiri_scene_load_bank(CUTSCENE_FIELD_BANK, 0);
+    } else {
         int scene = scene_for_cutscene(cs->scene);
 
         state.scene_loaded = scene >= 0 &&
