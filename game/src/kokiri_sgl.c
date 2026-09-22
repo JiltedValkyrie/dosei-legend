@@ -152,8 +152,10 @@ static unsigned char forest_face_flags(unsigned int i)
 /* The real OoT message panel, gDefaultMessageBackgroundTex, converted by
 ** tools/build_demo_assets.py. Drawn behind cutscene text. */
 #define MSGBOX_FILE         "MSGBOX.RGB"
-#define MSGBOX_WIDTH        128
-#define MSGBOX_HEIGHT       64
+/* Stored small and stretched by VDP1: the panel is a gradient, and VDP1
+** VRAM is the binding constraint -- see tools/build_demo_assets.py. */
+#define MSGBOX_WIDTH        32
+#define MSGBOX_HEIGHT       16
 #define MSGBOX_PIXEL_BYTES  (MSGBOX_WIDTH * MSGBOX_HEIGHT * 2)
 /* OoT's own prompts: a triangle when another page follows, a square when the
 ** message ends. gMessageContinueTriangleTex / gMessageEndSquareTex. */

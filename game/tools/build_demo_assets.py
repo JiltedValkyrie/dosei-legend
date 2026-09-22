@@ -78,8 +78,13 @@ def build_menu_icon(source, size=32):
     return out
 
 
-MESSAGE_BOX_WIDTH = 128
-MESSAGE_BOX_HEIGHT = 64
+# The panel is stored far smaller than the original 128x64 and stretched back
+# up by VDP1. It is a smooth gradient with no detail to lose, and VDP1 texture
+# VRAM is the binding constraint on this project: the tightest resident room
+# leaves under 5 KB spare, and a 128x64 RGB555 copy is 16 KB on its own --
+# enough to push the forest bank over the budget and fail the scene load.
+MESSAGE_BOX_WIDTH = 32
+MESSAGE_BOX_HEIGHT = 16
 
 
 def build_message_box(source, width=MESSAGE_BOX_WIDTH, height=MESSAGE_BOX_HEIGHT):
