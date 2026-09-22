@@ -45,6 +45,30 @@ unsigned int        link_anim_clip(void);
 unsigned int        link_anim_frame(void);
 unsigned int        link_anim_fraction(void); /* Q8 fraction toward next frame */
 
+/* Forward travel the roll owns this step, in Q8 world units, or 0 when Link is
+** not rolling. The clips are pose-only, so the caller applies this through
+** collision.
+**
+** Source model (Player_Action_Roll, z_player.c:9754): the target is the speed
+** ordinary locomotion would give for the current stick, times 1.5, floored at
+** 3.0 -- and dropped to that floor outright once the stick stops pointing
+** forward. It is NOT a decay to zero across the clip; the roll ends because
+** the animation ends.
+**
+** `link_anim_roll_input` must be called every step with the speed ORDINARY
+** LOCOMOTION would give for the pad right now (walk or run, in Q8), and
+** whether that input points forward relative to Link's facing. The target is
+** recomputed from those every step and approached in BOTH directions, so
+** pressing forward again after letting go restores the roll's speed, exactly
+** as re-centring the stick and pushing it again does in the original. */
+int32_t             link_anim_roll_speed_q8(void);
+void                link_anim_roll_input(int32_t locomotion_speed_q8,
+                                         bool forward);
+/* Drop a roll in progress. Anything that takes movement away from Link -- a
+** text box, the menu, a swing, a raised shield -- must call this, or the roll
+** would keep carrying him while he is supposed to be held still. */
+void                link_anim_cancel_roll(void);
+
 /* Root-motion-free: the slice drives translation from collision, so the clips
 ** are used for pose only. Exposed for tests and diagnostics. */
 bool                link_anim_is_locked(void);

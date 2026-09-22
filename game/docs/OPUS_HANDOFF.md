@@ -1,3 +1,43 @@
+# Control remap and manual roll - 2026-09-22 (branch feature/kokiri-slice-actions)
+
+Kokiri slice plan step 2 started. THIS SUPERSEDES the 2026-09-18 mapping below:
+
+- **Z** is the target button (hold to lock, tap to recenter). It NO LONGER
+  looks, and it no longer consumes the D-pad: holding it strafes.
+- **L** is the look camera (hold L + D-pad), taking over the old Z behaviour.
+- **A** rolls when no talk, prompt, pickup, menu or equip claimed the press.
+  Roll speed follows the source formula (z_player.c:9754): 1.5x what locomotion
+  would give, floored at a third of a run, eased down to that floor when the
+  pad stops asking forward. It does not decay to a stop; the roll ends with the
+  clip. Travel goes through `kokiri_camera_move_heading()` and collision, so
+  the clips stay pose-only. A text box, the menu, a swing or a raised shield
+  CANCELS a roll in progress (`link_anim_cancel_roll`), not just its start.
+- Holding Z with nothing locked holds Link's facing, so the D-pad strafes and
+  backs up, which is the source behaviour with no target in range.
+- The diagnostics chord now needs a direction: **L+R+Down** toggles the panel,
+  **L+R+Up** swaps cameras. Plain L+R is look-while-guarding and is left alone.
+
+Verified: 485 host tests run, all pass except two pre-existing setUpClass
+compile failures (`test_equipment_draw`, `test_forest_partition`) that also
+fail on the parent commit. Normal image builds clean. NOT yet confirmed in
+Kronos: the feel of Z strafing and the roll distance need a play check.
+
+Still missing from plan step 2: turn-in-place, ledge grab/climb, ladder,
+crawlspace, sidehop/backflip/jump slash, damage knockback, and the roll's
+wall-impact bonk (source reverses speed and plays hip_down).
+
+Astra review round 1 fixed: roll travel during talk/attack/shield (now
+cancelled), non-source linear decay (now the source target/floor model), and
+the in-game controls panel in main.c, which still named the old L/Z layout.
+
+Astra review round 2 fixed: the roll target is recomputed every step from the
+CURRENT locomotion input (`link_anim_roll_input`) and approached in both
+directions, so pressing forward again after letting go brings the speed back;
+and "forward" is now the real source test -- `kokiri_camera_input_heading()`
+gives the heading the D-pad asks for and demo.c compares it with Link's yaw,
+within the source's 45-degree quadrant. Sideways and backward input drop the
+roll to the floor speed.
+
 # Opening follow-up - 2026-09-22
 
 User then said "It fine.. just show VRAM and CPU % on bottom"; active work

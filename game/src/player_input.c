@@ -18,12 +18,12 @@ static input_edge_t         edge_walk_toggle;   /* B */
 static input_edge_t         edge_jump;          /* Y */
 static input_edge_t         edge_interact;      /* A */
 static input_edge_t         edge_attack;        /* X */
-static input_edge_t         edge_recenter;      /* L */
+static input_edge_t         edge_recenter;      /* Z: tap recentres */
 /* One edge per C direction, so holding C+Up does not repeat and a future held
 ** item (aiming) needs no further input rewrite. */
 static input_edge_t         edge_c[4];
 /* Menu cursor edges: the raw D-pad, taken before the modifier routing, so a
-** paused game can step the list without C or Z having any say. */
+** paused game can step the list without C or L having any say. */
 static input_edge_t         edge_menu[4];
 /* Release counters for the C directions. A rising-edge latch counts presses, so
 ** releases are counted with their own pair of counters rather than by inverting
@@ -62,7 +62,7 @@ void player_input_reset(void)
 void player_input_sample(uint16_t held)
 {
     unsigned int i;
-    bool look = (held & CAMERA_Z) != 0;
+    bool look = (held & CAMERA_L) != 0;
     bool c_mode = !look && (held & CAMERA_C) != 0;
 
     held_snapshot = held;
@@ -70,7 +70,7 @@ void player_input_sample(uint16_t held)
     input_edge_sample(&edge_jump, (held & CAMERA_Y) != 0);
     input_edge_sample(&edge_interact, (held & CAMERA_A) != 0);
     input_edge_sample(&edge_attack, (held & CAMERA_X) != 0);
-    input_edge_sample(&edge_recenter, (held & CAMERA_L) != 0);
+    input_edge_sample(&edge_recenter, (held & CAMERA_Z) != 0);
     for (i = 0; i < 4; ++i)
         input_edge_sample(&edge_menu[i], (held & c_direction_bit[i]) != 0);
     for (i = 0; i < 4; ++i)
@@ -83,12 +83,13 @@ void player_input_sample(uint16_t held)
     }
 }
 
-/* Priority order: Z look, then C buttons, then ordinary movement. */
+/* Priority order: L look, then C buttons, then ordinary movement. Z is the
+** target button and is read on the movement path, so holding it strafes. */
 void player_input_step(bool in_gameplay, player_input_t *out)
 {
     uint16_t held = held_snapshot;
     uint16_t dpad = held & DPAD_MASK;
-    bool look = (held & CAMERA_Z) != 0;
+    bool look = (held & CAMERA_L) != 0;
     bool c_mode = !look && (held & CAMERA_C) != 0;
     bool toggled = input_edge_consume(&edge_walk_toggle);
     bool jumped = input_edge_consume(&edge_jump);
@@ -136,13 +137,15 @@ void player_input_step(bool in_gameplay, player_input_t *out)
         return;
     }
 
-    /* L+R is the development diagnostics chord and CONSUMES both buttons, so
-    ** asking for diagnostics never also recenters or raises the shield. It is
-    ** gated to diagnostic builds: the clean player-facing disc leaves L and R
-    ** free to be pressed together for targeting plus shielding, which the
-    ** chord would otherwise block. */
+    /* Development diagnostics chord: L+R plus a direction, and it CONSUMES all
+    ** of them, so asking for diagnostics never also looks or raises the shield.
+    ** A DIRECTION is required because L is the look button as of this layout:
+    ** plain L+R is looking while guarding, an ordinary gameplay combination the
+    ** chord must not swallow. Up swaps the camera, Down toggles the panel.
+    ** Gated to diagnostic builds; the clean player disc has neither. */
 #ifndef DOSEI_CLEAN_TEST
-    if ((held & CAMERA_L) && (held & CAMERA_R))
+    if ((held & CAMERA_L) && (held & CAMERA_R) &&
+        (dpad & (CAMERA_UP | CAMERA_DOWN)))
     {
         bool swap = (dpad & CAMERA_UP) != 0;
 
@@ -208,7 +211,7 @@ void player_input_step(bool in_gameplay, player_input_t *out)
         out->look_pitch_delta = vertical * PLAYER_LOOK_PITCH_SPEED;
         out->shield_held = false;
         look_was_active = true;
-        /* Y is consumed rather than queued: a jump must not fire the instant Z
+        /* Y is consumed rather than queued: a jump must not fire the instant L
         ** is released. */
         return;
     }
@@ -243,7 +246,7 @@ void player_input_step(bool in_gameplay, player_input_t *out)
     /* Set only on the path that reaches here: the diagnostics chord and the
     ** dialogue branch both return early, so L consumed by either never reads
     ** as a targeting hold. */
-    out->target_held = (held & CAMERA_L) != 0;
+    out->target_held = (held & CAMERA_Z) != 0;
 }
 
 void    player_input_set_dialogue(bool open)

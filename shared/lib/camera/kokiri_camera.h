@@ -30,11 +30,25 @@
 #define CAMERA_PITCH_SPEED 240
 #define CAMERA_PITCH_LIMIT 14500
 void kokiri_camera_sincos(uint16_t yaw, int32_t *sine, int32_t *cosine);
+/* Heading of a movement delta, atan2(dx, dz) in this basis. Supplied by the
+ * platform (demo_camera.c on Saturn, libm in the host tests). */
+uint16_t kokiri_camera_facing(int32_t dx, int32_t dz);
 void kokiri_camera_reset_actor_motion(void);
 /* Persistent grounded locomotion speed for the actor path. false = run (the
  * default), true = walk. Does not affect the free diagnostic camera. */
 void kokiri_camera_set_walk(bool walk);
 bool kokiri_camera_walking(void);
+/* Move the actor `speed_q8` world units along `heading`, through the same
+ * collision and sub-unit remainder the button path uses. Used by moves that
+ * travel on their own (roll today; sidehop and backflip later), so they share
+ * one integer accumulator instead of each inventing a second one. */
+/* Heading the D-pad is asking to travel in, given the camera's yaw. false when
+ * no direction is held. Built from the same basis kokiri_camera_update() moves
+ * in, so callers never re-derive it and get the handedness wrong. */
+bool kokiri_camera_input_heading(uint16_t camera_yaw, uint16_t buttons,
+    uint16_t *heading);
+void kokiri_camera_move_heading(camera_position_t *position, uint16_t heading,
+    int32_t speed_q8);
 void kokiri_camera_update(camera_position_t *position, uint16_t *yaw,
     int32_t *pitch, uint16_t buttons, bool title_visible, bool actor_collision);
 #endif

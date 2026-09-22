@@ -634,16 +634,18 @@ void demo_update(void)
         /* Only movement reaches the legacy viewer controller. Its shoulder
          * orbit and raise/lower/pitch controls are not gameplay controls.
          *
-         * The yaw handed to kokiri_camera_update is the CAMERA's. L recenters,
-         * R is reserved for shield, and D-pad movement is camera-relative. Facing
+         * The yaw handed to kokiri_camera_update is the CAMERA's. Z targets and
+         * a tap recentres, L looks, R is shield, D-pad movement is camera-relative. Facing
          * is not steered by the camera -- it follows wherever he actually
          * moved, which is what keeps turning the view from spinning him. */
         uint16_t walk = buttons & (CAMERA_UP | CAMERA_DOWN | CAMERA_LEFT |
                                    CAMERA_RIGHT);
         int32_t unused_pitch = 0;
         bool recovered = false;
+        int32_t roll_speed = 0;
+        bool roll_pending = false;
         while (steps--) {
-            /* L is both OoT's Z-target and the slice's recenter. Targeting gets
+            /* Z is both the target button and the recenter tap. Targeting gets
              * the press first: recentring on the same press would swing the view
              * away from the actor just locked, or away from the one just dropped. */
             {
@@ -674,6 +676,15 @@ void demo_update(void)
                     if (!save_succeeded)
                         gameplay.events |= GP_EVENT_SAVE_FAILED;
                 }
+                /* A is the context button: talk, prompt, pickup and the menu
+                 * get it first. Only a press nothing else claimed becomes a
+                 * roll, so pressing A at a Kokiri never rolls away from them. */
+                roll_pending = interact_pending && !blocked_before &&
+                    !gameplay_blocks_world() &&
+                    !(gameplay.events & (GP_EVENT_TALK_OPEN | GP_EVENT_TALK_PAGE |
+                                         GP_EVENT_TALK_CLOSE | GP_EVENT_PICKUP |
+                                         GP_EVENT_MENU_OPEN | GP_EVENT_MENU_CLOSE |
+                                         GP_EVENT_EQUIP | GP_EVENT_SAVE));
                 action_audio_events(gameplay.events);
                 oot_follow_target(&link_follow, gameplay.face_locked);
                 attack_pending = false;
@@ -683,7 +694,7 @@ void demo_update(void)
                 menu_step = 0;
                 /* Tell the mapper who owns B before the next sample. */
                 player_input_set_dialogue(gameplay_blocks_world());
-                /* gameplay.c decides whether an L press was a tap or a
+                /* gameplay.c decides whether a Z press was a tap or a
                  * hold, because only it knows if the hold became a lock-on.
                  * A press that locked on must never also recentre, or the
                  * view swings away from the actor just acquired. */
@@ -696,6 +707,12 @@ void demo_update(void)
                     walk = 0;
                     jump_pending = false;
                     recenter = false;
+                    roll_pending = false;
+                    /* A box or the menu holds Link still. A roll already under
+                     * way has to END, not merely stop being started, or it
+                     * would keep carrying him across the floor behind the
+                     * text. */
+                    link_anim_cancel_roll();
                 }
                 /* Pause freezes the world outright. A text box only stops input --
                  * gravity and the camera keep easing under it, which is what OoT
@@ -706,6 +723,11 @@ void demo_update(void)
                 if (gameplay.swing || gameplay.shielding) {
                     walk = 0;
                     jump_pending = false;
+                    roll_pending = false;
+                    /* Same for combat: swinging or guarding takes movement
+                     * away, so it cancels the roll rather than letting the
+                     * travel run on underneath the pose. */
+                    link_anim_cancel_roll();
                 }
             }
             if (recenter) {
@@ -724,8 +746,38 @@ void demo_update(void)
                         action_audio_events(GP_EVENT_JUMP);
                     jump_pending = false;
                 }
-                kokiri_camera_update(&demo_link, &demo_yaw, &unused_pitch, walk,
-                                     false, true);
+                /* A roll commits: it owns translation for its whole clip, so
+                 * the D-pad cannot steer or stop it part way through. */
+                /* OoT's PLAYER_STICK_DIR_FORWARD, on a digital pad: the
+                 * direction the D-pad asks to travel in, measured against the
+                 * way Link is facing. Sideways or backward input is NOT
+                 * forward and drops the roll to the source floor speed, the
+                 * same as letting go; pressing forward again brings it back.
+                 * The locomotion speed handed over is what walking or running
+                 * would give right now, which is what the source scales. */
+                {
+                    uint16_t heading = demo_link_yaw;
+                    bool forward = kokiri_camera_input_heading(demo_yaw, walk,
+                                                               &heading);
+                    if (forward) {
+                        int32_t turn = (int32_t)(int16_t)
+                            (uint16_t)(heading - demo_link_yaw);
+                        if (turn < 0) turn = -turn;
+                        /* Source quadrant: within 45 degrees of his facing. */
+                        forward = turn <= 8192;
+                    }
+                    link_anim_roll_input(kokiri_camera_walking()
+                                             ? LINK_WALK_SPEED_Q8
+                                             : LINK_RUN_SPEED_Q8,
+                                         forward);
+                }
+                roll_speed = link_anim_roll_speed_q8();
+                if (roll_speed > 0)
+                    kokiri_camera_move_heading(&demo_link, demo_link_yaw,
+                                               roll_speed);
+                else
+                    kokiri_camera_update(&demo_link, &demo_yaw, &unused_pitch,
+                                         walk, false, true);
                 grounded = kokiri_collision_fall(&demo_link, &link_velocity_y_q8,
                                                   &link_fall_remainder_q8);
                 /* Actual travel length, not the largest axis: diagonal running
@@ -753,7 +805,8 @@ void demo_update(void)
                     if (recover_link_from_void())
                         recovered = true;
                 }
-                link_anim_update(moved, grounded, fell, false);
+                link_anim_update(moved, grounded, fell, roll_pending);
+                roll_pending = false;
                 if (!gameplay_blocks_world() && !gameplay.swing && !gameplay.shielding)
                     action_audio_events(link_anim_motion_events());
                 link_anim_combat(gameplay_is_talking() ? 0 : gameplay.swing,
@@ -775,6 +828,11 @@ void demo_update(void)
                      * target from this step's position, not the previous one. */
                     gameplay_update_facing(demo_link.x, demo_link.z);
                     demo_link_yaw = gameplay.face_yaw;
+                }
+                else if (target_held) {
+                    /* Z held with nothing locked: Link holds his heading and
+                     * the D-pad strafes and backs up around it, which is the
+                     * source behaviour with no target in range. */
                 }
                 else if (demo_link.x != step_x || demo_link.z != step_z)
                     demo_link_yaw = kokiri_camera_facing(demo_link.x - step_x,

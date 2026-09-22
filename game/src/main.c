@@ -671,17 +671,17 @@ static void         inventory_menu(void)
     jo_printf(2, row++, "%-36s", "X swing/cut  Hold R shield");
     jo_printf(2, row++, "%-36s", "Y jump       A talk/next page");
     jo_printf(2, row++, "%-36s", "B closes dialogue");
-    jo_printf(2, row++, "%-36s", "Hold L: lock on + strafe");
-    jo_printf(2, row++, "%-36s", "Release L: release lock");
-    jo_printf(2, row++, "%-36s", "Tap L: re-centre camera");
-    jo_printf(2, row++, "%-36s", "Locked: D-pad strafe/back up");
-    jo_printf(2, row++, "%-36s", "Hold Z + D-pad: look (unlocked)");
+    jo_printf(2, row++, "%-36s", "Hold Z: lock on + strafe");
+    jo_printf(2, row++, "%-36s", "Release Z: release lock");
+    jo_printf(2, row++, "%-36s", "Tap Z: re-centre camera");
+    jo_printf(2, row++, "%-36s", "Hold Z: D-pad strafe/back up");
+    jo_printf(2, row++, "%-36s", "Hold L + D-pad: look around");
     jo_printf(2, row++, "%-36s", "Hold C + D-pad: C items (pending)");
-    jo_printf(2, row++, "%-36s", "Roll: automatic after landing");
+    jo_printf(2, row++, "%-36s", "A: roll; also rolls on landing");
     jo_printf(2, row++, "%-36s", "Start opens/closes items");
     jo_printf(2, row++, "%-36s", "MENU: D-pad pick A equip B back");
 #ifndef DOSEI_CLEAN_TEST
-    jo_printf(2, row++, "%-36s", "L+R debug; +Up camera compare");
+    jo_printf(2, row++, "%-36s", "L+R+Down debug; +Up camera compare");
 #endif
 }
 
