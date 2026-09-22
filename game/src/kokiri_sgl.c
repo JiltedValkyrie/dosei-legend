@@ -17,15 +17,21 @@
 */
 
 #include <jo/jo.h>
+#include "asset_loading.h"
 #include <stdint.h>
 #include "frame_timer.h"
 
 #include "kokiri_scene.h"
 #include "scene_table.h"
 #include "link_scene.h"
+#include "link_clips.h"
 #include "kokiri_sgl.h"
 #include "vdp1_layout.h"
+static unsigned int texture_base = GAME_TEXTURE_BASE;
+#define TEXTURE_CAPACITY (0x7fef8u - texture_base)
+#define CUTSCENE_TEXTURE_BASE ((3750u * 32 + 8192 + 255) & ~255u)
 #include "demo.h"
+#include "cutscene.h"
 #include "link_anim_state.h"
 #include "kokiri_actors.h"
 #include "gameplay.h"
@@ -35,11 +41,16 @@
 ** halved distance cuts visible ground away in front of the camera; the build
 ** raises it through DOSEI_FOREST_FAR instead of hiding the choice here. */
 #ifdef DOSEI_FOREST_FAR
-#define FOREST_FAR (DOSEI_FOREST_FAR)
+#define FOREST_FAR_DEFAULT (DOSEI_FOREST_FAR)
 #else
-#define FOREST_FAR (4367 * 6 / 10 / 2)
+#define FOREST_FAR_DEFAULT (4367 * 6 / 10 / 2)
 #endif
-#define FOREST_FOG_START (FOREST_FAR / 2)
+#define FIELD_FAR 9000
+static int forest_far_current = FOREST_FAR_DEFAULT;
+static unsigned char forest_scene;
+#define FOREST_FAR (forest_far_current)
+#define FOREST_FOG_END (forest_scene == 2 ? 1310 : FOREST_FAR)
+#define FOREST_FOG_START (FOREST_FOG_END / 2)
 static short forest_depth[KOKIRI_VERTEX_COUNT];
 static short tile_depth[KOKIRI_TILE_COUNT];
 static unsigned char tile_fog[KOKIRI_TILE_COUNT];
@@ -131,7 +142,8 @@ static unsigned char forest_face_flags(unsigned int i)
 {
     const ATTR *attr = &kokiri_pdata.attbl[i];
     return (unsigned char)(((attr->atrb & MESHon) != 0) |
-                           (((attr->sort & 3u) == SORT_MAX) ? 2u : 0u));
+                           (((attr->sort & 3u) == SORT_MAX) ? 2u : 0u) |
+                           (((attr->dir & 7) != 4) ? 4u : 0u));
 }
 
 /* Pixel blobs are staged on the CD rather than compiled in: as C arrays they
@@ -149,6 +161,20 @@ static unsigned char forest_face_flags(unsigned int i)
 #define MENU_SHIELD_FILE    "SHIELM.RGB"
 #define MENU_EQUIP_FILE     "EQUIP.RGB"
 #define MENU_TEX_SIZE       32
+/* The real OoT message panel, gDefaultMessageBackgroundTex, converted by
+** tools/build_demo_assets.py. Drawn behind cutscene text. */
+#define MSGBOX_FILE         "MSGBOX.RGB"
+/* Stored small and stretched by VDP1: the panel is a gradient, and VDP1
+** VRAM is the binding constraint -- see tools/build_demo_assets.py. */
+#define MSGBOX_WIDTH        32
+#define MSGBOX_HEIGHT       16
+#define MSGBOX_PIXEL_BYTES  (MSGBOX_WIDTH * MSGBOX_HEIGHT * 2)
+/* OoT's own prompts: a triangle when another page follows, a square when the
+** message ends. gMessageContinueTriangleTex / gMessageEndSquareTex. */
+#define MSGNEXT_FILE        "MSGNEXT.RGB"
+#define MSGEND_FILE         "MSGEND.RGB"
+#define MSGMARK_SIZE        16
+#define MSGMARK_PIXEL_BYTES (MSGMARK_SIZE * MSGMARK_SIZE * 2)
 #define MENU_PIXEL_BYTES    (MENU_TEX_SIZE * MENU_TEX_SIZE * 2)
 #define FAIRY_WIDTH         16
 #define FAIRY_HEIGHT        16
@@ -166,6 +192,10 @@ static unsigned int  rupee_sprite[2], digit_sprite[10];
 static unsigned int  pickup_sprite[KOKIRI_PICKUP_COUNT];
 static unsigned int  menu_sprite[GP_SLOT_COUNT];
 static unsigned int  menu_equip_sprite;
+static unsigned int  msgbox_sprite;
+static bool          msgbox_ready;
+static unsigned int  msgmark_sprite[2];     /* 0 continue, 1 end */
+static bool          msgmark_ready;
 
 /* SGL addresses sprite character data in 8-byte units. */
 #define VRAM_UNITS(bytes)   ((bytes) >> 3)
@@ -182,14 +212,14 @@ static bool         mesh_load(const char *file, unsigned int pixel_bytes,
                               PDATA *pdata, unsigned int polygons)
 {
     unsigned char   *base = (unsigned char *)JO_VDP1_VRAM
-                            + GAME_TEXTURE_BASE;
+                            + texture_base;
     unsigned int     clut_bytes = tile_count * 32;
     unsigned char   *pixel_vram, *clut_vram;
     char            *loaded;
     int              length = 0;
     unsigned int     i, sprite_base = sprite_next;
 
-    if (vram_used + pixel_bytes + clut_bytes > GAME_TEXTURE_BYTES)
+    if (vram_used + pixel_bytes + clut_bytes > TEXTURE_CAPACITY)
     {
         jo_core_error("%s needs %d more VDP1 bytes, %d used of %d", file,
                       (int)(pixel_bytes + clut_bytes), (int)vram_used,
@@ -207,7 +237,9 @@ static bool         mesh_load(const char *file, unsigned int pixel_bytes,
     /* Read straight into VDP1 VRAM. Passing a buffer to jo_fs_read_file_ptr()
     ** avoids jo_malloc()'ing a staging copy of the whole blob. */
     pixel_vram = base + vram_used;
+    asset_loading(file);
     loaded = jo_fs_read_file_ptr(file, pixel_vram, &length);
+    asset_loading_done();
     if (loaded == JO_NULL)
     {
         jo_core_error("cannot read %s", file);
@@ -250,6 +282,7 @@ static bool         mesh_load(const char *file, unsigned int pixel_bytes,
     for (i = 0; i < polygons; ++i)
     {
         ATTR            *attr = &pdata->attbl[i];
+        if ((attr->dir & 7) == 4) continue; /* Flat face has no tile or CLUT. */
         unsigned int     tile = attr->texno;
         unsigned int     clut = (unsigned int)(clut_vram + tile * 32);
 
@@ -266,15 +299,17 @@ static bool         sprite_load_rect(const char *file, unsigned int *slot,
                                 unsigned int width, unsigned int height, unsigned int bytes)
 {
     unsigned char *pixel_vram = (unsigned char *)JO_VDP1_VRAM
-                                + GAME_TEXTURE_BASE + vram_used;
+                                + texture_base + vram_used;
     jo_texture_definition *texture;
     char *loaded;
     int length = 0;
 
-    if (vram_used + bytes > GAME_TEXTURE_BYTES ||
+    if (vram_used + bytes > TEXTURE_CAPACITY ||
         sprite_next >= JO_MAX_SPRITE)
         return false;
+    asset_loading(file);
     loaded = jo_fs_read_file_ptr(file, pixel_vram, &length);
+    asset_loading_done();
     if (!loaded || (unsigned int)length != bytes) return false;
     *slot = sprite_next++;
     texture = &__jo_sprite_def[*slot];
@@ -330,6 +365,15 @@ static bool         fairy_load(void)
         !sprite_load(MENU_EQUIP_FILE, &menu_equip_sprite,
                      MENU_TEX_SIZE, MENU_PIXEL_BYTES))
         return false;
+    /* The message panel is not fatal: without it the cutscene text still
+    ** draws, just without a box behind it. */
+    msgbox_ready = sprite_load_rect(MSGBOX_FILE, &msgbox_sprite, MSGBOX_WIDTH,
+                                    MSGBOX_HEIGHT, MSGBOX_PIXEL_BYTES);
+    msgmark_ready =
+        sprite_load(MSGNEXT_FILE, &msgmark_sprite[0], MSGMARK_SIZE,
+                    MSGMARK_PIXEL_BYTES) &&
+        sprite_load(MSGEND_FILE, &msgmark_sprite[1], MSGMARK_SIZE,
+                    MSGMARK_PIXEL_BYTES);
     return true;
 }
 
@@ -345,6 +389,7 @@ static bool room_read(jo_file *file, void *target, unsigned int bytes)
 ** ROOM_SHAPE_TYPE_NORMAL scene has banks at all -- OoT's interiors are
 ** prerendered backdrops with no geometry, so they have none. */
 static bool room_load_bank(unsigned int scene, unsigned int room);
+static void relocate_resident(unsigned int next_base);
 
 /* True while a prerendered interior's backdrop is on screen. The geometry
 ** draw is skipped entirely then: an interior HAS no geometry, and the resident
@@ -386,14 +431,17 @@ static void screens_for_backdrop(bool interior)
 ** the title image when it returns to the title for that reason. */
 bool kokiri_scene_load_backdrop(unsigned int scene, unsigned int room)
 {
+    relocate_resident(GAME_TEXTURE_BASE);
     char        name[] = "S0R0.RGB";
     jo_file     file;
     jo_img      strip;
     int         row;
     bool        ok = true;
 
-    if (scene > 9 || room > 9) return false;
+    if (scene > 9 || room > 9 || !kokiri_bank_allocate()) return false;
     name[1] += scene; name[3] += room;
+    asset_loading(name);
+    asset_loading(name);
     if (!jo_fs_open(&file, name)) return false;
     if (file.size != 320 * 240 * 2) { jo_fs_close(&file); return false; }
     strip.width = 320; strip.height = 1;
@@ -409,6 +457,7 @@ bool kokiri_scene_load_backdrop(unsigned int scene, unsigned int room)
     }
     jo_fs_close(&file);
     jo_free(strip.data);
+    asset_loading_done();
     if (!ok) return false;
     backdrop_active = true;
     screens_for_backdrop(true);
@@ -429,24 +478,58 @@ bool kokiri_scene_load_bank(unsigned int scene, unsigned int room)
     return room_load_bank(scene, room);
 }
 
+static void invalidate_equipped(void);
+
+/* The nightmare needs more VDP1 commands than a forest frame. Move the
+ * resident textures above that command region before loading its actor bank.
+ * Gameplay restores its own compact layout, keeping every forest tile. */
+static void relocate_resident(unsigned int next_base)
+{
+    volatile unsigned short *vram = (volatile unsigned short *)JO_VDP1_VRAM;
+    int delta = (int)next_base - (int)texture_base;
+    unsigned int i;
+    if (!delta) return;
+    if (delta > 0) {
+        for (i = resident_bytes / 2; i > 0; --i)
+            vram[next_base / 2 + i - 1] = vram[texture_base / 2 + i - 1];
+    } else {
+        for (i = 0; i < resident_bytes / 2; ++i)
+            vram[next_base / 2 + i] = vram[texture_base / 2 + i];
+    }
+    for (i = 1; i < resident_sprites; ++i) {
+        __jo_sprite_def[i].adr += delta / 8;
+        if (__jo_sprite_pic[i].data)
+            __jo_sprite_pic[i].data = (unsigned char *)__jo_sprite_pic[i].data + delta;
+    }
+    for (i = 0; i < (unsigned int)link_pdata.nbPolygon; ++i)
+        link_pdata.attbl[i].colno += delta / 8;
+    texture_base = next_base;
+    invalidate_equipped();
+}
+
 static bool room_load_bank(unsigned int scene, unsigned int room)
 {
     unsigned int header[8], expected, i;
     char mesh_name[] = "S0R0.MSH", pixel_name[] = "S0R0.TEX";
     jo_file file;
     bool ok;
-    if (scene > 9 || room > 9) return false;
+    if (scene > 9 || room > 9 || !kokiri_bank_allocate()) return false;
     mesh_name[1] += scene; pixel_name[1] += scene;
     mesh_name[3] += room;  pixel_name[3] += room;
+    asset_loading(mesh_name);
     if (!jo_fs_open(&file, mesh_name)) return false;
     if (!room_read(&file, header, sizeof(header))) { jo_fs_close(&file); return false; }
     expected = 32 + header[1]*12 + header[2]*32 + header[3]*44 +
                ((header[2]+3)&~3u) + header[5]*24;
-    if (header[0] != 0x4b524d31 || !header[1] || !header[2] || !header[3] ||
+    /* A bank with no tiles is flat shaded: every face carries its own colour
+    ** in its ATTR and there is no pixel file at all. The dream's Hyrule Field
+    ** is built that way, so header[3] of zero is a kind of bank, not a
+    ** malformed one. */
+    if (header[0] != 0x4b524d31 || !header[1] || !header[2] ||
         header[1] > KOKIRI_VERTEX_COUNT || header[2] > KOKIRI_POLYGON_COUNT ||
         header[3] > KOKIRI_TILE_COUNT || header[4] > KOKIRI_PIXEL_BYTES ||
         header[5] > KOKIRI_OBJECT_COUNT || (unsigned int)file.size != expected ||
-        resident_bytes + header[4] + header[3]*32 > GAME_TEXTURE_BYTES ||
+        resident_bytes + header[4] + header[3]*32 > TEXTURE_CAPACITY ||
         resident_sprites + header[3] > JO_MAX_SPRITE) {
         jo_fs_close(&file); return false;
     }
@@ -458,12 +541,17 @@ static bool room_load_bank(unsigned int scene, unsigned int room)
          room_read(&file, kokiri_objects, (header[2]+3)&~3u) &&
          room_read(&file, kokiri_bounds, header[5]*sizeof(kokiri_object));
     jo_fs_close(&file);
+    asset_loading_done();
     if (!ok) return false;
+    relocate_resident(scene == KOKIRI_FIELD_SCENE ? CUTSCENE_TEXTURE_BASE : GAME_TEXTURE_BASE);
     /* Every bank replaces the same forest slots; Link/fairies stay resident. */
     vram_used = resident_bytes;
     sprite_next = resident_sprites;
     forest_sprite_base = sprite_next;
-    if (!mesh_load(pixel_name,header[4],kokiri_tiles,header[3],
+    /* Nothing to upload for a flat bank: its ATTRs already hold their colours
+    ** and mesh_load() would only patch texno/colno over them. */
+    if (header[3] &&
+        !mesh_load(pixel_name,header[4],kokiri_tiles,header[3],
                    (const unsigned short (*)[16])kokiri_cluts,&kokiri_pdata,header[2]))
         return false;
     forest_vertex_count = kokiri_pdata.nbPoint = header[1];
@@ -474,6 +562,9 @@ static bool room_load_bank(unsigned int scene, unsigned int room)
     for (i=0;i<forest_tile_count;++i) tile_fog[i] = 255;
     forest_prepared = false;
     forest_room = (int)room;
+    forest_scene = (unsigned char)scene;
+    forest_far_current = scene == KOKIRI_FIELD_SCENE ? FIELD_FAR :
+                         (scene == 2 ? 2620 : FOREST_FAR_DEFAULT);
     return true;
 }
 #endif
@@ -516,6 +607,12 @@ bool kokiri_scene_update(void)
 #ifdef KOKIRI_STREAM_ROOMS
     unsigned int i;
     int target = requested_room;
+    /* A cutscene owns the resident bank. Room streaming follows Link through
+    ** the forest's portals, and during the dream it would happily load a
+    ** Kokiri room straight over the Hyrule Field bank the cutscene asked for.
+    ** Link is not walking anywhere during a cutscene, so there is nothing to
+    ** stream for. */
+    if (cutscene_is_playing()) { room_gameplay = false; return true; }
     if (!demo_link_active || demo_title_is_visible()) { room_gameplay = false; return true; }
     if (!room_gameplay) { target = 0; room_gameplay = true; }
     for (i=0;i<KOKIRI_PORTAL_COUNT;++i) {
@@ -585,6 +682,12 @@ unsigned int        kokiri_scene_vram_used(void)
     return (vram_used);
 }
 
+unsigned int        kokiri_scene_vram_percent(void)
+{
+    unsigned int allocated = texture_base + vram_used + (0x80000u - 0x7fef8u);
+    return allocated >= 0x80000u ? 100u : allocated * 100u / 0x80000u;
+}
+
 static void         submit(PDATA *pdata, unsigned int bit)
 {
     /* slPutPolygon returns FALSE when SGL cannot accept the list, e.g. the
@@ -604,6 +707,7 @@ static POLYGON equipped_polygons[LINK_VISIBLE_POLYGONS];
 static ATTR equipped_attributes[LINK_VISIBLE_POLYGONS];
 static unsigned int equipped_count;
 static unsigned int equipped_mask = 255;
+static void invalidate_equipped(void) { equipped_mask = 255; }
 
 static void link_part(unsigned int first, unsigned int count)
 {
@@ -641,6 +745,19 @@ void                kokiri_scene_draw(void)
     unsigned int i, j, visible = forest_polygon_count;
     int32_t sine, cosine;
     frame_timer_begin(FRAME_PHASE_PREP);
+    if (forest_scene == 4) {
+        /* Original pre-rendered house panorama, centred on the eye just as
+         * Skybox_Draw does. Large radius sorts the art behind Link/Navi. */
+        kokiri_rejected = 0;
+        kokiri_accepted_mask = 0;
+        submitted = 0;
+        frame_timer_end(FRAME_PHASE_PREP);
+        jo_3d_push_matrix();
+        jo_3d_translate_matrix(demo_camera.x, -demo_camera.y, demo_camera.z);
+        submit(&kokiri_pdata, 1u);
+        jo_3d_pop_matrix();
+        return;
+    }
     /* Geometry/fog depend on the camera. Unaccepted actor-order experiments
      * are excluded from normal builds. */
     if (forest_prepared && prepared_x == demo_camera.x &&
@@ -756,6 +873,35 @@ void                kokiri_scene_draw(void)
         {
             ATTR *attr = &kokiri_pdata.attbl[i];
             unsigned int tile = attr->texno - forest_sprite_base;
+            if (forest_scene == 2 && (forest_mesh[i] & 4)) {
+                const unsigned short *v = kokiri_pdata.pltbl[i].Vertices;
+                int low_x = 32767, high_x = -32768;
+                int low_z = 32767, high_z = -32768;
+                int dx, dz;
+                for (j = 0; j < 4; ++j) {
+                    int x = kokiri_pdata.pntbl[v[j]][0] >> 16;
+                    int z = kokiri_pdata.pntbl[v[j]][2] >> 16;
+                    if (x < low_x) low_x = x;
+                    if (x > high_x) high_x = x;
+                    if (z < low_z) low_z = z;
+                    if (z > high_z) high_z = z;
+                }
+                dx = demo_camera.x < low_x ? low_x - demo_camera.x :
+                     demo_camera.x > high_x ? demo_camera.x - high_x : 0;
+                dz = demo_camera.z < low_z ? low_z - demo_camera.z :
+                     demo_camera.z > high_z ? demo_camera.z - high_z : 0;
+                if ((int64_t)dx * dx + (int64_t)dz * dz > 1310 * 1310 ||
+                    nearest >= FOREST_FOG_END) {
+                    attr->dir = (attr->dir & ~7u) | 4;
+                    attr->atrb = (attr->atrb & ~0x38u) | CL32KRGB;
+                    attr->colno = C_RGB(27, 27, 19);
+                } else {
+                    attr->dir = (attr->dir & ~7u) | 2;
+                    attr->atrb = (attr->atrb & ~0x38u) | (1 << 3);
+                    attr->colno = (unsigned short)VRAM_UNITS(
+                        (unsigned int)(forest_palette + tile * 32) - JO_VDP1_VRAM);
+                }
+            }
             /* SGL sorts on one depth per polygon. A big ground quad reaching
             ** away from the eye has a CENTRE depth nearer than the actor
             ** standing on it, so it painted over Link's legs. The converter
@@ -775,7 +921,8 @@ void                kokiri_scene_draw(void)
             /* Only the parked command-order experiment consumes this tag. */
             attr->gstb = (unsigned short)(i + 1);
 #endif
-            if (nearest < tile_depth[tile]) tile_depth[tile] = nearest;
+            if (tile < forest_tile_count && (attr->dir & 7) != 4 &&
+                nearest < tile_depth[tile]) tile_depth[tile] = nearest;
 #ifdef DOSEI_WARP_PROBE
             {
                 const unsigned short *v = kokiri_pdata.pltbl[i].Vertices;
@@ -865,9 +1012,9 @@ void                kokiri_scene_draw(void)
         /* Most tiles are either unused/far or fully clear. Avoid signed
          * division for those, preserving the exact original fog steps. */
         if (tile_depth[i] <= FOREST_FOG_START) amount = 0;
-        else if (tile_depth[i] >= FOREST_FAR) amount = 16;
+        else if (tile_depth[i] >= FOREST_FOG_END) amount = 16;
         else amount = (tile_depth[i] - FOREST_FOG_START) * 16 /
-                      (FOREST_FAR - FOREST_FOG_START);
+                      (FOREST_FOG_END - FOREST_FOG_START);
         if (tile_fog[i] == amount) continue;
         tile_fog[i] = (unsigned char)amount;
         rg = fog_channel[0][amount];
@@ -912,7 +1059,17 @@ void                kokiri_link_draw(int x, int y, int z, int yaw)
     jo_3d_push_matrix();
     {
         jo_3d_translate_matrix(x, -y, z);
-        jo_3d_rotate_matrix_y((yaw * 360) >> 16);
+        slRotY((ANGLE)yaw);
+        if (cutscene_is_playing() && cutscene_id() == CUTSCENE_NIGHTMARE) {
+            /* OoT's camera/cues use Actor_Init's 0.01 model scale. Gameplay
+             * normalizes Link to 60 units and grounds him; undo that here.
+             * Otherwise the bridge fly-by enters the enlarged head. */
+            const FIXED native_scale = (FIXED)(4294967296ULL /
+                                              (100u * LINK_ANIM_SCALE_Q16));
+            slScale(native_scale, native_scale, native_scale);
+            jo_3d_translate_matrix(-LINK_ANIM_SHIFT_X, LINK_ANIM_SHIFT_Y,
+                                    -LINK_ANIM_SHIFT_Z);
+        }
         if (equipped_mask != gameplay.equipped) {
             equipped_count = 0;
             link_part(LINK_BODY_FIRST, LINK_BODY_COUNT);
@@ -1159,6 +1316,80 @@ static void         menu_quad(unsigned int sprite, int x, int y, int side)
     if (slPutSprite(pos, &attr, 0) == FALSE) ++kokiri_rejected;
 }
 
+/*
+** The message panel behind cutscene text.
+**
+** Same screen-space trick as the pause quads: at z = -KOKIRI_MENU_PLANE one
+** world unit is one screen pixel, so the rectangle is given in pixels and
+** nothing in the world can sort in front of it.
+**
+** The VDP2 text layer draws over the sprite layer, so the text lands on top of
+** this without any ordering work. A dithered fill of '#' glyphs was tried
+** first, on the text layer itself; it looked like what it was.
+*/
+void                kokiri_message_box_draw(int x, int y, int width, int height)
+{
+    FIXED    pos[5];
+    SPR_ATTR attr = SPR_ATTRIBUTE(0, No_Palet, No_Gouraud, ECdis,
+                                  sprNoflip | FUNC_Sprite);
+
+    if (!msgbox_ready)
+        return;
+    /* slDispSprite ignores the world matrix and takes screen-centred
+    ** coordinates, exactly as the rupee HUD does, so the box is positioned in
+    ** plain screen pixels. Depth 31 sorts it ahead of the world without
+    ** tripping SGL's near rejection; see rupee_hud_sprite. */
+    pos[0] = (x - JO_TV_WIDTH_2) * 65536;
+    pos[1] = (y - JO_TV_HEIGHT_2) * 65536;
+    /* SGL rejects a sprite nearer than screen_distance >> display_level.
+    ** Gameplay uses 240 (near 30) but Link's house sets its backdrop's own
+    ** 277 (near 34), while narrow cutscene shots go much farther. Follow the
+    ** active shot's near plane rather than using a fixed overlay depth. */
+    pos[2] = (int)((cutscene_screen_distance() > 277 ?
+                   cutscene_screen_distance() : 277) / 8 + 3) * 65536;
+    pos[3] = (width * 65536) / MSGBOX_WIDTH;
+    pos[4] = (height * 65536) / MSGBOX_HEIGHT;
+    attr.texno = (Uint16)msgbox_sprite;
+    attr.atrb |= (FAIRY_COLMODE_RGB & 7) << 3;
+    attr.atrb |= MESHon;
+#ifdef DOSEI_HIRES
+    /* Screen-space sprites bypass the world's vertical scale. */
+    pos[1] = (y * 2 - JO_TV_HEIGHT_2) * 65536;
+    pos[4] = (height * 2 * 65536) / MSGBOX_HEIGHT;
+    if (slDispSpriteHV(pos, &attr, 1) == FALSE) ++kokiri_rejected;
+#else
+    /* Unequal X/Y scales require HV; slDispSprite uses X for both axes. */
+    if (slDispSpriteHV(pos, &attr, 1) == FALSE) ++kokiri_rejected;
+#endif
+}
+
+/* The prompt at the bottom of a box: OoT's triangle when another page follows,
+** its square when the message ends. Same screen-space path as the panel. */
+void                kokiri_message_mark_draw(int x, int y, bool last_page)
+{
+    FIXED    pos[5];
+    SPR_ATTR attr = SPR_ATTRIBUTE(0, No_Palet, No_Gouraud, ECdis,
+                                  sprNoflip | FUNC_Sprite);
+
+    if (!msgmark_ready)
+        return;
+    pos[0] = (x - JO_TV_WIDTH_2) * 65536;
+    pos[1] = (y - JO_TV_HEIGHT_2) * 65536;
+    /* One nearer than the panel, so it lands on top of it. */
+    pos[2] = (int)((cutscene_screen_distance() > 277 ?
+                   cutscene_screen_distance() : 277) / 8 + 2) * 65536;
+    pos[3] = pos[4] = 32768; /* Eight pixels fit the padded bottom row. */
+    attr.texno = (Uint16)msgmark_sprite[last_page ? 1 : 0];
+    attr.atrb |= (FAIRY_COLMODE_RGB & 7) << 3;
+#ifdef DOSEI_HIRES
+    pos[1] = (y * 2 - JO_TV_HEIGHT_2) * 65536;
+    pos[4] = 65536;
+    if (slDispSpriteHV(pos, &attr, 1) == FALSE) ++kokiri_rejected;
+#else
+    if (slDispSprite(pos, &attr, 0) == FALSE) ++kokiri_rejected;
+#endif
+}
+
 void                kokiri_menu_draw(void)
 {
     unsigned int slot;
@@ -1176,6 +1407,84 @@ void                kokiri_menu_draw(void)
         if (gameplay.equipped & item)
             menu_quad(menu_equip_sprite, x, y, EQUIP_CELL);
     }
+}
+
+/*
+** Upload one tile into the resident bank's VDP1 space and take a sprite slot.
+**
+** For meshes that are not banks and not resident: the dream's riders, whose
+** textures belong to the shot rather than to the game. They land above
+** resident_bytes, so the next room_load_bank() reclaims them by resetting
+** vram_used, exactly as a bank swap reclaims the previous bank's tiles.
+**
+** KOKIRI_TILE_NONE when the texture area or the sprite table is full, which
+** the caller must treat as a failed load rather than draw with a wrong slot.
+*/
+/* Only the textureless nightmare bank may release its transient textures. */
+void kokiri_cutscene_tiles_reset(void)
+{
+#ifdef KOKIRI_STREAM_ROOMS
+    vram_used = resident_bytes;
+    sprite_next = resident_sprites;
+#endif
+}
+
+unsigned int        kokiri_bank_tile_upload(const void *pixels,
+                                            const void *clut,
+                                            unsigned int width,
+                                            unsigned int height,
+                                            unsigned int *colno)
+{
+#ifdef KOKIRI_STREAM_ROOMS
+    unsigned int   bytes = width * height / 2;   /* 4bpp */
+    unsigned int   clut_bytes = 32;              /* 16 entries of 15-bit RGB */
+    unsigned char *vram = (unsigned char *)JO_VDP1_VRAM + texture_base
+                          + vram_used;
+    jo_texture_definition *texture;
+    unsigned int   slot, i;
+
+    if (!width || !height ||
+        vram_used + bytes + clut_bytes > TEXTURE_CAPACITY ||
+        sprite_next >= JO_MAX_SPRITE)
+        return (KOKIRI_TILE_NONE);
+    {
+        const unsigned char *source = (const unsigned char *)pixels;
+
+        for (i = 0; i < bytes; ++i)
+            vram[i] = source[i];
+    }
+    /* The CLUT goes directly behind its tile, as mesh_load() places a bank's.
+    ** A 4bpp tile is meaningless without it: uploading pixels alone leaves the
+    ** hardware reading whatever palette happened to be at colno, which is what
+    ** made the riders come out in the wrong colours entirely. */
+    {
+        const unsigned char *source = (const unsigned char *)clut;
+
+        for (i = 0; i < clut_bytes; ++i)
+            vram[bytes + i] = source[i];
+    }
+    slot = sprite_next++;
+    texture = &__jo_sprite_def[slot];
+    texture->width = (unsigned short)width;
+    texture->height = (unsigned short)height;
+    texture->adr = (unsigned short)VRAM_UNITS((unsigned int)vram
+                                              - JO_VDP1_VRAM);
+    texture->size = JO_MULT_BY_32(width & 0x1f8) | height;
+    __jo_sprite_pic[slot].color_mode = COL_16;
+    __jo_sprite_pic[slot].data = vram;
+    if (colno)
+        *colno = VRAM_UNITS((unsigned int)(vram + bytes) - JO_VDP1_VRAM);
+    vram_used += bytes + clut_bytes;
+    return (slot);
+#else
+    (void)pixels; (void)clut; (void)width; (void)height; (void)colno;
+    return (KOKIRI_TILE_NONE);
+#endif
+}
+
+void                kokiri_submit_pdata(PDATA *pdata)
+{
+    submit(pdata, 8u);
 }
 
 unsigned int        kokiri_scene_accepted_mask(void)
@@ -1196,3 +1505,53 @@ unsigned int        kokiri_scene_submitted(void)
 #ifdef DOSEI_ACTOR_ORDER_PROBE
 #include "scene_actor_order.h"
 #endif
+
+/* Cutscene fairy and Environment_DrawRain's camera-local precipitation. */
+void kokiri_cutscene_effects_draw(void)
+{
+    unsigned int i, count = cutscene_rain_count();
+    if (cutscene_hides_scene()) return;
+    if (cutscene_actor_channel_visible(8)) {
+        FIXED pos[5];
+        SPR_ATTR attr = SPR_ATTRIBUTE(0, No_Palet, No_Gouraud, ECdis,
+                                      sprNoflip | FUNC_Sprite);
+        pos[0] = cutscene_actor_channel_x(8) * 65536;
+        pos[1] = -cutscene_actor_channel_y(8) * 65536;
+        pos[2] = cutscene_actor_channel_z(8) * 65536;
+        pos[3] = pos[4] = toFIXED(1);
+        attr.texno = (Uint16)fairy_sprite;
+        attr.atrb |= (FAIRY_COLMODE_RGB & 7) << 3;
+        if (slPutSprite(pos, &attr, 0) == FALSE) ++kokiri_rejected;
+    }
+    if (count) {
+        /* Original raindrop triangle (gameplay_keep/gRaindropVtx), scaled
+         * 0.4,1.2,0.4. Saturn mesh approximates the translucent source. */
+        /* slPutPolygon queues table pointers for the slave SH-2; it does
+         * not copy these tables before returning. Keep them alive through
+         * slSynch, including the final drop submitted before this returns. */
+        static POINT points[3] = {{0,-2516582,0},{-26214,-2516582,0},{-26214,2516582,0}};
+        static POLYGON polygon = {{0,0,65536},{0,1,2,2}};
+        static ATTR attr = ATTRIBUTE(Dual_Plane, SORT_CEN, 0,
+                              C_RGB(18,31,31), No_Gouraud,
+                              CL32KRGB | MESHon | ECdis, sprPolygon, UseNearClip);
+        static PDATA data = {points,3,&polygon,1,&attr};
+        int32_t sy, cy, sp, cp;
+        uint32_t random = cutscene_frame() * 1664525u + 1013904223u;
+        kokiri_camera_sincos(demo_yaw, &sy, &cy);
+        kokiri_camera_sincos(demo_pitch, &sp, &cp);
+        for (i = 0; i < count; ++i) {
+            int x, y, z;
+            random = random * 1664525u + 1013904223u;
+            x = demo_camera.x + (int)(((int64_t)sy * cp * 50) >> 32) + (int)(random % 100) - 70;
+            random = random * 1664525u + 1013904223u;
+            y = demo_camera.y + (int)(((int64_t)sp * 50) >> 16) + (int)(random % 100) - 70;
+            random = random * 1664525u + 1013904223u;
+            z = demo_camera.z + (int)(((int64_t)cy * cp * 50) >> 32) + (int)(random % 100) - 70;
+            slPushMatrix();
+            slTranslate(x * 65536, -y * 65536, z * 65536);
+            slRotY((ANGLE)demo_yaw);
+            submit(&data, 0);
+            slPopMatrix();
+        }
+    }
+}

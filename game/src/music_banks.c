@@ -9,6 +9,9 @@
 #include "music_banks.h"
 #include "title_score.h"
 #include "kokiri_score.h"
+#include "navi_score.h"
+#include "deku_tree_score.h"
+#include "nightmare_score.h"
 
 /* The title score's generated header does not export its sample-bank size;
 ** this is the figure its loader has always validated against. */
@@ -26,4 +29,33 @@ const music_bank_t music_bank_kokiri = {
     (const music_pcm_t *)kokiri_pcm, (const music_trigger_t *)kokiri_triggers,
     KOKIRI_TRIGGER_COUNT, KOKIRI_FRAMES, KOKIRI_LOOP_FRAME, KOKIRI_VOICES,
     KOKIRI_SAMPLE_BASE, KOKIRI_PCM_BYTES, KOKIRI_LEVEL_BYTES
+};
+
+/*
+** The opening cutscenes' cues, named by the cutscenes' own CS_START_SEQ
+** commands. These are one-pass cues rather than area themes, so they loop from
+** the top: a beat that outlives its cue repeats instead of falling silent.
+**
+*/
+const music_bank_t music_bank_navi = {
+    "CSNAVI.PCM", "CSNAVI.LVL",
+    (const music_pcm_t *)navi_pcm, (const music_trigger_t *)navi_triggers,
+    NAVI_TRIGGER_COUNT, NAVI_FRAMES, NAVI_LOOP_FRAME, NAVI_VOICES,
+    NAVI_SAMPLE_BASE, NAVI_PCM_BYTES, NAVI_LEVEL_BYTES
+};
+
+const music_bank_t music_bank_deku_tree = {
+    "CSDEKU.PCM", "CSDEKU.LVL",
+    (const music_pcm_t *)deku_tree_pcm,
+    (const music_trigger_t *)deku_tree_triggers,
+    DEKU_TREE_TRIGGER_COUNT, DEKU_TREE_FRAMES, DEKU_TREE_LOOP_FRAME,
+    DEKU_TREE_VOICES, DEKU_TREE_SAMPLE_BASE, DEKU_TREE_PCM_BYTES,
+    DEKU_TREE_LEVEL_BYTES
+};
+
+const music_bank_t music_bank_nightmare = {
+    "CSGANON.PCM", "CSGANON.LVL",
+    (const music_pcm_t *)nightmare_pcm, (const music_trigger_t *)nightmare_triggers,
+    NIGHTMARE_TRIGGER_COUNT, NIGHTMARE_FRAMES, NIGHTMARE_LOOP_FRAME,
+    NIGHTMARE_VOICES, NIGHTMARE_SAMPLE_BASE, NIGHTMARE_PCM_BYTES, NIGHTMARE_LEVEL_BYTES
 };

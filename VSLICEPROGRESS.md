@@ -1,5 +1,46 @@
 # Vertical slice progress
 
+## Opening freeze, sound and close-up (2026-09-22)
+
+- Reproduced nightmare stall at Kronos's 2048-command guard; project-local
+  emulator fixes it and launcher config selects that executable. Replay passed
+  into scene 2. See `game/docs/OPENING_FREEZE_2026-09-22.md`.
+- Rain geometry now survives SGL's deferred slave reads. Automatic text uses
+  source post-reveal delay without the added length-based wait.
+- Nine source-derived opening effects use a 32,836-byte bank in the existing
+  action-SFX tail. Music starts at Ganon's frame-330 cue; music fades leave SFX
+  slots audible. Source layers/envelopes are reduced; audible mix remains
+  unreviewed, not claimed as exact original sound parity.
+- Nightmare Link uses source scale/origin. Bridge fly-by gets a smooth side
+  arc and head aim, visually checked at frame 185 without face clipping.
+- 86 focused tests pass. Normal/clean builds pass SGL boundaries with
+  8,544 / 19,248 bytes spare. Player discs contain no camera-test frame hold.
+
+## Opening readability and scenery (2026-09-22)
+
+- Text/NONE commands no longer erase an unread message at its hold boundary.
+  Automatic fade pages retain the source delay after reveal; the extra
+  length-based hold was removed after feedback. Button pages retain marks.
+- Cutscene panels use a small padded charcoal mesh fill and bright cyan text.
+  Overlay depth follows the shot near plane; separate X/Y sprite scaling fixes
+  the oversized panel. Full-cover narration keeps UI sprites visible.
+- `CS_TRANS_TRIGGER_INSTANCE` is no longer an opaque black fade. In original
+  `z_demo.c` it changes transition control, not screen-fill alpha; the old mapping
+  hid the Deku Tree from frame 70 through his speech.
+- House shots use the four original `vr_LHVR_static` pre-rendered panorama faces,
+  with source palette order and cube orientation. Ordinary house gameplay keeps
+  its fixed JPEG. Kronos showed the doorway/Navi and sleeping Link against the
+  panorama with zero rejected draws.
+- Navi's flight uses banks derived from all three streamed forest room meshes,
+  retaining trees and huts across room boundaries. Banks cover 100 camera frames;
+  textures outside the span's possible fog view are omitted, distant faces are
+  flat fog colour, and runtime faces beyond fog range draw flat. This is bounded
+  per-shot residency, not a new per-frame VRAM allocator. Forest bank textures
+  occupy 54,656–307,488 bytes; the house panorama uses 135,168 bytes.
+- 72 focused cutscene/message/room tests pass. Final colour/panel sizing and the
+  complete forest bank-switch flight still need a player check; the background
+  emulator later entered BIOS setup. No global input or desktop capture used.
+
 ## Lock camera, rupee melody and pause controls (2026-09-18)
 
 - Target camera now eases behind Link on acquire and tracks target-facing yaw

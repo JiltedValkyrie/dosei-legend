@@ -25,9 +25,18 @@
 typedef enum
 {
     FILE_SELECT_CHOOSING = 0,   /* picking a file to play */
+    FILE_SELECT_OPEN_CONFIRM,   /* "Open this file?" -- Yes / Quit */
     FILE_SELECT_ERASE_PICK,     /* picking a file to erase */
     FILE_SELECT_ERASE_CONFIRM   /* "are you sure" on one file */
 }               file_select_mode;
+
+/* Rows on the "Open this file?" panel, in the original's order. */
+typedef enum
+{
+    FILE_SELECT_OPEN_YES = 0,
+    FILE_SELECT_OPEN_QUIT,
+    FILE_SELECT_OPEN_ROWS
+}               file_select_open_row;
 
 typedef enum
 {
@@ -48,6 +57,10 @@ typedef struct
 {
     file_select_mode    mode;
     uint8_t             cursor;         /* 0..FILE_SELECT_ROWS-1 */
+    /* Which button the "Open this file?" panel is on. Separate from `cursor`
+    ** so backing out of the panel returns to the file the player was on
+    ** rather than to whichever button they left highlighted. */
+    uint8_t             open_row;
     uint8_t             erase_slot;     /* slot awaiting confirmation */
     file_select_result  result;
     uint8_t             slot;           /* which slot `result` refers to */
@@ -76,6 +89,13 @@ const char         *file_select_row_label(unsigned int row);
 /* A short description of a file row: hearts and rupees, "NEW FILE", or why the
 ** slot could not be read. */
 const char         *file_select_row_detail(unsigned int row);
+
+/* Button label on the "Open this file?" panel. Never NULL. */
+const char         *file_select_open_label(unsigned int row);
+
+/* Which slot the "Open this file?" panel is asking about. Only meaningful in
+** FILE_SELECT_OPEN_CONFIRM; the renderer shows that file's summary. */
+unsigned int        file_select_open_slot(void);
 
 /* False: the original's COPY option is not implemented. Exposed so the screen
 ** does not advertise it. */

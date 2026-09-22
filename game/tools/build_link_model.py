@@ -456,7 +456,7 @@ def write_model(faces, out_path, skinned=False):
         # (tunic, skin, belt, boots, sword, shield) collapses to one colour.
         # Cutout alpha inside a flattened material is lost; nothing outside the
         # head currently relies on it.
-        flat = face.get('limb') != HEAD_LIMB
+        flat = face.get('limb') != HEAD_LIMB and not face.get('full_texture')
         if flat:
             # One lit colour per flat face, deduplicated after RGB555 conversion.
             # Keep eye/mouth artwork on the normal textured path.
@@ -527,6 +527,18 @@ CLIPS = (
     # PLAYER_ANIMGROUP_defense / defense_wait, one-handed equipment group.
     ('guard',   'gPlayerAnim_link_normal_defense',              0,    2, 1),
     ('guard_wait', 'gPlayerAnim_link_normal_defense_wait',      0,   20, 1),
+    # The opening cutscene's poses, from the player cues in
+    # gLinkHouseIntroSleepCs / gLinkHouseIntroWakeUpCs. Mapped to these symbols
+    # in z_player.c:15039-15042; see tools/build_cutscenes.py PLAYER_CUES.
+    # Complete clips; interpolation between samples runs at native 30 Hz,
+    # independently of how long the cutscene cue lasts. Zero count = whole clip.
+    ('sleeping',  'gPlayerAnim_clink_op3_wait1',                0,    0, 3),
+    ('turn_over', 'gPlayerAnim_clink_op3_negaeri',              0,    0, 3),
+    ('sit_up',    'gPlayerAnim_clink_op3_okiagari',             0,    0, 3),
+    ('stand_up',  'gPlayerAnim_clink_op3_tatiagari',            0,    0, 3),
+    ('turn_look', 'gPlayerAnim_link_demo_furimuki',             0,    0, 3),
+    ('sleep_wait2', 'gPlayerAnim_clink_op3_wait2',              0,    0, 2),
+    ('sit_wait3', 'gPlayerAnim_clink_op3_wait3',                0,    0, 2),
 )
 
 # Rotations keep their full 16-bit binang precision. The clip tables share the
@@ -569,8 +581,11 @@ def read_animation_frames(keep, animetion, offset, first, count, stride,
     """
     frames, _, _ = struct.unpack_from('>hhI', keep, offset)
     out = []
+    complete = count == 0
+    if complete:
+        count = (frames - 1 + stride - 1) // stride + 1
     for step in range(count):
-        frame = (first + step * stride) % frames
+        frame = min(first + step * stride, frames - 1) if complete else (first + step * stride) % frames
         _, root, rotations = read_animation(keep, animetion, offset, frame,
                                              limb_count)
         out.append((root, rotations))
@@ -604,6 +619,8 @@ def emit_animation(out_dir, clips, limbs, skin_limbs, skin_locals, shift, scale)
           'typedef struct { uint16_t first, count; } link_clip_t;', '',
           'extern const link_limb_t  link_limbs[LINK_LIMB_COUNT];',
           'extern const link_clip_t  link_clips[LINK_CLIP_COUNT];',
+          'extern const uint16_t link_clip_source_count[LINK_CLIP_COUNT];',
+          'extern const uint8_t link_clip_stride[LINK_CLIP_COUNT];',
           '/* Per frame: the root translation, at full precision. */',
           'extern const int16_t      link_root[][3];',
           '/* Per frame: one binang rotation per limb, full precision. */',
@@ -633,7 +650,11 @@ def emit_animation(out_dir, clips, limbs, skin_limbs, skin_locals, shift, scale)
             rows.extend((idle_root, rotations) for _, rotations in frames)
         else:
             rows.extend(frames)
-    c += ['};', '', 'const int16_t link_root[][3] = {']
+    c += ['};', 'const uint16_t link_clip_source_count[LINK_CLIP_COUNT] = {',
+          ','.join(str(clip[3]) for clip in clips), '};',
+          'const uint8_t link_clip_stride[LINK_CLIP_COUNT] = {',
+          ','.join(str(clip[4]) for clip in clips), '};',
+          '', 'const int16_t link_root[][3] = {']
     for root, _rotations in rows:
         c.append('    { %6d, %6d, %6d },' % tuple(root))
     c += ['};', '', 'const int16_t link_rotations[][LINK_LIMB_COUNT * 3] = {']
@@ -703,7 +724,7 @@ def main():
             total, sampled = read_animation_frames(
                 keep, animetion, offsets[symbol], first, count, stride,
                 LIMB_COUNT)
-            resolved.append((name, symbol, first, count, stride, sampled))
+            resolved.append((name, symbol, first, total, stride, sampled))
             print('clip    : %-8s %3d/%3d frames stride %d  (%#07x)'
                   % (name, len(sampled), total, stride, offsets[symbol]))
         baked = emit_animation(args.out.parent, resolved, limbs, skin_limbs,

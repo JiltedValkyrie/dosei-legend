@@ -2,18 +2,20 @@
 #include <jo/jo.h>
 #include "action_audio.h"
 #include "action_audio_data.h"
+#include "opening_audio_data.h"
 #include "gameplay.h"
 #include "music.h"
 
 #define SLOT(s,o) (*(volatile unsigned short *)(0x25b00000UL + (s)*32 + (o)))
 static volatile bool ready;
+static bool opening_bank;
 static unsigned int voice;
 static volatile bool rupee_active;
 static volatile unsigned int rupee_clock, rupee_note;
 static unsigned int sound_refresh;
 static void rupee_vblank(void);
 
-bool action_audio_init(void)
+static bool load_pcm(const char *name, unsigned int bytes)
 {
     jo_file file;
     unsigned short buffer[256];
@@ -21,11 +23,11 @@ bool action_audio_init(void)
     volatile unsigned short *ram = (volatile unsigned short *)0x25a00000UL;
     ready = false;
     if (ACTION_PCM_BASE < MUSIC_SAMPLE_LIMIT ||
-        ACTION_PCM_BASE + ACTION_PCM_BYTES > 0x80000 ||
-        !jo_fs_open(&file, "ACTIONS.PCM")) return false;
-    if (file.size != ACTION_PCM_BYTES) { jo_fs_close(&file); return false; }
-    while (offset < ACTION_PCM_BYTES) {
-        unsigned int count = ACTION_PCM_BYTES - offset;
+        ACTION_PCM_BASE + bytes > 0x80000 ||
+        !jo_fs_open(&file, name)) return false;
+    if ((unsigned int)file.size != bytes) { jo_fs_close(&file); return false; }
+    while (offset < bytes) {
+        unsigned int count = bytes - offset;
         if (count > sizeof(buffer)) count = sizeof(buffer);
         if (jo_fs_read_next_bytes(&file, (char *)buffer, count) != (int)count) {
             jo_fs_close(&file); return false;
@@ -38,9 +40,29 @@ bool action_audio_init(void)
     for (i = 24; i < 31; ++i) { SLOT(i,0) = 0; SLOT(i,12) = 255; }
     voice = 0;
     rupee_active = false;
+    ready = true;
+    return true;
+}
+
+bool action_audio_init(void)
+{
+    opening_bank = false;
+    if (!load_pcm("ACTIONS.PCM", ACTION_PCM_BYTES)) return false;
     sound_refresh = (JO_VDP2_TVSTAT & 1) ? 50 : 60;
     if (!jo_core_add_vblank_callback(rupee_vblank)) return false;
     ready = true;
+    return true;
+}
+
+bool action_audio_set_opening(bool opening)
+{
+    unsigned int i;
+    rupee_active = false;
+    for (i = 24; i < 31; ++i) { SLOT(i,12) = 255; SLOT(i,0) = 0x1000; }
+    if (opening == opening_bank && ready) return true;
+    if (!load_pcm(opening ? "OPENING.PCM" : "ACTIONS.PCM",
+                  opening ? OPENING_PCM_BYTES : ACTION_PCM_BYTES)) return false;
+    opening_bank = opening;
     return true;
 }
 
@@ -49,8 +71,8 @@ static void play_sample(unsigned int id, unsigned int slot, unsigned int pitch,
 {
     const action_pcm_t *sample;
     unsigned int address, key;
-    if (!ready || id >= ACTION_PCM_COUNT || music_busy()) return;
-    sample = &action_pcm[id];
+    if (!ready || id >= (opening_bank ? OPENING_PCM_COUNT : ACTION_PCM_COUNT)) return;
+    sample = opening_bank ? &opening_pcm[id] : &action_pcm[id];
     address = ACTION_PCM_BASE + sample->offset;
     SLOT(slot,0) = 0x1000; /* key off old one-shot before retrigger */
     SLOT(slot,12) = 255;
@@ -68,6 +90,20 @@ static void play_sample(unsigned int id, unsigned int slot, unsigned int pitch,
     SLOT(slot,22) = 7 << 13;
     SLOT(slot,12) = level;
     SLOT(slot,0) = key | 0x1800;
+}
+
+void action_audio_opening_play(unsigned int sound, unsigned int channel, bool loop)
+{
+    if (!opening_bank || channel >= 7) return;
+    play_sample(sound, 24 + channel, 13 << 11,
+                sound == OPENING_RAIN ? 52 : 18, loop);
+}
+
+void action_audio_opening_stop(unsigned int channel)
+{
+    if (!opening_bank || channel >= 7) return;
+    SLOT(24 + channel,12) = 255;
+    SLOT(24 + channel,0) = 0x1000;
 }
 
 static void play(unsigned int id, unsigned int slot)
@@ -119,6 +155,7 @@ static void rupee_vblank(void)
 
 void action_audio_events(uint32_t events)
 {
+    if (opening_bank) return;
     if (events & GP_EVENT_SWING) {
         play(ACTION_SWING, 24);
         play(ACTION_VOICE0 + (voice++ & 3), 25);

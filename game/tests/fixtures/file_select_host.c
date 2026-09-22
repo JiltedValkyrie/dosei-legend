@@ -25,6 +25,8 @@ int  fs_mode(void)          { return ((int)file_select.mode); }
 int  fs_cursor(void)        { return ((int)file_select.cursor); }
 int  fs_result(void)        { return ((int)file_select.result); }
 int  fs_slot(void)          { return ((int)file_select.slot); }
+int  fs_open_row(void)      { return ((int)file_select.open_row); }
+int  fs_open_slot(void)     { return ((int)file_select_open_slot()); }
 bool fs_device_failed(void) { return (file_select.device_failed); }
 
 int  fs_status(unsigned int slot)

@@ -51,6 +51,7 @@ void                file_select_open(void)
 {
     file_select.mode = FILE_SELECT_CHOOSING;
     file_select.cursor = 0;
+    file_select.open_row = FILE_SELECT_OPEN_YES;
     file_select.erase_slot = 0;
     file_select.result = FILE_SELECT_NONE;
     file_select.slot = 0;
@@ -63,6 +64,17 @@ static void         move_cursor(int delta)
     int             rows = FILE_SELECT_ROWS;
     int             cursor;
 
+    /* The open panel has its own two-button cursor, kept apart from the file
+    ** cursor so leaving the panel returns to the file the player was on. */
+    if (file_select.mode == FILE_SELECT_OPEN_CONFIRM) {
+        cursor = (int)file_select.open_row + delta;
+        if (cursor < 0)
+            cursor = FILE_SELECT_OPEN_ROWS - 1;
+        else if (cursor >= FILE_SELECT_OPEN_ROWS)
+            cursor = 0;
+        file_select.open_row = (uint8_t)cursor;
+        return;
+    }
     /* While picking a file to erase there is no erase row to land on: the row
     ** is what got us here, and B is how you leave. */
     if (file_select.mode == FILE_SELECT_ERASE_PICK)
@@ -99,7 +111,23 @@ static void         confirm_choosing(void)
         file_select.device_failed = true;
         return;
     }
+    /* Picking a file does not open it. The original asks "Open this file?"
+    ** first, so nothing is written and no save is loaded until Yes. */
     file_select.slot = (uint8_t)slot;
+    file_select.open_row = FILE_SELECT_OPEN_YES;
+    file_select.mode = FILE_SELECT_OPEN_CONFIRM;
+}
+
+/* Yes or Quit on the "Open this file?" panel. This is where a new file is
+** actually created and an existing one actually read. */
+static void         confirm_open(void)
+{
+    unsigned int    slot = file_select.slot;
+
+    if (file_select.open_row == FILE_SELECT_OPEN_QUIT) {
+        file_select.mode = FILE_SELECT_CHOOSING;
+        return;
+    }
     if (file_select.status[slot] == SAVE_FILE_EMPTY) {
         /* save_new_game() decides where a new file begins -- Link's house,
         ** spawn 0, the bed, as in the original. This used to override it to
@@ -110,9 +138,10 @@ static void         confirm_choosing(void)
         return;
     }
     if (save_device_read(slot) != SAVE_FILE_OK) {
-        /* It read fine for the summary and not now: report it and stay put
-        ** instead of dropping the player into an unloaded world. */
+        /* It read fine for the summary and not now: report it and go back to
+        ** the list instead of dropping the player into an unloaded world. */
         file_select.device_failed = true;
+        file_select.mode = FILE_SELECT_CHOOSING;
         file_select_refresh();
         return;
     }
@@ -151,6 +180,10 @@ file_select_result  file_select_step(const file_select_input *in)
 
     if (in->cancel) {
         switch (file_select.mode) {
+            case FILE_SELECT_OPEN_CONFIRM:
+                /* B is Quit. Back to the list, nothing opened. */
+                file_select.mode = FILE_SELECT_CHOOSING;
+                break;
             case FILE_SELECT_ERASE_CONFIRM:
                 file_select.mode = FILE_SELECT_ERASE_PICK;
                 break;
@@ -168,6 +201,7 @@ file_select_result  file_select_step(const file_select_input *in)
     if (in->confirm) {
         switch (file_select.mode) {
             case FILE_SELECT_CHOOSING:      confirm_choosing(); break;
+            case FILE_SELECT_OPEN_CONFIRM:  confirm_open(); break;
             case FILE_SELECT_ERASE_PICK:    confirm_erase_pick(); break;
             default:                        confirm_erase(); break;
         }
@@ -206,6 +240,20 @@ const char         *file_select_row_detail(unsigned int row)
         at = put_text(at, "  EMERALD");
     *at = '\0';
     return (detail);
+}
+
+const char         *file_select_open_label(unsigned int row)
+{
+    switch (row) {
+        case FILE_SELECT_OPEN_YES:  return "YES";
+        case FILE_SELECT_OPEN_QUIT: return "QUIT";
+        default:                    return "";
+    }
+}
+
+unsigned int        file_select_open_slot(void)
+{
+    return (file_select.slot);
 }
 
 bool                file_select_copy_supported(void)

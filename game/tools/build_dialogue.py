@@ -31,6 +31,9 @@ import pathlib
 import re
 import sys
 
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+import oot_messages                                             # noqa: E402
+
 MAX_PAGES = 4
 MAX_LINES = 4
 MAX_COLUMNS = 34
@@ -391,54 +394,28 @@ def speaker_rules(symbols, oot, report):
 # ---------------------------------------------------------------------------
 
 def load_messages(oot):
-    """Every message's English pages, keyed by text id."""
-    path = oot / 'extracted/ntsc-1.2/text/message_data.h'
-    if not path.is_file():
-        sys.exit('extracted message table not found: %s' % path)
-    raw = path.read_text(encoding='utf-8', errors='replace')
-    messages = {}
-    for block in re.split(r'(?=DEFINE_MESSAGE\()', raw):
-        head = re.match(r'DEFINE_MESSAGE\((0x[0-9A-Fa-f]{4})', block)
-        if not head:
-            continue
-        # MSG(...) groups are jpn, nes, ger, fra in that order; take the NES one.
-        groups = re.findall(r'MSG\((.*?)\)\s*(?:,|\))', block, re.S)
-        if len(groups) < 2:
-            continue
-        messages[int(head.group(1), 16)] = groups[1]
-    return messages
+    """Every message's English body, keyed by text id.
 
-
-def clean_pages(body):
-    """Plain ASCII pages and lines from one NES message body.
-
-    Control macros carry colour, shifting, icons and speed; none of them
-    survive to a 34-column Saturn box, so they are dropped rather than
-    half-honoured. BOX_BREAK is kept because it is the original's own page
-    boundary.
+    The message format itself lives in tools/oot_messages.py, shared with
+    build_cutscenes.py so the opening's narration and the NPC script are read
+    the same way.
     """
-    if not body or 'MISSING' in body:
+    return oot_messages.load_messages(oot)
+
+
+def clean_pages(message):
+    """Plain ASCII pages and lines from one message.
+
+    The dialogue box has no colour today, so the parser's colour runs are
+    flattened here; the colour information itself survives in oot_messages for
+    the cutscene text, which does draw it.
+    """
+    if not message:
         return []
-    pages = []
-    for chunk in re.split(r'BOX_BREAK\w*', body):
-        # NAME is a macro OUTSIDE the quotes -- the player's name spliced into
-        # the sentence -- so it has to be substituted before the quoted
-        # literals are gathered, or the sentence loses its subject.
-        chunk = re.sub(r'\bNAME\b', '"Link"', chunk)
-        # Keep only the quoted string literals, then strip the macros.
-        text = ''.join(re.findall(r'"((?:[^"\\]|\\.)*)"', chunk))
-        text = text.replace('\\n', '\n')
-        text = re.sub(r'[^\x20-\x7E\n]', '', text)
-        lines = []
-        for line in text.split('\n'):
-            line = ' '.join(line.split())
-            if line:
-                lines.append(line[:MAX_COLUMNS])
-        if lines:
-            pages.append(lines[:MAX_LINES])
-        if len(pages) >= MAX_PAGES:
-            break
-    return pages
+    pages = oot_messages.parse_pages(message['body'], max_lines=MAX_LINES,
+                                     max_columns=MAX_COLUMNS,
+                                     max_pages=MAX_PAGES)
+    return [oot_messages.plain(page) for page in pages]
 
 
 def escape(text):

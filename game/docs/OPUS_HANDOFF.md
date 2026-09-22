@@ -1,3 +1,120 @@
+# Opening follow-up - 2026-09-22
+
+User then said "It fine.. just show VRAM and CPU % on bottom"; active work
+switched to that overlay. Normal and clean builds now show a bottom line in
+menus, cutscenes and gameplay. VRAM is allocated VDP1 bytes including reserved
+tables / 512 KiB. CPU~ is smoothed master callback time / (callback + sync),
+an estimate, not combined dual-SH2 utilization. Both player images rebuilt.
+
+LATEST: user reports another pre-Ganon failure with a vertically striped screen.
+Still unresolved. No failing process remained to inspect. Full-start diagnostic
+(sleep through nightmare, automatic confirm) passed into scene 2; this does not
+prove the user failure fixed. Need actual launcher/image and live failure state.
+See the unresolved-report section in OPENING_FREEZE_2026-09-22.md first.
+
+Nightmare freeze reproduced and traced to Kronos's 2048-command cap, not a
+proven texture-swap failure. Local rebuilt emulator passed into scene 2; launcher
+config selects it. See OPENING_FREEZE_2026-09-22.md for evidence and rebuild.
+Rain geometry also needed static storage for SGL's deferred slave reads.
+
+Removed the extra `80 + page_length` post-reveal hold; FADE uses source delay.
+Music remains silent before the source Ganon cue at frame 330. Busy transitions
+retain pending music cues. Music fades now attenuate slots 0..23, leaving SFX
+audible when music is silent instead of muting SCSP master volume.
+
+New OPENING.PCM swaps into the reserved action tail during the opening and
+restores ACTIONS.PCM before gameplay. Nine source-derived effects cover shot
+cuts, lightning, bridge movement/stop, hooves, neigh/dust, rain and Navi's wake-up
+dash. PCM8 5512.5 Hz, 32,836 bytes; reduced layers/envelopes, no reverb or pitch
+slides. No claim of full original SFX parity. Source frame holds cannot repeat
+one-shots. Looping voices stop at scene transitions.
+
+Nightmare Link now uses source 0.01 scale/origin rather than gameplay's enlarged,
+grounded model. The bridge fly-by also gets a local smooth side arc during
+frames 140..219 to keep the Saturn near plane out of his head, blending the
+look target toward him so he stays in frame. Other shots remain source splines.
+Work-RAM arena reduced to 56 KiB; expansion cart
+still supplies large allocations. `core.o` now depends on makefile so an arena
+size change cannot silently retain the old allocation.
+
+Validation: 86 focused tests passed (37 cutscene, 28 message, 16 audio,
+5 opening scenery). Normal and clean discs build; SGL boundary checks leave
+8,544 / 19,248 bytes respectively. SH-2 disassembly has no float helpers in
+the changed cutscene, music, action-audio, rain and Link draw paths; Link yaw
+now calls slRotY directly instead of converting through floating-point degrees.
+Sound replay reached scene 2 frame 99. Final camera still at frame 185 shows
+Link from the side without face clipping (`build/nightmare-final-185.png`).
+The final unpaused camera/audio build also passed the complete nightmare into
+scene 2 frame 60 (`build/nightmare-final-replay.png`); diagnostic process closed.
+Read-only emulator inspection confirms OPENING.PCM resident byte-for-byte,
+active rain/hoof slots and master volume 15 while music is silent. The audible
+mix and complete opening through gameplay have not been manually checked.
+
+The user's later frame-185 freeze screenshot matched our intentionally held
+camera diagnostic, not the earlier 2048-command deadlock. Held tests now display
+CAMERA TEST HOLD explicitly; the final diagnostic and both player discs have
+no frame hold. Do not leave a held diagnostic running for the user.
+
+---
+
+# Opening fixes after checkpoint - 2026-09-22
+
+Work remains on the existing `feature/new-game-cutscene` branch. Opening fixes:
+unread text survives the next NONE cue; fade pages wait until reveal completes;
+the panel uses correct independent X/Y scaling, near-plane-safe sprite depth,
+charcoal dither, bright cyan dialogue and 8-pixel advance/end marks.
+
+The disappearing Deku Tree also had a separate cause: CS_TRANS_TRIGGER_INSTANCE
+was mapped to an opaque black fill. It now leaves fill alpha unchanged, matching
+z_demo.c. Compiled tests cover the real text boundary and the source fade timeline.
+
+`build_opening_banks.py` derives S2R0..9 from the ordinary streamed forest meshes,
+100 camera frames per bank. It retains source hut/tree geometry, drops textures
+that cannot enter fog view during the span, and keeps distant visible faces flat.
+Runtime toggles eligible faces to flat beyond fog range; unused span textures are
+still resident until the next bank. CD load time is excluded from catch-up ticks.
+S4R0 is the original four CI8 house panorama images (`vr_LHVR_static`), not new
+furniture geometry; ordinary house gameplay still uses the fixed JPEG.
+
+Checks: 72 focused tests passed; Kronos house doorway/Navi and sleeping Link
+captured with REJ 0. The later colour/panel adjustment and full forest flight need
+a player check; later background boots reached BIOS setup. Final disc is rebuilt
+without CUTSCENE_PROBE. See VSLICEPROGRESS.md for budgets and exact limits.
+Final normal build exited 0: 2,768 bytes below the SGL work area. All staged
+mesh banks fit compiled capacities; changed scene/UI draw functions have no
+software-float helper references in SH-2 disassembly.
+
+---
+
+# Cutscene checkpoint - 2026-09-22
+
+User directive: stop expanding performance/detail work; checkpoint and push everything.
+Keep these cutscene development HUD rows permanently during development:
+`SCENE # FRAME # FADE #` and `ACT # X # Z # REJ #`.
+They must not depend on CUTSCENE_PROBE. Show actual asset names during loading,
+including ordinary builds, so a synchronous CD load is visibly progressing.
+
+Checkpoint includes original young Ganondorf, Zelda, Impa, separate animated
+horses, bridge/chains, source-order cue latching, camera roll/FOV fixes, native
+Link clip timing and wait loops, rain/Navi, and Ganon's score with percussion.
+Actor assets stay in the RAM cart; only visible actors occupy the transient
+VDP1 bank. Horse vertices share only the same source Skin blend or rigid
+limb/local position; every baked pose validates that sharing preserves motion.
+The previous Kronos close-up at frame 400 showed textured Ganondorf with REJ 0.
+Latest horse deduplication and always-visible debug/loading text follow that capture.
+Normal player-disc build passed with 3,328 bytes below the SGL work area.
+480 host tests completed: pass, with one skipped. No auto-start/freeze probe
+is enabled in the final local disc. Logs: build/checkpoint-build.log and
+build/checkpoint-tests.log (ignored build artifacts).
+
+This is a checkpoint, not a claim of perfect N64 parity. Field art is still
+flat authored geometry; clouds, cape, ocarina, torch/lightning/rain-ring effects,
+original SFX, precise fades/lighting and full Link root/morph behavior remain.
+Link's complete clips use interpolated samples. Navi still uses a billboard.
+No change to user controls; no foreground input or desktop capture used.
+
+---
+
 # Phase 0 build verification (Astra, 2026-09-21)
 
 ## Build steps for Claude
