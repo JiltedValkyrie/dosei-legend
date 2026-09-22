@@ -39,7 +39,7 @@ cp "$here/disc/ABS.TXT" "$here/disc/BIB.TXT" "$here/disc/CPY.TXT" "$here/build/c
 
 # Regenerate the SGL tables from the original scene, then stage the 4bpp blob
 # on the CD image. Both are cheap and keep game.iso consistent with FOREST.BIN.
-"$python" "$here/tools/build_sgl_area.py" --source "$sgl_source" --max-polygons "${SGL_MAX_POLYGONS:-2200}"
+"$python" "$here/tools/build_sgl_area.py" --source "$sgl_source" --max-polygons "${SGL_MAX_POLYGONS:-2900}"
 "$python" "$here/tools/build_link_model.py" --flat --animate --oot "$oot" --rom-dir "$roms"
 quad_args=()
 if [ -n "${QUAD_OBJ:-}" ]; then
@@ -139,7 +139,7 @@ cd "$here"
 
 # The work area is laid out from the top of work RAM downwards, so .bss must
 # end below its base. Only the map just produced can prove that.
-if ! "$python" "$here/tools/build_sgl_area.py" --source "$sgl_source" --max-polygons "${SGL_MAX_POLYGONS:-2200}" --verify --map "$here/build/$variant.map"; then
+if ! "$python" "$here/tools/build_sgl_area.py" --source "$sgl_source" --max-polygons "${SGL_MAX_POLYGONS:-2900}" --verify --map "$here/build/$variant.map"; then
     echo "boundary check failed: removing the image so it cannot be run" >&2
     rm -f "$here/build/$variant.iso" "$here/build/$variant.cue" "$here/build/$variant.elf" "$here/build/$variant.raw"
     exit 1
