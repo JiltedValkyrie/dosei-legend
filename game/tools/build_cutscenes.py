@@ -30,6 +30,14 @@ import re
 import struct
 import sys
 
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+import oot_messages                                             # noqa: E402
+
+# The cutscene text is drawn across the whole screen, not inside the 34-column
+# NPC box, so it keeps the original's own line breaks at full width.
+MESSAGE_COLUMNS = 38
+MESSAGE_LINES = 4
+
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 OOT = pathlib.Path('D:/Workspace-Claude/game-decomps/n64/oot')
 SCENES = OOT / 'extracted/ntsc-1.2/assets/scenes'
@@ -405,7 +413,121 @@ def pack_track(track):
     return b''.join(struct.pack(TRACK_FORMAT, *point) for point in track)
 
 
-def emit(cutscenes, header_path, source_path, cd_dir):
+def collect_messages(cutscenes, messages):
+    """Every message the opening shows, parsed into pages and coloured runs.
+
+    The ids come from the cutscenes' own CS_TEXT commands, so nothing is
+    included that the opening does not actually say, and nothing it does say
+    can be left out.
+    """
+    wanted = []
+    for cs in cutscenes:
+        for item in cs['text']:
+            if item['id'] and item['id'] not in wanted:
+                wanted.append(item['id'])
+    out = []
+    for text_id in sorted(wanted):
+        message = messages.get(text_id)
+        if not message:
+            raise SystemExit('cutscene text 0x%04X is not in the message table'
+                             % text_id)
+        pages = oot_messages.parse_pages(message['body'],
+                                         max_lines=MESSAGE_LINES,
+                                         max_columns=MESSAGE_COLUMNS)
+        if not pages:
+            raise SystemExit('cutscene text 0x%04X has no English pages'
+                             % text_id)
+        out.append(dict(id=text_id, pages=pages,
+                        box=message['box'], position=message['position']))
+    return out
+
+
+def emit_messages(messages, h, c):
+    """Pooled runs/lines/pages, the same shape kokiri_dialogue.c uses."""
+    boxes = sorted({m['box'] for m in messages})
+    positions = sorted({m['position'] for m in messages})
+    colours = sorted({colour for m in messages for page in m['pages']
+                      for line in page['lines'] for _, colour in line['runs']})
+    advances = ['button', 'delay', 'fade']
+
+    h += ['/* Text the opening speaks, from the real US 1.2 message table.',
+          '** A line is a list of coloured runs: COLOR() changes colour partway',
+          '** through a line, so colour cannot be a property of the line. */',
+          'typedef enum {']
+    h += ['    CUTSCENE_COLOUR_%s = %d,' % (name, i)
+          for i, name in enumerate(colours)]
+    h += ['    CUTSCENE_COLOUR_COUNT = %d' % len(colours),
+          '} cutscene_colour_t;', '', 'typedef enum {']
+    h += ['    CUTSCENE_ADVANCE_%s = %d,' % (name.upper(), i)
+          for i, name in enumerate(advances)]
+    h += ['} cutscene_advance_t;', '',
+          '/* The original box styles these messages use. */', 'typedef enum {']
+    h += ['    CUTSCENE_BOX_%s = %d,' % (name.replace('TEXTBOX_TYPE_', ''), i)
+          for i, name in enumerate(boxes)]
+    h += ['} cutscene_box_t;', '', 'typedef enum {']
+    h += ['    CUTSCENE_POS_%s = %d,' % (name.replace('TEXTBOX_POS_', ''), i)
+          for i, name in enumerate(positions)]
+    h += ['} cutscene_position_t;', '',
+          'typedef struct { const char *text; unsigned char colour; }'
+          ' cutscene_run_t;',
+          '/* `indent` is the original\'s SHIFT, halved to character cells:',
+          '** the narration is centred with it. */',
+          'typedef struct { unsigned short first_run; unsigned char runs,'
+          ' indent; } cutscene_line_t;',
+          'typedef struct { unsigned short first_line; unsigned char lines;',
+          '                 unsigned char advance; unsigned short delay; }'
+          ' cutscene_page_t;',
+          'typedef struct { unsigned short id; unsigned short first_page;',
+          '                 unsigned char pages, box, position; }'
+          ' cutscene_message_t;', '']
+
+    runs, lines, pages, entries = [], [], [], []
+    for message in messages:
+        first_page = len(pages)
+        for page in message['pages']:
+            first_line = len(lines)
+            for line in page['lines']:
+                first_run = len(runs)
+                runs.extend(line['runs'])
+                lines.append((first_run, len(line['runs']), line['indent']))
+            pages.append((first_line, len(page['lines']),
+                          advances.index(page['advance']), page['delay']))
+        entries.append((message['id'], first_page, len(message['pages']),
+                        boxes.index(message['box']),
+                        positions.index(message['position'])))
+
+    h += ['#define CUTSCENE_RUN_COUNT     %d' % len(runs),
+          '#define CUTSCENE_LINE_COUNT    %d' % len(lines),
+          '#define CUTSCENE_PAGE_COUNT    %d' % len(pages),
+          '#define CUTSCENE_MESSAGE_COUNT %d' % len(entries),
+          '#define CUTSCENE_MESSAGE_COLUMNS %d' % MESSAGE_COLUMNS,
+          '#define CUTSCENE_MESSAGE_LINES   %d' % MESSAGE_LINES, '',
+          'extern const cutscene_run_t     cutscene_runs[CUTSCENE_RUN_COUNT];',
+          'extern const cutscene_line_t    cutscene_text_lines[CUTSCENE_LINE_COUNT];',
+          'extern const cutscene_page_t    cutscene_pages[CUTSCENE_PAGE_COUNT];',
+          'extern const cutscene_message_t cutscene_messages[CUTSCENE_MESSAGE_COUNT];',
+          '']
+
+    c.append('const cutscene_run_t cutscene_runs[CUTSCENE_RUN_COUNT] = {')
+    c += ['    {"%s",CUTSCENE_COLOUR_%s},' % (escape(text), colour)
+          for text, colour in runs]
+    c += ['};', '',
+          'const cutscene_line_t cutscene_text_lines[CUTSCENE_LINE_COUNT] = {']
+    c += ['    {%d,%d,%d},' % line for line in lines]
+    c += ['};', '', 'const cutscene_page_t cutscene_pages[CUTSCENE_PAGE_COUNT] = {']
+    c += ['    {%d,%d,%d,%d},' % page for page in pages]
+    c += ['};', '',
+          'const cutscene_message_t cutscene_messages[CUTSCENE_MESSAGE_COUNT] = {']
+    c += ['    {0x%04X,%d,%d,%d,%d},' % entry for entry in entries]
+    c += ['};', '']
+    return len(runs), len(lines), len(pages)
+
+
+def escape(text):
+    return text.replace('\\', '\\\\').replace('"', '\\"')
+
+
+def emit(cutscenes, header_path, source_path, cd_dir, messages):
     keys = [c['key'] for c in cutscenes]
     ignored = sorted(set().union(*(c['ignored'] for c in cutscenes)))
 
@@ -493,11 +615,12 @@ def emit(cutscenes, header_path, source_path, cd_dir):
           '    const cutscene_fade_t  *fades;  unsigned char fade_count;',
           '    const cutscene_music_t *music;  unsigned char music_count;',
           '} cutscene_t;', '',
-          'extern const cutscene_t cutscenes[CUTSCENE_COUNT];', '',
-          '#endif']
+          'extern const cutscene_t cutscenes[CUTSCENE_COUNT];', '']
 
     c = ['/* Generated by tools/build_cutscenes.py. Do not edit. */',
          '#include "cutscenes.h"', '']
+    emit_messages(messages, h, c)
+    h += ['#endif']
     for index, cs in enumerate(cutscenes):
         c.append('static const cutscene_text_t text_%d[] = {' % index)
         for item in cs['text']:
@@ -579,7 +702,8 @@ def build():
         return
 
     baked = [read_cutscene(entry) for entry in CUTSCENES]
-    emit(baked, header, source, cd_dir)
+    messages = collect_messages(baked, oot_messages.load_messages(OOT))
+    emit(baked, header, source, cd_dir, messages)
     header.write_text(signature + '\n' + header.read_text())
     for cs, entry in zip(baked, CUTSCENES):
         print('Cutscene %-9s %4d frames, %2d text, %2d cues, %2d fades, '
@@ -587,6 +711,12 @@ def build():
               (cs['key'], cs['frames'], len(cs['text']),
                len(cs['player_cues']), len(cs['transitions']),
                len(cs['music']), len(cs['track']) * TRACK_BYTES))
+    coloured = sum(1 for m in messages for page in m['pages']
+                   for line in page['lines'] for _, colour in line['runs']
+                   if colour != oot_messages.DEFAULT_COLOUR)
+    print('Cutscene text: %d messages, %d pages, %d coloured runs' %
+          (len(messages),
+           sum(len(m['pages']) for m in messages), coloured))
 
 
 if __name__ == '__main__':

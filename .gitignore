@@ -31,3 +31,7 @@ Thumbs.db
 # Kronos screenshots
 kronos-*.png
 Kronos-*.png
+
+# Blender Files
+*.blend
+*.blend1

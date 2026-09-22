@@ -27,6 +27,7 @@
 #include "save_device.h"
 #include "file_select.h"
 #include "scene_flow.h"
+#include "message.h"
 
 /*
 ** Baseline camera, in the scene's native source space.
@@ -52,6 +53,7 @@ static void         dialogue_box(void);
 static void         inventory_menu(void);
 static void         action_hint(void);
 static void         file_select_screen(void);
+static void         cutscene_text(void);
 #ifdef DOSEI_TEXTURE_PROBE
 #include "texture_probe.h"
 static unsigned int probe_frame;
@@ -235,6 +237,7 @@ static void         viewer_draw(void)
         frame_timer_end(FRAME_PHASE_LINK);
     }
     rejected_total += kokiri_scene_rejected();
+    cutscene_text();
     dialogue_box();
     inventory_menu();
     file_select_screen();
@@ -244,6 +247,96 @@ static void         viewer_draw(void)
         kokiri_rupee_hud_draw();
     frame_timer_frame_end();
     frame_timer_begin(FRAME_PHASE_SYNC);
+}
+
+/*
+** Cutscene text: the opening's narration and speeches.
+**
+** Separate from dialogue_box() below, which draws NPC conversations. This one
+** has no speaker name and no "A: next" footer on a timed page, it is centred
+** or placed per the original's TEXTBOX_POS_*, and a line is drawn as a series
+** of coloured runs -- COLOR() changes colour partway through a line, so
+** "I'm Navi the fairy!" is one line in three colours.
+**
+** Colour works through SGL's slCurColor, which Jo's jo_printf_with_color sets:
+** the index is written into each character cell's pattern name as the cell is
+** printed, so it stays per character rather than recolouring the layer.
+*/
+#define CUTSCENE_TEXT_ROWS  6
+
+static unsigned int cutscene_text_colour(unsigned int colour)
+{
+    switch (colour) {
+        /* Navi's light blue. Jo has no light blue slot, so Blue carries it. */
+        case CUTSCENE_COLOUR_BLUE: return JO_COLOR_INDEX_Blue;
+        case CUTSCENE_COLOUR_RED:  return JO_COLOR_INDEX_Red;
+        default:                   return JO_COLOR_INDEX_White;
+    }
+}
+
+/* Top row for the current message, from the original's box position. */
+static int          cutscene_text_row(void)
+{
+    switch (message_position()) {
+        case CUTSCENE_POS_TOP:    return 3;
+        case CUTSCENE_POS_MIDDLE: return 12;
+        default:                  return 21;
+    }
+}
+
+static void         cutscene_text(void)
+{
+    static bool     was_active;
+    static int      last_row;
+    unsigned int    line, run;
+    int             row;
+
+    if (!message_is_active()) {
+        if (was_active) {
+            for (line = 0; line < CUTSCENE_TEXT_ROWS; ++line)
+                jo_printf(0, last_row + (int)line, "%-40s", "");
+            was_active = false;
+        }
+        return;
+    }
+    row = cutscene_text_row();
+    /* A message that moves up or down the screen has to wipe where it was, or
+    ** VDP2 keeps the old rows on screen underneath the new ones. */
+    if (was_active && row != last_row) {
+        for (line = 0; line < CUTSCENE_TEXT_ROWS; ++line)
+            jo_printf(0, last_row + (int)line, "%-40s", "");
+    }
+    was_active = true;
+    last_row = row;
+
+    for (line = 0; line < CUTSCENE_TEXT_ROWS; ++line) {
+        /* The original's SHIFT, which is what centres the narration. */
+        int column = 1 + (int)message_line_indent(line);
+
+        if (line >= message_lines()) {
+            jo_printf(0, row + (int)line, "%-40s", "");
+            continue;
+        }
+        /* Clear the row first: the previous page's line may be longer, and
+        ** each run is printed at its own column rather than padded. */
+        jo_printf(0, row + (int)line, "%-40s", "");
+        for (run = 0; run < message_line_runs(line); ++run) {
+            const char *text = message_run_text(line, run);
+
+            jo_printf_with_color(column, row + (int)line,
+                                 cutscene_text_colour(
+                                     message_run_colour(line, run)),
+                                 "%s", text);
+            while (*text) { ++column; ++text; }
+        }
+    }
+    /* Restore the default, or every other jo_printf on the screen inherits
+    ** whichever colour the last run happened to use. */
+    jo_set_printf_color_index(JO_COLOR_INDEX_White);
+    /* Only a page the player has to turn shows a prompt. A timed page must
+    ** not invite a press it would ignore. */
+    jo_printf(1, row + CUTSCENE_TEXT_ROWS, "%-38s",
+              message_waits_for_button() ? "A" : "");
 }
 
 /*
