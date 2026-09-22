@@ -26,6 +26,7 @@
 #include "kokiri_sgl.h"
 #include "vdp1_layout.h"
 #include "demo.h"
+#include "cutscene.h"
 #include "link_anim_state.h"
 #include "kokiri_actors.h"
 #include "gameplay.h"
@@ -554,6 +555,12 @@ bool kokiri_scene_update(void)
 #ifdef KOKIRI_STREAM_ROOMS
     unsigned int i;
     int target = requested_room;
+    /* A cutscene owns the resident bank. Room streaming follows Link through
+    ** the forest's portals, and during the dream it would happily load a
+    ** Kokiri room straight over the Hyrule Field bank the cutscene asked for.
+    ** Link is not walking anywhere during a cutscene, so there is nothing to
+    ** stream for. */
+    if (cutscene_is_playing()) { room_gameplay = false; return true; }
     if (!demo_link_active || demo_title_is_visible()) { room_gameplay = false; return true; }
     if (!room_gameplay) { target = 0; room_gameplay = true; }
     for (i=0;i<KOKIRI_PORTAL_COUNT;++i) {
