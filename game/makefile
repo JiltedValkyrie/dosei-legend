@@ -21,7 +21,10 @@ JO_COMPILE_WITH_RAM_CARD_MODULE = 1
 JO_DEBUG = 1
 HIRES ?= 0
 CLEAN_TEST ?= 0
-ifeq ($(CLEAN_TEST),1)
+ifeq ($(OPENING_CHECK),1)
+override TARGET = build/opening-check.elf
+OBJDIR = build/obj-opening-check
+else ifeq ($(CLEAN_TEST),1)
 override TARGET = build/game-clean.elf
 OBJDIR = build/obj-clean
 else ifeq ($(HIRES),1)
@@ -69,7 +72,9 @@ JO_MAX_SPRITE = 2800
 # this work-RAM arena only has to cover Jo's own small blocks and the
 # collision index -- and every byte it gives back buys SGL work area, which
 # must live in work RAM and is what caps polygons per frame.
-JO_GLOBAL_MEMORY_SIZE_FOR_MALLOC ?= 65536
+# Resident opening sound control uses a few more bytes of work RAM; large
+# scene allocations already use the expansion cart.
+JO_GLOBAL_MEMORY_SIZE_FOR_MALLOC ?= 57344
 
 SRCS = src/main.c src/ram_cart.c src/game_mode.c src/message.c src/cutscene.c src/cutscene_actor.c src/save_state.c src/save_file.c src/save_device.c src/file_select.c src/scene_flow.c src/kokiri_sgl.c ../shared/lib/music/music.c src/music_banks.c src/demo.c src/player_input.c src/gameplay.c src/action_audio.c src/demo_camera.c src/demo_collision.c src/demo_follow.c src/link_anim.c src/link_anim_state.c src/frame_timer.c build/generated/kokiri_scene.c build/generated/kokiri_textures.c build/generated/link_scene.c build/generated/link_textures.c build/generated/link_clips.c build/generated/scene_table.c build/generated/kokiri_actors.c build/generated/kokiri_dialogue.c build/generated/cutscenes.c
 override ASSETS_DIR = ./build/cd
@@ -112,6 +117,9 @@ endif
 # Diagnostic only; never set for a player disc.
 ifneq ($(CUTSCENE_PROBE),)
 _CCFLAGS += -DDOSEI_CUTSCENE_PROBE=$(CUTSCENE_PROBE)
+ifeq ($(CUTSCENE_PROBE_AUTO),1)
+_CCFLAGS += -DDOSEI_CUTSCENE_PROBE_AUTO
+endif
 ifneq ($(CUTSCENE_PROBE_FRAME),)
 _CCFLAGS += -DDOSEI_CUTSCENE_PROBE_FRAME=$(CUTSCENE_PROBE_FRAME)
 endif
@@ -164,6 +172,8 @@ $(OBJDIR)/message.o $(OBJDIR)/cutscene.o $(OBJDIR)/cutscenes.o $(OBJDIR)/demo.o 
 $(OBJDIR)/music.o: ../shared/lib/music/music.c ../shared/lib/music/music.h src/video_mode.h | $(OBJDIR)
 	$(CC) $< $(DFLAGS) $(CCFLAGS) $(_CCFLAGS) -o $@
 
+$(OBJDIR)/core.o: makefile
+
 $(OBJDIR)/%.o: build/generated/%.c src/video_mode.h | $(OBJDIR)
 	$(CC) $< $(DFLAGS) $(CCFLAGS) $(_CCFLAGS) -o $@
 
@@ -192,6 +202,6 @@ $(TARGET3): $(TARGET2)
 clean:
 	$(RM) $(OBJDIR) $(TARGET) $(TARGET1) $(TARGET2) $(TARGET3) $(MPFILE) build/cd/0.bin
 
-$(OBJDIR)/action_audio.o: build/generated/action_audio_data.h
+$(OBJDIR)/action_audio.o: build/generated/action_audio_data.h build/generated/opening_audio_data.h
 $(OBJDIR)/action_audio.o $(OBJDIR)/demo.o $(OBJDIR)/main.o: src/action_audio.h
 $(OBJDIR)/action_audio.o: ../shared/lib/music/music.h src/gameplay.h

@@ -79,9 +79,6 @@ fi
 if [ -n "${AUTHORED_OBJ:-}" ]; then
     quad_args+=(--skip-scene)
 fi
-if [ "${STREAM_ROOMS:-1}" = 1 ]; then
-    "$python" "$here/tools/build_cutscene_scene.py"
-fi
 "$python" "$here/tools/build_sgl_scene.py" --texture-path "${TEXTURE_PATH:-hybrid}" --oot "$oot" --rom-dir "$roms" "${quad_args[@]}"
 # Overwrite the generated forest with the authored import. Link's tables and
 # vdp1_layout.h come from the run above and are left alone.
@@ -93,6 +90,7 @@ fi
 "$python" "$here/tools/build_actors.py" --oot "$oot" --rom-dir "$roms"
 "$python" "$here/tools/build_dialogue.py" --oot "$oot"
 "$python" "$here/tools/build_action_audio.py" --oot "$oot"
+"$python" "$here/tools/build_opening_audio.py" --oot "$oot"
 "$python" "$here/tools/build_demo_assets.py" --oot "$oot"
 # The dream's Hyrule Field: flat shaded, no tiles, so it costs no VDP1
 # texture VRAM and can be resident during the opening alongside nothing else.
@@ -127,6 +125,7 @@ for rider in GANON ZELDA IMPA HZELDA HGANON; do
     [ -f "$here/build/generated/$rider.BIN" ] &&         cp "$here/build/generated/$rider.BIN" "$here/build/cd/$rider.BIN"
 done
 cp "$here/build/generated/ACTIONS.PCM" "$here/build/cd/ACTIONS.PCM"
+cp "$here/build/generated/OPENING.PCM" "$here/build/cd/OPENING.PCM"
 cp "$here/../shared/assets/audio/title/TITLE_PCM.RAW" "$here/build/cd/TITLE.PCM"
 cp "$here/../shared/assets/audio/title/TITLE_LEVELS.RAW" "$here/build/cd/TITLE.LVL"
 cp "$here/levels/kokiri/assets/audio/KOKIRI_PCM.RAW" "$here/build/cd/FOREST.PCM"

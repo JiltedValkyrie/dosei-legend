@@ -92,9 +92,8 @@ def build_message_box(source, width=MESSAGE_BOX_WIDTH, height=MESSAGE_BOX_HEIGHT
 
     An I4 texture: intensity only. In the original it is drawn translucent over
     the scene; VDP1 has no per-texel alpha, so the intensity is mapped to a
-    dark blue-black ramp and drawn solid. Solid is deliberate -- the panel
-    exists so text stays readable over a bright scene, and a translucent one
-    made of the same texels would not achieve that.
+    dark neutral ramp. The renderer applies VDP1 mesh dithering to this panel.
+    Dialogue uses bright cyan rather than dark blue for contrast.
 
     The darkest texels are lifted off pure black, because VDP1 treats a zero
     texel as transparent and the panel would be full of holes.
@@ -105,9 +104,9 @@ def build_message_box(source, width=MESSAGE_BOX_WIDTH, height=MESSAGE_BOX_HEIGHT
     for y in range(height):
         for x in range(width):
             level = src[x, y]
-            # OoT's box is a blue-tinted near-black; keep that cast.
-            pixels[x, y] = (max(1, level // 6), max(1, level // 5),
-                            max(2, level // 3))
+            # Neutral charcoal keeps coloured dialogue readable over mesh.
+            shade = max(8, level // 8)
+            pixels[x, y] = (shade, shade, shade)
     return out
 
 

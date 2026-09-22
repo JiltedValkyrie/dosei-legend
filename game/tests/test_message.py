@@ -323,7 +323,12 @@ class Message(unittest.TestCase):
         # fade across the rest of the page instead of guessing which tick it
         # starts on.
         peak = 0
-        for _ in range(last['delay'] + 60):
+        read_delay = last['delay']
+        for _ in range(read_delay - 1):
+            self.lib.message_step(False)
+            self.assertTrue(self.lib.message_is_active())
+            self.assertEqual(self.fade(), 0, 'fade started before reading time')
+        for _ in range(20):
             if not self.lib.message_is_active():
                 break
             self.lib.message_step(False)

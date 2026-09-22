@@ -1,4 +1,4 @@
-param([string]$OutputPath, [int]$Delay=0, [switch]$ShowBehind)
+param([string]$OutputPath, [int]$Delay=0, [switch]$ShowBehind, [int]$ViewerId=0)
 # Capture the emulator itself; never switch focus or capture the desktop.
 $ErrorActionPreference='Stop'
 Add-Type -AssemblyName System.Drawing
@@ -25,7 +25,7 @@ public static class KronosCapture {
 [KronosCapture]::SetProcessDPIAware() | Out-Null
 if (!$OutputPath) { $OutputPath=Join-Path $PSScriptRoot '../build/generated/kronos-window.png' }
 if ($Delay) { Start-Sleep -Seconds $Delay }
-$viewer=Get-Process kronos | Select-Object -First 1
+$viewer=if ($ViewerId) { Get-Process -Id $ViewerId } else { Get-Process kronos | Select-Object -First 1 }
 $window=[KronosCapture]::Find($viewer.Id)
 if ($ShowBehind) {
     [KronosCapture]::SetWindowPos($window,[IntPtr]1,0,0,0,0,0x53)|Out-Null

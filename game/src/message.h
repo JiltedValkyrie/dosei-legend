@@ -14,9 +14,9 @@
 ** opening narration uses all three:
 **
 **   BOX_BREAK              wait for A               (most pages)
-**   BOX_BREAK_DELAYED(n)   advance itself after n   ("In the vast, deep
+**   BOX_BREAK_DELAYED(n)   wait n ticks, then A     ("In the vast, deep
 **                                                     forest of Hyrule...")
-**   FADE(n)                fade out after n         (the last narration page)
+**   FADE(n)                wait n ticks after reveal, then fade
 **
 ** A line is a list of coloured runs rather than a string, because COLOR()
 ** changes colour partway through a line -- "I'm Navi the fairy!" has Navi in

@@ -99,6 +99,13 @@ class Cutscenes(unittest.TestCase):
                          ['NA_BGM_OPENING_GANON'])
         self.assertEqual(music[0]['bank'], 'NIGHTMARE')
         self.assertFalse(music[0]['stop'])
+        self.assertEqual(music[0]['start'], 330)
+
+    def test_bridge_flyby_stays_outside_links_head_and_near_plane(self):
+        for x,y,z,*_ in self.baked['NIGHTMARE']['track'][140:220]:
+            self.assertGreaterEqual((x+1)**2+(y-45)**2+(z-1348)**2, 45**2)
+        for frame in (0,139,220,318):
+            self.assertEqual(bake.nightmare_eye_clearance((-1,45,1348),frame),(-1,45,1348))
 
     def test_the_deku_tree_theme_stops_before_navis_begins(self):
         """The speech plays over spot04's own scene music.

@@ -24,6 +24,7 @@ static unsigned char *levels, *pending_levels;
 static volatile unsigned char swap_stage;
 static unsigned short frame, cursor, keys[MUSIC_MAX_VOICES];
 static bool active[MUSIC_MAX_VOICES];
+static unsigned char voice_levels[MUSIC_MAX_VOICES];
 static volatile unsigned int ticks, vblanks;
 static unsigned int phase, refresh;
 static volatile bool playing;
@@ -47,10 +48,22 @@ static unsigned short *swap_staging;
 static unsigned int swap_offset;
 static bool swap_failed;
 
+/* SCSP TL is 0.375 dB/step. Fade only the music slots: master volume also
+ * controls resident effects, which must remain audible during silent scenes. */
+static unsigned int faded_level(unsigned int level)
+{
+    static const unsigned char attenuation[16] =
+        {255,63,47,37,31,25,21,18,15,12,9,7,5,3,2,0};
+    unsigned int result = level + attenuation[volume];
+    return result > 255 ? 255 : result;
+}
+
 static void set_volume(unsigned int level)
 {
+    unsigned int i;
     volume = (unsigned char)level;
-    REG(0x400) = 0x0200 | level;
+    for (i = 0; i < MUSIC_MAX_VOICES; ++i)
+        if (active[i]) SLOT(i,12) = faded_level(voice_levels[i]);
 }
 
 static void stop_all(void)
@@ -71,6 +84,7 @@ static void start_note(const music_trigger_t *event)
     const music_pcm_t *sample = &bank->pcm[event->sample];
     unsigned int address = bank->sample_base + sample->offset;
     SLOT(s,12) = 255;
+    voice_levels[s] = 255;
     SLOT(s,0) = (keys[s] & ~0x0800) | 0x1000;
     keys[s] = 0x0020 | ((address>>16)&15);
     SLOT(s,0) = keys[s];
@@ -106,7 +120,10 @@ static void score_tick(void)
     ** last level, which the master-volume ramp is already taking down. */
     if (levels)
         for (i = 0; i < bank->voices; ++i)
-            if (active[i]) SLOT(i,12) = levels[frame * bank->voices + i];
+            if (active[i]) {
+                voice_levels[i] = levels[frame * bank->voices + i];
+                SLOT(i,12) = faded_level(voice_levels[i]);
+            }
     ++frame;
     ++ticks;
 }
@@ -410,6 +427,7 @@ bool music_init(const music_bank_t *first)
     if (!jo_core_add_vblank_callback(music_vblank)) {
         jo_free(levels); return false;
     }
+    REG(0x400) = 0x0200 | VOLUME_MAX;
     set_volume(VOLUME_MAX);
     return true;
 }

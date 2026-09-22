@@ -11,6 +11,7 @@
 #include "scene_flow.h"
 #include "kokiri_sgl.h"
 #include "cutscene_actor.h"
+#include "action_audio.h"
 
 typedef struct
 {
@@ -37,6 +38,11 @@ typedef struct
     unsigned short applied_frame;
     unsigned char rain, flash;
     short bridge_start;
+    unsigned char scenery_bank;
+    unsigned short sound_frame;
+    short sound_bridge_angle;
+    int32_t sound_navi_y;
+    bool sound_hooves, sound_navi_falling;
 }                   cutscene_state_t;
 
 static cutscene_state_t state;
@@ -75,16 +81,10 @@ static int scene_for_cutscene(unsigned int scene)
 #define CUTSCENE_FIELD_BANK 3
 
 /*
-** Navi's flight uses the ordinary streamed rooms.
-**
-** A single authored bank of the whole zone was tried instead -- the flight
-** crosses rooms that are not resident, so parts of the forest are missing
-** from the shot. It was not worth it: fitting the whole zone into one bank
-** meant 1,795 sixteen-pixel tiles, which came out corrupted and dropped VDP1
-** to 21 FPS, and its capacities grew the shared bank buffers enough to take
-** the .bss gap from 39 KB to 7 KB. Missing scenery during a fly-through is
-** the cheaper problem. tools/build_cutscene_scene.py is kept for a mesh that
-** is actually cheap enough; nothing builds one today.
+** Navi's flight uses S2R0..9, built from the ordinary streamed room meshes.
+** Each bank covers 100 camera frames, keeping the room textures that can
+** enter fog range and flat fog-coloured geometry beyond it. Source trees
+** and huts therefore survive shots that look across a gameplay room portal.
 */
 
 /*
@@ -162,6 +162,11 @@ bool cutscene_start(unsigned int id)
     state.applied_frame = 0;
     state.rain = state.flash = 0;
     state.bridge_start = -1;
+    state.scenery_bank = 0;
+    state.sound_frame = 65535;
+    state.sound_bridge_angle = -16384;
+    state.sound_navi_y = 0;
+    state.sound_hooves = state.sound_navi_falling = false;
     state.player_cue = 0;
     { unsigned int axis; for (axis = 0; axis < 3; ++axis)
         state.navi_pos[axis] = state.navi_velocity[axis] = 0; }
@@ -183,7 +188,7 @@ bool cutscene_start(unsigned int id)
     ** SCENE_CMD_SOUND_SETTINGS(..., NA_BGM_GENERAL_SFX) -- ambience only -- so
     ** the title theme stops here rather than playing on under the narration.
     ** Later beats start their own cue through CS_START_SEQ. */
-    if (id == CUTSCENE_SLEEP)
+    if (id == CUTSCENE_SLEEP || id == CUTSCENE_NIGHTMARE)
         music_silence(CUTSCENE_FADE_FRAMES);
     asset_loading("CUTSCENE SCENE");
     game_mode_set(GAME_MODE_LOADING);
@@ -197,6 +202,10 @@ bool cutscene_start(unsigned int id)
     } else if (cs->scene == CUTSCENE_SCENE_SPOT04) {
         cutscene_actors_free();
         state.scene_loaded = kokiri_scene_load_bank(2, 0);
+    } else if (cs->scene == CUTSCENE_SCENE_LINK_HOME) {
+        cutscene_actors_free();
+        /* Moving house cameras use SKYBOX_HOUSE_LINK, not the fixed JPEG. */
+        state.scene_loaded = kokiri_scene_load_bank(4, 0);
     } else {
         cutscene_actors_free();
         int scene = scene_for_cutscene(cs->scene);
@@ -207,6 +216,8 @@ bool cutscene_start(unsigned int id)
     asset_loading(cs->track_file);
     if (!load_track(cs))
         return (false);
+    asset_loading("OPENING.PCM");
+    if (!action_audio_set_opening(true)) return false;
     asset_loading_done();
     game_mode_set(GAME_MODE_CUTSCENE);
     state.active = true;
@@ -245,6 +256,11 @@ static void update_fade(const cutscene_t *cs)
         int into = (int)state.frame - fade->start;
         int lerp_num, lerp_den;
 
+        /* z_demo.c: CS_TRANS_TRIGGER_INSTANCE sets transitionControl=1.
+         * It does not set screenFillColor/alpha. Treating it as an opaque
+         * fill blacked out the Deku Tree throughout his speech. */
+        if (fade->direction == CUTSCENE_FADE_TRIGGER) continue;
+
         if (into < 0) {
             /* Not reached yet. Only the FIRST pending transition decides what
             ** is on screen now, and only if it expects to start opaque. */
@@ -277,8 +293,7 @@ static void update_fade(const cutscene_t *cs)
                 alpha = (unsigned int)(255 - 155 * (lerp_den - lerp_num)
                                        / lerp_den);
                 break;
-            default:            /* CUTSCENE_FADE_INSTANT */
-                alpha = 255;
+            default:
                 break;
         }
     }
@@ -295,10 +310,63 @@ static void apply_camera(const cutscene_point_t *point)
     demo_pitch = point->pitch;
 }
 
+static void step_sounds(void)
+{
+    unsigned int i;
+    if (state.sound_frame == state.frame) return; /* held text is not a new cue */
+    state.sound_frame = state.frame;
+    if (state.id == CUTSCENE_NIGHTMARE) {
+        /* EnViewer_UpdateImpl, scene layer 4: the original shot-cut accents. */
+        static const unsigned short cuts[] = {20,59,71,129,140,219,280,320,380,409,438};
+        const cutscene_cue_t *horse = state.actor_cues[0];
+        const cutscene_cue_t *ganon = state.actor_cues[1];
+        int angle = cutscene_bridge_angle();
+        bool hooves = horse && state.frame <= horse->end &&
+                      (horse->x != horse->ex || horse->z != horse->ez);
+        if (!state.frame) action_audio_opening_play(OPENING_RAIN, 0, true);
+        for (i = 0; i < sizeof(cuts)/sizeof(cuts[0]); ++i)
+            if (state.frame == cuts[i]) action_audio_opening_play(OPENING_CUT, 1, false);
+        /* Pair the lightning flashes, so the second flash does not restart
+         * the same thunder tail a fraction of a second later. */
+        if (state.frame == 20 || state.frame == 163 || state.frame == 370)
+            action_audio_opening_play(OPENING_THUNDER, 2, false);
+        if (angle > -16384 && state.sound_bridge_angle == -16384)
+            action_audio_opening_play(OPENING_BRIDGE, 3, true);
+        if (angle == 0 && state.sound_bridge_angle < 0) {
+            action_audio_opening_stop(3);
+            action_audio_opening_play(OPENING_BRIDGE_STOP, 3, false);
+        }
+        state.sound_bridge_angle = (short)angle;
+        if (hooves != state.sound_hooves) {
+            if (hooves) action_audio_opening_play(OPENING_HOOVES, 4, true);
+            else action_audio_opening_stop(4);
+            state.sound_hooves = hooves;
+        }
+        /* The rearing cue begins at 361; EnViewer sounds source frames 8
+         * and 30 before its animation update. */
+        if (state.frame == 369) action_audio_opening_play(OPENING_NEIGH, 5, false);
+        if (state.frame == 391) action_audio_opening_play(OPENING_HOOVES, 6, false);
+        if (ganon && ganon->id == 2 && state.frame == (unsigned int)ganon->start + 25)
+            action_audio_opening_play(OPENING_DUST, 6, false);
+    } else if (state.id == CUTSCENE_WAKE_UP) {
+        const cutscene_cue_t *navi = state.actor_cues[8];
+        int32_t y = state.actor_pos[8][1];
+        bool falling = y < state.sound_navi_y;
+        /* EnElf: entrance frame 55, then each downward turn while waking Link. */
+        if (state.frame == 55 || (navi && navi->id == 3 && falling && !state.sound_navi_falling))
+            action_audio_opening_play(OPENING_DASH, 1, false);
+        state.sound_navi_y = y;
+        state.sound_navi_falling = falling;
+    }
+}
+
 static void step_events(const cutscene_t *cs, bool confirm)
 {
     while (state.text_cursor < cs->text_count &&
            cs->text[state.text_cursor].start <= (short)state.frame) {
+        /* A following NONE/text command may start exactly at hold_end.
+         * Do not erase the current page before the clock can hold it. */
+        if (message_is_active()) break;
         unsigned short id = cs->text[state.text_cursor].id;
         if (id) {
             message_start(id);
@@ -313,6 +381,9 @@ static void step_events(const cutscene_t *cs, bool confirm)
         const cutscene_music_t *music = &cs->music[state.music_cursor];
         const music_bank_t *bank = bank_for_cutscene(music->bank);
 
+        /* A scene can reach its cue while the previous score still fades.
+         * Keep the cue pending: the player refuses switches while busy. */
+        if (bank && music_busy()) break;
         if (music->stop) {
             /* CS_STOP_SEQ. Only silence what is actually playing: the stop
             ** names a sequence, and if a later cue has already replaced it
@@ -337,6 +408,13 @@ bool cutscene_step(bool confirm)
     if (!state.active || state.id >= CUTSCENE_COUNT)
         return (false);
     cs = &cutscenes[state.id];
+    if (cs->scene == CUTSCENE_SCENE_SPOT04 &&
+        state.frame / 100 != state.scenery_bank) {
+        /* Wait for the previous VDP1 draw before replacing its textures. */
+        if (!(JO_VDP1_EDSR & 2)) return true;
+        state.scenery_bank = (unsigned char)(state.frame / 100);
+        state.scene_loaded = kokiri_scene_load_bank(2, state.scenery_bank);
+    }
     if (state.frame < cs->frames)
         apply_camera(&state.track[state.frame]);
     {
@@ -354,6 +432,7 @@ bool cutscene_step(bool confirm)
     state.applied_frame = state.frame;
     update_cues(cs);
     update_fade(cs);
+    step_sounds();
     step_events(cs, confirm);
     /*
     ** A cutscene waits for what it is saying.
@@ -379,6 +458,10 @@ bool cutscene_step(bool confirm)
                 state.finished = true;
         } else {
             cutscene_actors_free();
+            asset_loading("ACTIONS.PCM");
+            if (!action_audio_set_opening(false))
+                jo_core_error("Action sound bank reload failed");
+            asset_loading_done();
             save_set_event_chk_inf(EVENTCHKINF_DEKU_TREE_INTRO_CS_SEEN);
         }
         return (state.active);

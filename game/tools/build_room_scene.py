@@ -52,6 +52,10 @@ def pack_room(vertices, faces, tiles, records, normal):
     for f in faces:
         data.extend(struct.pack('>3i4H',*normal(baked,f['idx']),*f['idx']))
     for f in faces:
+        if 'colour' in f:
+            data.extend(struct.pack('>BB5H', 0 if f['cull'] else 1, 0x67,
+                                    0, 0xA8, f['colour'], 0, 4))
+            continue
         # SGL 3.02j ATTR: flag, sort, texno, atrb, colno, gstb, dir.
         # Matches ATTRIBUTE(... SORT_CEN|UsePalette|UseNearClip, sprNoflip).
         data.extend(struct.pack('>BB5H',0 if f['cull'] else 1,0x67,
@@ -80,6 +84,7 @@ def emit_rooms(args, head, actor, normal):
 
     out = args.out
     summaries = []
+    forest_rooms = []
     portals = []
     for scene_id, entry in enumerate(SCENES):
         prefix = entry['prefix']
@@ -99,6 +104,8 @@ def emit_rooms(args, head, actor, normal):
                 quad_obj=args.quad_obj, source_path=args.scene, room=room,
                 prefix=prefix)
             manifest = json.loads((folder / 'texture_manifest.json').read_text())
+            if prefix == 'spot04':
+                forest_rooms.append((vertices, faces, tiles))
             mesh, pixels, bounds = pack_room(vertices, faces, tiles,
                                              manifest['faces'], normal)
             (out / ('S%dR%d.MSH' % (scene_id, room_id))).write_bytes(mesh)
@@ -109,15 +116,11 @@ def emit_rooms(args, head, actor, normal):
                                   objects=len(bounds),
                                   budget=manifest['budget'],
                                   workshop=manifest['workshop']))
-    # The cutscene forest is a bank too, built by build_cutscene_scene.py from
-    # an authored OBJ rather than from the ROM. It shares these buffers, so its
-    # counts have to be in the maximum or room_load_bank() would refuse it.
-    cutscene_bank = out / 'cutscene_bank.json'
+    # Opening banks share these buffers and the source room artwork. Include
+    # their actual capacities, never an old authored cutscene mesh manifest.
     sized = list(summaries)
-    if cutscene_bank.is_file():
-        # Only its sizes: it has no prefix, room id or texture budget of the
-        # kind the per-room report below prints.
-        sized.append(json.loads(cutscene_bank.read_text()))
+    from build_opening_banks import emit_opening_banks
+    sized.extend(emit_opening_banks(args.oot, out, forest_rooms, normal))
 
     maximum = lambda key: max(r[key] for r in sized)
     definitions = dict(VERTEX_COUNT=maximum('vertices'),

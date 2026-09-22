@@ -607,8 +607,19 @@ void demo_update(void)
             if (cutscene_frame() >= DOSEI_CUTSCENE_PROBE_FRAME) continue;
 #endif
             unsigned int previous_cutscene = cutscene_id();
+            unsigned int previous_scenery = cutscene_frame() / 100;
+#ifdef DOSEI_CUTSCENE_PROBE_AUTO
+            /* Full-opening unattended replay, including scene/bank changes.
+             * Diagnostic only; never enabled in a player image. */
+            interact_pending = true;
+#endif
             cutscene_step(interact_pending);
-            if (cutscene_id() != previous_cutscene) {
+            if (cutscene_id() != previous_cutscene ||
+                (previous_cutscene == CUTSCENE_NAVI_FLY &&
+                 cutscene_frame() / 100 != previous_scenery) ||
+                ticks - now > refresh / 2) {
+                /* Synchronous scenery CD loads must not become catch-up
+                 * ticks that skip the next shot or consume reading time. */
                 cutscene_phase = 0;
                 cutscene_tick = ticks;
             }

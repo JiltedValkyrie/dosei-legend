@@ -24,6 +24,7 @@
 #include "kokiri_scene.h"
 #include "scene_table.h"
 #include "link_scene.h"
+#include "link_clips.h"
 #include "kokiri_sgl.h"
 #include "vdp1_layout.h"
 static unsigned int texture_base = GAME_TEXTURE_BASE;
@@ -46,8 +47,10 @@ static unsigned int texture_base = GAME_TEXTURE_BASE;
 #endif
 #define FIELD_FAR 9000
 static int forest_far_current = FOREST_FAR_DEFAULT;
+static unsigned char forest_scene;
 #define FOREST_FAR (forest_far_current)
-#define FOREST_FOG_START (FOREST_FAR / 2)
+#define FOREST_FOG_END (forest_scene == 2 ? 1310 : FOREST_FAR)
+#define FOREST_FOG_START (FOREST_FOG_END / 2)
 static short forest_depth[KOKIRI_VERTEX_COUNT];
 static short tile_depth[KOKIRI_TILE_COUNT];
 static unsigned char tile_fog[KOKIRI_TILE_COUNT];
@@ -139,7 +142,8 @@ static unsigned char forest_face_flags(unsigned int i)
 {
     const ATTR *attr = &kokiri_pdata.attbl[i];
     return (unsigned char)(((attr->atrb & MESHon) != 0) |
-                           (((attr->sort & 3u) == SORT_MAX) ? 2u : 0u));
+                           (((attr->sort & 3u) == SORT_MAX) ? 2u : 0u) |
+                           (((attr->dir & 7) != 4) ? 4u : 0u));
 }
 
 /* Pixel blobs are staged on the CD rather than compiled in: as C arrays they
@@ -171,10 +175,6 @@ static unsigned char forest_face_flags(unsigned int i)
 #define MSGEND_FILE         "MSGEND.RGB"
 #define MSGMARK_SIZE        16
 #define MSGMARK_PIXEL_BYTES (MSGMARK_SIZE * MSGMARK_SIZE * 2)
-/* Depth for the message overlay. Must exceed every screen distance the game
-** uses, shifted by SGL's display level: 240 >> 3 = 30 in the world, and
-** 277 >> 3 = 34 inside Link's house. */
-#define MSGBOX_PLANE        40
 #define MENU_PIXEL_BYTES    (MENU_TEX_SIZE * MENU_TEX_SIZE * 2)
 #define FAIRY_WIDTH         16
 #define FAIRY_HEIGHT        16
@@ -282,6 +282,7 @@ static bool         mesh_load(const char *file, unsigned int pixel_bytes,
     for (i = 0; i < polygons; ++i)
     {
         ATTR            *attr = &pdata->attbl[i];
+        if ((attr->dir & 7) == 4) continue; /* Flat face has no tile or CLUT. */
         unsigned int     tile = attr->texno;
         unsigned int     clut = (unsigned int)(clut_vram + tile * 32);
 
@@ -561,6 +562,7 @@ static bool room_load_bank(unsigned int scene, unsigned int room)
     for (i=0;i<forest_tile_count;++i) tile_fog[i] = 255;
     forest_prepared = false;
     forest_room = (int)room;
+    forest_scene = (unsigned char)scene;
     forest_far_current = scene == KOKIRI_FIELD_SCENE ? FIELD_FAR :
                          (scene == 2 ? 2620 : FOREST_FAR_DEFAULT);
     return true;
@@ -680,6 +682,12 @@ unsigned int        kokiri_scene_vram_used(void)
     return (vram_used);
 }
 
+unsigned int        kokiri_scene_vram_percent(void)
+{
+    unsigned int allocated = texture_base + vram_used + (0x80000u - 0x7fef8u);
+    return allocated >= 0x80000u ? 100u : allocated * 100u / 0x80000u;
+}
+
 static void         submit(PDATA *pdata, unsigned int bit)
 {
     /* slPutPolygon returns FALSE when SGL cannot accept the list, e.g. the
@@ -737,6 +745,19 @@ void                kokiri_scene_draw(void)
     unsigned int i, j, visible = forest_polygon_count;
     int32_t sine, cosine;
     frame_timer_begin(FRAME_PHASE_PREP);
+    if (forest_scene == 4) {
+        /* Original pre-rendered house panorama, centred on the eye just as
+         * Skybox_Draw does. Large radius sorts the art behind Link/Navi. */
+        kokiri_rejected = 0;
+        kokiri_accepted_mask = 0;
+        submitted = 0;
+        frame_timer_end(FRAME_PHASE_PREP);
+        jo_3d_push_matrix();
+        jo_3d_translate_matrix(demo_camera.x, -demo_camera.y, demo_camera.z);
+        submit(&kokiri_pdata, 1u);
+        jo_3d_pop_matrix();
+        return;
+    }
     /* Geometry/fog depend on the camera. Unaccepted actor-order experiments
      * are excluded from normal builds. */
     if (forest_prepared && prepared_x == demo_camera.x &&
@@ -852,6 +873,35 @@ void                kokiri_scene_draw(void)
         {
             ATTR *attr = &kokiri_pdata.attbl[i];
             unsigned int tile = attr->texno - forest_sprite_base;
+            if (forest_scene == 2 && (forest_mesh[i] & 4)) {
+                const unsigned short *v = kokiri_pdata.pltbl[i].Vertices;
+                int low_x = 32767, high_x = -32768;
+                int low_z = 32767, high_z = -32768;
+                int dx, dz;
+                for (j = 0; j < 4; ++j) {
+                    int x = kokiri_pdata.pntbl[v[j]][0] >> 16;
+                    int z = kokiri_pdata.pntbl[v[j]][2] >> 16;
+                    if (x < low_x) low_x = x;
+                    if (x > high_x) high_x = x;
+                    if (z < low_z) low_z = z;
+                    if (z > high_z) high_z = z;
+                }
+                dx = demo_camera.x < low_x ? low_x - demo_camera.x :
+                     demo_camera.x > high_x ? demo_camera.x - high_x : 0;
+                dz = demo_camera.z < low_z ? low_z - demo_camera.z :
+                     demo_camera.z > high_z ? demo_camera.z - high_z : 0;
+                if ((int64_t)dx * dx + (int64_t)dz * dz > 1310 * 1310 ||
+                    nearest >= FOREST_FOG_END) {
+                    attr->dir = (attr->dir & ~7u) | 4;
+                    attr->atrb = (attr->atrb & ~0x38u) | CL32KRGB;
+                    attr->colno = C_RGB(27, 27, 19);
+                } else {
+                    attr->dir = (attr->dir & ~7u) | 2;
+                    attr->atrb = (attr->atrb & ~0x38u) | (1 << 3);
+                    attr->colno = (unsigned short)VRAM_UNITS(
+                        (unsigned int)(forest_palette + tile * 32) - JO_VDP1_VRAM);
+                }
+            }
             /* SGL sorts on one depth per polygon. A big ground quad reaching
             ** away from the eye has a CENTRE depth nearer than the actor
             ** standing on it, so it painted over Link's legs. The converter
@@ -871,7 +921,8 @@ void                kokiri_scene_draw(void)
             /* Only the parked command-order experiment consumes this tag. */
             attr->gstb = (unsigned short)(i + 1);
 #endif
-            if (nearest < tile_depth[tile]) tile_depth[tile] = nearest;
+            if (tile < forest_tile_count && (attr->dir & 7) != 4 &&
+                nearest < tile_depth[tile]) tile_depth[tile] = nearest;
 #ifdef DOSEI_WARP_PROBE
             {
                 const unsigned short *v = kokiri_pdata.pltbl[i].Vertices;
@@ -961,9 +1012,9 @@ void                kokiri_scene_draw(void)
         /* Most tiles are either unused/far or fully clear. Avoid signed
          * division for those, preserving the exact original fog steps. */
         if (tile_depth[i] <= FOREST_FOG_START) amount = 0;
-        else if (tile_depth[i] >= FOREST_FAR) amount = 16;
+        else if (tile_depth[i] >= FOREST_FOG_END) amount = 16;
         else amount = (tile_depth[i] - FOREST_FOG_START) * 16 /
-                      (FOREST_FAR - FOREST_FOG_START);
+                      (FOREST_FOG_END - FOREST_FOG_START);
         if (tile_fog[i] == amount) continue;
         tile_fog[i] = (unsigned char)amount;
         rg = fog_channel[0][amount];
@@ -1008,7 +1059,17 @@ void                kokiri_link_draw(int x, int y, int z, int yaw)
     jo_3d_push_matrix();
     {
         jo_3d_translate_matrix(x, -y, z);
-        jo_3d_rotate_matrix_y((yaw * 360) >> 16);
+        slRotY((ANGLE)yaw);
+        if (cutscene_is_playing() && cutscene_id() == CUTSCENE_NIGHTMARE) {
+            /* OoT's camera/cues use Actor_Init's 0.01 model scale. Gameplay
+             * normalizes Link to 60 units and grounds him; undo that here.
+             * Otherwise the bridge fly-by enters the enlarged head. */
+            const FIXED native_scale = (FIXED)(4294967296ULL /
+                                              (100u * LINK_ANIM_SCALE_Q16));
+            slScale(native_scale, native_scale, native_scale);
+            jo_3d_translate_matrix(-LINK_ANIM_SHIFT_X, LINK_ANIM_SHIFT_Y,
+                                    -LINK_ANIM_SHIFT_Z);
+        }
         if (equipped_mask != gameplay.equipped) {
             equipped_count = 0;
             link_part(LINK_BODY_FIRST, LINK_BODY_COUNT);
@@ -1282,22 +1343,23 @@ void                kokiri_message_box_draw(int x, int y, int width, int height)
     pos[1] = (y - JO_TV_HEIGHT_2) * 65536;
     /* SGL rejects a sprite nearer than screen_distance >> display_level.
     ** Gameplay uses 240 (near 30) but Link's house sets its backdrop's own
-    ** 277 (near 34), so the 31 the rupee HUD uses is culled in there -- which
-    ** is why the box vanished in the house and left unreadable blue text on
-    ** the backdrop. 40 clears both and is still far nearer than any world
-    ** polygon. */
-    pos[2] = MSGBOX_PLANE * 65536;
+    ** 277 (near 34), while narrow cutscene shots go much farther. Follow the
+    ** active shot's near plane rather than using a fixed overlay depth. */
+    pos[2] = (int)((cutscene_screen_distance() > 277 ?
+                   cutscene_screen_distance() : 277) / 8 + 3) * 65536;
     pos[3] = (width * 65536) / MSGBOX_WIDTH;
     pos[4] = (height * 65536) / MSGBOX_HEIGHT;
     attr.texno = (Uint16)msgbox_sprite;
     attr.atrb |= (FAIRY_COLMODE_RGB & 7) << 3;
+    attr.atrb |= MESHon;
 #ifdef DOSEI_HIRES
     /* Screen-space sprites bypass the world's vertical scale. */
     pos[1] = (y * 2 - JO_TV_HEIGHT_2) * 65536;
     pos[4] = (height * 2 * 65536) / MSGBOX_HEIGHT;
     if (slDispSpriteHV(pos, &attr, 1) == FALSE) ++kokiri_rejected;
 #else
-    if (slDispSprite(pos, &attr, 0) == FALSE) ++kokiri_rejected;
+    /* Unequal X/Y scales require HV; slDispSprite uses X for both axes. */
+    if (slDispSpriteHV(pos, &attr, 1) == FALSE) ++kokiri_rejected;
 #endif
 }
 
@@ -1314,13 +1376,14 @@ void                kokiri_message_mark_draw(int x, int y, bool last_page)
     pos[0] = (x - JO_TV_WIDTH_2) * 65536;
     pos[1] = (y - JO_TV_HEIGHT_2) * 65536;
     /* One nearer than the panel, so it lands on top of it. */
-    pos[2] = (MSGBOX_PLANE + 1) * 65536;
-    pos[3] = pos[4] = 65536;
+    pos[2] = (int)((cutscene_screen_distance() > 277 ?
+                   cutscene_screen_distance() : 277) / 8 + 2) * 65536;
+    pos[3] = pos[4] = 32768; /* Eight pixels fit the padded bottom row. */
     attr.texno = (Uint16)msgmark_sprite[last_page ? 1 : 0];
     attr.atrb |= (FAIRY_COLMODE_RGB & 7) << 3;
 #ifdef DOSEI_HIRES
     pos[1] = (y * 2 - JO_TV_HEIGHT_2) * 65536;
-    pos[4] = 2 * 65536;
+    pos[4] = 65536;
     if (slDispSpriteHV(pos, &attr, 1) == FALSE) ++kokiri_rejected;
 #else
     if (slDispSprite(pos, &attr, 0) == FALSE) ++kokiri_rejected;
@@ -1463,12 +1526,15 @@ void kokiri_cutscene_effects_draw(void)
     if (count) {
         /* Original raindrop triangle (gameplay_keep/gRaindropVtx), scaled
          * 0.4,1.2,0.4. Saturn mesh approximates the translucent source. */
-        POINT points[3] = {{0,-2516582,0},{-26214,-2516582,0},{-26214,2516582,0}};
-        POLYGON polygon = {{0,0,65536},{0,1,2,2}};
-        ATTR attr = ATTRIBUTE(Dual_Plane, SORT_CEN, 0,
+        /* slPutPolygon queues table pointers for the slave SH-2; it does
+         * not copy these tables before returning. Keep them alive through
+         * slSynch, including the final drop submitted before this returns. */
+        static POINT points[3] = {{0,-2516582,0},{-26214,-2516582,0},{-26214,2516582,0}};
+        static POLYGON polygon = {{0,0,65536},{0,1,2,2}};
+        static ATTR attr = ATTRIBUTE(Dual_Plane, SORT_CEN, 0,
                               C_RGB(18,31,31), No_Gouraud,
                               CL32KRGB | MESHon | ECdis, sprPolygon, UseNearClip);
-        PDATA data = {points,3,&polygon,1,&attr};
+        static PDATA data = {points,3,&polygon,1,&attr};
         int32_t sy, cy, sp, cp;
         uint32_t random = cutscene_frame() * 1664525u + 1013904223u;
         kokiri_camera_sincos(demo_yaw, &sy, &cy);

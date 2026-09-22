@@ -28,6 +28,8 @@ bool            kokiri_scene_update(void);
 
 /** @brief VDP1 bytes consumed, valid after kokiri_scene_load(). */
 unsigned int    kokiri_scene_vram_used(void);
+/* Share of 512 KiB VDP1 VRAM allocated to textures and reserved tables. */
+unsigned int    kokiri_scene_vram_percent(void);
 
 /** @brief Submit the forest. Resets the per-frame submission counters, so it
  *  must be called before any actor draw in the same frame. */

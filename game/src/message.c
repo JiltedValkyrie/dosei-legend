@@ -110,15 +110,19 @@ bool                message_step(bool confirm)
         return (true);
     }
 
-    ++message_state.page_ticks;
+    if (message_state.page_ticks < 65535)
+        ++message_state.page_ticks;
     switch (page->advance) {
         case CUTSCENE_ADVANCE_DELAY:
             if (message_state.page_ticks >= page->delay && confirm)
                 advance();
             break;
         case CUTSCENE_ADVANCE_FADE:
+            /* The source delay starts after reveal. Do not add a second,
+             * length-based reading hold after the player has read along. */
             if (message_state.page_ticks >= page->delay) {
-                unsigned int gone = message_state.page_ticks - page->delay;
+                unsigned int delay = page->delay;
+                unsigned int gone = message_state.page_ticks - delay;
                 if (gone >= MESSAGE_FADE_TICKS)
                     advance();
                 else

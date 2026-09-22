@@ -301,7 +301,8 @@ static void         viewer_draw(void)
                          demo_link.z, demo_link_yaw);
         frame_timer_end(FRAME_PHASE_LINK);
     }
-    if (cutscene_is_playing()) kokiri_cutscene_effects_draw();
+    if (cutscene_is_playing() && !cutscene_hides_scene())
+        kokiri_cutscene_effects_draw();
     rejected_total += kokiri_scene_rejected();
     cutscene_fade();
     cutscene_text();
@@ -314,6 +315,16 @@ static void         viewer_draw(void)
             jo_printf(0, 1, "ACT %d X %d Z %d REJ %d   ", cutscene_actors_ready(),
                       cutscene_actor_channel_x(1), cutscene_actor_channel_z(1),
                       kokiri_scene_rejected());
+#ifdef DOSEI_CUTSCENE_PROBE
+            jo_printf(0, 2, "MUS %d BUSY %d FAIL %d T %d   ",
+                      music_current() == &music_bank_nightmare,
+                      music_busy(), music_failed(), (int)music_ticks());
+#ifdef DOSEI_CUTSCENE_PROBE_FRAME
+            jo_printf(0, 3, "CAMERA TEST HOLD AT %d", DOSEI_CUTSCENE_PROBE_FRAME);
+#elif defined(DOSEI_CUTSCENE_PROBE_AUTO)
+            jo_printf(0, 3, "AUTOMATIC OPENING TEST");
+#endif
+#endif
             debug_visible = true;
         } else if (debug_visible) {
             jo_printf(0, 0, "                                        ");
@@ -329,6 +340,16 @@ static void         viewer_draw(void)
     if (!demo_title_is_visible() && !demo_file_select_is_visible() &&
         !cutscene_is_playing())
         kokiri_rupee_hud_draw();
+    {
+        /* Callback share of frame time: an estimate of master-CPU work,
+         * not total utilization across both SH-2s. Sync includes GPU/VBlank
+         * waiting. Existing smoothed timings keep the display readable. */
+        unsigned int work = frame_timer_frame();
+        unsigned int total = work + frame_timer_cost(FRAME_PHASE_SYNC);
+        unsigned int cpu = total ? work * 100u / total : 0;
+        jo_printf(1, JO_TV_HEIGHT / 8 - 1, "VRAM %3u%%   CPU~ %3u%%   ",
+                  kokiri_scene_vram_percent(), cpu);
+    }
     frame_timer_frame_end();
     frame_timer_begin(FRAME_PHASE_SYNC);
 }
@@ -351,6 +372,8 @@ static void         viewer_draw(void)
 static void         cutscene_fade(void)
 {
     static int last_level = -999;
+    static bool last_hidden;
+    bool hidden = cutscene_hides_scene();
     unsigned int alpha = cutscene_fade_alpha();
     int flash = cutscene_lightning();
     Sint16 level = (Sint16)(flash - (int)alpha);
@@ -358,8 +381,9 @@ static void         cutscene_fade(void)
     if (alpha && cutscene_fade_colour() != CUTSCENE_FADE_BLACK)
         level = (Sint16)(flash + (int)alpha);
     if (level > 255) level = 255;
-    if (level == last_level) return;
+    if (level == last_level && hidden == last_hidden) return;
     last_level = level;
+    last_hidden = hidden;
     if (!level) {
         slColOffsetOff(NBG1ON | RBG0ON | SPRON | BACKON);
         return;
@@ -367,6 +391,9 @@ static void         cutscene_fade(void)
     slColOffsetB(level, level, level);
     slColOffsetBUse(NBG1ON | RBG0ON | SPRON | BACKON);
     slColOffsetOn(NBG1ON | RBG0ON | SPRON | BACKON);
+    /* At full cover the world is not submitted. The only sprites left are
+     * the text panel and its notice; keep them visible during narration. */
+    if (hidden) slColOffsetOff(SPRON);
 }
 
 /*
@@ -385,7 +412,7 @@ static void         cutscene_fade(void)
 static unsigned int cutscene_text_colour(unsigned int colour)
 {
     switch (colour) {
-        /* Navi's light blue. Jo has no light blue slot, so Blue carries it. */
+        /* The Blue font palette is bright cyan while cutscene text is active. */
         case CUTSCENE_COLOUR_BLUE: return JO_COLOR_INDEX_Blue;
         case CUTSCENE_COLOUR_RED:  return JO_COLOR_INDEX_Red;
         default:                   return JO_COLOR_INDEX_White;
@@ -407,8 +434,8 @@ static unsigned int cutscene_text_colour(unsigned int colour)
 /* One padding row above and below the text, and the box only as tall as the
 ** page needs. Two rows each way made it swallow half the screen. */
 #define CUTSCENE_BOX_PAD    1
-#define CUTSCENE_BOX_LEFT   2
-#define CUTSCENE_BOX_RIGHT  37
+#define CUTSCENE_BOX_LEFT   0
+#define CUTSCENE_BOX_RIGHT  39
 #define CUTSCENE_BOX_WIDTH  (CUTSCENE_BOX_RIGHT - CUTSCENE_BOX_LEFT + 1)
 
 /* Row the box starts on, for a message of `lines` lines.
@@ -447,6 +474,7 @@ static void         cutscene_text(void)
     if (!message_is_active()) {
         if (was_active) {
             cutscene_box_clear(last_top, last_rows);
+            jo_set_printf_palette_color(JO_COLOR_INDEX_Blue, JO_COLOR_Blue);
             was_active = false;
         }
         return;
@@ -461,6 +489,8 @@ static void         cutscene_text(void)
     /* A box that moved or changed size must wipe where it was first. */
     if (was_active && (top != last_top || rows != last_rows))
         cutscene_box_clear(last_top, last_rows);
+    if (!was_active)
+        jo_set_printf_palette_color(JO_COLOR_INDEX_Blue, C_RGB(18, 28, 31));
     was_active = true;
     last_top = top;
     last_rows = rows;

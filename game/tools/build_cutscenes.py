@@ -90,7 +90,7 @@ TRANSITIONS = {
     'CS_TRANS_WHITE_FILL_OUT':          ('WHITE', 'OUT'),
     'CS_TRANS_BLACK_FILL_OUT_TO_HALF':  ('BLACK', 'OUT_HALF'),
     'CS_TRANS_BLACK_FILL_IN_FROM_HALF': ('BLACK', 'IN_HALF'),
-    'CS_TRANS_TRIGGER_INSTANCE':        ('BLACK', 'INSTANT'),
+    'CS_TRANS_TRIGGER_INSTANCE':        ('BLACK', 'TRIGGER'),
 }
 
 # Music. Each original sequence becomes one of our CD banks; see
@@ -409,6 +409,22 @@ def cue(args):
                 end_pos=(number(args[9]), number(args[10]), number(args[11])))
 
 
+def nightmare_eye_clearance(eye, frame):
+    """Keep the bridge fly-by outside Link and Saturn's larger near plane.
+
+    The source spline passes through the player's head at (-1,45,1348).
+    A local side arc preserves shot timing. Its squared
+    falloff has zero slope at the 100-unit boundary, avoiding a camera jump.
+    Other shots and the house cameras remain exact source splines.
+    """
+    if not 140 <= frame < 220:
+        return eye
+    x, y, z = eye
+    distance2 = (x + 1)**2 + (y - 45)**2 + (z - 1348)**2
+    weight = max(0., 1. - distance2 / 10000.)
+    return (x + 48. * weight * weight, y, z)
+
+
 def bake_camera(eye_shots, at_shots, frames, scene=None):
     """Per-frame camera for the whole cutscene.
 
@@ -429,7 +445,7 @@ def bake_camera(eye_shots, at_shots, frames, scene=None):
                 track[at_frame] = sample
 
     baked, last = [], None
-    for sample in track:
+    for frame, sample in enumerate(track):
         if sample is None:
             sample = last
         last = sample
@@ -437,6 +453,14 @@ def bake_camera(eye_shots, at_shots, frames, scene=None):
             baked.append((0, 0, 0, 0, 0, 0, 0))
             continue
         eye, look, roll, fov = sample
+        if scene == 'SPOT00':
+            source_eye = eye
+            eye = nightmare_eye_clearance(eye, frame)
+            # Follow the head during the side-step instead of losing Link
+            # off the edge of this narrow-FOV shot. Same smooth local weight.
+            weight = (eye[0] - source_eye[0]) / 48.
+            look = tuple(a + weight * (b - a)
+                         for a, b in zip(look, (-1., 45., 1348.)))
         yaw, pitch = look_angles(eye, look)
         # Store the SGL screen distance rather than the fov, by the same rule
         # build_scene_table.py uses for a prerendered room's fixed camera: half
