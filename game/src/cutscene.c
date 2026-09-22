@@ -53,24 +53,17 @@ static int scene_for_cutscene(unsigned int scene)
 }
 
 /*
-** Navi's flight is shown from a bank of its own.
+** Navi's flight uses the ordinary streamed rooms.
 **
-** The streamed rooms hold one room at a time, and the flight crosses the whole
-** of Kokiri Forest -- through rooms that are not resident, so most of the zone
-** would simply be missing. CUTSCENE_FOREST_BANK is the authored
-** kokiriforest-newGameCs mesh: the whole zone at a polygon count one bank can
-** hold, built by tools/build_cutscene_scene.py.
-**
-** Only one bank is ever resident, so while it plays there is no hut and no
-** other forest room in VDP1 VRAM, and the whole texture budget is the shot's.
-** Gameplay reloads the ordinary rooms afterwards.
+** A single authored bank of the whole zone was tried instead -- the flight
+** crosses rooms that are not resident, so parts of the forest are missing
+** from the shot. It was not worth it: fitting the whole zone into one bank
+** meant 1,795 sixteen-pixel tiles, which came out corrupted and dropped VDP1
+** to 21 FPS, and its capacities grew the shared bank buffers enough to take
+** the .bss gap from 39 KB to 7 KB. Missing scenery during a fly-through is
+** the cheaper problem. tools/build_cutscene_scene.py is kept for a mesh that
+** is actually cheap enough; nothing builds one today.
 */
-#define CUTSCENE_FOREST_BANK 2
-
-static bool uses_cutscene_forest(unsigned int id)
-{
-    return (id == CUTSCENE_NAVI_FLY);
-}
 
 /*
 ** The bank a CS_START_SEQ asks for, or NULL when we have not built it.
@@ -157,11 +150,7 @@ bool cutscene_start(unsigned int id)
     if (id == CUTSCENE_SLEEP)
         music_silence(CUTSCENE_FADE_FRAMES);
     game_mode_set(GAME_MODE_LOADING);
-    if (uses_cutscene_forest(id)) {
-        /* Straight to the bank: this one has no scene_table entry, because it
-        ** is never walked into, only flown through. */
-        state.scene_loaded = kokiri_scene_load_bank(CUTSCENE_FOREST_BANK, 0);
-    } else {
+    {
         int scene = scene_for_cutscene(cs->scene);
 
         state.scene_loaded = scene >= 0 &&
