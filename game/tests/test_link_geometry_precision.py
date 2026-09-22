@@ -68,9 +68,10 @@ class ModelIdentity(unittest.TestCase):
         self.assertEqual(locals_, face['local'])
         self.assertEqual(limbs, [0, 0, 0])
 
-    def test_head_texture_is_not_flattened(self):
+    def test_marked_head_hair_is_not_flattened(self):
         texture = dict(width=2, height=2, colors=[(200,100,50,255)]*4)
-        face = dict(limb=model.HEAD_LIMB, texture=texture, texture_segment=4)
+        face = dict(limb=model.HEAD_LIMB, texture=texture, texture_segment=4,
+                    hair_detail=True)
         self.assertEqual(model.flatten_faces([face]), 0)
         self.assertIs(face['texture'], texture)
 

@@ -335,7 +335,7 @@ def emit_equipment(out, faces):
 
 
 def flatten_faces(faces):
-    """Flatten body materials, preserving the complete head's textures.
+    """Flatten body materials, preserving marked hair and facial textures.
 
     Link is 62 units tall and his median face spans 7 units, so a 16x16 tile
     gives him 0.4 world units per texel -- roughly 35x finer than the scene's
@@ -343,12 +343,12 @@ def flatten_faces(faces):
     That detail is invisible in play and the VRAM it costs is needed by the
     ground, which is what actually smears.
 
-    Head artwork (including hair/skin, not just eyes/mouth) carries facial shape
+    Hair and face artwork (not headwear) carries facial shape
     at the close gameplay camera and must not be replaced by per-face averages.
     """
     flattened = 0
     for face in faces:
-        if face.get('texture_segment') in FACE_SEGMENTS or face.get('limb') == HEAD_LIMB:
+        if character_textures.keep_texture(face):
             continue
         texture = face['texture']
         if not texture:
@@ -414,6 +414,8 @@ def write_model(faces, out_path, skinned=False, character=True):
     limbs together the moment an animation moves them apart. The cost is a few
     extra vertices; the benefit is that every vertex has one unambiguous owner.
     """
+    if character:
+        flatten_faces(faces)
     if skinned:
         # Pair each posed vertex with the limb-local coordinate it came from.
         # collect_faces() kept face['local'] in the same order as the vertices,
@@ -451,12 +453,13 @@ def write_model(faces, out_path, skinned=False, character=True):
         # A face collapsed to one colour needs no resolution: the smallest
         # tile VDP1 addresses carries it exactly as well as a 16x16 would, and
         # the difference is VRAM the ground needs.
-        # Preserve the existing flat-body policy when requested by the importer.
-        # Textured characters use the shared quarter-pixel budget below, with
-        # source facial materials exempt. Flat bodies need no extra texture.
+        # Every character uses flat body colours regardless of importer flags.
+        # Only marked hair and facial materials keep artwork. Retained hair
+        # uses the shared reduced resolution; faces keep their previous detail.
         # Cutout alpha inside a flattened material is lost; nothing outside the
         # head currently relies on it.
-        flat = face.get('limb') != HEAD_LIMB and not face.get('full_texture')
+        flat = (not character_textures.keep_texture(face) if character else
+                face.get('limb') != HEAD_LIMB and not face.get('full_texture'))
         if flat:
             # One lit colour per flat face, deduplicated after RGB555 conversion.
             # Keep eye/mouth artwork on the normal textured path.

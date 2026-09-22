@@ -1,5 +1,24 @@
 # Character texture budget — 2026-09-22
 
+UPDATE: user still reports a crash. Current policy is flat colours everywhere
+on characters except hair and face. Shared writer enforces this even for
+`full_texture` actors. Hats/hoods are flat; horses retain eyes/nose/mane.
+Constant colour tiles remain a format requirement (40 bytes per unique colour).
+Earlier quarter-body measurements below are historical, not current results.
+
+Current all-actor bank: 61,600 bytes; total VDP1 residency including Link/UI
+and command reservations: 220,720 / 524,288 bytes (42%). Zelda's XML has no
+named head limb: use zero-based 16 from EnZl4's head callback (one-based 17)
+for material classification, without changing the previous import sizes.
+Humanoid facial texture bindings on body limbs are no longer exempt: texture
+state can remain bound after the head list. Existing tiny constant tiles
+represent the flat colours; body artwork is absent.
+
+Normal and clean images rebuilt. 500 tests run: two pre-existing setup compile
+errors, one skip, no assertion failures. User reports a vast improvement.
+No claim that the intermittent emulator crash is resolved.
+
+
 Permanent user policy: halve both dimensions of non-face character tiles at
 import time. Keep face detail at the previous import resolution, and preserve
 existing flat-shaded bodies. See the engineering Bible for future importers.
