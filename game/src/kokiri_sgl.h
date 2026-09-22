@@ -59,6 +59,15 @@ unsigned int    kokiri_scene_room(void);
 void            kokiri_rupees_draw(unsigned int tick);
 void            kokiri_rupee_hud_draw(void);
 /* Pause equipment grid, drawn over the frozen world. */
+/* No sprite slot was available. */
+#define KOKIRI_TILE_NONE 0xFFFFFFFFu
+/* Upload a 4bpp tile into the resident bank's VDP1 space, above the resident
+** meshes, and return its sprite slot. Reclaimed by the next bank load. */
+unsigned int    kokiri_bank_tile_upload(const void *pixels, unsigned int width,
+                                        unsigned int height);
+/* Submit a caller-owned polygon list through the scene's accounting. */
+void            kokiri_submit_pdata(PDATA *pdata);
+
 void            kokiri_menu_draw(void);
 /* OoT's own message panel, drawn behind cutscene text. Screen-space pixels,
 ** centred on (x, y). Silently does nothing if the texture failed to load. */

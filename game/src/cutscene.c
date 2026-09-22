@@ -9,6 +9,7 @@
 #include "save_state.h"
 #include "scene_flow.h"
 #include "kokiri_sgl.h"
+#include "cutscene_actor.h"
 
 typedef struct
 {
@@ -165,7 +166,13 @@ bool cutscene_start(unsigned int id)
     game_mode_set(GAME_MODE_LOADING);
     if (cs->scene == CUTSCENE_SCENE_SPOT00) {
         state.scene_loaded = kokiri_scene_load_bank(CUTSCENE_FIELD_BANK, 0);
+        /* The riders load after the bank, into the VDP1 space it leaves empty
+        ** and the cart RAM nothing else wants. Failing to load them costs the
+        ** shot its riders, not the cutscene. */
+        if (state.scene_loaded)
+            cutscene_actors_load();
     } else {
+        cutscene_actors_free();
         int scene = scene_for_cutscene(cs->scene);
 
         state.scene_loaded = scene >= 0 &&
@@ -319,6 +326,7 @@ bool cutscene_step(bool confirm)
             if (!cutscene_start(next))
                 state.finished = true;
         } else {
+            cutscene_actors_free();
             save_set_event_chk_inf(EVENTCHKINF_DEKU_TREE_INTRO_CS_SEEN);
         }
         return (state.active);
@@ -380,6 +388,72 @@ static int cue_progress(const cutscene_cue_t *cue)
 static int cue_lerp(int from, int to, int progress)
 {
     return (from + (to - from) * progress / 256);
+}
+
+/* The cue running on `channel` this frame, or NULL. */
+static const cutscene_cue_t *current_actor_cue(unsigned int channel)
+{
+    const cutscene_t *cs;
+    unsigned int      i;
+
+    if (!state.active || state.id >= CUTSCENE_COUNT)
+        return ((const cutscene_cue_t *)0);
+    cs = &cutscenes[state.id];
+    for (i = 0; i < cs->actor_cue_count; ++i) {
+        const cutscene_cue_t *cue = &cs->actor_cues[i];
+
+        if (cue->clip == channel &&
+            (short)state.frame >= cue->start && (short)state.frame < cue->end)
+            return (cue);
+    }
+    return ((const cutscene_cue_t *)0);
+}
+
+unsigned int cutscene_actor_channels(void)
+{
+    const cutscene_t *cs;
+    unsigned int      i, highest = 0;
+
+    if (!state.active || state.id >= CUTSCENE_COUNT)
+        return (0);
+    cs = &cutscenes[state.id];
+    for (i = 0; i < cs->actor_cue_count; ++i)
+        if (cs->actor_cues[i].clip + 1u > highest)
+            highest = cs->actor_cues[i].clip + 1u;
+    return (highest);
+}
+
+bool cutscene_actor_channel_visible(unsigned int channel)
+{
+    return (current_actor_cue(channel) != (const cutscene_cue_t *)0);
+}
+
+int32_t cutscene_actor_channel_x(unsigned int channel)
+{
+    const cutscene_cue_t *cue = current_actor_cue(channel);
+
+    return (cue ? cue_lerp(cue->x, cue->ex, cue_progress(cue)) : 0);
+}
+
+int32_t cutscene_actor_channel_y(unsigned int channel)
+{
+    const cutscene_cue_t *cue = current_actor_cue(channel);
+
+    return (cue ? cue_lerp(cue->y, cue->ey, cue_progress(cue)) : 0);
+}
+
+int32_t cutscene_actor_channel_z(unsigned int channel)
+{
+    const cutscene_cue_t *cue = current_actor_cue(channel);
+
+    return (cue ? cue_lerp(cue->z, cue->ez, cue_progress(cue)) : 0);
+}
+
+uint16_t cutscene_actor_channel_yaw(unsigned int channel)
+{
+    const cutscene_cue_t *cue = current_actor_cue(channel);
+
+    return (cue ? cue->yaw : 0);
 }
 
 bool cutscene_link_visible(void)

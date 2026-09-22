@@ -94,10 +94,14 @@ fi
 # The dream's Hyrule Field: flat shaded, no tiles, so it costs no VDP1
 # texture VRAM and can be resident during the opening alongside nothing else.
 if [ "${STREAM_ROOMS:-1}" = 1 ] && \
-   [ -f "$here/levels/hyrule/assets/static/hyrulefield.obj" ]; then
+   [ -f "$here/levels/hyrule/assets/static/hyrulefield-nightmare.obj" ]; then
     "$python" "$here/tools/build_flat_scene.py" \
-        --obj "$here/levels/hyrule/assets/static/hyrulefield.obj"
+        --obj "$here/levels/hyrule/assets/static/hyrulefield-nightmare.obj"
 fi
+# The dream's riders, flat shaded except their heads. Their geometry is read
+# into the cart at cutscene time and their tiles into the bank space the flat
+# field leaves empty, so they cost nothing while the game is not dreaming.
+"$python" "$here/tools/build_actor_model.py" --oot "$oot" --rom-dir "$roms"
 "$python" "$here/tools/build_cutscenes.py" --oot "$oot"
 "$python" "$here/tools/build_title_paths.py"
 if [ "${STREAM_ROOMS:-1}" = 1 ]; then
@@ -110,6 +114,9 @@ else
     cp "$here/build/generated/kokiri_pixels.bin" "$here/build/cd/KOKIRI.TEX"
 fi
 cp "$here/build/generated/link_pixels.bin" "$here/build/cd/LINK.TEX"
+for rider in GANON ZELDA IMPA; do
+    [ -f "$here/build/generated/$rider.BIN" ] &&         cp "$here/build/generated/$rider.BIN" "$here/build/cd/$rider.BIN"
+done
 cp "$here/build/generated/ACTIONS.PCM" "$here/build/cd/ACTIONS.PCM"
 cp "$here/../shared/assets/audio/title/TITLE_PCM.RAW" "$here/build/cd/TITLE.PCM"
 cp "$here/../shared/assets/audio/title/TITLE_LEVELS.RAW" "$here/build/cd/TITLE.LVL"

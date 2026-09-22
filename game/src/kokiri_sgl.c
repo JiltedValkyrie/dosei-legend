@@ -1295,6 +1295,60 @@ void                kokiri_menu_draw(void)
     }
 }
 
+/*
+** Upload one tile into the resident bank's VDP1 space and take a sprite slot.
+**
+** For meshes that are not banks and not resident: the dream's riders, whose
+** textures belong to the shot rather than to the game. They land above
+** resident_bytes, so the next room_load_bank() reclaims them by resetting
+** vram_used, exactly as a bank swap reclaims the previous bank's tiles.
+**
+** KOKIRI_TILE_NONE when the texture area or the sprite table is full, which
+** the caller must treat as a failed load rather than draw with a wrong slot.
+*/
+unsigned int        kokiri_bank_tile_upload(const void *pixels,
+                                            unsigned int width,
+                                            unsigned int height)
+{
+#ifdef KOKIRI_STREAM_ROOMS
+    unsigned int   bytes = width * height / 2;   /* 4bpp */
+    unsigned char *vram = (unsigned char *)JO_VDP1_VRAM + GAME_TEXTURE_BASE
+                          + vram_used;
+    jo_texture_definition *texture;
+    unsigned int   slot;
+
+    if (!width || !height || vram_used + bytes > GAME_TEXTURE_BYTES ||
+        sprite_next >= JO_MAX_SPRITE)
+        return (KOKIRI_TILE_NONE);
+    {
+        const unsigned char *source = (const unsigned char *)pixels;
+        unsigned int         i;
+
+        for (i = 0; i < bytes; ++i)
+            vram[i] = source[i];
+    }
+    slot = sprite_next++;
+    texture = &__jo_sprite_def[slot];
+    texture->width = (unsigned short)width;
+    texture->height = (unsigned short)height;
+    texture->adr = (unsigned short)VRAM_UNITS((unsigned int)vram
+                                              - JO_VDP1_VRAM);
+    texture->size = JO_MULT_BY_32(width & 0x1f8) | height;
+    __jo_sprite_pic[slot].color_mode = COL_16;
+    __jo_sprite_pic[slot].data = vram;
+    vram_used += bytes;
+    return (slot);
+#else
+    (void)pixels; (void)width; (void)height;
+    return (KOKIRI_TILE_NONE);
+#endif
+}
+
+void                kokiri_submit_pdata(PDATA *pdata)
+{
+    submit(pdata, 8u);
+}
+
 unsigned int        kokiri_scene_accepted_mask(void)
 {
     return (kokiri_accepted_mask);

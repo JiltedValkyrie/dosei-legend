@@ -280,6 +280,7 @@ def read_cutscene(entry):
                ignored=set())
 
     eye_shots, at_shots, pending = [], [], None
+    actor_channels, current_channel = [], 0
     for name, args in calls:
         if name in IGNORED:
             out['ignored'].add(name)
@@ -303,8 +304,17 @@ def read_cutscene(entry):
         elif name == 'CS_TEXT_NONE':
             out['text'].append(dict(id=None, start=number(args[0]),
                                     end=number(args[1])))
+        elif name == 'CS_ACTOR_CUE_LIST':
+            # Each list names a cue channel, and each channel is one actor on
+            # screen. The dream has two: the rider being chased and the chaser.
+            channel = args[0].strip()
+            if channel not in actor_channels:
+                actor_channels.append(channel)
+            current_channel = actor_channels.index(channel)
         elif name == 'CS_ACTOR_CUE':
-            out['actor_cues'].append(cue(args))
+            entry = cue(args)
+            entry['channel'] = current_channel
+            out['actor_cues'].append(entry)
         elif name == 'CS_PLAYER_CUE':
             entry_cue = cue(args)
             entry_cue['clip'] = PLAYER_CUES.get(args[0].strip())
@@ -614,6 +624,10 @@ def emit(cutscenes, header_path, source_path, cd_dir, messages):
           '    const cutscene_cue_t   *cues;   unsigned char cue_count;',
           '    const cutscene_fade_t  *fades;  unsigned char fade_count;',
           '    const cutscene_music_t *music;  unsigned char music_count;',
+          '    /* Actors the shot places. `clip` is the cue channel, which is',
+          '    ** one actor on screen -- the dream has two. */',
+          '    const cutscene_cue_t   *actor_cues;',
+          '    unsigned char           actor_cue_count;',
           '} cutscene_t;', '',
           'extern const cutscene_t cutscenes[CUTSCENE_COUNT];', '']
 
@@ -626,6 +640,15 @@ def emit(cutscenes, header_path, source_path, cd_dir, messages):
         for item in cs['text']:
             c.append('    {0x%04X,%d,%d},' % (item['id'] if item['id'] else 0,
                                               item['start'], item['end']))
+        c += ['};', '']
+        c.append('static const cutscene_cue_t actor_cues_%d[] = {' % index)
+        for item in cs['actor_cues']:
+            c.append('    {%d,%d,%d,%d,%d,%d,%d,%d,%d,%d},' %
+                     (item['channel'], item['start'], item['end'],
+                      item['start_pos'][0], item['start_pos'][1],
+                      item['start_pos'][2], item['end_pos'][0],
+                      item['end_pos'][1], item['end_pos'][2],
+                      item['rot_y'] & 0xFFFF))
         c += ['};', '']
         c.append('static const cutscene_cue_t cues_%d[] = {' % index)
         for item in cs['player_cues']:
@@ -658,12 +681,14 @@ def emit(cutscenes, header_path, source_path, cd_dir, messages):
             destination = keys.index(cs['destination']['next'])
             destination_frame = cs['destination']['start']
         c.append('    { "CS%d.BIN", %d, CUTSCENE_SCENE_%s, %d, %d, %d,'
-                 ' text_%d, %d, cues_%d, %d, fades_%d, %d, music_%d, %d },' %
+                 ' text_%d, %d, cues_%d, %d, fades_%d, %d, music_%d, %d,'
+                 ' actor_cues_%d, %d },' %
                  (index, len(cs['track']), cs['scene'],
                   cs['stop_frame'] if cs['stop_frame'] is not None else -1,
                   destination, destination_frame,
                   index, len(cs['text']), index, len(cs['player_cues']),
-                  index, len(cs['transitions']), index, len(cs['music'])))
+                  index, len(cs['transitions']), index, len(cs['music']),
+                  index, len(cs['actor_cues'])))
     c += ['};', '']
 
     header_path.write_text('\n'.join(h) + '\n')

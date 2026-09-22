@@ -44,6 +44,20 @@ bool            cutscene_hides_scene(void);
 ** False when no cue is running, in which case the caller draws nothing: the
 ** opening's shots that do not cue Link do not contain him.
 */
+/*
+** The shot's other actors, one per cue channel.
+**
+** The dream has two: the rider crossing the drawbridge and the one chasing.
+** `channel` is the cue list they came from, which is what identifies an actor
+** across a cutscene -- the cues carry no actor id of their own.
+*/
+unsigned int    cutscene_actor_channels(void);
+bool            cutscene_actor_channel_visible(unsigned int channel);
+int32_t         cutscene_actor_channel_x(unsigned int channel);
+int32_t         cutscene_actor_channel_y(unsigned int channel);
+int32_t         cutscene_actor_channel_z(unsigned int channel);
+uint16_t        cutscene_actor_channel_yaw(unsigned int channel);
+
 bool            cutscene_link_visible(void);
 int32_t         cutscene_link_x(void);
 int32_t         cutscene_link_y(void);

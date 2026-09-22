@@ -29,6 +29,7 @@
 #include "scene_flow.h"
 #include "message.h"
 #include "cutscene.h"
+#include "cutscene_actor.h"
 
 /*
 ** Baseline camera, in the scene's native source space.
@@ -242,6 +243,23 @@ static void         viewer_draw(void)
     /* Link is submitted after the forest so the per-frame counters, which
     ** kokiri_scene_draw() resets, cover both lists. His model origin is at his
     ** feet, EYE_HEIGHT below the collision position. */
+    if (cutscene_is_playing()) {
+        /* The shot's riders, one per cue channel. Ganondorf chases; Zelda and
+         * Impa flee. They are placed entirely by the baked cues. */
+        unsigned int channel;
+
+        for (channel = 0; channel < cutscene_actor_channels(); ++channel) {
+            if (!cutscene_actor_channel_visible(channel) ||
+                cutscene_hides_scene())
+                continue;
+            cutscene_actor_draw(channel == 0 ? CUTSCENE_ACTOR_GANON
+                                             : CUTSCENE_ACTOR_ZELDA,
+                                cutscene_actor_channel_x(channel),
+                                cutscene_actor_channel_y(channel),
+                                cutscene_actor_channel_z(channel),
+                                cutscene_actor_channel_yaw(channel));
+        }
+    }
     if (cutscene_is_playing()) {
         /* A cutscene places and poses Link itself, from its own player cues:
          * asleep in bed for the narration, sitting up when Navi wakes him.
