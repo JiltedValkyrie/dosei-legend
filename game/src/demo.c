@@ -16,6 +16,7 @@
 #include "save_state.h"
 #include "save_device.h"
 #include "game_mode.h"
+#include "cutscene.h"
 #include "kokiri_sgl.h"
 
 camera_position_t demo_camera;
@@ -85,6 +86,7 @@ static int8_t menu_step;
 static bool shield_held;
 /* L held. Not an edge: hold targeting needs the button state every step. */
 static bool target_held;
+static unsigned int cutscene_phase;
 /* Pending actions whose gameplay systems do not exist yet. Counted rather than
  * dropped so the HUD/tests can show the input arrived, and deliberately not
  * wired to any substitute behavior. */
@@ -314,7 +316,12 @@ static void         file_select_tick(void)
         game_mode_set(GAME_MODE_LOADING);
         active_slot = file_select.slot;
         save_reported = false;
-        enter_world();
+        if (chosen == FILE_SELECT_START_NEW) {
+            if (!cutscene_start(CUTSCENE_SLEEP))
+                enter_world();
+        } else {
+            enter_world();
+        }
     }
 }
 
@@ -424,12 +431,14 @@ void demo_update(void)
      * is false -- AFTER consuming the press edges -- so leaving the file select
      * out of it swallowed A, B and the D-pad entirely and nothing on the screen
      * could be chosen. */
-    bool in_gameplay = !title_visible && (demo_link_active || file_select_visible);
+    bool in_gameplay = !title_visible &&
+        (demo_link_active || file_select_visible ||
+         game_mode() == GAME_MODE_CUTSCENE);
 
     /* It owns the pad exactly the way a text box does: D-pad moves the cursor,
      * A confirms, B cancels, and B must not also toggle walk/run. Set before
      * the step, because the step is what reads it. */
-    if (file_select_visible)
+    if (file_select_visible || game_mode() == GAME_MODE_CUTSCENE)
         player_input_set_dialogue(true);
 
     player_input_step(in_gameplay, &input);
@@ -529,6 +538,24 @@ void demo_update(void)
          * knock it off its route. Start above has already switched state by
          * the time gameplay reaches this branch. */
         title_showcase_camera(now);
+    } else if (game_mode() == GAME_MODE_CUTSCENE) {
+        jump_pending = false;
+        attack_pending = false;
+        cancel_pending = false;
+        pause_pending = false;
+        menu_step = 0;
+        player_input_set_dialogue(true);
+        cutscene_phase += elapsed * CUTSCENE_TICK_HZ;
+        while (cutscene_phase >= refresh) {
+            cutscene_phase -= refresh;
+            cutscene_step(interact_pending);
+            interact_pending = false;
+        }
+        if (cutscene_finished()) {
+            cutscene_phase = 0;
+            enter_world();
+            player_input_reset();
+        }
     } else if (demo_link_active) {
         /* Only movement reaches the legacy viewer controller. Its shoulder
          * orbit and raise/lower/pitch controls are not gameplay controls.
