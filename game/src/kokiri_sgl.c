@@ -18,6 +18,7 @@
 
 #include <jo/jo.h>
 #include "asset_loading.h"
+#include "vdp1_draw_wait.h"
 #include <stdint.h>
 #include "frame_timer.h"
 
@@ -633,9 +634,9 @@ bool kokiri_scene_update(void)
     }
     requested_room = target;
     if (target != forest_room) {
-        /* Do not overwrite texture RAM while VDP1 still reads last frame.
-         * Defer until draw end instead of spinning inside the game callback. */
-        if (!(JO_VDP1_EDSR & 2)) return true;
+        /* Wait for the in-flight draw without resubmitting it on every retry.
+         * A timed-out draw leaves the bank untouched for the next callback. */
+        if (!vdp1_wait_for_draw_end()) return true;
         return room_load_bank(SCENE_SPOT04, (unsigned int)target);
     }
 #endif

@@ -12,6 +12,7 @@
 #include "kokiri_sgl.h"
 #include "cutscene_actor.h"
 #include "action_audio.h"
+#include "vdp1_draw_wait.h"
 
 typedef struct
 {
@@ -411,7 +412,7 @@ bool cutscene_step(bool confirm)
     if (cs->scene == CUTSCENE_SCENE_SPOT04 &&
         state.frame / 100 != state.scenery_bank) {
         /* Wait for the previous VDP1 draw before replacing its textures. */
-        if (!(JO_VDP1_EDSR & 2)) return true;
+        if (!vdp1_wait_for_draw_end()) return true;
         state.scenery_bank = (unsigned char)(state.frame / 100);
         state.scene_loaded = kokiri_scene_load_bank(2, state.scenery_bank);
     }
