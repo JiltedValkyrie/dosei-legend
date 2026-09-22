@@ -8,6 +8,7 @@
 #include "music_banks.h"
 #include "save_state.h"
 #include "scene_flow.h"
+#include "kokiri_sgl.h"
 
 typedef struct
 {
@@ -49,6 +50,26 @@ static int scene_for_cutscene(unsigned int scene)
     case CUTSCENE_SCENE_SPOT04:    return SCENE_SPOT04;
     default:                       return -1;
     }
+}
+
+/*
+** Navi's flight is shown from a bank of its own.
+**
+** The streamed rooms hold one room at a time, and the flight crosses the whole
+** of Kokiri Forest -- through rooms that are not resident, so most of the zone
+** would simply be missing. CUTSCENE_FOREST_BANK is the authored
+** kokiriforest-newGameCs mesh: the whole zone at a polygon count one bank can
+** hold, built by tools/build_cutscene_scene.py.
+**
+** Only one bank is ever resident, so while it plays there is no hut and no
+** other forest room in VDP1 VRAM, and the whole texture budget is the shot's.
+** Gameplay reloads the ordinary rooms afterwards.
+*/
+#define CUTSCENE_FOREST_BANK 2
+
+static bool uses_cutscene_forest(unsigned int id)
+{
+    return (id == CUTSCENE_NAVI_FLY);
 }
 
 /*
@@ -129,8 +150,18 @@ bool cutscene_start(unsigned int id)
     ** so the frames before it are black in the original too. */
     state.fade_alpha = 255;
     state.fade_colour = CUTSCENE_FADE_BLACK;
+    /* The opening starts in silence. link_home's cutscene layer is
+    ** SCENE_CMD_SOUND_SETTINGS(..., NA_BGM_GENERAL_SFX) -- ambience only -- so
+    ** the title theme stops here rather than playing on under the narration.
+    ** Later beats start their own cue through CS_START_SEQ. */
+    if (id == CUTSCENE_SLEEP)
+        music_silence(CUTSCENE_FADE_FRAMES);
     game_mode_set(GAME_MODE_LOADING);
-    {
+    if (uses_cutscene_forest(id)) {
+        /* Straight to the bank: this one has no scene_table entry, because it
+        ** is never walked into, only flown through. */
+        state.scene_loaded = kokiri_scene_load_bank(CUTSCENE_FOREST_BANK, 0);
+    } else {
         int scene = scene_for_cutscene(cs->scene);
 
         state.scene_loaded = scene >= 0 &&

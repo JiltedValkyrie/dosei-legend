@@ -79,6 +79,12 @@ fi
 if [ -n "${AUTHORED_OBJ:-}" ]; then
     quad_args+=(--skip-scene)
 fi
+# The cutscene forest bank, from the authored OBJ. Built BEFORE the scene
+# tables: it writes cutscene_bank.json, which the bank capacities below fold
+# in, and a bank larger than those would be refused at load.
+if [ "${STREAM_ROOMS:-1}" = 1 ]; then
+    "$python" "$here/tools/build_cutscene_scene.py"
+fi
 "$python" "$here/tools/build_sgl_scene.py" --texture-path "${TEXTURE_PATH:-hybrid}" --oot "$oot" --rom-dir "$roms" "${quad_args[@]}"
 # Overwrite the generated forest with the authored import. Link's tables and
 # vdp1_layout.h come from the run above and are left alone.

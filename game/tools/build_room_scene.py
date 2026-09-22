@@ -109,7 +109,17 @@ def emit_rooms(args, head, actor, normal):
                                   objects=len(bounds),
                                   budget=manifest['budget'],
                                   workshop=manifest['workshop']))
-    maximum = lambda key: max(r[key] for r in summaries)
+    # The cutscene forest is a bank too, built by build_cutscene_scene.py from
+    # an authored OBJ rather than from the ROM. It shares these buffers, so its
+    # counts have to be in the maximum or room_load_bank() would refuse it.
+    cutscene_bank = out / 'cutscene_bank.json'
+    sized = list(summaries)
+    if cutscene_bank.is_file():
+        # Only its sizes: it has no prefix, room id or texture budget of the
+        # kind the per-room report below prints.
+        sized.append(json.loads(cutscene_bank.read_text()))
+
+    maximum = lambda key: max(r[key] for r in sized)
     definitions = dict(VERTEX_COUNT=maximum('vertices'),
                        POLYGON_COUNT=maximum('polygons'),
                        TILE_COUNT=maximum('tiles'),

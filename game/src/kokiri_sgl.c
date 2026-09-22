@@ -163,6 +163,10 @@ static unsigned char forest_face_flags(unsigned int i)
 #define MSGEND_FILE         "MSGEND.RGB"
 #define MSGMARK_SIZE        16
 #define MSGMARK_PIXEL_BYTES (MSGMARK_SIZE * MSGMARK_SIZE * 2)
+/* Depth for the message overlay. Must exceed every screen distance the game
+** uses, shifted by SGL's display level: 240 >> 3 = 30 in the world, and
+** 277 >> 3 = 34 inside Link's house. */
+#define MSGBOX_PLANE        40
 #define MENU_PIXEL_BYTES    (MENU_TEX_SIZE * MENU_TEX_SIZE * 2)
 #define FAIRY_WIDTH         16
 #define FAIRY_HEIGHT        16
@@ -1211,7 +1215,13 @@ void                kokiri_message_box_draw(int x, int y, int width, int height)
     ** tripping SGL's near rejection; see rupee_hud_sprite. */
     pos[0] = (x - JO_TV_WIDTH_2) * 65536;
     pos[1] = (y - JO_TV_HEIGHT_2) * 65536;
-    pos[2] = 31 * 65536;
+    /* SGL rejects a sprite nearer than screen_distance >> display_level.
+    ** Gameplay uses 240 (near 30) but Link's house sets its backdrop's own
+    ** 277 (near 34), so the 31 the rupee HUD uses is culled in there -- which
+    ** is why the box vanished in the house and left unreadable blue text on
+    ** the backdrop. 40 clears both and is still far nearer than any world
+    ** polygon. */
+    pos[2] = MSGBOX_PLANE * 65536;
     pos[3] = (width * 65536) / MSGBOX_WIDTH;
     pos[4] = (height * 65536) / MSGBOX_HEIGHT;
     attr.texno = (Uint16)msgbox_sprite;
@@ -1239,7 +1249,7 @@ void                kokiri_message_mark_draw(int x, int y, bool last_page)
     pos[0] = (x - JO_TV_WIDTH_2) * 65536;
     pos[1] = (y - JO_TV_HEIGHT_2) * 65536;
     /* One nearer than the panel, so it lands on top of it. */
-    pos[2] = 32 * 65536;
+    pos[2] = (MSGBOX_PLANE + 1) * 65536;
     pos[3] = pos[4] = 65536;
     attr.texno = (Uint16)msgmark_sprite[last_page ? 1 : 0];
     attr.atrb |= (FAIRY_COLMODE_RGB & 7) << 3;

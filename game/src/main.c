@@ -344,6 +344,9 @@ static unsigned int cutscene_text_colour(unsigned int colour)
 ** that layer has no solid cell to fill a rectangle with. It looked like a row
 ** of hashes, which is what it was.
 */
+/* One padding row above and below the text, and the box only as tall as the
+** page needs. Two rows each way made it swallow half the screen. */
+#define CUTSCENE_BOX_PAD    1
 #define CUTSCENE_BOX_LEFT   2
 #define CUTSCENE_BOX_RIGHT  37
 #define CUTSCENE_BOX_WIDTH  (CUTSCENE_BOX_RIGHT - CUTSCENE_BOX_LEFT + 1)
@@ -355,7 +358,7 @@ static unsigned int cutscene_text_colour(unsigned int colour)
 ** instead of drifting. Only a message the original places elsewhere moves. */
 static int          cutscene_box_top(unsigned int lines)
 {
-    int height = (int)lines + 2;        /* a padding row above and below */
+    int height = (int)lines + CUTSCENE_BOX_PAD * 2;
 
     switch (message_position()) {
         case CUTSCENE_POS_TOP:    return 2;
@@ -391,7 +394,7 @@ static void         cutscene_text(void)
 
     lines = message_lines();
     top = cutscene_box_top(lines);
-    rows = (int)lines + 2;
+    rows = (int)lines + CUTSCENE_BOX_PAD * 2;
     text_row = top + 1;
     prompt_row = top + rows - 1;
 
@@ -414,6 +417,11 @@ static void         cutscene_text(void)
         /* The original's SHIFT, which is what centres the narration, measured
         ** from inside the box rather than from the screen edge. */
         int column = CUTSCENE_BOX_LEFT + 1 + (int)message_line_indent(line);
+
+        /* Wipe the row first. VDP2 retains text, and a page shorter than the
+        ** one before it would otherwise leave the tail of the old line on
+        ** screen -- which is where "descendingof" came from. */
+        jo_printf(0, text_row + (int)line, "%-40s", "");
 
         for (run = 0; run < message_line_runs(line); ++run) {
             const char  *text = message_run_text(line, run);

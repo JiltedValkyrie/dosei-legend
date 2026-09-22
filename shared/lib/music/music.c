@@ -167,6 +167,34 @@ static unsigned char *read_levels(const music_bank_t *target)
     return loaded;
 }
 
+/*
+** Fade out and stay silent.
+**
+** A cutscene beat can genuinely have no music: the opening's sleep layer is
+** SCENE_CMD_SOUND_SETTINGS(..., NA_BGM_GENERAL_SFX), which is ambience only,
+** so the title theme has to stop rather than play on under the narration.
+**
+** Shares the fade-out ramp with music_fade_to(); it differs only in having no
+** incoming bank, so the vblank half ends at silence and the main thread frees
+** the outgoing bank and goes idle.
+*/
+bool music_silence(unsigned int fade_frames)
+{
+    if (state != MUSIC_IDLE || !bank)
+        return (false);
+    incoming = JO_NULL;
+    fade_length = fade_frames ? fade_frames : 1;
+    transition_start = vblanks;
+    transition_frames = 0;
+    fade_step = fade_length;
+    swap_stage = 1;
+    audible_frames = 0;
+    worst_stall = 0;
+    last_service = vblanks;
+    state = MUSIC_FADE_OUT;
+    return (true);
+}
+
 bool music_fade_to(const music_bank_t *target, unsigned int fade_frames)
 {
     if (!target || target->sample_base > MUSIC_SAMPLE_LIMIT ||
@@ -201,6 +229,23 @@ void music_service(void)
         unsigned int now = vblanks, gap = now - last_service;
         if (gap > worst_stall) worst_stall = gap;
         last_service = now;
+    }
+
+    /* No incoming bank: music_silence(). The fade-out has already stopped the
+    ** voices, so all that is left is to drop the outgoing envelopes and go
+    ** idle -- there is nothing to stream in. */
+    if (swap_stage && !incoming) {
+        if (state == MUSIC_SWAP) {
+            unsigned char *outgoing = levels;
+
+            levels = JO_NULL;         /* the vblank stops reading it here */
+            if (outgoing) jo_free(outgoing);
+            bank = JO_NULL;
+            swap_stage = 0;
+            state = MUSIC_IDLE;
+            transition_frames = vblanks - transition_start;
+        }
+        return;
     }
 
     if (swap_stage == 1) {
