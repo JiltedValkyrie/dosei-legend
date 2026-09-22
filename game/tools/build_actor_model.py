@@ -45,6 +45,9 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 STANDARD_LIMB = '>hhhBBI'
 STANDARD_LIMB_SIZE = struct.calcsize(STANDARD_LIMB)
 
+# Every one of these actors draws at Actor_SetScale(0.01).
+ACTOR_SCALE = 0.01
+
 # The actors the dream needs. `clips` names the animations to bake, by the
 # offset their XML gives them; an actor with one animation simply has one.
 ACTORS = {
@@ -199,8 +202,24 @@ def build(oot, rom_dir, name, out, frame, clip_frames, stride, flat):
         raise SystemExit('%s: no geometry walked' % name)
     link.apply_primitive_colour(faces)
     flattened = link.flatten_faces(faces) if flat else 0
+    # These actors draw at Actor_SetScale(0.01) -- z_en_zl1.c:100 and the rest
+    # agree -- so the object's units are a hundred times the world's, exactly
+    # as Epona's are. Unscaled, Zelda would stand taller than the castle.
+    faces = link.scale_faces(faces, ACTOR_SCALE)
+    faces = link.drop_degenerate(faces)
     print('  model : %d faces, %d flattened (head keeps its artwork)'
           % (len(faces), flattened))
+
+    # One KFR1 file per actor, the same container FOREST.BIN and LINK.BIN use,
+    # so the mesh workshop can open them and the loader already understands the
+    # shape. Written skinned: a vertex keeps its owning limb, or the shoulder
+    # and the upper arm weld together the moment an animation moves them.
+    out.mkdir(parents=True, exist_ok=True)
+    path = out / ('%s.BIN' % name.upper())
+    positions, tiles, skin_limbs, skin_locals = link.write_model(
+        faces, path, skinned=True)
+    print('  out   : %s  %d bytes, %d vertices, %d tiles'
+          % (path.name, path.stat().st_size, len(positions), len(tiles)))
     return faces, limbs, animations, data, limb_count
 
 
