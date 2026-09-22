@@ -527,6 +527,19 @@ CLIPS = (
     # PLAYER_ANIMGROUP_defense / defense_wait, one-handed equipment group.
     ('guard',   'gPlayerAnim_link_normal_defense',              0,    2, 1),
     ('guard_wait', 'gPlayerAnim_link_normal_defense_wait',      0,   20, 1),
+    # The opening cutscene's poses, from the player cues in
+    # gLinkHouseIntroSleepCs / gLinkHouseIntroWakeUpCs. Mapped to these symbols
+    # in z_player.c:15039-15042; see tools/build_cutscenes.py PLAYER_CUES.
+    # Decimated hard: they are slow, and the clip tables sit below the same
+    # .bss/SGL boundary as everything else.
+    ('sleeping',  'gPlayerAnim_clink_op3_wait1',                0,   10, 2),
+    ('turn_over', 'gPlayerAnim_clink_op3_negaeri',              0,   12, 3),
+    # okiagari is 365 frames and tatiagari 110; sampled sparsely so the pose
+    # actually reaches sitting and standing rather than stopping just after it
+    # starts to move.
+    ('sit_up',    'gPlayerAnim_clink_op3_okiagari',             0,   24, 15),
+    ('stand_up',  'gPlayerAnim_clink_op3_tatiagari',            0,   20, 5),
+    ('turn_look', 'gPlayerAnim_link_demo_furimuki',             0,   10, 2),
 )
 
 # Rotations keep their full 16-bit binang precision. The clip tables share the

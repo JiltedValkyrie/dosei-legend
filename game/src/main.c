@@ -28,6 +28,7 @@
 #include "file_select.h"
 #include "scene_flow.h"
 #include "message.h"
+#include "cutscene.h"
 
 /*
 ** Baseline camera, in the scene's native source space.
@@ -54,6 +55,7 @@ static void         inventory_menu(void);
 static void         action_hint(void);
 static void         file_select_screen(void);
 static void         cutscene_text(void);
+static void         cutscene_fade(void);
 #ifdef DOSEI_TEXTURE_PROBE
 #include "texture_probe.h"
 static unsigned int probe_frame;
@@ -127,7 +129,7 @@ static void         viewer_draw(void)
     /* Pin Link where the moving capture showed the offending wall quad
     ** filling the near view and let the real follow camera settle behind him,
     ** so split-off and split-on discs render the same gameplay view. */
-    if (demo_link_active && !demo_title_is_visible()) {
+    if (demo_link_active && !demo_title_is_visible() && !cutscene_is_playing()) {
         demo_link.x = -43; demo_link.y = 90; demo_link.z = -14;
         demo_link_yaw = 16384;
         /* Astra's settled gap pose, camera included: the follow camera reaches
@@ -217,12 +219,22 @@ static void         viewer_draw(void)
      * The forest's actors go with it. They filter by ROOM, and an interior is
      * a different SCENE whose room 0 would otherwise match -- a Kokiri fairy
      * would bob around inside Link's house. */
-    if (!kokiri_scene_backdrop_active()) {
+    /* A cutscene's screen fill covers the world completely at full strength,
+     * so there is nothing to submit -- and while a cutscene's scene is one we
+     * have not extracted, drawing would show whichever scene is still resident
+     * instead. Either way the polygons are skipped rather than drawn and
+     * hidden. */
+    if (!kokiri_scene_backdrop_active() && !cutscene_hides_scene()) {
         kokiri_scene_draw();
         kokiri_grass_draw();
         kokiri_rupees_draw(demo_clock());
-        kokiri_fairies_draw(demo_clock());
-        kokiri_pickups_draw(demo_clock());
+        /* The forest's own actors belong to gameplay, not to a cutscene
+         * playing in the same scene: Navi's flight must not have Kokiri
+         * fairies bobbing along beside it. */
+        if (!cutscene_is_playing()) {
+            kokiri_fairies_draw(demo_clock());
+            kokiri_pickups_draw(demo_clock());
+        }
     }
     kokiri_menu_draw();
 #endif
@@ -230,23 +242,71 @@ static void         viewer_draw(void)
     /* Link is submitted after the forest so the per-frame counters, which
     ** kokiri_scene_draw() resets, cover both lists. His model origin is at his
     ** feet, EYE_HEIGHT below the collision position. */
-    if (demo_link_active && !demo_title_is_visible()) {
+    if (cutscene_is_playing()) {
+        /* A cutscene places and poses Link itself, from its own player cues:
+         * asleep in bed for the narration, sitting up when Navi wakes him.
+         * Shots with no cue do not contain him, so nothing is drawn. */
+        if (cutscene_link_visible() && !cutscene_hides_scene()) {
+            frame_timer_begin(FRAME_PHASE_LINK);
+            link_anim_pose(cutscene_link_clip(), cutscene_link_frame(), 0);
+            kokiri_link_draw(cutscene_link_x(), cutscene_link_y(),
+                             cutscene_link_z(), cutscene_link_yaw());
+            frame_timer_end(FRAME_PHASE_LINK);
+        }
+    } else if (demo_link_active && !demo_title_is_visible()) {
         frame_timer_begin(FRAME_PHASE_LINK);
         kokiri_link_draw(demo_link.x, demo_link.y - DEMO_LINK_EYE_HEIGHT,
                          demo_link.z, demo_link_yaw);
         frame_timer_end(FRAME_PHASE_LINK);
     }
     rejected_total += kokiri_scene_rejected();
+    cutscene_fade();
     cutscene_text();
     dialogue_box();
     inventory_menu();
     file_select_screen();
-    if (!gameplay_blocks_world()) viewer_hud();
+    if (!gameplay_blocks_world() && !cutscene_is_playing()) viewer_hud();
     action_hint();
-    if (!demo_title_is_visible() && !demo_file_select_is_visible())
+    if (!demo_title_is_visible() && !demo_file_select_is_visible() &&
+        !cutscene_is_playing())
         kokiri_rupee_hud_draw();
     frame_timer_frame_end();
     frame_timer_begin(FRAME_PHASE_SYNC);
+}
+
+/*
+** The cutscene's screen fill, as a VDP2 colour offset.
+**
+** OoT fills the screen with a coloured quad and ramps its alpha
+** (z_demo.c:1550-1574). VDP2 offers the same effect far more cheaply: a
+** negative colour offset darkens every layer it is applied to, so a black fill
+** is a ramp from 0 to -255 and needs no polygon at all.
+**
+** Applied to the scene layers and the sprites, never to NBG0: the text layer
+** has to stay legible over a darkened scene, and the narration is drawn while
+** the fill is at full strength.
+**
+** A fully opaque fill is handled earlier by skipping the scene entirely, so
+** this only has to cover the partial values.
+*/
+static void         cutscene_fade(void)
+{
+    static unsigned int last_alpha;
+    unsigned int        alpha = cutscene_fade_alpha();
+    Sint16              level;
+
+    if (alpha == last_alpha)
+        return;
+    last_alpha = alpha;
+    if (!alpha) {
+        slColOffsetOff(NBG1ON | RBG0ON | SPRON);
+        return;
+    }
+    /* The offset range is -255..255, so the alpha maps straight onto it. */
+    level = (Sint16)(0 - (int)alpha);
+    slColOffsetB(level, level, level);
+    slColOffsetBUse(NBG1ON | RBG0ON | SPRON);
+    slColOffsetOn(NBG1ON | RBG0ON | SPRON);
 }
 
 /*
@@ -291,9 +351,13 @@ static void         cutscene_text(void)
     unsigned int    line, run;
     int             row;
 
+    /* The prompt row is included in every wipe. It sits BELOW the text rows,
+    ** and leaving it out left one "A" behind per box position the opening had
+    ** used -- three of them stacked down the side of the screen once play
+    ** began. */
     if (!message_is_active()) {
         if (was_active) {
-            for (line = 0; line < CUTSCENE_TEXT_ROWS; ++line)
+            for (line = 0; line <= CUTSCENE_TEXT_ROWS; ++line)
                 jo_printf(0, last_row + (int)line, "%-40s", "");
             was_active = false;
         }
@@ -303,12 +367,18 @@ static void         cutscene_text(void)
     /* A message that moves up or down the screen has to wipe where it was, or
     ** VDP2 keeps the old rows on screen underneath the new ones. */
     if (was_active && row != last_row) {
-        for (line = 0; line < CUTSCENE_TEXT_ROWS; ++line)
+        for (line = 0; line <= CUTSCENE_TEXT_ROWS; ++line)
             jo_printf(0, last_row + (int)line, "%-40s", "");
     }
     was_active = true;
     last_row = row;
 
+    /* PENDING: the original draws a black box behind a TEXTBOX_TYPE_BLACK
+    ** message. The VDP2 text layer has only the ASCII font and no solid cell,
+    ** so there is nothing here to fill one with -- printing a row of '#' in
+    ** black draws hatched glyphs, not a box, which reads worse than no box at
+    ** all. While the fill is opaque the screen is black anyway, which covers
+    ** the narration; a box over a visible scene still needs a real fill. */
     for (line = 0; line < CUTSCENE_TEXT_ROWS; ++line) {
         /* The original's SHIFT, which is what centres the narration. */
         int column = 1 + (int)message_line_indent(line);
@@ -335,8 +405,10 @@ static void         cutscene_text(void)
     jo_set_printf_color_index(JO_COLOR_INDEX_White);
     /* Only a page the player has to turn shows a prompt. A timed page must
     ** not invite a press it would ignore. */
-    jo_printf(1, row + CUTSCENE_TEXT_ROWS, "%-38s",
+    jo_printf_with_color(1, row + CUTSCENE_TEXT_ROWS, JO_COLOR_INDEX_White,
+                         "%-38s",
               message_waits_for_button() ? "A" : "");
+    jo_set_printf_color_index(JO_COLOR_INDEX_White);
 }
 
 /*
@@ -360,7 +432,8 @@ static void         dialogue_box(void)
     /* Title flythrough and the file select have no interaction. Clear retained
      * VDP2 text too, so returning here cannot leave an old prompt or page on
      * screen -- and so a stale prompt cannot print over the file list. */
-    if (demo_title_is_visible() || demo_file_select_is_visible()) {
+    if (demo_title_is_visible() || demo_file_select_is_visible() ||
+        cutscene_is_playing()) {
         if (last_prompt != -1)
             jo_printf(1, PROMPT_ROW, "%-38s", "");
         if (was_talking) {
@@ -482,7 +555,11 @@ static void action_hint(void)
     static unsigned int last_owned, last_cuts;
     static const char *notice = "";
     unsigned int now = demo_clock();
-    if (demo_title_is_visible() || demo_file_select_is_visible()) return;
+    if (demo_title_is_visible() || demo_file_select_is_visible() ||
+        cutscene_is_playing()) {
+        jo_printf(1, 28, "%-38s", "");
+        return;
+    }
     if (gameplay.owned != last_owned) {
         notice = (gameplay.owned & GP_SWORD) && !(last_owned & GP_SWORD)
             ? "Sword equipped! X: swing" : "Shield equipped! Hold R: guard";
@@ -498,12 +575,14 @@ static void action_hint(void)
         jo_printf(1, 28, "%-38s", "");
         return;
     }
+    /* Only things that just happened. The standing control reminders that used
+    ** to sit here ("Find sword west. Start: items/help") were on screen for the
+    ** whole game, which the original never does -- and reading one the instant
+    ** the opening cutscene handed over to play was the first thing anyone saw.
+    ** Transient notices stay: they are feedback, not instructions. */
     jo_printf(1, 28, "%-38s",
         gameplay.swing ? "Sword swing" : gameplay.shielding ? "Shield raised" :
-        (*notice && now - changed_at < 180) ? notice :
-        !(gameplay.owned & GP_SWORD) ? "Find sword west. Start: items/help" :
-        !(gameplay.owned & GP_SHIELD) ? "X sword. Shield north. Start: help" :
-        "X sword R shield L target Start items");
+        (*notice && now - changed_at < 180) ? notice : "");
 }
 
 static void         viewer_hud(void)

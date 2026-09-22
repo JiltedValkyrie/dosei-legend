@@ -84,9 +84,7 @@ bool                message_step(bool confirm)
     ++message_state.page_ticks;
     switch (page->advance) {
         case CUTSCENE_ADVANCE_DELAY:
-            /* The original does not wait for the player here, and pressing A
-            ** must not skip ahead either: these pages are UNSKIPPABLE. */
-            if (message_state.page_ticks >= page->delay)
+            if (message_state.page_ticks >= page->delay && confirm)
                 advance();
             break;
         case CUTSCENE_ADVANCE_FADE:
@@ -188,7 +186,9 @@ bool                message_waits_for_button(void)
 {
     const cutscene_page_t *page = current_page();
 
-    return (page && page->advance == CUTSCENE_ADVANCE_BUTTON);
+    return (page && (page->advance == CUTSCENE_ADVANCE_BUTTON ||
+           (page->advance == CUTSCENE_ADVANCE_DELAY &&
+            message_state.page_ticks >= page->delay)));
 }
 
 /*

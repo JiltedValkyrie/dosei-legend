@@ -766,7 +766,9 @@ void demo_update(void)
      * kokiri_scene_load_backdrop() uploads it, and the very next demo_update()
      * turned the layer off again. */
     slScrAutoDisp(NBG0ON |
-                  ((title_visible || kokiri_scene_backdrop_active()) ? NBG1ON : 0));
+                  ((title_visible ||
+                    (kokiri_scene_backdrop_active() &&
+                     !cutscene_hides_scene())) ? NBG1ON : 0));
 }
 
 /* -1 no attempt yet this session, 0 failed, 1 succeeded. */

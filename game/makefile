@@ -56,7 +56,15 @@ JO_MAX_SPRITE = 2400
 # both live below the same boundary. Measured demand is ~11 KB (the A-button
 # overlay prints jo_memory_usage_percent(), which reads 6% of 176 KB), so a
 # smaller arena still leaves several times the real figure.
-JO_GLOBAL_MEMORY_SIZE_FOR_MALLOC ?= 180224
+#
+# Trimmed again for the opening cutscenes. Their const tables (camera event
+# lists, the message text and its coloured runs) live in .rodata, which sits
+# below the same boundary, and they had taken the normal variant's gap down to
+# 2,608 bytes. Known arena demand is the 16 KB collision index, the largest
+# cutscene camera track at about 13 KB, a 1 KB background strip and Jo's small
+# blocks -- roughly 32 KB. 128 KB still leaves about four times that, and buys
+# back 48 KB of boundary headroom.
+JO_GLOBAL_MEMORY_SIZE_FOR_MALLOC ?= 131072
 
 SRCS = src/main.c src/ram_cart.c src/game_mode.c src/message.c src/cutscene.c src/save_state.c src/save_file.c src/save_device.c src/file_select.c src/scene_flow.c src/kokiri_sgl.c ../shared/lib/music/music.c src/music_banks.c src/demo.c src/player_input.c src/gameplay.c src/action_audio.c src/demo_camera.c src/demo_collision.c src/demo_follow.c src/link_anim.c src/link_anim_state.c src/frame_timer.c build/generated/kokiri_scene.c build/generated/kokiri_textures.c build/generated/link_scene.c build/generated/link_textures.c build/generated/link_clips.c build/generated/scene_table.c build/generated/kokiri_actors.c build/generated/kokiri_dialogue.c build/generated/cutscenes.c
 override ASSETS_DIR = ./build/cd

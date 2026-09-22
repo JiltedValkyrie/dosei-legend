@@ -6,7 +6,7 @@ player against the words the game will actually say. What matters:
   * the three ways a page ends are all honoured -- the opening narration uses
     a button page, a self-advancing page and a fading page, and getting any of
     them wrong either hangs the cutscene or flashes a line past unread;
-  * the opening's pages are UNSKIPPABLE, so A must not cut a timed page short;
+  * delayed pages hold until A after their minimum delay, so text stays readable;
   * colour survives as runs within a line, which is what panels 8 and 12 of
     the storyboard show.
 """
@@ -201,17 +201,25 @@ class Message(unittest.TestCase):
         self.lib.message_step(True)
         self.assertNotEqual(self.page_text(), first)
 
-    def test_a_delayed_page_advances_by_itself(self):
+    def test_a_delayed_page_waits_for_a_press_after_its_delay(self):
         """'In the vast, deep forest of Hyrule...' -- BOX_BREAK_DELAYED(40)."""
         page = self.by_id[NARRATION]['pages'][0]
         self.assertEqual(page['advance'], 'delay')
         self.lib.message_start(NARRATION)
         self.assertFalse(self.lib.message_waits_for_button())
+        # Before the delay is up the page cannot be turned at all.
         for _ in range(page['delay'] - 1):
             self.lib.message_step(False)
+            self.assertFalse(self.lib.message_waits_for_button())
+        # The tick that reaches the delay is the one that opens it up.
+        self.lib.message_step(False)
         self.assertEqual(self.page_text(),
                          ['In the vast, deep forest of Hyrule...'])
+        self.assertTrue(self.lib.message_waits_for_button())
         self.lib.message_step(False)
+        self.assertEqual(self.page_text(),
+                         ['In the vast, deep forest of Hyrule...'])
+        self.lib.message_step(True)
         self.assertNotEqual(self.page_text(),
                             ['In the vast, deep forest of Hyrule...'])
 
@@ -232,7 +240,7 @@ class Message(unittest.TestCase):
         self.lib.message_start(NARRATION)
         while self.lib.message_lines() and \
                 self.page_text() != bake.oot_messages.plain(last):
-            self.lib.message_step(False)
+            self.lib.message_step(True)
         for _ in range(last['delay']):
             self.lib.message_step(False)
         self.assertTrue(self.lib.message_is_active())
@@ -253,13 +261,12 @@ class Message(unittest.TestCase):
 
     def test_a_fading_page_eventually_ends_the_message(self):
         self.lib.message_start(NARRATION)
-        self.run_until_done(confirm=False)
+        self.run_until_done(confirm=True)
         self.assertFalse(self.lib.message_is_active())
 
-    def test_the_narration_needs_no_button_at_all(self):
-        """Every page of it is timed, so it plays unattended."""
+    def test_the_narration_waits_for_confirmation_between_pages(self):
         self.lib.message_start(NARRATION)
-        self.assertEqual(len(self.run_until_done(confirm=False)),
+        self.assertEqual(len(self.run_until_done(confirm=True)),
                          len(self.by_id[NARRATION]['pages']))
 
     # ---- finishing -----------------------------------------------------

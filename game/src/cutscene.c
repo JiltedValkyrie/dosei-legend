@@ -2,6 +2,7 @@
 #include "cutscene.h"
 #include "demo.h"
 #include "game_mode.h"
+#include "link_clips.h"
 #include "message.h"
 #include "music.h"
 #include "music_banks.h"
@@ -16,6 +17,15 @@ typedef struct
     unsigned short    frame;
     unsigned char     text_cursor;
     unsigned char     music_cursor;
+    /* Current screen fill, rebuilt every frame from the transition list. */
+    unsigned char     fade_alpha;
+    unsigned char     fade_colour;
+    /* End frame of the text command currently on screen. Past it, the
+    ** cutscene clock holds until the player has read the message. */
+    short             text_hold_end;
+    /* False when this cutscene's scene is not in the scene table yet, so the
+    ** screen is held covered instead of showing an unrelated room. */
+    bool              scene_loaded;
     cutscene_point_t *track;
 }                   cutscene_state_t;
 
@@ -23,19 +33,28 @@ static cutscene_state_t state;
 
 #define CUTSCENE_FADE_FRAMES 10
 
-static unsigned int scene_for_cutscene(unsigned int scene)
+/*
+** Which scene_table entry a cutscene plays in, or -1 when that scene has not
+** been extracted yet.
+**
+** SPOT00 -- the castle drawbridge the nightmare rides across -- is not in the
+** table. It must NOT fall back to Link's house: that put the bedroom backdrop
+** behind Ganondorf's ride. A missing scene keeps the screen covered instead,
+** which reads as work still to do rather than as a wrong room.
+*/
+static int scene_for_cutscene(unsigned int scene)
 {
     switch (scene) {
     case CUTSCENE_SCENE_LINK_HOME: return SCENE_LINK_HOME;
     case CUTSCENE_SCENE_SPOT04:    return SCENE_SPOT04;
-    default:                       return SCENE_LINK_HOME;
+    default:                       return -1;
     }
 }
 
 static const music_bank_t *bank_for_cutscene(unsigned int bank)
 {
     (void)bank;
-    return (&music_bank_kokiri);
+    return ((const music_bank_t *)0);
 }
 
 static int16_t read_be16(const unsigned char *p)
@@ -95,13 +114,96 @@ bool cutscene_start(unsigned int id)
     state.frame = 0;
     state.text_cursor = 0;
     state.music_cursor = 0;
+    state.text_hold_end = 0;
+    /* Start covered. The opening's first transition is a fade OUT from black,
+    ** so the frames before it are black in the original too. */
+    state.fade_alpha = 255;
+    state.fade_colour = CUTSCENE_FADE_BLACK;
     game_mode_set(GAME_MODE_LOADING);
-    scene_flow_load(scene_for_cutscene(cs->scene), 0);
+    {
+        int scene = scene_for_cutscene(cs->scene);
+
+        state.scene_loaded = scene >= 0 &&
+                             scene_flow_load((unsigned int)scene, 0);
+    }
     if (!load_track(cs))
         return (false);
     game_mode_set(GAME_MODE_CUTSCENE);
     state.active = true;
     return (true);
+}
+
+/*
+** The screen fill for this frame, from the cutscene's CS_TRANSITION list.
+**
+** Straight from z_demo.c:1550-1574, where lerp runs 0..1 across the
+** transition's frames:
+**
+**   FILL_IN        alpha = 255 * lerp            ends opaque
+**   FILL_OUT       alpha = 255 * (1 - lerp)      starts opaque, clears
+**   OUT_TO_HALF    alpha = 255 - 155 * lerp      255 -> 100
+**   IN_FROM_HALF   alpha = 255 - 155 * (1-lerp)  100 -> 255
+**
+** Before the first transition and after the last, the fill holds at whatever
+** that transition implies rather than snapping to clear: a cutscene that opens
+** with a FILL_OUT is on screen *because* the screen is already filled, which
+** is exactly the case in the sleep cutscene -- its first transition is at
+** frame 55, and the 55 frames before it are black in the original.
+**
+** Integer only: lerp is applied as a numerator over the transition's length.
+*/
+static void update_fade(const cutscene_t *cs)
+{
+    unsigned int    i;
+    unsigned int    alpha = 0;
+    unsigned char   colour = CUTSCENE_FADE_BLACK;
+    bool            have = false;
+
+    for (i = 0; i < cs->fade_count; ++i) {
+        const cutscene_fade_t *fade = &cs->fades[i];
+        int span = fade->end - fade->start;
+        int into = (int)state.frame - fade->start;
+        int lerp_num, lerp_den;
+
+        if (into < 0) {
+            /* Not reached yet. Only the FIRST pending transition decides what
+            ** is on screen now, and only if it expects to start opaque. */
+            if (!have) {
+                if (fade->direction == CUTSCENE_FADE_OUT ||
+                    fade->direction == CUTSCENE_FADE_OUT_HALF) {
+                    alpha = 255;
+                    colour = fade->colour;
+                }
+                have = true;
+            }
+            continue;
+        }
+        /* A zero-length transition applies its end state immediately. */
+        lerp_den = span > 0 ? span : 1;
+        lerp_num = span > 0 ? (into < span ? into : span) : 1;
+        colour = fade->colour;
+        have = true;
+        switch (fade->direction) {
+            case CUTSCENE_FADE_IN:
+                alpha = (unsigned int)(255 * lerp_num / lerp_den);
+                break;
+            case CUTSCENE_FADE_OUT:
+                alpha = (unsigned int)(255 - 255 * lerp_num / lerp_den);
+                break;
+            case CUTSCENE_FADE_OUT_HALF:
+                alpha = (unsigned int)(255 - 155 * lerp_num / lerp_den);
+                break;
+            case CUTSCENE_FADE_IN_HALF:
+                alpha = (unsigned int)(255 - 155 * (lerp_den - lerp_num)
+                                       / lerp_den);
+                break;
+            default:            /* CUTSCENE_FADE_INSTANT */
+                alpha = 255;
+                break;
+        }
+    }
+    state.fade_alpha = (unsigned char)alpha;
+    state.fade_colour = colour;
 }
 
 static void apply_camera(const cutscene_point_t *point)
@@ -118,17 +220,20 @@ static void step_events(const cutscene_t *cs, bool confirm)
     while (state.text_cursor < cs->text_count &&
            cs->text[state.text_cursor].start <= (short)state.frame) {
         unsigned short id = cs->text[state.text_cursor].id;
-        if (id)
+        if (id) {
             message_start(id);
-        else
+            state.text_hold_end = cs->text[state.text_cursor].end;
+        } else {
             message_stop();
+        }
         ++state.text_cursor;
     }
     while (state.music_cursor < cs->music_count &&
            cs->music[state.music_cursor].start <= (short)state.frame) {
         const cutscene_music_t *music = &cs->music[state.music_cursor];
-        if (!music->stop && music->bank != CUTSCENE_BANK_NONE)
-            music_fade_to(bank_for_cutscene(music->bank), CUTSCENE_FADE_FRAMES);
+        const music_bank_t *bank = bank_for_cutscene(music->bank);
+        if (!music->stop && bank)
+            music_fade_to(bank, CUTSCENE_FADE_FRAMES);
         ++state.music_cursor;
     }
     message_step(confirm);
@@ -144,7 +249,20 @@ bool cutscene_step(bool confirm)
     cs = &cutscenes[state.id];
     if (state.frame < cs->frames)
         apply_camera(&state.track[state.frame]);
+    update_fade(cs);
     step_events(cs, confirm);
+    /*
+    ** A cutscene waits for what it is saying.
+    **
+    ** Once the clock passes a text command's end frame, OoT holds it there
+    ** while the box is still open -- literally csCtx->curFrame-- in
+    ** z_demo.c:1787. Without this the Deku Tree's speech is still on screen
+    ** while Navi has already set off through the forest, because the camera
+    ** and the text were running on the same clock but only one of them waits
+    ** for the player.
+    */
+    if (message_is_active() && (short)state.frame >= state.text_hold_end)
+        return (true);
     if ((cs->destination >= 0 && state.frame >= (unsigned short)cs->destination_frame) ||
         (cs->stop_frame >= 0 && state.frame >= (unsigned short)cs->stop_frame) ||
         state.frame + 1 >= cs->frames) {
@@ -174,6 +292,140 @@ bool cutscene_finished(void)
     bool out = state.finished;
     state.finished = false;
     return (out);
+}
+
+/*
+** The player cue running on this frame, or NULL.
+**
+** Cues do not overlap in the opening, so the first one whose window contains
+** the frame is the one in force.
+*/
+static const cutscene_cue_t *current_cue(void)
+{
+    const cutscene_t *cs;
+    unsigned int      i;
+
+    if (!state.active || state.id >= CUTSCENE_COUNT)
+        return ((const cutscene_cue_t *)0);
+    cs = &cutscenes[state.id];
+    for (i = 0; i < cs->cue_count; ++i) {
+        const cutscene_cue_t *cue = &cs->cues[i];
+
+        if ((short)state.frame >= cue->start && (short)state.frame < cue->end)
+            return (cue);
+    }
+    return ((const cutscene_cue_t *)0);
+}
+
+/* How far through the current cue we are, as a 0..256 fraction. */
+static int cue_progress(const cutscene_cue_t *cue)
+{
+    int span = cue->end - cue->start;
+    int into = (int)state.frame - cue->start;
+
+    if (span <= 0)
+        return (0);
+    if (into < 0)
+        into = 0;
+    if (into > span)
+        into = span;
+    return (into * 256 / span);
+}
+
+static int cue_lerp(int from, int to, int progress)
+{
+    return (from + (to - from) * progress / 256);
+}
+
+bool cutscene_link_visible(void)
+{
+    const cutscene_cue_t *cue = current_cue();
+
+    return (cue && cue->clip != CUTSCENE_CLIP_HOLD);
+}
+
+int32_t cutscene_link_x(void)
+{
+    const cutscene_cue_t *cue = current_cue();
+
+    return (cue ? cue_lerp(cue->x, cue->ex, cue_progress(cue)) : 0);
+}
+
+int32_t cutscene_link_y(void)
+{
+    const cutscene_cue_t *cue = current_cue();
+
+    return (cue ? cue_lerp(cue->y, cue->ey, cue_progress(cue)) : 0);
+}
+
+int32_t cutscene_link_z(void)
+{
+    const cutscene_cue_t *cue = current_cue();
+
+    return (cue ? cue_lerp(cue->z, cue->ez, cue_progress(cue)) : 0);
+}
+
+uint16_t cutscene_link_yaw(void)
+{
+    const cutscene_cue_t *cue = current_cue();
+
+    return (cue ? cue->yaw : 0);
+}
+
+unsigned int cutscene_link_clip(void)
+{
+    const cutscene_cue_t *cue = current_cue();
+
+    if (!cue)
+        return (LINK_CLIP_IDLE);
+    switch (cue->clip) {
+        case CUTSCENE_CLIP_SLEEPING:  return (LINK_CLIP_SLEEPING);
+        case CUTSCENE_CLIP_TURN_OVER: return (LINK_CLIP_TURN_OVER);
+        case CUTSCENE_CLIP_SIT_UP:    return (LINK_CLIP_SIT_UP);
+        case CUTSCENE_CLIP_STAND_UP:  return (LINK_CLIP_STAND_UP);
+        case CUTSCENE_CLIP_TURN_LOOK: return (LINK_CLIP_TURN_LOOK);
+        default:                      return (LINK_CLIP_IDLE);
+    }
+}
+
+unsigned int cutscene_link_frame(void)
+{
+    const cutscene_cue_t *cue = current_cue();
+    unsigned int          count;
+    unsigned int          frame;
+
+    if (!cue)
+        return (0);
+    count = link_clips[cutscene_link_clip()].count;
+    if (!count)
+        return (0);
+    /* Play the clip once across the cue rather than looping it: a sit-up that
+    ** restarted halfway would have Link lie back down. The sleeping pose is
+    ** the exception -- it is a breathing loop, so it wraps. */
+    frame = (unsigned int)cue_progress(cue) * count / 256;
+    if (cue->clip == CUTSCENE_CLIP_SLEEPING)
+        return (frame % count);
+    return (frame >= count ? count - 1 : frame);
+}
+
+unsigned int cutscene_fade_alpha(void)
+{
+    return (state.active ? state.fade_alpha : 0);
+}
+
+unsigned int cutscene_fade_colour(void)
+{
+    return (state.fade_colour);
+}
+
+bool cutscene_hides_scene(void)
+{
+    /* Nothing of the world can show through a full-strength fill, and the
+    ** scenes the opening asks for are not all extracted yet, so a cutscene
+    ** whose scene could not be loaded stays covered rather than showing
+    ** whichever scene happened to be resident. */
+    return (state.active &&
+            (state.fade_alpha >= 255 || !state.scene_loaded));
 }
 
 unsigned int cutscene_id(void)
