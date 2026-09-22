@@ -43,6 +43,8 @@ class AudioEvents(unittest.TestCase):
 #include <string.h>
 #include "gameplay.h"
 #include "action_audio_data.h"
+#include "opening_audio_data.h"
+#include "action_audio.h"
 #define MUSIC_SAMPLE_LIMIT 0x76400
 typedef struct { unsigned int size; } jo_file;
 static unsigned short regs[32][16];
@@ -56,7 +58,8 @@ static void jo_fs_close(jo_file *f) {}
 static int jo_fs_read_next_bytes(jo_file *f, char *b, unsigned int n) { return -1; }
 '''
         wrapper = '''
-void reset(void) { memset(regs, 0, sizeof(regs)); ready = true; busy = false; voice = 0; rupee_active = false; rupee_clock = rupee_note = 0; sound_refresh = 60; }
+void reset(void) { memset(regs, 0, sizeof(regs)); ready = true; opening_bank = false; busy = false; voice = 0; rupee_active = false; rupee_clock = rupee_note = 0; sound_refresh = 60; }
+void use_opening(void) { opening_bank = true; }
 unsigned int reg(unsigned int s, unsigned int o) { return SLOT(s,o); }
 void set_busy(bool b) { busy = b; }
 void tick(void) { rupee_vblank(); }
@@ -130,7 +133,7 @@ void refresh(unsigned int hz) { sound_refresh = hz; }
         self.assertEqual(self.lib.reg(30,12),255)
         self.assertFalse(self.lib.reg(30,0)&0x800)
 
-    def test_voice_rotates_and_music_swap_drops_effects(self):
+    def test_voice_rotates_and_music_swap_keeps_resident_effects(self):
         addresses = []
         for _ in range(5):
             self.lib.action_audio_events(2)
@@ -140,4 +143,18 @@ void refresh(unsigned int hz) { sound_refresh = hz; }
         self.lib.reset()
         self.lib.set_busy(True)
         self.lib.action_audio_events(2 | 4 | 32 | 4096)
-        for slot in range(24,28): self.assertEqual(self.lib.reg(slot,0),0)
+        for slot in range(24,28): self.assertTrue(self.lib.reg(slot,0) & 0x800)
+        for slot in range(24): self.assertEqual(self.lib.reg(slot,0),0)
+
+    def test_opening_loop_uses_reserved_tail_and_stops(self):
+        self.lib.use_opening()
+        self.lib.set_busy(True)
+        self.lib.action_audio_opening_play(8,0,True)
+        self.assertEqual(self.lib.reg(24,16),13 << 11)
+        self.assertEqual(self.lib.reg(24,0) & 0x1830,0x1830)
+        address = ((self.lib.reg(24,0)&15)<<16) | self.lib.reg(24,2)
+        self.assertGreaterEqual(address,0x76400)
+        self.assertLessEqual(address+self.lib.reg(24,6),0x80000)
+        self.lib.action_audio_opening_stop(0)
+        self.assertEqual(self.lib.reg(24,12),255)
+        self.assertFalse(self.lib.reg(24,0)&0x800)

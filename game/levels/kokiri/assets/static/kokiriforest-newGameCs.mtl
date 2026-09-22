@@ -1,0 +1,52 @@
+# Blender 5.2.2 LTS MTL File: 'kokiriforest.blend'
+# www.blender.org
+
+newmtl Water.001
+Ns 250.000000
+Ka 1.000000 1.000000 1.000000
+Kd 0.001187 0.411736 0.800007
+Ks 0.500000 0.500000 0.500000
+Ke 0.000000 0.000000 0.000000
+Ni 1.500000
+d 0.783333
+illum 9
+
+newmtl flags_0.003
+Ns 0.000000
+Ka 1.000000 1.000000 1.000000
+Ks 0.000000 0.000000 0.000000
+Ke 0.000000 0.000000 0.000000
+Ni 1.500000
+d 1.000000
+illum 1
+map_Kd D:/Workspace-Claude/saturn-homebrew/dosei-legend/workspace/meshes/3fd66b9e8dab/exports/20260918-141138-c52ebf55/atlas.png
+
+newmtl flags_1.003
+Ns 0.000000
+Ka 1.000000 1.000000 1.000000
+Ks 0.000000 0.000000 0.000000
+Ke 0.000000 0.000000 0.000000
+Ni 1.500000
+d 1.000000
+illum 1
+map_Kd D:/Workspace-Claude/saturn-homebrew/dosei-legend/workspace/meshes/3fd66b9e8dab/exports/20260918-141138-c52ebf55/atlas.png
+
+newmtl flags_2.003
+Ns 0.000000
+Ka 1.000000 1.000000 1.000000
+Ks 0.000000 0.000000 0.000000
+Ke 0.000000 0.000000 0.000000
+Ni 1.500000
+d 1.000000
+illum 1
+map_Kd D:/Workspace-Claude/saturn-homebrew/dosei-legend/workspace/meshes/3fd66b9e8dab/exports/20260918-141138-c52ebf55/atlas.png
+
+newmtl flags_3.003
+Ns 0.000000
+Ka 1.000000 1.000000 1.000000
+Ks 0.000000 0.000000 0.000000
+Ke 0.000000 0.000000 0.000000
+Ni 1.500000
+d 1.000000
+illum 1
+map_Kd D:/Workspace-Claude/saturn-homebrew/dosei-legend/workspace/meshes/3fd66b9e8dab/exports/20260918-141138-c52ebf55/atlas.png

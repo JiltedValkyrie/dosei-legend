@@ -39,7 +39,7 @@ cp "$here/disc/ABS.TXT" "$here/disc/BIB.TXT" "$here/disc/CPY.TXT" "$here/build/c
 
 # Regenerate the SGL tables from the original scene, then stage the 4bpp blob
 # on the CD image. Both are cheap and keep game.iso consistent with FOREST.BIN.
-"$python" "$here/tools/build_sgl_area.py" --source "$sgl_source" --max-polygons "${SGL_MAX_POLYGONS:-2200}"
+"$python" "$here/tools/build_sgl_area.py" --source "$sgl_source" --max-polygons "${SGL_MAX_POLYGONS:-3750}" --max-vertices 3200
 "$python" "$here/tools/build_link_model.py" --flat --animate --oot "$oot" --rom-dir "$roms"
 quad_args=()
 if [ -n "${QUAD_OBJ:-}" ]; then
@@ -90,7 +90,25 @@ fi
 "$python" "$here/tools/build_actors.py" --oot "$oot" --rom-dir "$roms"
 "$python" "$here/tools/build_dialogue.py" --oot "$oot"
 "$python" "$here/tools/build_action_audio.py" --oot "$oot"
+"$python" "$here/tools/build_opening_audio.py" --oot "$oot"
 "$python" "$here/tools/build_demo_assets.py" --oot "$oot"
+# The dream's Hyrule Field: flat shaded, no tiles, so it costs no VDP1
+# texture VRAM and can be resident during the opening alongside nothing else.
+if [ "${STREAM_ROOMS:-1}" = 1 ] && \
+   [ -f "$here/levels/hyrule/assets/static/hyrulefield-nightmare.obj" ]; then
+    "$python" "$here/tools/build_flat_scene.py" \
+        --obj "$here/levels/hyrule/assets/static/hyrulefield-nightmare.obj"
+fi
+# The dream's original textured riders and separate animated horses. Their geometry is read
+# into the cart at cutscene time and their tiles into the bank space the flat
+# field leaves empty, so they cost nothing while the game is not dreaming.
+"$python" "$here/tools/build_actor_model.py" --oot "$oot" --rom-dir "$roms"
+"$python" "$here/tools/build_horse_model.py" --oot "$oot" --rom-dir "$roms" --horse zelda
+"$python" "$here/tools/build_horse_model.py" --oot "$oot" --rom-dir "$roms" --horse ganon
+"$python" "$here/tools/build_cutscene_props.py" --oot "$oot" --rom-dir "$roms"
+cp "$here/build/generated/BRIDGE.BIN" "$here/build/cd/BRIDGE.BIN"
+cp "$here/build/generated/CHAINS.BIN" "$here/build/cd/CHAINS.BIN"
+"$python" "$here/tools/build_cutscenes.py" --oot "$oot"
 "$python" "$here/tools/build_title_paths.py"
 if [ "${STREAM_ROOMS:-1}" = 1 ]; then
     # One bank per (scene, room). Only scenes whose rooms are real geometry
@@ -102,11 +120,25 @@ else
     cp "$here/build/generated/kokiri_pixels.bin" "$here/build/cd/KOKIRI.TEX"
 fi
 cp "$here/build/generated/link_pixels.bin" "$here/build/cd/LINK.TEX"
+for rider in GANON ZELDA IMPA HZELDA HGANON; do
+    cp "$here/build/generated/$rider.ANM" "$here/build/cd/$rider.ANM"
+    [ -f "$here/build/generated/$rider.BIN" ] &&         cp "$here/build/generated/$rider.BIN" "$here/build/cd/$rider.BIN"
+done
 cp "$here/build/generated/ACTIONS.PCM" "$here/build/cd/ACTIONS.PCM"
+cp "$here/build/generated/OPENING.PCM" "$here/build/cd/OPENING.PCM"
 cp "$here/../shared/assets/audio/title/TITLE_PCM.RAW" "$here/build/cd/TITLE.PCM"
 cp "$here/../shared/assets/audio/title/TITLE_LEVELS.RAW" "$here/build/cd/TITLE.LVL"
 cp "$here/levels/kokiri/assets/audio/KOKIRI_PCM.RAW" "$here/build/cd/FOREST.PCM"
 cp "$here/levels/kokiri/assets/audio/KOKIRI_LEVELS.RAW" "$here/build/cd/FOREST.LVL"
+# The opening cutscenes' scores. Built by tools/build_cutscene_audio.py; a bank
+# whose sequence the player cannot build yet simply has no files here, and the
+# cutscene leaves the current score alone rather than substituting another.
+for cs_bank in CSGANON CSNAVI CSDEKU; do
+    if [ -f "$here/assets/audio/cutscenes/${cs_bank}_PCM.RAW" ]; then
+        cp "$here/assets/audio/cutscenes/${cs_bank}_PCM.RAW" "$here/build/cd/$cs_bank.PCM"
+        cp "$here/assets/audio/cutscenes/${cs_bank}_LEVELS.RAW" "$here/build/cd/$cs_bank.LVL"
+    fi
+done
 
 cd "$here"
 # jo_engine_makefile picks its toolchain from $(OS), which does not reach make
@@ -122,7 +154,7 @@ cd "$here"
 
 # The work area is laid out from the top of work RAM downwards, so .bss must
 # end below its base. Only the map just produced can prove that.
-if ! "$python" "$here/tools/build_sgl_area.py" --source "$sgl_source" --max-polygons "${SGL_MAX_POLYGONS:-2200}" --verify --map "$here/build/$variant.map"; then
+if ! "$python" "$here/tools/build_sgl_area.py" --source "$sgl_source" --max-polygons "${SGL_MAX_POLYGONS:-3750}" --max-vertices 3200 --verify --map "$here/build/$variant.map"; then
     echo "boundary check failed: removing the image so it cannot be run" >&2
     rm -f "$here/build/$variant.iso" "$here/build/$variant.cue" "$here/build/$variant.elf" "$here/build/$variant.raw"
     exit 1

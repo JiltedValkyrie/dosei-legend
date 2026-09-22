@@ -51,6 +51,14 @@ bool music_init(const music_bank_t *bank);
  */
 bool music_fade_to(const music_bank_t *bank, unsigned int fade_frames);
 
+/** @brief Fade the current bank out and stay silent.
+ *
+ *  A scene or cutscene beat can genuinely have no music -- the opening's sleep
+ *  layer is sfx-only -- and leaving the previous theme playing is wrong.
+ *  @return false if a switch is already running or nothing is playing.
+ */
+bool music_silence(unsigned int fade_frames);
+
 /** @brief Main-thread half of a switch: streams the incoming bank into sound
  *  RAM a few chunks per frame. Call once per rendered frame. Never call from a
  *  vblank callback -- it reads the CD and allocates. */

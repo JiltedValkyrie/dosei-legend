@@ -107,11 +107,12 @@ class LocomotionTiming(unittest.TestCase):
         host harness; the player_input side is covered in test_player_controls.
         """
         text = (ROOT / 'src/demo.c').read_text()
-        self.assertIn(
-            'bool in_gameplay = !title_visible && (demo_link_active || file_select_visible);',
-            text)
-        # It must also claim the pad, or B toggles walk/run instead of cancelling.
-        self.assertIn('player_input_set_dialogue(true)', text)
+        self.assertIn('demo_link_active || file_select_visible ||', text)
+        self.assertIn('game_mode() == GAME_MODE_CUTSCENE', text)
+        # They must also claim the pad, or B toggles walk/run instead of
+        # cancelling, and A would not advance cutscene text boxes.
+        self.assertIn('file_select_visible || game_mode() == GAME_MODE_CUTSCENE',
+                      text)
 
     def test_diagonal_and_rotated_speed_match(self):
         for buttons, yaw in ((0x9000, 0), (0x1000, 8192), (0x9000, 5000)):

@@ -1,0 +1,29 @@
+{
+  "version": "ntsc-1.2 US",
+  "sequence": 75,
+  "soundfont": 9,
+  "sequence_sha256": "b3aded4be9214b9998deb8bcaeafc1afc837b7f347a0553aa776f2a77fbcfc20",
+  "notes": 57,
+  "triggers": 57,
+  "frames": 1557,
+  "voices": 24,
+  "pcm_bytes": 480078,
+  "levels_bytes": 37368,
+  "total_seconds": 25.945945945945308,
+  "omitted_opcodes": [
+    "initchan",
+    "mutebhv",
+    "mutescale",
+    "noshort",
+    "notepri",
+    "reverb",
+    "vibdepth"
+  ],
+  "limitations": [
+    "Loops from the top: a cutscene cue has no musical loop point",
+    "No N64 reverb or vibrato",
+    "PCM resampled to fit SCSP RAM",
+    "60 Hz envelopes and quantized SCSP pitch/pan",
+    "Host bake, not target playback verification"
+  ]
+}

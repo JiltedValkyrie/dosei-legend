@@ -24,8 +24,9 @@ SAVE_FILE_SLOTS = 3
 ROW_ERASE = SAVE_FILE_SLOTS
 ROWS = SAVE_FILE_SLOTS + 1
 
-CHOOSING, ERASE_PICK, ERASE_CONFIRM = 0, 1, 2
+CHOOSING, OPEN_CONFIRM, ERASE_PICK, ERASE_CONFIRM = 0, 1, 2, 3
 NONE, START_NEW, START_LOAD, BACK = 0, 1, 2, 3
+OPEN_YES, OPEN_QUIT = 0, 1
 
 SAVE_FILE_OK = 0
 SAVE_FILE_EMPTY = 1
@@ -54,13 +55,15 @@ class FileSelect(unittest.TestCase):
                         str(ROOT / 'tests/fixtures/file_select_host.c')],
                        check=True, env=env, cwd=str(ROOT))
         cls.lib = ctypes.CDLL(str(output))
-        for name in ('file_select_row_label', 'file_select_row_detail'):
+        for name in ('file_select_row_label', 'file_select_row_detail',
+                     'file_select_open_label'):
             getattr(cls.lib, name).restype = ctypes.c_char_p
         cls.lib.file_select_copy_supported.restype = ctypes.c_bool
         cls.lib.save_check_quest_item.restype = ctypes.c_bool
         cls.lib.save_get_event_chk_inf.restype = ctypes.c_bool
         cls.lib.fs_device_failed.restype = ctypes.c_bool
         for name in ('fs_mode', 'fs_cursor', 'fs_result', 'fs_slot',
+                     'fs_open_row', 'fs_open_slot',
                      'fs_status', 'fake_is_stored', 'fs_step'):
             getattr(cls.lib, name).restype = ctypes.c_int
 
@@ -127,20 +130,26 @@ class FileSelect(unittest.TestCase):
 
     # ---- starting a game -----------------------------------------------
 
+    def open_file(self):
+        """A on a file, then YES on 'Open this file?'. Two presses, as on N64."""
+        self.step(confirm=1)
+        self.assertEqual(OPEN_CONFIRM, self.lib.fs_mode())
+        return self.step(confirm=1)
+
     def test_an_empty_slot_starts_a_new_game(self):
-        self.assertEqual(START_NEW, self.step(confirm=1))
+        self.assertEqual(START_NEW, self.open_file())
         self.assertEqual(0, self.lib.fs_slot())
         self.assertFalse(self.lib.save_check_quest_item(QUEST_KOKIRI_EMERALD))
 
     def test_a_new_game_starts_from_a_clean_save_even_over_stale_state(self):
         self.lib.save_give_quest_item(QUEST_KOKIRI_EMERALD)
-        self.step(confirm=1)
+        self.open_file()
         self.assertFalse(self.lib.save_check_quest_item(QUEST_KOKIRI_EMERALD))
 
     def test_a_stored_slot_loads_and_brings_its_progress_back(self):
         self.populate(1, rupees=42, emerald=True)
         self.step(down=1)
-        self.assertEqual(START_LOAD, self.step(confirm=1))
+        self.assertEqual(START_LOAD, self.open_file())
         self.assertEqual(1, self.lib.fs_slot())
         self.assertTrue(self.lib.save_check_quest_item(QUEST_KOKIRI_EMERALD))
         self.assertTrue(self.lib.save_get_event_chk_inf(
@@ -157,9 +166,81 @@ class FileSelect(unittest.TestCase):
         self.assertFalse(self.lib.save_check_quest_item(QUEST_KOKIRI_EMERALD))
 
     def test_result_latches_so_a_held_button_cannot_choose_twice(self):
-        self.assertEqual(START_NEW, self.step(confirm=1))
+        self.assertEqual(START_NEW, self.open_file())
         self.assertEqual(START_NEW, self.step(confirm=1, down=1))
         self.assertEqual(0, self.lib.fs_slot())
+
+    # ---- "Open this file?" ---------------------------------------------
+
+    def test_choosing_a_file_asks_before_opening_it(self):
+        """The panel must not load or create anything by itself."""
+        self.lib.save_give_quest_item(QUEST_KOKIRI_EMERALD)
+        self.assertEqual(NONE, self.step(confirm=1))
+        self.assertEqual(OPEN_CONFIRM, self.lib.fs_mode())
+        self.assertEqual(0, self.lib.fs_open_slot())
+        # Nothing committed yet: the stale quest state is still standing.
+        self.assertTrue(self.lib.save_check_quest_item(QUEST_KOKIRI_EMERALD))
+
+    def test_the_panel_opens_on_yes(self):
+        self.step(confirm=1)
+        self.assertEqual(OPEN_YES, self.lib.fs_open_row())
+
+    def test_quit_returns_to_the_list_without_opening(self):
+        self.populate(1, rupees=42)
+        self.step(down=1)
+        self.step(confirm=1)
+        self.step(down=1)                       # onto QUIT
+        self.assertEqual(OPEN_QUIT, self.lib.fs_open_row())
+        self.assertEqual(NONE, self.step(confirm=1))
+        self.assertEqual(CHOOSING, self.lib.fs_mode())
+        self.assertNotEqual(42, self.lib.fs_rupees())
+
+    def test_b_is_quit_too(self):
+        self.step(confirm=1)
+        self.assertEqual(NONE, self.step(cancel=1))
+        self.assertEqual(CHOOSING, self.lib.fs_mode())
+
+    def test_backing_out_returns_to_the_file_that_was_chosen(self):
+        """Not to whichever button was highlighted on the panel."""
+        self.populate(1)
+        self.step(down=1)
+        self.step(confirm=1)
+        self.step(down=1)                       # move the panel cursor
+        self.step(cancel=1)
+        self.assertEqual(1, self.lib.fs_cursor())
+
+    def test_the_panel_cursor_wraps_between_its_two_buttons(self):
+        self.step(confirm=1)
+        self.step(up=1)
+        self.assertEqual(OPEN_QUIT, self.lib.fs_open_row())
+        self.step(down=1)
+        self.assertEqual(OPEN_YES, self.lib.fs_open_row())
+
+    def test_the_panel_names_its_buttons(self):
+        self.assertEqual(b'YES', self.lib.file_select_open_label(OPEN_YES))
+        self.assertEqual(b'QUIT', self.lib.file_select_open_label(OPEN_QUIT))
+
+    def test_a_file_can_be_reconsidered_then_opened(self):
+        """Quit, then pick a different file. The slot must follow."""
+        self.populate(2, rupees=7)
+        self.step(confirm=1)
+        self.step(cancel=1)
+        self.step(down=1)
+        self.step(down=1)
+        self.assertEqual(START_LOAD, self.open_file())
+        self.assertEqual(2, self.lib.fs_slot())
+        self.assertEqual(7, self.lib.fs_rupees())
+
+    def test_a_slot_that_breaks_between_summary_and_yes_is_reported(self):
+        """It read fine for the list and not on open: back to the list."""
+        self.populate(0, rupees=15)
+        self.step(confirm=1)
+        self.assertEqual(OPEN_CONFIRM, self.lib.fs_mode())
+        self.lib.fake_corrupt(0, 40)
+        self.assertEqual(NONE, self.step(confirm=1))
+        self.assertEqual(CHOOSING, self.lib.fs_mode())
+        self.assertTrue(self.lib.fs_device_failed())
+        self.assertTrue(self.lib.fake_is_stored(0))
 
     # ---- refusing what cannot be read ----------------------------------
 
