@@ -28,6 +28,7 @@ import json
 import re
 from pathlib import Path
 import sys
+import xml.etree.ElementTree as ET
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT.parent / 'shared/tools'))
@@ -69,24 +70,31 @@ def build_one(source, output, name, sequence, stem):
         raise SystemExit('missing sequence: %s' % seq)
     font_id = soundfont_of(seq)
 
-    # PENDING: percussion. A drum note names the soundfont's drum table rather
-    # than a program number, and the note's key picks the drum out of it by
-    # range -- a path the player has never needed, because neither the title
-    # nor the forest theme uses one. Only the Ganondorf fanfare does. Skipped
-    # with a message rather than baked wrong or crashed on.
-    if 'FONTANY_INSTR_DRUM' in seq.read_text(errors='replace'):
-        print('%-10s seq %2d  SKIPPED: uses percussion, which the SCSP player '
-              'does not build yet' % (name, sequence))
-        return None
-
     loop_label = loop_label_of(seq)
     notes, tempo, volumes, gain, intro, end, omitted = audio.interpret(
         seq, loop_label or 'SEQ_0000', stop_at_loop=loop_label is not None)
     times = audio.timeline(tempo, end)
     envelopes, instruments, samples, pcm, hashes = audio.load_font(
         source, font_id)
+    # Soundfont drum ranges select the sample/envelope/pan by the note key.
+    # Keep this adaptation local to cutscene banks; existing music is unchanged.
+    font = ET.parse(source / ('soundfonts/Soundfont_%d.xml' % font_id)).getroot()
+    drums = list(font.find('Drums') or [])
+    for note in notes:
+        if note['program'] != 'FONTANY_INSTR_DRUM':
+            continue
+        selected = next((d.attrib for d in drums
+                         if audio.pitch(d.attrib['NoteStart']) <= note['key'] <=
+                            audio.pitch(d.attrib['NoteEnd'])), None)
+        if selected is None:
+            raise ValueError('No drum for key %d' % note['key'])
+        program = 'drum_' + selected['Name']
+        instruments[program] = selected
+        note['program'] = program
+        note['pan'] = int(selected['Pan'])
     frames, levels, triggers, cooked = audio.bake(
-        notes, times, volumes, gain, envelopes, instruments, samples, end)
+        notes, times, volumes, gain, envelopes, instruments, samples, end,
+        limit_one_shots=True, steal_releasing=True)
     if not (0 < frames <= 65535):
         raise SystemExit('%s: score exceeds the player frame format' % name)
 
@@ -129,6 +137,7 @@ def build_one(source, output, name, sequence, stem):
                                  'No N64 reverb or vibrato',
                                  'PCM resampled to fit SCSP RAM',
                                  '60 Hz envelopes and quantized SCSP pitch/pan',
+                                 '24 SCSP voices; quietest releasing voice reclaimed at saturation',
                                  'Host bake, not target playback verification'])
     (output / ('%s_manifest.json' % lower)).write_text(
         json.dumps(manifest, indent=2) + '\n')
@@ -143,7 +152,7 @@ def build_one(source, output, name, sequence, stem):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--source', type=Path,
-                        default=audio.ROOT / 'build/audio-source/extracted/assets/audio')
+                        default=Path('D:/Workspace-Claude/game-decomps/n64/oot/extracted/ntsc-1.2/assets/audio'))
     parser.add_argument('--output', type=Path,
                         default=ROOT / 'assets/audio/cutscenes')
     args = parser.parse_args()

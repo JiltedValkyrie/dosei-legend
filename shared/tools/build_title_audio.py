@@ -349,7 +349,8 @@ def volume_at(changes, tick):
     return changes[bisect.bisect_right(changes, (tick, 1000)) - 1][1]
 
 
-def bake(notes, times, changes, seq_volume, envelopes, instruments, samples, end_tick):
+def bake(notes, times, changes, seq_volume, envelopes, instruments, samples, end_tick,
+         limit_one_shots=False, steal_releasing=False):
     frames = round(times[end_tick] * FPS)
     levels = bytearray([255]) * (frames * VOICES)
     available = [0] * VOICES
@@ -369,6 +370,8 @@ def bake(notes, times, changes, seq_volume, envelopes, instruments, samples, end
         gate_level = envelope_level(env, gate - start)
         release = release_seconds(env['release'])
         stop = min(times[end_tick], gate + gate_level * release)
+        if limit_one_shots and sample["loop_end"] - sample["loop_start"] <= 1:
+            stop = min(stop, start + sample["loop_end"] / rate)
         first, last = round(start * FPS), min(frames, math.ceil(stop * FPS))
         if n['velocity'] == 0 or first >= frames:
             continue
@@ -387,6 +390,18 @@ def bake(notes, times, changes, seq_volume, envelopes, instruments, samples, end
         if not any(g > 1e-5 for g in gains):
             continue
         slot = next((i for i, end in enumerate(available) if end <= first), None)
+        if slot is None and steal_releasing:
+            # Reclaim a releasing voice before dropping a new attack. Select
+            # the quietest tail at this frame; existing scores opt out.
+            releasing = [n for n in cooked
+                         if times[min(n['end_tick'], end_tick)] <= start
+                         and n['end_frame'] > first]
+            if releasing:
+                victim = max(releasing, key=lambda n: levels[first * VOICES + n['slot']])
+                slot = victim['slot']
+                for frame in range(first, available[slot]):
+                    if frame < frames: levels[frame * VOICES + slot] = 255
+                victim['end_frame'] = first
         assert slot is not None, 'Polyphony exceeds SCSP voice budget'
         available[slot] = last + 1  # one fully silent frame before reuse
         for i, gain in enumerate(gains):

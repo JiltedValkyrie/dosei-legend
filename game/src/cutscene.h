@@ -23,6 +23,14 @@ unsigned int    cutscene_frame(void);
 **
 ** 0 = nothing over the scene, 255 = the scene is completely hidden.
 */
+/* SGL screen distance for the shot on screen, baked from its fov. Zero when
+** no cutscene is playing, in which case the caller keeps its own. */
+unsigned int    cutscene_screen_distance(void);
+int16_t         cutscene_camera_roll(void);
+unsigned int    cutscene_rain_count(void);
+unsigned int    cutscene_lightning(void);
+int16_t         cutscene_bridge_angle(void);
+
 unsigned int    cutscene_fade_alpha(void);
 
 /* Which colour the fill is, as CUTSCENE_FADE_BLACK / _GRAY. */
@@ -37,7 +45,7 @@ bool            cutscene_hides_scene(void);
 **
 ** A cue carries a start and end position and a facing, and names the pose
 ** Link holds while it runs -- asleep in bed, turning over, sitting up. The
-** position is interpolated across the cue exactly as OoT does, so the
+** position snaps to the cue start as in func_808529D0, so the
 ** storyboard's sleeping Link is where the original puts him rather than
 ** wherever gameplay last left him.
 **
@@ -67,4 +75,5 @@ uint16_t        cutscene_link_yaw(void);
 unsigned int    cutscene_link_clip(void);
 unsigned int    cutscene_link_frame(void);
 
+unsigned int cutscene_link_fraction(void);
 #endif

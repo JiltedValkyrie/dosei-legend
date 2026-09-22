@@ -173,7 +173,12 @@ static void         viewer_draw(void)
      * a double, and on an FPU-less SH-2 a non-constant argument pulls in the
      * software-float helpers (DOSEI-LEGEND-BIBLE.md). The constants below are
      * folded at compile time and stay safe. */
-    if (kokiri_scene_backdrop_active() && scene_flow_entry()->cam_dist > 0)
+    /* A cutscene shot has its own field of view, baked to a screen distance
+     * because the SH-2 has no tangent. Holding the gameplay 240 for every shot
+     * framed the whole dream far too wide. */
+    if (cutscene_screen_distance() > 0)
+        slSetScreenDist((FIXED)((int32_t)cutscene_screen_distance() << 16));
+    else if (kokiri_scene_backdrop_active() && scene_flow_entry()->cam_dist > 0)
         slSetScreenDist((FIXED)((int32_t)scene_flow_entry()->cam_dist << 16));
     else
         slSetScreenDist(toFIXED(demo_title_is_visible() ? 180 : SCREEN_DISTANCE));
@@ -208,6 +213,7 @@ static void         viewer_draw(void)
 #else
     slScale(toFIXED(-1), toFIXED(1), toFIXED(1));
 #endif
+    slRotZ((ANGLE)(0u - cutscene_camera_roll()));
     slRotX((ANGLE)(0u-demo_pitch));
     slRotY((ANGLE)(0u-demo_yaw));
     jo_3d_translate_matrix(-demo_camera.x, demo_camera.y, -demo_camera.z);
@@ -227,12 +233,12 @@ static void         viewer_draw(void)
      * hidden. */
     if (!kokiri_scene_backdrop_active() && !cutscene_hides_scene()) {
         kokiri_scene_draw();
-        kokiri_grass_draw();
-        kokiri_rupees_draw(demo_clock());
         /* The forest's own actors belong to gameplay, not to a cutscene
          * playing in the same scene: Navi's flight must not have Kokiri
          * fairies bobbing along beside it. */
         if (!cutscene_is_playing()) {
+            kokiri_grass_draw();
+            kokiri_rupees_draw(demo_clock());
             kokiri_fairies_draw(demo_clock());
             kokiri_pickups_draw(demo_clock());
         }
@@ -244,29 +250,47 @@ static void         viewer_draw(void)
     ** kokiri_scene_draw() resets, cover both lists. His model origin is at his
     ** feet, EYE_HEIGHT below the collision position. */
     if (cutscene_is_playing()) {
-        /* The shot's riders, one per cue channel. Ganondorf chases; Zelda and
-         * Impa flee. They are placed entirely by the baked cues. */
         unsigned int channel;
 
-        for (channel = 0; channel < cutscene_actor_channels(); ++channel) {
-            if (!cutscene_actor_channel_visible(channel) ||
-                cutscene_hides_scene())
+        cutscene_actors_prepare();
+        if (cutscene_id() == CUTSCENE_NIGHTMARE && !cutscene_hides_scene()) {
+            int32_t sine, cosine;
+            int y, z;
+            kokiri_camera_sincos((uint16_t)cutscene_bridge_angle(), &sine, &cosine);
+            y = -10 + (int)(((int64_t)10 * cosine - (int64_t)400 * sine) >> 16);
+            z = 670 + (int)(((int64_t)10 * sine + (int64_t)400 * cosine) >> 16);
+            cutscene_actor_draw(CUTSCENE_ACTOR_BRIDGE, 0, -10, 670, 0);
+            cutscene_actor_draw(CUTSCENE_ACTOR_CHAINS, 158, y, z, 0);
+            cutscene_actor_draw(CUTSCENE_ACTOR_CHAINS, -158, y, z, 0);
+        }
+        /* All five En_Viewer actors share their channel's world origin.
+         * Riding offsets belong to the original animation, not the mount. */
+        for (channel = 0; channel < 2; ++channel) {
+            int32_t x, y, z;
+            if (!cutscene_actor_channel_visible(channel) || cutscene_hides_scene())
                 continue;
-            cutscene_actor_draw(channel == 0 ? CUTSCENE_ACTOR_GANON
-                                             : CUTSCENE_ACTOR_ZELDA,
-                                cutscene_actor_channel_x(channel),
-                                cutscene_actor_channel_y(channel),
-                                cutscene_actor_channel_z(channel),
-                                cutscene_actor_channel_yaw(channel));
+            x = cutscene_actor_channel_x(channel);
+            y = cutscene_actor_channel_y(channel);
+            z = cutscene_actor_channel_z(channel);
+            cutscene_actor_draw(channel == 0 ? CUTSCENE_ACTOR_HORSE_ZELDA
+                                            : CUTSCENE_ACTOR_HORSE_GANON,
+                                x, y, z, 0);
+            if (channel == 0) {
+                cutscene_actor_draw(CUTSCENE_ACTOR_ZELDA, x, y, z, 0);
+                cutscene_actor_draw(CUTSCENE_ACTOR_IMPA, x, y, z, 0);
+            } else {
+                cutscene_actor_draw(CUTSCENE_ACTOR_GANON, x, y - 6, z, 0);
+            }
         }
     }
+
     if (cutscene_is_playing()) {
         /* A cutscene places and poses Link itself, from its own player cues:
          * asleep in bed for the narration, sitting up when Navi wakes him.
          * Shots with no cue do not contain him, so nothing is drawn. */
         if (cutscene_link_visible() && !cutscene_hides_scene()) {
             frame_timer_begin(FRAME_PHASE_LINK);
-            link_anim_pose(cutscene_link_clip(), cutscene_link_frame(), 0);
+            link_anim_pose(cutscene_link_clip(), cutscene_link_frame(), cutscene_link_fraction());
             kokiri_link_draw(cutscene_link_x(), cutscene_link_y(),
                              cutscene_link_z(), cutscene_link_yaw());
             frame_timer_end(FRAME_PHASE_LINK);
@@ -277,9 +301,26 @@ static void         viewer_draw(void)
                          demo_link.z, demo_link_yaw);
         frame_timer_end(FRAME_PHASE_LINK);
     }
+    if (cutscene_is_playing()) kokiri_cutscene_effects_draw();
     rejected_total += kokiri_scene_rejected();
     cutscene_fade();
     cutscene_text();
+    /* Persistent development readout, independent of auto-start probes. */
+    {
+        static bool debug_visible;
+        if (cutscene_is_playing()) {
+            jo_printf(0, 0, "SCENE %d FRAME %d FADE %d   ",
+                      cutscene_id(), cutscene_frame(), cutscene_fade_alpha());
+            jo_printf(0, 1, "ACT %d X %d Z %d REJ %d   ", cutscene_actors_ready(),
+                      cutscene_actor_channel_x(1), cutscene_actor_channel_z(1),
+                      kokiri_scene_rejected());
+            debug_visible = true;
+        } else if (debug_visible) {
+            jo_printf(0, 0, "                                        ");
+            jo_printf(0, 1, "                                        ");
+            debug_visible = false;
+        }
+    }
     dialogue_box();
     inventory_menu();
     file_select_screen();
@@ -309,22 +350,23 @@ static void         viewer_draw(void)
 */
 static void         cutscene_fade(void)
 {
-    static unsigned int last_alpha;
-    unsigned int        alpha = cutscene_fade_alpha();
-    Sint16              level;
+    static int last_level = -999;
+    unsigned int alpha = cutscene_fade_alpha();
+    int flash = cutscene_lightning();
+    Sint16 level = (Sint16)(flash - (int)alpha);
 
-    if (alpha == last_alpha)
-        return;
-    last_alpha = alpha;
-    if (!alpha) {
-        slColOffsetOff(NBG1ON | RBG0ON | SPRON);
+    if (alpha && cutscene_fade_colour() != CUTSCENE_FADE_BLACK)
+        level = (Sint16)(flash + (int)alpha);
+    if (level > 255) level = 255;
+    if (level == last_level) return;
+    last_level = level;
+    if (!level) {
+        slColOffsetOff(NBG1ON | RBG0ON | SPRON | BACKON);
         return;
     }
-    /* The offset range is -255..255, so the alpha maps straight onto it. */
-    level = (Sint16)(0 - (int)alpha);
     slColOffsetB(level, level, level);
-    slColOffsetBUse(NBG1ON | RBG0ON | SPRON);
-    slColOffsetOn(NBG1ON | RBG0ON | SPRON);
+    slColOffsetBUse(NBG1ON | RBG0ON | SPRON | BACKON);
+    slColOffsetOn(NBG1ON | RBG0ON | SPRON | BACKON);
 }
 
 /*

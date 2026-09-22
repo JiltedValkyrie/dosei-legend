@@ -11,8 +11,8 @@
 
 extern const music_bank_t music_bank_title;
 extern const music_bank_t music_bank_kokiri;
-/* The opening cutscenes' cues. NA_BGM_OPENING_GANON has no bank yet: its
-** sequence uses percussion the score builder cannot bake. */
+/* The opening cutscenes' original sequence banks, including Ganon percussion. */
+extern const music_bank_t music_bank_nightmare;
 extern const music_bank_t music_bank_navi;
 extern const music_bank_t music_bank_deku_tree;
 

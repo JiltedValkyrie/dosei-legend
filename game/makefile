@@ -38,7 +38,7 @@ endif
 # entry 0. Forest 1801 + Link 419 + 1 = 2221 today; the margin is because a
 # texture change can move Link's tile count, and overrunning this aborts into
 # Jo's error handler at load. tests/test_build_sgl_scene.py checks the sum.
-JO_MAX_SPRITE = 2400
+JO_MAX_SPRITE = 2800
 
 # The project-local SGL work area (generated/sglarea.o) is laid out from the
 # top of work RAM downwards and needs .bss to end below its base. The stock
@@ -107,6 +107,14 @@ _CCFLAGS += -DDOSEI_FOREST_FAR=$(FOREST_FAR)
 endif
 ifeq ($(WARP_PROBE),1)
 _CCFLAGS += -DDOSEI_WARP_PROBE
+endif
+# Boot straight into one cutscene, for looking at it without the opening.
+# Diagnostic only; never set for a player disc.
+ifneq ($(CUTSCENE_PROBE),)
+_CCFLAGS += -DDOSEI_CUTSCENE_PROBE=$(CUTSCENE_PROBE)
+ifneq ($(CUTSCENE_PROBE_FRAME),)
+_CCFLAGS += -DDOSEI_CUTSCENE_PROBE_FRAME=$(CUTSCENE_PROBE_FRAME)
+endif
 endif
 ifneq ($(filter 1 2 3 4 5,$(PERF_PROBE)),)
 _CCFLAGS += -DDOSEI_PERF_PROBE=$(PERF_PROBE)

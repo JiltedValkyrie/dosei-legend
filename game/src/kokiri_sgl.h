@@ -9,6 +9,10 @@
  *  @return true on success; on failure jo_core_error() describes the reason. */
 bool            kokiri_scene_load(void);
 
+/* The flat cutscene field's bank number. It is seen end to end, unlike a
+** forest room, so the loader gives it a far larger draw distance. */
+#define KOKIRI_FIELD_SCENE 3
+
 /* Load one (scene, room) VDP1 geometry bank: S<scene>R<room>.MSH/.TEX. */
 bool            kokiri_scene_load_bank(unsigned int scene, unsigned int room);
 
@@ -63,8 +67,10 @@ void            kokiri_rupee_hud_draw(void);
 #define KOKIRI_TILE_NONE 0xFFFFFFFFu
 /* Upload a 4bpp tile into the resident bank's VDP1 space, above the resident
 ** meshes, and return its sprite slot. Reclaimed by the next bank load. */
-unsigned int    kokiri_bank_tile_upload(const void *pixels, unsigned int width,
-                                        unsigned int height);
+unsigned int    kokiri_bank_tile_upload(const void *pixels, const void *clut,
+                                        unsigned int width,
+                                        unsigned int height,
+                                        unsigned int *colno);
 /* Submit a caller-owned polygon list through the scene's accounting. */
 void            kokiri_submit_pdata(PDATA *pdata);
 
@@ -95,6 +101,9 @@ unsigned int    kokiri_order_frames(void);
 unsigned int    kokiri_order_error(void);
 #endif
 
+void kokiri_cutscene_effects_draw(void);
+/* Release only transient nightmare textures; resident Link/UI remain. */
+void kokiri_cutscene_tiles_reset(void);
 #endif /* !__KOKIRI_SGL_H__ */
 
 /*

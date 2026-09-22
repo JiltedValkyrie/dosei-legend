@@ -138,18 +138,33 @@ def emit_rooms(args, head, actor, normal):
                '   which scene it belongs to; a portal never crosses scenes. */',
                'typedef struct { short front,back,x,y,z,yaw; unsigned char scene; } kokiri_portal;',
                'extern PDATA kokiri_pdata;',
-               'extern kokiri_tile kokiri_tiles[KOKIRI_TILE_COUNT];',
-               'extern unsigned short kokiri_cluts[KOKIRI_TILE_COUNT][16];',
+               'extern kokiri_tile *kokiri_tiles;',
+               'extern unsigned short (*kokiri_cluts)[16];',
+               'bool kokiri_bank_allocate(void);',
                'extern unsigned char kokiri_objects[KOKIRI_POLYGON_COUNT+3];',
                'extern kokiri_object kokiri_bounds[KOKIRI_OBJECT_COUNT];',
                '#define KOKIRI_PORTAL_COUNT %d'%max(len(portals), 1),
                'extern const kokiri_portal kokiri_portals[KOKIRI_PORTAL_COUNT];','#endif']
     (out/'kokiri_scene.h').write_text('\n'.join(header)+'\n')
     code = ['#include "kokiri_scene.h"',
-            'static POINT points[KOKIRI_VERTEX_COUNT];',
-            'static POLYGON polygons[KOKIRI_POLYGON_COUNT];',
-            'static ATTR attributes[KOKIRI_POLYGON_COUNT];',
-            'PDATA kokiri_pdata = {points,0,polygons,0,attributes};',
+            'PDATA kokiri_pdata;',
+            'bool kokiri_bank_allocate(void) {',
+            '    if (kokiri_pdata.pntbl) return true;',
+            '    POINT *points = jo_malloc(sizeof(POINT) * KOKIRI_VERTEX_COUNT);',
+            '    POLYGON *polygons = jo_malloc(sizeof(POLYGON) * KOKIRI_POLYGON_COUNT);',
+            '    ATTR *attributes = jo_malloc(sizeof(ATTR) * KOKIRI_POLYGON_COUNT);',
+            '    kokiri_tiles = jo_malloc(sizeof(kokiri_tile) * KOKIRI_TILE_COUNT);',
+            '    kokiri_cluts = jo_malloc(32 * KOKIRI_TILE_COUNT);',
+            '    if (!points || !polygons || !attributes || !kokiri_tiles || !kokiri_cluts) {',
+            '        if (points) jo_free(points); if (polygons) jo_free(polygons);',
+            '        if (attributes) jo_free(attributes);',
+            '        if (kokiri_tiles) jo_free(kokiri_tiles);',
+            '        if (kokiri_cluts) jo_free(kokiri_cluts);',
+            '        kokiri_tiles = 0; kokiri_cluts = 0; return false;',
+            '    }',
+            '    kokiri_pdata.pntbl = points; kokiri_pdata.pltbl = polygons;',
+            '    kokiri_pdata.attbl = attributes; return true;',
+            '}',
             'unsigned char kokiri_objects[KOKIRI_POLYGON_COUNT+3];',
             'kokiri_object kokiri_bounds[KOKIRI_OBJECT_COUNT];',
             'const kokiri_portal kokiri_portals[KOKIRI_PORTAL_COUNT] = {']
@@ -161,8 +176,8 @@ def emit_rooms(args, head, actor, normal):
     code += ['};']
     (out/'kokiri_scene.c').write_text('\n'.join(code)+'\n')
     (out/'kokiri_textures.c').write_text('#include "kokiri_scene.h"\n'
-        'kokiri_tile kokiri_tiles[KOKIRI_TILE_COUNT];\n'
-        'unsigned short kokiri_cluts[KOKIRI_TILE_COUNT][16];\n')
+        'kokiri_tile *kokiri_tiles;\n'
+        'unsigned short (*kokiri_cluts)[16];\n')
     # Shared diagnostic landmark remains the village clearing: spot04 room 0.
     probe = out / ('s%dr0' % next(i for i, e in enumerate(SCENES)
                                   if e['prefix'] == 'spot04'))

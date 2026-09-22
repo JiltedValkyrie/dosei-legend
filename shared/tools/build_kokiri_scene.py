@@ -182,6 +182,8 @@ class DisplayLists:
                 assert 0 <= first and first + n <= 32
                 for i in range(n):
                     x, y, z, flag, u, v, r, g, b, a = struct.unpack('>hhhHhhBBBB', self.read(w1 + i * 16, 16))
+                    # Skin importers retain source blend ownership through G_VTX.
+                    self.vertex_address = w1 + i * 16
                     self.load_vertex(first + i, (x, y, z, u / 32, v / 32, r, g, b, a))
             elif op == 0x05:
                 self.triangle(w0, transparent)

@@ -83,7 +83,13 @@ class AnimationOffsets(unittest.TestCase):
                     self.keep, self.animetion, self.offsets[symbol],
                     first, count, stride, blm.LIMB_COUNT)
                 self.assertGreater(total, 0)
-                self.assertEqual(len(frames), count)
+                expected = count if count else (total - 1 + stride - 1) // stride + 1
+                self.assertEqual(len(frames), expected)
+                if not count:
+                    _, root, rotations = blm.read_animation(
+                        self.keep, self.animetion, self.offsets[symbol], total - 1,
+                        blm.LIMB_COUNT)
+                    self.assertEqual(frames[-1], (root, rotations))
                 for root, rotations in frames:
                     self.assertEqual(len(root), 3)
                     self.assertEqual(len(rotations), blm.LIMB_COUNT)

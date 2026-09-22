@@ -11,6 +11,7 @@
 #include "kokiri_score.h"
 #include "navi_score.h"
 #include "deku_tree_score.h"
+#include "nightmare_score.h"
 
 /* The title score's generated header does not export its sample-bank size;
 ** this is the figure its loader has always validated against. */
@@ -35,10 +36,6 @@ const music_bank_t music_bank_kokiri = {
 ** commands. These are one-pass cues rather than area themes, so they loop from
 ** the top: a beat that outlives its cue repeats instead of falling silent.
 **
-** The nightmare's fanfare (NA_BGM_OPENING_GANON, sequence 35) is not here: it
-** uses percussion, which tools/build_cutscene_audio.py cannot bake yet. The
-** cutscene player leaves the current score alone for a bank it has not got,
-** rather than substituting an unrelated one.
 */
 const music_bank_t music_bank_navi = {
     "CSNAVI.PCM", "CSNAVI.LVL",
@@ -54,4 +51,11 @@ const music_bank_t music_bank_deku_tree = {
     DEKU_TREE_TRIGGER_COUNT, DEKU_TREE_FRAMES, DEKU_TREE_LOOP_FRAME,
     DEKU_TREE_VOICES, DEKU_TREE_SAMPLE_BASE, DEKU_TREE_PCM_BYTES,
     DEKU_TREE_LEVEL_BYTES
+};
+
+const music_bank_t music_bank_nightmare = {
+    "CSGANON.PCM", "CSGANON.LVL",
+    (const music_pcm_t *)nightmare_pcm, (const music_trigger_t *)nightmare_triggers,
+    NIGHTMARE_TRIGGER_COUNT, NIGHTMARE_FRAMES, NIGHTMARE_LOOP_FRAME,
+    NIGHTMARE_VOICES, NIGHTMARE_SAMPLE_BASE, NIGHTMARE_PCM_BYTES, NIGHTMARE_LEVEL_BYTES
 };

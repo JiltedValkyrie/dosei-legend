@@ -87,6 +87,13 @@ static bool shield_held;
 /* L held. Not an edge: hold targeting needs the button state every step. */
 static bool target_held;
 static unsigned int cutscene_phase;
+/* The vblank the cutscene clock last consumed.
+**
+** It cannot share previous_tick with the 30 Hz gameplay step: that one only
+** ever advances in whole pairs of vblanks (steps * 2), so an odd tick is left
+** on the counter and the cutscene, which reads the raw difference, counts it
+** a second time on the next frame. The dream ran about half again too fast. */
+static unsigned int cutscene_tick;
 /* Pending actions whose gameplay systems do not exist yet. Counted rather than
  * dropped so the HUD/tests can show the input arrived, and deliberately not
  * wired to any substitute behavior. */
@@ -102,6 +109,23 @@ static jo_color sky_color(unsigned int row)
     g = 157 + (221 - 157) * row / 239;
     b = 108 + (155 - 108) * row / 239;
     return JO_COLOR_RGB(r, g, b);
+}
+
+/* The nightmare's own environment has fog RGB (0,20,35). Until its cloud
+ * skybox is imported, use that horizon colour rather than Kokiri daylight. */
+static void cutscene_sky_update(void)
+{
+    static int last_nightmare = -1;
+    int nightmare = cutscene_is_playing() && cutscene_id() == CUTSCENE_NIGHTMARE;
+    unsigned int row, lines = 240;
+    volatile jo_color *sky = (volatile jo_color *)(JO_VDP2_VRAM_B1 + 0x1f000);
+#ifdef DOSEI_HIRES
+    lines = 480;
+#endif
+    if (last_nightmare == nightmare) return;
+    last_nightmare = nightmare;
+    for (row = 0; row < lines - 1; ++row)
+        sky[row] = nightmare ? JO_COLOR_RGB(0, 20, 35) : sky_color(row * 240 / lines);
 }
 
 /* Authored travelling shots: 10 seconds each, fairy subjects beside logo.
@@ -317,8 +341,11 @@ static void         file_select_tick(void)
         active_slot = file_select.slot;
         save_reported = false;
         if (chosen == FILE_SELECT_START_NEW) {
+            cutscene_phase = 0;
+            cutscene_tick = ticks;
             if (!cutscene_start(CUTSCENE_SLEEP))
                 enter_world();
+            cutscene_tick = ticks;
         } else {
             enter_world();
         }
@@ -413,11 +440,38 @@ bool demo_init(void)
     prompt = (unsigned short *)jo_fs_read_file("START.RGB", &length);
     if (!prompt || length != 84 * 14 * 2) return false;
     refresh = (JO_VDP2_TVSTAT & 1) ? 50 : 60;
-    return jo_core_add_vblank_callback(demo_vblank) != 0;
+    if (jo_core_add_vblank_callback(demo_vblank) == 0)
+        return false;
+
+    return true;
 }
 
 void demo_update(void)
 {
+#ifdef DOSEI_CUTSCENE_PROBE
+    /*
+    ** Straight into one cutscene, skipping the title and the file select.
+    **
+    ** Diagnostic only, never in a player disc: looking at the dream otherwise
+    ** means sitting through the narration every time. Build with
+    ** CUTSCENE_PROBE=<id>, where the id is a cutscene_id_t -- 1 is the
+    ** nightmare.
+    */
+    static bool probe_started;
+    if (!probe_started) {
+        probe_started = true;
+        save_new_game();
+        game_mode_set(GAME_MODE_FILE_SELECT);
+        game_mode_set(GAME_MODE_LOADING);
+        cutscene_phase = 0;
+        cutscene_tick = ticks;
+        if (!cutscene_start(DOSEI_CUTSCENE_PROBE))
+            enter_world();
+        cutscene_tick = ticks;
+        jo_clear_screen();
+        return;
+    }
+#endif
     uint16_t buttons = 0;
     bool recenter = false;
     bool start_pressed = input_edge_consume(&start_edge);
@@ -545,10 +599,19 @@ void demo_update(void)
         pause_pending = false;
         menu_step = 0;
         player_input_set_dialogue(true);
-        cutscene_phase += elapsed * CUTSCENE_TICK_HZ;
+        cutscene_phase += (now - cutscene_tick) * CUTSCENE_TICK_HZ;
+        cutscene_tick = now;
         while (cutscene_phase >= refresh) {
             cutscene_phase -= refresh;
+#ifdef DOSEI_CUTSCENE_PROBE_FRAME
+            if (cutscene_frame() >= DOSEI_CUTSCENE_PROBE_FRAME) continue;
+#endif
+            unsigned int previous_cutscene = cutscene_id();
             cutscene_step(interact_pending);
+            if (cutscene_id() != previous_cutscene) {
+                cutscene_phase = 0;
+                cutscene_tick = ticks;
+            }
             interact_pending = false;
         }
         if (cutscene_finished()) {
@@ -765,6 +828,7 @@ void demo_update(void)
      * is hidden is why the backdrop appeared for a frame and then vanished:
      * kokiri_scene_load_backdrop() uploads it, and the very next demo_update()
      * turned the layer off again. */
+    cutscene_sky_update();
     slScrAutoDisp(NBG0ON |
                   ((title_visible ||
                     (kokiri_scene_backdrop_active() &&

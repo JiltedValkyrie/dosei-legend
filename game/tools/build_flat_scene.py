@@ -109,7 +109,12 @@ def pack(vertices, faces):
         data.extend(struct.pack('>3i4H', *face_normal(baked, face['idx']),
                                 *face['idx']))
     for face in faces:
-        data.extend(struct.pack('>BB5H', 0 if face['cull'] else 1, 0x67,
+        # Dual_Plane (0), not Single_Plane (1): the flag is backface culling,
+        # and an authored mesh exported from Blender has no guaranteed winding
+        # relative to the camera. Every face came out culled -- which is why
+        # the field had no ground at all -- and a cutscene backdrop gains
+        # nothing from culling anyway.
+        data.extend(struct.pack('>BB5H', 0 if not face['cull'] else 1, 0x67,
                                 0, ATTR_BASE | CL32KRGB, face['colour'], 0,
                                 FUNC_POLYGON))
     data.extend(bytes(0 for _ in faces))        # every face in object 0

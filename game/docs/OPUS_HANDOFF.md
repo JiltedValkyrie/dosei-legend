@@ -1,3 +1,32 @@
+# Cutscene checkpoint - 2026-09-22
+
+User directive: stop expanding performance/detail work; checkpoint and push everything.
+Keep these cutscene development HUD rows permanently during development:
+`SCENE # FRAME # FADE #` and `ACT # X # Z # REJ #`.
+They must not depend on CUTSCENE_PROBE. Show actual asset names during loading,
+including ordinary builds, so a synchronous CD load is visibly progressing.
+
+Checkpoint includes original young Ganondorf, Zelda, Impa, separate animated
+horses, bridge/chains, source-order cue latching, camera roll/FOV fixes, native
+Link clip timing and wait loops, rain/Navi, and Ganon's score with percussion.
+Actor assets stay in the RAM cart; only visible actors occupy the transient
+VDP1 bank. Horse vertices share only the same source Skin blend or rigid
+limb/local position; every baked pose validates that sharing preserves motion.
+The previous Kronos close-up at frame 400 showed textured Ganondorf with REJ 0.
+Latest horse deduplication and always-visible debug/loading text follow that capture.
+Normal player-disc build passed with 3,328 bytes below the SGL work area.
+480 host tests completed: pass, with one skipped. No auto-start/freeze probe
+is enabled in the final local disc. Logs: build/checkpoint-build.log and
+build/checkpoint-tests.log (ignored build artifacts).
+
+This is a checkpoint, not a claim of perfect N64 parity. Field art is still
+flat authored geometry; clouds, cape, ocarina, torch/lightning/rain-ring effects,
+original SFX, precise fades/lighting and full Link root/morph behavior remain.
+Link's complete clips use interpolated samples. Navi still uses a billboard.
+No change to user controls; no foreground input or desktop capture used.
+
+---
+
 # Phase 0 build verification (Astra, 2026-09-21)
 
 ## Build steps for Claude

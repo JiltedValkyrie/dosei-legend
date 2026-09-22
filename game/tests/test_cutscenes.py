@@ -101,10 +101,65 @@ class Cutscenes(unittest.TestCase):
         self.assertFalse(music[0]['stop'])
 
     def test_the_deku_tree_theme_stops_before_navis_begins(self):
+        """The speech plays over spot04's own scene music.
+
+        The script only ever STOPS the Deku Tree's theme -- it is started by
+        the scene layer's SCENE_CMD_SOUND_SETTINGS, not by the cutscene -- so
+        the bake has to supply that start or the speech plays in silence and
+        the stop has nothing to stop."""
         music = sorted(self.baked['NAVI_FLY']['music'], key=lambda m: m['start'])
-        self.assertEqual([(m['sequence'], m['stop']) for m in music],
-                         [('NA_BGM_DEKU_TREE_CS', True),
-                          ('NA_BGM_NAVI_OPENING', False)])
+        self.assertEqual([(m['sequence'], m['stop'], m['start']) for m in music],
+                         [('NA_BGM_DEKU_TREE_CS', False, 0),
+                          ('NA_BGM_DEKU_TREE_CS', True, 192),
+                          ('NA_BGM_NAVI_OPENING', False, 200)])
+
+    def test_music_cues_are_in_frame_order(self):
+        """The runtime walks them with one cursor, so a cue out of order is a
+        cue never played: the stop at 192 is written after the start at 200."""
+        for key, cs in self.baked.items():
+            starts = [m['start'] for m in cs['music']]
+            self.assertEqual(starts, sorted(starts), key)
+
+    def test_cues_keep_source_order_and_authored_yaw(self):
+        cues = self.baked['NIGHTMARE']['actor_cues']
+        self.assertEqual(cues[0]['start'], 180)
+        self.assertTrue(all(c['rot_y'] == 0 for c in cues))
+
+    def test_camera_roll_and_fov_come_from_at_spline(self):
+        eye = [('CS_CAM_CONTINUE', 0, 10, 60, i * 100, 0, 0)
+               for i in range(6)] + [('CS_CAM_STOP', 0, 10, 60, 600, 0, 0)]
+        at = [(p[0], 8, p[2], 30, *p[4:]) for p in eye]
+        track = bake.bake_shot(bake.Spline(eye), bake.Spline(at), 3)
+        self.assertAlmostEqual(track[0][2], 8)
+        self.assertAlmostEqual(track[0][3], 30)
+
+    def test_the_dream_cues_two_channels_exactly_as_the_rom_does(self):
+        """Three CS_ACTOR_CUE_LISTs over two channels, eleven cues. Channel 0
+        is Zelda's -- En_Zl1 reads csCtx.actorCues[0] (z_en_zl1.c:401), which
+        CS_CMD_ACTOR_CUE_0_* fills (z_demo.c:1951) -- and channel 1 pursues."""
+        cues = self.baked['NIGHTMARE']['actor_cues']
+        self.assertEqual(len(cues), 11)
+        self.assertEqual({c['channel'] for c in cues}, {0, 1})
+        zelda = sorted((c for c in cues if c['channel'] == 0), key=lambda c: c['start'])
+        ganon = [c for c in cues if c['channel'] == 1]
+        self.assertEqual(len(zelda), 4)
+        self.assertEqual(len(ganon), 7)
+        # Zelda's long flee: the full length of the field.
+        self.assertEqual((zelda[-1]['start'], zelda[-1]['end']), (180, 420))
+        self.assertEqual(zelda[-1]['start_pos'][2], -50)
+        self.assertEqual(zelda[-1]['end_pos'][2], 3355)
+        # Ganondorf rides in, then holds in front of Link.
+        self.assertEqual(ganon[1]['end_pos'], (0, 0, 1198))
+        for cue in ganon[2:]:
+            self.assertEqual(cue['start_pos'], (0, 0, 1198))
+            self.assertEqual(cue['end_pos'], (0, 0, 1198))
+
+    def test_a_cutscene_with_no_scene_music_starts_none(self):
+        """link_home's layer is NA_BGM_GENERAL_SFX and spot00's dream layer is
+        NA_BGM_NO_MUSIC: both are meant to be silent."""
+        for key in ('SLEEP', 'WAKE_UP'):
+            self.assertEqual([m for m in self.baked[key]['music']
+                              if not m['stop']], [])
 
     def test_every_sequence_used_by_the_opening_has_a_bank(self):
         for key, cs in self.baked.items():

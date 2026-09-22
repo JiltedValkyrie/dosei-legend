@@ -1,4 +1,5 @@
 #include <jo/jo.h>
+#include "asset_loading.h"
 #include "cutscene.h"
 #include "demo.h"
 #include "game_mode.h"
@@ -29,6 +30,13 @@ typedef struct
     ** screen is held covered instead of showing an unrelated room. */
     bool              scene_loaded;
     cutscene_point_t *track;
+    const cutscene_cue_t *player_cue;
+    const cutscene_cue_t *actor_cues[10];
+    int32_t actor_pos[10][3];
+    int32_t navi_pos[3], navi_velocity[3];
+    unsigned short applied_frame;
+    unsigned char rain, flash;
+    short bridge_start;
 }                   cutscene_state_t;
 
 static cutscene_state_t state;
@@ -89,6 +97,7 @@ static int scene_for_cutscene(unsigned int scene)
 static const music_bank_t *bank_for_cutscene(unsigned int bank)
 {
     switch (bank) {
+        case CUTSCENE_BANK_NIGHTMARE: return (&music_bank_nightmare);
         case CUTSCENE_BANK_NAVI:      return (&music_bank_navi);
         case CUTSCENE_BANK_DEKU_TREE: return (&music_bank_deku_tree);
         default:                      return ((const music_bank_t *)0);
@@ -128,7 +137,7 @@ static bool load_track(const cutscene_t *cs)
         state.track[i].yaw = read_be16(p + 6);
         state.track[i].pitch = read_be16(p + 8);
         state.track[i].roll = read_be16(p + 10);
-        state.track[i].fov = read_be16(p + 12);
+        state.track[i].dist = read_be16(p + 12);
     }
     jo_free(data);
     return (true);
@@ -150,6 +159,19 @@ bool cutscene_start(unsigned int id)
     state.finished = false;
     state.id = (unsigned char)id;
     state.frame = 0;
+    state.applied_frame = 0;
+    state.rain = state.flash = 0;
+    state.bridge_start = -1;
+    state.player_cue = 0;
+    { unsigned int axis; for (axis = 0; axis < 3; ++axis)
+        state.navi_pos[axis] = state.navi_velocity[axis] = 0; }
+    {
+        unsigned int i;
+        for (i = 0; i < 10; ++i) {
+            state.actor_cues[i] = 0;
+            state.actor_pos[i][0] = state.actor_pos[i][1] = state.actor_pos[i][2] = 0;
+        }
+    }
     state.text_cursor = 0;
     state.music_cursor = 0;
     state.text_hold_end = 0;
@@ -163,6 +185,7 @@ bool cutscene_start(unsigned int id)
     ** Later beats start their own cue through CS_START_SEQ. */
     if (id == CUTSCENE_SLEEP)
         music_silence(CUTSCENE_FADE_FRAMES);
+    asset_loading("CUTSCENE SCENE");
     game_mode_set(GAME_MODE_LOADING);
     if (cs->scene == CUTSCENE_SCENE_SPOT00) {
         state.scene_loaded = kokiri_scene_load_bank(CUTSCENE_FIELD_BANK, 0);
@@ -171,6 +194,9 @@ bool cutscene_start(unsigned int id)
         ** shot its riders, not the cutscene. */
         if (state.scene_loaded)
             cutscene_actors_load();
+    } else if (cs->scene == CUTSCENE_SCENE_SPOT04) {
+        cutscene_actors_free();
+        state.scene_loaded = kokiri_scene_load_bank(2, 0);
     } else {
         cutscene_actors_free();
         int scene = scene_for_cutscene(cs->scene);
@@ -178,8 +204,10 @@ bool cutscene_start(unsigned int id)
         state.scene_loaded = scene >= 0 &&
                              scene_flow_load((unsigned int)scene, 0);
     }
+    asset_loading(cs->track_file);
     if (!load_track(cs))
         return (false);
+    asset_loading_done();
     game_mode_set(GAME_MODE_CUTSCENE);
     state.active = true;
     return (true);
@@ -284,12 +312,22 @@ static void step_events(const cutscene_t *cs, bool confirm)
            cs->music[state.music_cursor].start <= (short)state.frame) {
         const cutscene_music_t *music = &cs->music[state.music_cursor];
         const music_bank_t *bank = bank_for_cutscene(music->bank);
-        if (!music->stop && bank)
+
+        if (music->stop) {
+            /* CS_STOP_SEQ. Only silence what is actually playing: the stop
+            ** names a sequence, and if a later cue has already replaced it
+            ** there is nothing to stop. */
+            if (bank && music_current() == bank)
+                music_silence(CUTSCENE_FADE_FRAMES);
+        } else if (bank) {
             music_fade_to(bank, CUTSCENE_FADE_FRAMES);
+        }
         ++state.music_cursor;
     }
     message_step(confirm);
 }
+
+static void update_cues(const cutscene_t *cs);
 
 bool cutscene_step(bool confirm)
 {
@@ -301,6 +339,20 @@ bool cutscene_step(bool confirm)
     cs = &cutscenes[state.id];
     if (state.frame < cs->frames)
         apply_camera(&state.track[state.frame]);
+    {
+        unsigned int i;
+        if (state.flash > 10) state.flash -= 10; else state.flash = 0;
+        for (i = 0; i < CUTSCENE_MISC_COUNT; ++i) {
+            const cutscene_misc_t *event = &cutscene_misc[i];
+            if (event->scene != state.id || state.frame != event->start) continue;
+            if (event->kind == 0) state.rain = 20;
+            else if (event->kind == 1) state.flash = 100;
+            else if (event->kind == 2) state.bridge_start = state.frame;
+            /* Locked viewpoint: the baked house camera already owns the view. */
+        }
+    }
+    state.applied_frame = state.frame;
+    update_cues(cs);
     update_fade(cs);
     step_events(cs, confirm);
     /*
@@ -347,66 +399,69 @@ bool cutscene_finished(void)
     return (out);
 }
 
-/*
-** The player cue running on this frame, or NULL.
-**
-** Cues do not overlap in the opening, so the first one whose window contains
-** the frame is the one in force.
-*/
+/* z_demo retains cue pointers until the next script starts. */
 static const cutscene_cue_t *current_cue(void)
 {
-    const cutscene_t *cs;
-    unsigned int      i;
-
-    if (!state.active || state.id >= CUTSCENE_COUNT)
-        return ((const cutscene_cue_t *)0);
-    cs = &cutscenes[state.id];
-    for (i = 0; i < cs->cue_count; ++i) {
-        const cutscene_cue_t *cue = &cs->cues[i];
-
-        if ((short)state.frame >= cue->start && (short)state.frame < cue->end)
-            return (cue);
-    }
-    return ((const cutscene_cue_t *)0);
+    return state.active ? state.player_cue : 0;
 }
 
-/* How far through the current cue we are, as a 0..256 fraction. */
-static int cue_progress(const cutscene_cue_t *cue)
-{
-    int span = cue->end - cue->start;
-    int into = (int)state.frame - cue->start;
-
-    if (span <= 0)
-        return (0);
-    if (into < 0)
-        into = 0;
-    if (into > span)
-        into = span;
-    return (into * 256 / span);
-}
-
-static int cue_lerp(int from, int to, int progress)
-{
-    return (from + (to - from) * progress / 256);
-}
-
-/* The cue running on `channel` this frame, or NULL. */
 static const cutscene_cue_t *current_actor_cue(unsigned int channel)
 {
-    const cutscene_t *cs;
-    unsigned int      i;
+    return state.active && channel < 10 ? state.actor_cues[channel] : 0;
+}
 
-    if (!state.active || state.id >= CUTSCENE_COUNT)
-        return ((const cutscene_cue_t *)0);
-    cs = &cutscenes[state.id];
+/* Last matching command wins; gaps retain the previous pointer and position. */
+static void update_cues(const cutscene_t *cs)
+{
+    unsigned int i;
+    for (i = 0; i < cs->cue_count; ++i) {
+        const cutscene_cue_t *cue = &cs->cues[i];
+        if (state.frame > cue->start && state.frame <= cue->end)
+            state.player_cue = cue;
+    }
     for (i = 0; i < cs->actor_cue_count; ++i) {
         const cutscene_cue_t *cue = &cs->actor_cues[i];
-
-        if (cue->clip == channel &&
-            (short)state.frame >= cue->start && (short)state.frame < cue->end)
-            return (cue);
+        if (cue->clip < 10 && state.frame > cue->start && state.frame <= cue->end)
+            state.actor_cues[cue->clip] = cue;
     }
-    return ((const cutscene_cue_t *)0);
+    for (i = 0; i < 10; ++i) {
+        const cutscene_cue_t *cue = state.actor_cues[i];
+        int span, into;
+        if (i == 8 && cue) {
+            int starts[3] = {cue->x, cue->y, cue->z};
+            int ends[3] = {cue->ex, cue->ey, cue->ez};
+            unsigned int axis;
+            span = cue->end - cue->start;
+            into = state.frame - cue->start;
+            if (into > span) into = span;
+            for (axis = 0; axis < 3; ++axis) {
+                int32_t target = starts[axis] * 256;
+                int32_t velocity, change, step = axis == 1 ? 8192 : 384;
+                if (span > 0) target += (int32_t)((int64_t)(ends[axis] - starts[axis]) * into * 256 / span);
+                velocity = (target - state.navi_pos[axis]) / 5;
+                if (velocity > 5120) velocity = 5120;
+                if (velocity < -5120) velocity = -5120;
+                change = velocity - state.navi_velocity[axis];
+                if (change > step) change = step;
+                if (change < -step) change = -step;
+                state.navi_velocity[axis] += change;
+                state.navi_pos[axis] += state.navi_velocity[axis];
+                if (cue->id == 1 && axis != 1) {
+                    state.navi_pos[axis] = target; state.navi_velocity[axis] = 0;
+                }
+                state.actor_pos[i][axis] = state.navi_pos[axis] / 256;
+            }
+            continue;
+        }
+        if (!cue || state.frame >= cue->end)
+            continue; /* EnViewer stops before the end frame, not at endPos. */
+        span = cue->end - cue->start;
+        into = state.frame - cue->start;
+        if (span <= 0) continue;
+        state.actor_pos[i][0] = cue->x + (int32_t)((int64_t)(cue->ex - cue->x) * into / span);
+        state.actor_pos[i][1] = cue->y + (int32_t)((int64_t)(cue->ey - cue->y) * into / span);
+        state.actor_pos[i][2] = cue->z + (int32_t)((int64_t)(cue->ez - cue->z) * into / span);
+    }
 }
 
 unsigned int cutscene_actor_channels(void)
@@ -430,23 +485,17 @@ bool cutscene_actor_channel_visible(unsigned int channel)
 
 int32_t cutscene_actor_channel_x(unsigned int channel)
 {
-    const cutscene_cue_t *cue = current_actor_cue(channel);
-
-    return (cue ? cue_lerp(cue->x, cue->ex, cue_progress(cue)) : 0);
+    return current_actor_cue(channel) ? state.actor_pos[channel][0] : 0;
 }
 
 int32_t cutscene_actor_channel_y(unsigned int channel)
 {
-    const cutscene_cue_t *cue = current_actor_cue(channel);
-
-    return (cue ? cue_lerp(cue->y, cue->ey, cue_progress(cue)) : 0);
+    return current_actor_cue(channel) ? state.actor_pos[channel][1] : 0;
 }
 
 int32_t cutscene_actor_channel_z(unsigned int channel)
 {
-    const cutscene_cue_t *cue = current_actor_cue(channel);
-
-    return (cue ? cue_lerp(cue->z, cue->ez, cue_progress(cue)) : 0);
+    return current_actor_cue(channel) ? state.actor_pos[channel][2] : 0;
 }
 
 uint16_t cutscene_actor_channel_yaw(unsigned int channel)
@@ -467,21 +516,21 @@ int32_t cutscene_link_x(void)
 {
     const cutscene_cue_t *cue = current_cue();
 
-    return (cue ? cue_lerp(cue->x, cue->ex, cue_progress(cue)) : 0);
+    return (cue ? cue->x : 0);
 }
 
 int32_t cutscene_link_y(void)
 {
     const cutscene_cue_t *cue = current_cue();
 
-    return (cue ? cue_lerp(cue->y, cue->ey, cue_progress(cue)) : 0);
+    return (cue ? cue->y : 0);
 }
 
 int32_t cutscene_link_z(void)
 {
     const cutscene_cue_t *cue = current_cue();
 
-    return (cue ? cue_lerp(cue->z, cue->ez, cue_progress(cue)) : 0);
+    return (cue ? cue->z : 0);
 }
 
 uint16_t cutscene_link_yaw(void)
@@ -491,40 +540,77 @@ uint16_t cutscene_link_yaw(void)
     return (cue ? cue->yaw : 0);
 }
 
-unsigned int cutscene_link_clip(void)
+/* LinkAnimation advances 1.5 source frames per 20 Hz tick (R_UPDATE_RATE
+ * times 0.5). Cue duration never stretches the animation. The two one-shot
+ * bed movements hand over to their original wait loops when they finish. */
+static void link_sample(unsigned int *clip, unsigned int *frame, unsigned int *fraction)
 {
     const cutscene_cue_t *cue = current_cue();
-
-    if (!cue)
-        return (LINK_CLIP_IDLE);
+    unsigned int elapsed, source, limit, stride, first, span;
+    bool loop = false;
+    *clip = LINK_CLIP_IDLE; *frame = *fraction = 0;
+    if (!cue) return;
     switch (cue->clip) {
-        case CUTSCENE_CLIP_SLEEPING:  return (LINK_CLIP_SLEEPING);
-        case CUTSCENE_CLIP_TURN_OVER: return (LINK_CLIP_TURN_OVER);
-        case CUTSCENE_CLIP_SIT_UP:    return (LINK_CLIP_SIT_UP);
-        case CUTSCENE_CLIP_STAND_UP:  return (LINK_CLIP_STAND_UP);
-        case CUTSCENE_CLIP_TURN_LOOK: return (LINK_CLIP_TURN_LOOK);
-        default:                      return (LINK_CLIP_IDLE);
+        case CUTSCENE_CLIP_SLEEPING: *clip = LINK_CLIP_SLEEPING; loop = true; break;
+        case CUTSCENE_CLIP_TURN_OVER: *clip = LINK_CLIP_TURN_OVER; break;
+        case CUTSCENE_CLIP_SIT_UP: *clip = LINK_CLIP_SIT_UP; break;
+        case CUTSCENE_CLIP_STAND_UP: *clip = LINK_CLIP_STAND_UP; break;
+        case CUTSCENE_CLIP_TURN_LOOK: *clip = LINK_CLIP_TURN_LOOK; break;
+        default: loop = true; break;
     }
+    elapsed = state.applied_frame > cue->start ? state.applied_frame - cue->start - 1 : 0;
+    source = elapsed * 3 / 2;
+    limit = link_clip_source_count[*clip];
+    if ((*clip == LINK_CLIP_TURN_OVER || *clip == LINK_CLIP_SIT_UP) &&
+        elapsed > ((limit - 1) * 2 + 2) / 3) {
+        unsigned int end_tick = ((limit - 1) * 2 + 2) / 3 + 1;
+        *clip = *clip == LINK_CLIP_TURN_OVER ? LINK_CLIP_SLEEP_WAIT2 : LINK_CLIP_SIT_WAIT3;
+        source = (elapsed - end_tick) * 3 / 2;
+        limit = link_clip_source_count[*clip];
+        loop = true;
+    }
+    if (!limit) return;
+    source = loop ? source % limit : (source >= limit ? limit - 1 : source);
+    stride = link_clip_stride[*clip];
+    *frame = source / stride;
+    if (*frame >= link_clips[*clip].count - 1) {
+        *frame = link_clips[*clip].count - 1;
+        return;
+    }
+    first = *frame * stride;
+    span = limit - 1 - first;
+    if (span > stride) span = stride;
+    if (span) *fraction = (source - first) * 256 / span;
+}
+
+unsigned int cutscene_link_clip(void)
+{
+    unsigned int clip, frame, fraction;
+    link_sample(&clip, &frame, &fraction); return clip;
 }
 
 unsigned int cutscene_link_frame(void)
 {
-    const cutscene_cue_t *cue = current_cue();
-    unsigned int          count;
-    unsigned int          frame;
+    unsigned int clip, frame, fraction;
+    link_sample(&clip, &frame, &fraction); return frame;
+}
 
-    if (!cue)
+unsigned int cutscene_link_fraction(void)
+{
+    unsigned int clip, frame, fraction;
+    link_sample(&clip, &frame, &fraction); return fraction;
+}
+
+unsigned int cutscene_screen_distance(void)
+{
+    const cutscene_t *cs;
+
+    if (!state.active || state.id >= CUTSCENE_COUNT || !state.track)
         return (0);
-    count = link_clips[cutscene_link_clip()].count;
-    if (!count)
+    cs = &cutscenes[state.id];
+    if (state.frame >= cs->frames)
         return (0);
-    /* Play the clip once across the cue rather than looping it: a sit-up that
-    ** restarted halfway would have Link lie back down. The sleeping pose is
-    ** the exception -- it is a breathing loop, so it wraps. */
-    frame = (unsigned int)cue_progress(cue) * count / 256;
-    if (cue->clip == CUTSCENE_CLIP_SLEEPING)
-        return (frame % count);
-    return (frame >= count ? count - 1 : frame);
+    return ((unsigned int)state.track[state.applied_frame].dist);
 }
 
 unsigned int cutscene_fade_alpha(void)
@@ -554,5 +640,24 @@ unsigned int cutscene_id(void)
 
 unsigned int cutscene_frame(void)
 {
-    return (state.frame);
+    return (state.applied_frame);
+}
+
+int16_t cutscene_camera_roll(void)
+{
+    return state.active && state.track ? state.track[state.applied_frame].roll : 0;
+}
+
+unsigned int cutscene_rain_count(void)
+{
+    unsigned int ramp = (state.applied_frame / 8 + 1) * 2;
+    return !state.active ? 0 : (ramp < state.rain ? ramp : state.rain);
+}
+unsigned int cutscene_lightning(void) { return state.active ? state.flash : 0; }
+int16_t cutscene_bridge_angle(void)
+{
+    int angle = -16384;
+    if (state.bridge_start >= 0 && state.applied_frame > state.bridge_start)
+        angle += (state.applied_frame - state.bridge_start) * 120;
+    return angle < 0 ? angle : 0;
 }

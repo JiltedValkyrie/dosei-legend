@@ -54,11 +54,21 @@ CUTSCENE_PATHS = [
     'indoors/link_home/gLinkHouseIntroWakeUpCs.csdata.inc.c',
 ]
 
+# The BGM each cutscene's own scene layer sets, from its
+# SCENE_CMD_SOUND_SETTINGS. This is NOT in the cutscene script: the Deku Tree's
+# theme is spot04's scene music, and the script only ever stops it. Without it
+# the speech played in silence and the stop had nothing to stop.
 CUTSCENES = [
-    dict(key='SLEEP',     scene='LINK_HOME', path=SCENES / CUTSCENE_PATHS[0]),
-    dict(key='NIGHTMARE', scene='SPOT00',    path=SCENES / CUTSCENE_PATHS[1]),
-    dict(key='NAVI_FLY',  scene='SPOT04',    path=SCENES / CUTSCENE_PATHS[2]),
-    dict(key='WAKE_UP',   scene='LINK_HOME', path=SCENES / CUTSCENE_PATHS[3]),
+    dict(key='SLEEP',     scene='LINK_HOME', path=SCENES / CUTSCENE_PATHS[0],
+         # link_home's cutscene layer is NA_BGM_GENERAL_SFX: ambience only.
+         scene_bgm=None),
+    dict(key='NIGHTMARE', scene='SPOT00',    path=SCENES / CUTSCENE_PATHS[1],
+         # spot00's dream layer is NA_BGM_NO_MUSIC until Ganon's theme starts.
+         scene_bgm=None),
+    dict(key='NAVI_FLY',  scene='SPOT04',    path=SCENES / CUTSCENE_PATHS[2],
+         scene_bgm='NA_BGM_DEKU_TREE_CS'),
+    dict(key='WAKE_UP',   scene='LINK_HOME', path=SCENES / CUTSCENE_PATHS[3],
+         scene_bgm=None),
 ]
 
 # CS_DESTINATION values we honour, mapped to the next cutscene's key. The
@@ -199,7 +209,8 @@ class Spline:
 
     def __init__(self, points):
         # (continueFlag, roll, nextPointFrame, viewAngle, x, y, z)
-        self.points = points
+        self.points = [(p[0], ((int(p[1]) + 128) % 256) - 128, *p[2:])
+                       for p in points]
 
     def stopped(self, key):
         for i in range(3):
@@ -245,7 +256,7 @@ def bake_shot(eye_spline, at_spline, frames):
         at = at_spline.sample(state)
         if eye is None or at is None:
             break
-        track.append((eye[0], at[0], eye[1], eye[2]))
+        track.append((eye[0], at[0], at[1], at[2]))
     return track
 
 
@@ -277,7 +288,7 @@ def read_cutscene(entry):
     out = dict(key=entry['key'], scene=entry['scene'], header_frames=0,
                frames=0, track=[], text=[], actor_cues=[], player_cues=[],
                transitions=[], music=[], destination=None, stop_frame=None,
-               ignored=set())
+               ignored=set(), misc=[])
 
     eye_shots, at_shots, pending = [], [], None
     actor_channels, current_channel = [], 0
@@ -307,14 +318,14 @@ def read_cutscene(entry):
         elif name == 'CS_ACTOR_CUE_LIST':
             # Each list names a cue channel, and each channel is one actor on
             # screen. The dream has two: the rider being chased and the chaser.
-            channel = args[0].strip()
-            if channel not in actor_channels:
-                actor_channels.append(channel)
-            current_channel = actor_channels.index(channel)
+            channel = re.fullmatch(r'CS_CMD_ACTOR_CUE_(\d+)_\d+', args[0].strip())
+            if channel is None:
+                raise ValueError('Unknown actor cue channel ' + args[0])
+            current_channel = int(channel[1])
         elif name == 'CS_ACTOR_CUE':
-            entry = cue(args)
-            entry['channel'] = current_channel
-            out['actor_cues'].append(entry)
+            actor_cue = cue(args)
+            actor_cue['channel'] = current_channel
+            out['actor_cues'].append(actor_cue)
         elif name == 'CS_PLAYER_CUE':
             entry_cue = cue(args)
             entry_cue['clip'] = PLAYER_CUES.get(args[0].strip())
@@ -338,14 +349,35 @@ def read_cutscene(entry):
         elif name == 'CS_MISC':
             if args[0].strip() == 'CS_MISC_STOP_CUTSCENE':
                 out['stop_frame'] = number(args[1])
+            else:
+                kind = args[0].strip()
+                if kind not in ('CS_MISC_RAIN', 'CS_MISC_LIGHTNING',
+                                'CS_MISC_SET_CSFLAG_0', 'CS_MISC_SET_LOCKED_VIEWPOINT'):
+                    raise ValueError('Unimplemented CS_MISC: ' + kind)
+                out['misc'].append(dict(kind=kind, start=number(args[1]), end=number(args[2])))
 
     # The header's frameCount is an allotment, not a length: every one of these
     # cutscenes declares 3000 and none runs anywhere near it. The real end is
     # whichever comes first of CS_DESTINATION and CS_MISC_STOP_CUTSCENE, and
     # failing both, the last frame any event or shot touches. Baking the
     # declared 3000 would put 42 KB per cutscene on the disc for nothing.
+    if entry.get('scene_bgm'):
+        out['music'].insert(0, dict(bank=SEQUENCES.get(entry['scene_bgm']),
+                                    sequence=entry['scene_bgm'],
+                                    stop=False, start=0))
+    # The macros arrive grouped by list, not in time order: the stop at frame
+    # 192 was written after the start at 200. The runtime walks this with one
+    # cursor, so it has to be in frame order or a cue is skipped outright.
+    out['music'].sort(key=lambda m: m['start'])
+    # Transitions arrive grouped by list too, and the runtime walks them in
+    # order looking for the one covering this frame. An older transition later
+    # in the file would otherwise win over the current one and the screen fade
+    # would jump backwards. Same fault the music cues had.
+    out['transitions'].sort(key=lambda f: f['start'])
+    # Preserve source order: the last active cue in file order wins.
+
     out['frames'] = cutscene_length(out, eye_shots, at_shots)
-    out['track'] = bake_camera(eye_shots, at_shots, out['frames'])
+    out['track'] = bake_camera(eye_shots, at_shots, out['frames'], out['scene'])
     return out
 
 
@@ -370,13 +402,14 @@ def cutscene_length(out, eye_shots, at_shots):
 
 
 def cue(args):
+    """Keep authored rotation; each actor decides how to use it."""
     return dict(id=args[0].strip(), start=number(args[1]), end=number(args[2]),
                 rot_y=number(args[4]),
                 start_pos=(number(args[6]), number(args[7]), number(args[8])),
                 end_pos=(number(args[9]), number(args[10]), number(args[11])))
 
 
-def bake_camera(eye_shots, at_shots, frames):
+def bake_camera(eye_shots, at_shots, frames, scene=None):
     """Per-frame camera for the whole cutscene.
 
     Shots are paired in order: OoT emits one CS_CAM_AT_SPLINE for each
@@ -405,11 +438,26 @@ def bake_camera(eye_shots, at_shots, frames):
             continue
         eye, look, roll, fov = sample
         yaw, pitch = look_angles(eye, look)
+        # Store the SGL screen distance rather than the fov, by the same rule
+        # build_scene_table.py uses for a prerendered room's fixed camera: half
+        # the 240-line picture over tan(fov/2). The SH-2 has no tangent, and
+        # the runtime held the gameplay distance of 240 for every shot, which
+        # is a far wider field than these 25-32 degree shots want -- the whole
+        # dream was framed wrongly for it.
+        half = max(1.0, fov) * math.pi / 360.0
+        distance = 120.0 / math.tan(half) if half > 0 else 240.0
+        # View_SetScale scales every homogeneous projection component,
+        # including W (guPerspectiveF); it does not change the field of view.
         baked.append((clamp16(eye[0], 'eye x'), clamp16(eye[1], 'eye y'),
                       clamp16(eye[2], 'eye z'), yaw,
-                      # The runtime camera treats a downward look as negative;
-                      # OoT stores it the other way round, as demo.c notes.
-                      -pitch, clamp16(roll, 'roll'), clamp16(fov * 100, 'fov')))
+                      # look_angles() already returns the RENDERER's
+                      # convention -- positive is up, measured from eye to at.
+                      # demo.c negates a bgCam pitch because OoT *stores* one
+                      # the other way round; negating this one too pointed
+                      # every shot at the ground and put the camera under the
+                      # floor for the whole dream.
+                      pitch, clamp16(roll * 256, 'roll'),
+                      clamp16(min(distance, 32000.0), 'screen distance')))
     return baked
 
 
@@ -601,13 +649,15 @@ def emit(cutscenes, header_path, source_path, cd_dir, messages):
     h += ['    CUTSCENE_SCENE_COUNT = %d' % len(scenes),
           '} cutscene_scene_t;', '']
 
-    h += ['typedef struct { short x, y, z, yaw, pitch, roll, fov; }'
+    h += ['/* `dist` is the SGL screen distance for the shot fov, computed',
+          '** offline: the SH-2 has no tangent. */',
+          'typedef struct { short x, y, z, yaw, pitch, roll, dist; }'
           ' cutscene_point_t;', '',
           '/* Event lists. Frames are cutscene ticks from the start. */',
           'typedef struct { unsigned short id; short start, end; }'
           ' cutscene_text_t;',
           'typedef struct { unsigned char clip; short start, end;'
-          ' short x, y, z, ex, ey, ez; unsigned short yaw; }'
+          ' short x, y, z, ex, ey, ez; unsigned short yaw, id; }'
           ' cutscene_cue_t;',
           'typedef struct { unsigned char colour, direction; short start, end; }'
           ' cutscene_fade_t;',
@@ -634,6 +684,16 @@ def emit(cutscenes, header_path, source_path, cd_dir, messages):
     c = ['/* Generated by tools/build_cutscenes.py. Do not edit. */',
          '#include "cutscenes.h"', '']
     emit_messages(messages, h, c)
+    misc_kinds = ['CS_MISC_RAIN', 'CS_MISC_LIGHTNING', 'CS_MISC_SET_CSFLAG_0',
+                  'CS_MISC_SET_LOCKED_VIEWPOINT']
+    events = [(i, misc_kinds.index(e['kind']), e['start'], e['end'])
+              for i, cs in enumerate(cutscenes) for e in cs['misc']]
+    h += ['typedef struct { unsigned char scene, kind; short start, end; } cutscene_misc_t;',
+          '#define CUTSCENE_MISC_COUNT %d' % len(events),
+          'extern const cutscene_misc_t cutscene_misc[CUTSCENE_MISC_COUNT];']
+    c += ['const cutscene_misc_t cutscene_misc[CUTSCENE_MISC_COUNT] = {']
+    c += ['    {%d,%d,%d,%d},' % e for e in events]
+    c += ['};', '']
     h += ['#endif']
     for index, cs in enumerate(cutscenes):
         c.append('static const cutscene_text_t text_%d[] = {' % index)
@@ -643,22 +703,22 @@ def emit(cutscenes, header_path, source_path, cd_dir, messages):
         c += ['};', '']
         c.append('static const cutscene_cue_t actor_cues_%d[] = {' % index)
         for item in cs['actor_cues']:
-            c.append('    {%d,%d,%d,%d,%d,%d,%d,%d,%d,%d},' %
+            c.append('    {%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d},' %
                      (item['channel'], item['start'], item['end'],
                       item['start_pos'][0], item['start_pos'][1],
                       item['start_pos'][2], item['end_pos'][0],
                       item['end_pos'][1], item['end_pos'][2],
-                      item['rot_y'] & 0xFFFF))
+                      item['rot_y'] & 0xFFFF, int(item['id'].split('_')[-1], 0)))
         c += ['};', '']
         c.append('static const cutscene_cue_t cues_%d[] = {' % index)
         for item in cs['player_cues']:
             clip = 'CUTSCENE_CLIP_' + (item['clip'] or 'HOLD')
-            c.append('    {%s,%d,%d,%d,%d,%d,%d,%d,%d,%d},' %
+            c.append('    {%s,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d},' %
                      (clip, item['start'], item['end'],
                       item['start_pos'][0], item['start_pos'][1],
                       item['start_pos'][2], item['end_pos'][0],
                       item['end_pos'][1], item['end_pos'][2],
-                      item['rot_y'] & 0xFFFF))
+                      item['rot_y'] & 0xFFFF, int(item['id'].split('_')[-1], 0)))
         c += ['};', '']
         c.append('static const cutscene_fade_t fades_%d[] = {' % index)
         for item in cs['transitions']:
