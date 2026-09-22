@@ -215,6 +215,8 @@ def build(oot, rom_dir, name, out, frame, clip_frames, stride, flat):
         raise ValueError(name + ': unresolved texture segment')
     if not faces:
         raise SystemExit('%s: no geometry walked' % name)
+    link.character_textures.mark_faces(faces,
+        oot / 'assets/xml/objects' / (spec['xml'] + '.xml'), head_index, expressions[name])
     link.apply_primitive_colour(faces)
     flattened = link.flatten_faces(faces) if flat else 0
     if not flat:

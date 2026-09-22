@@ -124,3 +124,30 @@ Current checks: `game/tests/test_link_geometry_precision.py` and
 `game/tests/test_link_animation.py`. Actor inspection: `PERF_PROBE=3`; rebuild
 without the option before shipping. Other model formats need their own adapter,
 not a claim that Link's segment-D scheme fits every model.
+
+## Character textures: quarter the pixels, keep the face sharp
+
+Permanent user rule, set on 2026-09-22. Saturn VDP1 texture VRAM is the
+scarcest resource in this project, so character art pays for itself first.
+
+- Every textured character tile uses **25% of its previous imported pixel
+  count** -- half the width and half the height. This applies to bodies, limbs,
+  clothing, hair, hats, shields, weapons held by a character, and every NPC.
+- **Face textures are the one exception**: they keep their existing resolution.
+  The face is what the player reads, so its detail is never traded away.
+- Reduce at import time in the offline tool, not at runtime. The smaller image
+  is what ships; nothing rescales on SH-2.
+- This is a floor on savings, not a ceiling. If a model still does not fit the
+  VDP1 budget, reduce further and say so, but never raise a non-face character
+  texture back above the quarter-pixel size to make something look better.
+- Scenery, UI, title art and effects are outside this rule and keep their own
+  budgets.
+
+Enforced by `game/tools/character_textures.py` through the shared character
+writer, including Link, riders and horses. New importers must mark facial
+materials from source XML and expression bindings before writing the model.
+Unknown head materials conservatively keep detail; named hair/headwear do not.
+Existing flat-shaded bodies stay flat. Non-character props opt out explicitly.
+VDP1 requires widths divisible by eight: a logical 4x4 tile stores repeated
+columns as 8x4. Palettes also retain their 32 bytes, so total VRAM savings are
+less than 75%. Apply once from original import sizes, never cumulatively.
