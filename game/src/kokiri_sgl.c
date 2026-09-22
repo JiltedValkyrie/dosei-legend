@@ -149,6 +149,18 @@ static unsigned char forest_face_flags(unsigned int i)
 #define MENU_SHIELD_FILE    "SHIELM.RGB"
 #define MENU_EQUIP_FILE     "EQUIP.RGB"
 #define MENU_TEX_SIZE       32
+/* The real OoT message panel, gDefaultMessageBackgroundTex, converted by
+** tools/build_demo_assets.py. Drawn behind cutscene text. */
+#define MSGBOX_FILE         "MSGBOX.RGB"
+#define MSGBOX_WIDTH        128
+#define MSGBOX_HEIGHT       64
+#define MSGBOX_PIXEL_BYTES  (MSGBOX_WIDTH * MSGBOX_HEIGHT * 2)
+/* OoT's own prompts: a triangle when another page follows, a square when the
+** message ends. gMessageContinueTriangleTex / gMessageEndSquareTex. */
+#define MSGNEXT_FILE        "MSGNEXT.RGB"
+#define MSGEND_FILE         "MSGEND.RGB"
+#define MSGMARK_SIZE        16
+#define MSGMARK_PIXEL_BYTES (MSGMARK_SIZE * MSGMARK_SIZE * 2)
 #define MENU_PIXEL_BYTES    (MENU_TEX_SIZE * MENU_TEX_SIZE * 2)
 #define FAIRY_WIDTH         16
 #define FAIRY_HEIGHT        16
@@ -166,6 +178,10 @@ static unsigned int  rupee_sprite[2], digit_sprite[10];
 static unsigned int  pickup_sprite[KOKIRI_PICKUP_COUNT];
 static unsigned int  menu_sprite[GP_SLOT_COUNT];
 static unsigned int  menu_equip_sprite;
+static unsigned int  msgbox_sprite;
+static bool          msgbox_ready;
+static unsigned int  msgmark_sprite[2];     /* 0 continue, 1 end */
+static bool          msgmark_ready;
 
 /* SGL addresses sprite character data in 8-byte units. */
 #define VRAM_UNITS(bytes)   ((bytes) >> 3)
@@ -330,6 +346,15 @@ static bool         fairy_load(void)
         !sprite_load(MENU_EQUIP_FILE, &menu_equip_sprite,
                      MENU_TEX_SIZE, MENU_PIXEL_BYTES))
         return false;
+    /* The message panel is not fatal: without it the cutscene text still
+    ** draws, just without a box behind it. */
+    msgbox_ready = sprite_load_rect(MSGBOX_FILE, &msgbox_sprite, MSGBOX_WIDTH,
+                                    MSGBOX_HEIGHT, MSGBOX_PIXEL_BYTES);
+    msgmark_ready =
+        sprite_load(MSGNEXT_FILE, &msgmark_sprite[0], MSGMARK_SIZE,
+                    MSGMARK_PIXEL_BYTES) &&
+        sprite_load(MSGEND_FILE, &msgmark_sprite[1], MSGMARK_SIZE,
+                    MSGMARK_PIXEL_BYTES);
     return true;
 }
 
@@ -1157,6 +1182,72 @@ static void         menu_quad(unsigned int sprite, int x, int y, int side)
     attr.texno = (Uint16)sprite;
     attr.atrb |= (FAIRY_COLMODE_RGB & 7) << 3;
     if (slPutSprite(pos, &attr, 0) == FALSE) ++kokiri_rejected;
+}
+
+/*
+** The message panel behind cutscene text.
+**
+** Same screen-space trick as the pause quads: at z = -KOKIRI_MENU_PLANE one
+** world unit is one screen pixel, so the rectangle is given in pixels and
+** nothing in the world can sort in front of it.
+**
+** The VDP2 text layer draws over the sprite layer, so the text lands on top of
+** this without any ordering work. A dithered fill of '#' glyphs was tried
+** first, on the text layer itself; it looked like what it was.
+*/
+void                kokiri_message_box_draw(int x, int y, int width, int height)
+{
+    FIXED    pos[5];
+    SPR_ATTR attr = SPR_ATTRIBUTE(0, No_Palet, No_Gouraud, ECdis,
+                                  sprNoflip | FUNC_Sprite);
+
+    if (!msgbox_ready)
+        return;
+    /* slDispSprite ignores the world matrix and takes screen-centred
+    ** coordinates, exactly as the rupee HUD does, so the box is positioned in
+    ** plain screen pixels. Depth 31 sorts it ahead of the world without
+    ** tripping SGL's near rejection; see rupee_hud_sprite. */
+    pos[0] = (x - JO_TV_WIDTH_2) * 65536;
+    pos[1] = (y - JO_TV_HEIGHT_2) * 65536;
+    pos[2] = 31 * 65536;
+    pos[3] = (width * 65536) / MSGBOX_WIDTH;
+    pos[4] = (height * 65536) / MSGBOX_HEIGHT;
+    attr.texno = (Uint16)msgbox_sprite;
+    attr.atrb |= (FAIRY_COLMODE_RGB & 7) << 3;
+#ifdef DOSEI_HIRES
+    /* Screen-space sprites bypass the world's vertical scale. */
+    pos[1] = (y * 2 - JO_TV_HEIGHT_2) * 65536;
+    pos[4] = (height * 2 * 65536) / MSGBOX_HEIGHT;
+    if (slDispSpriteHV(pos, &attr, 1) == FALSE) ++kokiri_rejected;
+#else
+    if (slDispSprite(pos, &attr, 0) == FALSE) ++kokiri_rejected;
+#endif
+}
+
+/* The prompt at the bottom of a box: OoT's triangle when another page follows,
+** its square when the message ends. Same screen-space path as the panel. */
+void                kokiri_message_mark_draw(int x, int y, bool last_page)
+{
+    FIXED    pos[5];
+    SPR_ATTR attr = SPR_ATTRIBUTE(0, No_Palet, No_Gouraud, ECdis,
+                                  sprNoflip | FUNC_Sprite);
+
+    if (!msgmark_ready)
+        return;
+    pos[0] = (x - JO_TV_WIDTH_2) * 65536;
+    pos[1] = (y - JO_TV_HEIGHT_2) * 65536;
+    /* One nearer than the panel, so it lands on top of it. */
+    pos[2] = 32 * 65536;
+    pos[3] = pos[4] = 65536;
+    attr.texno = (Uint16)msgmark_sprite[last_page ? 1 : 0];
+    attr.atrb |= (FAIRY_COLMODE_RGB & 7) << 3;
+#ifdef DOSEI_HIRES
+    pos[1] = (y * 2 - JO_TV_HEIGHT_2) * 65536;
+    pos[4] = 2 * 65536;
+    if (slDispSpriteHV(pos, &attr, 1) == FALSE) ++kokiri_rejected;
+#else
+    if (slDispSprite(pos, &attr, 0) == FALSE) ++kokiri_rejected;
+#endif
 }
 
 void                kokiri_menu_draw(void)

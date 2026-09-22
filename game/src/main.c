@@ -335,22 +335,18 @@ static unsigned int cutscene_text_colour(unsigned int colour)
 /*
 ** The box the text sits in.
 **
-** VDP2's text layer has only the ASCII font: there is no solid cell to fill a
-** rectangle with, and a character cell's background is transparent, so a black
-** box in the usual sense cannot be drawn here at all. A row of dense glyphs in
-** black is the nearest thing the layer can produce, and over the forest it is
-** the difference between readable text and none -- white text on sunlit bark
-** cannot be read at all.
+** The panel itself is OoT's own gDefaultMessageBackgroundTex, drawn on VDP1
+** behind the text; the VDP2 text layer sits above the sprite layer, so the
+** words land on it without any ordering work. These constants only say where
+** it goes, in character cells, which the box draw converts to pixels.
 **
-** Left as a known approximation: a real box wants its own VDP2 layer (NBG2 is
-** free) with one solid tile and a priority between the text and the scene.
-** That is the proper fix; this is what the text layer alone can do.
+** A dithered fill of '#' glyphs on the text layer was tried first, because
+** that layer has no solid cell to fill a rectangle with. It looked like a row
+** of hashes, which is what it was.
 */
 #define CUTSCENE_BOX_LEFT   2
 #define CUTSCENE_BOX_RIGHT  37
 #define CUTSCENE_BOX_WIDTH  (CUTSCENE_BOX_RIGHT - CUTSCENE_BOX_LEFT + 1)
-/* The densest glyph in the font, so the fill reads as shading not as text. */
-#define CUTSCENE_BOX_FILL   '#'
 
 /* Row the box starts on, for a message of `lines` lines.
 **
@@ -382,7 +378,6 @@ static void         cutscene_text(void)
 {
     static bool     was_active;
     static int      last_top, last_rows;
-    char            fill[CUTSCENE_BOX_WIDTH + 1];
     unsigned int    line, run, lines;
     int             top, rows, text_row, prompt_row;
 
@@ -407,12 +402,13 @@ static void         cutscene_text(void)
     last_top = top;
     last_rows = rows;
 
-    for (run = 0; run < CUTSCENE_BOX_WIDTH; ++run)
-        fill[run] = CUTSCENE_BOX_FILL;
-    fill[CUTSCENE_BOX_WIDTH] = '\0';
-    for (line = 0; line < (unsigned int)rows; ++line)
-        jo_printf_with_color(CUTSCENE_BOX_LEFT, top + (int)line,
-                             JO_COLOR_INDEX_Black, "%s", fill);
+    /* OoT's own message panel, on VDP1 behind the text. A character cell is
+    ** 8x8, so the box's rows and columns convert straight to pixels, and the
+    ** sprite is centred on that rectangle. */
+    kokiri_message_box_draw(
+        (CUTSCENE_BOX_LEFT * 8 + (CUTSCENE_BOX_RIGHT + 1) * 8) / 2,
+        (top * 8 + (top + rows) * 8) / 2,
+        CUTSCENE_BOX_WIDTH * 8, rows * 8);
 
     for (line = 0; line < lines; ++line) {
         /* The original's SHIFT, which is what centres the narration, measured
@@ -420,23 +416,35 @@ static void         cutscene_text(void)
         int column = CUTSCENE_BOX_LEFT + 1 + (int)message_line_indent(line);
 
         for (run = 0; run < message_line_runs(line); ++run) {
-            const char *text = message_run_text(line, run);
+            const char  *text = message_run_text(line, run);
+            unsigned int shown = message_run_visible(line, run);
+            unsigned int length = 0;
 
-            jo_printf_with_color(column, text_row + (int)line,
-                                 cutscene_text_colour(
-                                     message_run_colour(line, run)),
-                                 "%s", text);
-            while (*text) { ++column; ++text; }
+            while (text[length])
+                ++length;
+            if (shown > length)
+                shown = length;
+            if (shown)
+                /* Typed out a character at a time, so only the part of the
+                ** run that has appeared so far is drawn. */
+                jo_printf_with_color(column, text_row + (int)line,
+                                     cutscene_text_colour(
+                                         message_run_colour(line, run)),
+                                     "%.*s", (int)shown, text);
+            column += (int)length;
+            if (shown < length)
+                break;          /* nothing later on this line is visible yet */
         }
     }
 
     /* The prompt appears only when the page is genuinely waiting for it.
     ** Anything else invites a press that would be ignored. */
-#define CUTSCENE_PROMPT "[A]"
+    /* OoT's own prompt, on the box's bottom edge: the continue triangle, or
+    ** the end square on the last page. Drawn only when the page is genuinely
+    ** waiting -- never while it is still typing itself out. */
     if (message_waits_for_button())
-        jo_printf_with_color((40 - (int)sizeof(CUTSCENE_PROMPT) + 1) / 2,
-                             prompt_row, JO_COLOR_INDEX_White,
-                             "%s", CUTSCENE_PROMPT);
+        kokiri_message_mark_draw(160, prompt_row * 8 + 4,
+                                 message_is_last_page());
     /* Restore the default, or every other jo_printf on the screen inherits
     ** whichever colour was used last. */
     jo_set_printf_color_index(JO_COLOR_INDEX_White);

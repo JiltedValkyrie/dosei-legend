@@ -31,7 +31,11 @@ typedef struct
     bool            active;
     unsigned short  message;        /* index into cutscene_messages */
     unsigned char   page;           /* page within that message */
-    unsigned short  page_ticks;     /* ticks the current page has been up */
+    /* Ticks since the page finished typing itself out. The page's own timer
+    ** runs on this, not on the time since the page appeared. */
+    unsigned short  page_ticks;
+    /* Characters typed so far on this page, counted across its lines. */
+    unsigned short  revealed;
     /* Set for the frame the message finishes, so the caller can react once. */
     bool            finished;
     /* 0..255 while a FADE page is fading out; 255 is fully faded. The
@@ -70,6 +74,24 @@ unsigned int    message_line_indent(unsigned int line);
 const char     *message_run_text(unsigned int line, unsigned int run);
 /* Jo text palette index for a run. */
 unsigned int    message_run_colour(unsigned int line, unsigned int run);
+
+/*
+** How much of a run has been typed out yet.
+**
+** The original draws a message a character at a time and only starts the
+** page's timer once the last one is on screen; without that a page can come
+** and go before it has been read. A press during the reveal finishes it
+** instead of turning the page, which is also what the original does -- so one
+** press can never skip a page unseen.
+*/
+unsigned int    message_run_visible(unsigned int line, unsigned int run);
+
+/* True while characters are still appearing. */
+bool            message_is_revealing(void);
+
+/* True when the page on screen is the message's last, which is what picks
+** OoT's end square over its continue triangle. */
+bool            message_is_last_page(void);
 
 /* Box style and screen position of the current message, from the original. */
 unsigned int    message_box(void);

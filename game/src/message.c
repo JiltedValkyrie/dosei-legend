@@ -11,6 +11,13 @@ message_state_t     message_state;
 ** this many cutscene ticks, so the line is gone by the time the shot cuts. */
 #define MESSAGE_FADE_TICKS  10
 
+/* Characters typed per cutscene tick. At 20 Hz this is close to the rate the
+** original draws at, and it is what makes a page readable: the page's own
+** timer does not start until the last character is on screen. */
+#define MESSAGE_REVEAL_RATE 2
+
+static unsigned int page_length(void);
+
 static const cutscene_message_t *current(void)
 {
     if (!message_state.active)
@@ -38,6 +45,7 @@ bool                message_start(uint16_t text_id)
         message_state.message = (unsigned short)i;
         message_state.page = 0;
         message_state.page_ticks = 0;
+        message_state.revealed = 0;
         message_state.finished = false;
         message_state.fade = 0;
         return (true);
@@ -54,6 +62,7 @@ void                message_stop(void)
     message_state.finished = false;
     message_state.page = 0;
     message_state.page_ticks = 0;
+    message_state.revealed = 0;
     message_state.fade = 0;
 }
 
@@ -63,6 +72,7 @@ static void         advance(void)
     const cutscene_message_t *message = current();
 
     message_state.page_ticks = 0;
+    message_state.revealed = 0;
     message_state.fade = 0;
     if (!message || message_state.page + 1 >= message->pages) {
         message_state.active = false;
@@ -80,6 +90,25 @@ bool                message_step(bool confirm)
     page = current_page();
     if (!page)
         return (false);
+
+    /*
+    ** Type the page out first, and only then start its timer.
+    **
+    ** A page whose timer ran from the moment it appeared could be gone before
+    ** it had finished drawing, which is how whole lines were being missed. A
+    ** press during the reveal finishes it rather than turning the page, so one
+    ** press cannot skip a page unread.
+    */
+    if (message_state.revealed < page_length()) {
+        if (confirm)
+            message_state.revealed = (unsigned short)page_length();
+        else
+            message_state.revealed = (unsigned short)
+                (message_state.revealed + MESSAGE_REVEAL_RATE);
+        if (message_state.revealed > page_length())
+            message_state.revealed = (unsigned short)page_length();
+        return (true);
+    }
 
     ++message_state.page_ticks;
     switch (page->advance) {
@@ -168,6 +197,70 @@ unsigned int        message_run_colour(unsigned int line, unsigned int run)
     return (entry ? entry->colour : CUTSCENE_COLOUR_WHITE);
 }
 
+/* Characters on the current page, counted across its lines and runs. */
+static unsigned int page_length(void)
+{
+    const cutscene_page_t *page = current_page();
+    unsigned int           total = 0;
+    unsigned int           line, run;
+
+    if (!page)
+        return (0);
+    for (line = 0; line < page->lines; ++line) {
+        const cutscene_line_t *entry =
+            &cutscene_text_lines[page->first_line + line];
+
+        for (run = 0; run < entry->runs; ++run) {
+            const char *text = cutscene_runs[entry->first_run + run].text;
+
+            while (*text++)
+                ++total;
+        }
+    }
+    return (total);
+}
+
+unsigned int        message_run_visible(unsigned int line, unsigned int run)
+{
+    const cutscene_page_t *page = current_page();
+    unsigned int           before = 0;
+    unsigned int           i, j;
+
+    if (!page || line >= page->lines)
+        return (0);
+    /* Count the characters ahead of this run in reading order; whatever is
+    ** left of the reveal belongs to it. */
+    for (i = 0; i <= line; ++i) {
+        const cutscene_line_t *entry =
+            &cutscene_text_lines[page->first_line + i];
+        unsigned int last = (i == line) ? run : entry->runs;
+
+        if (i == line && run >= entry->runs)
+            return (0);
+        for (j = 0; j < last; ++j) {
+            const char *text = cutscene_runs[entry->first_run + j].text;
+
+            while (*text++)
+                ++before;
+        }
+    }
+    if (message_state.revealed <= before)
+        return (0);
+    return (message_state.revealed - before);
+}
+
+bool                message_is_revealing(void)
+{
+    return (message_state.active && message_state.revealed < page_length());
+}
+
+bool                message_is_last_page(void)
+{
+    const cutscene_message_t *message = current();
+
+    return (!message || message_state.page + 1 >= message->pages);
+}
+
 unsigned int        message_box(void)
 {
     const cutscene_message_t *message = current();
@@ -186,9 +279,13 @@ bool                message_waits_for_button(void)
 {
     const cutscene_page_t *page = current_page();
 
-    return (page && (page->advance == CUTSCENE_ADVANCE_BUTTON ||
-           (page->advance == CUTSCENE_ADVANCE_DELAY &&
-            message_state.page_ticks >= page->delay)));
+    /* Never while the page is still typing itself out: the press would finish
+    ** the reveal, not turn the page, so offering it would be a lie. */
+    if (!page || message_is_revealing())
+        return (false);
+    return (page->advance == CUTSCENE_ADVANCE_BUTTON ||
+            (page->advance == CUTSCENE_ADVANCE_DELAY &&
+             message_state.page_ticks >= page->delay));
 }
 
 /*

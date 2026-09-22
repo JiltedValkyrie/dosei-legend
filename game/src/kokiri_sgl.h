@@ -60,6 +60,12 @@ void            kokiri_rupees_draw(unsigned int tick);
 void            kokiri_rupee_hud_draw(void);
 /* Pause equipment grid, drawn over the frozen world. */
 void            kokiri_menu_draw(void);
+/* OoT's own message panel, drawn behind cutscene text. Screen-space pixels,
+** centred on (x, y). Silently does nothing if the texture failed to load. */
+void            kokiri_message_box_draw(int x, int y, int width, int height);
+/* The prompt on the box's bottom edge: OoT's continue triangle, or its end
+** square on the last page. */
+void            kokiri_message_mark_draw(int x, int y, bool last_page);
 
 /** @brief Submissions SGL refused this frame. Non-zero means some faces never
  *  reached VDP1, so the picture is incomplete. */

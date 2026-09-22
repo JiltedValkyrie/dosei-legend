@@ -78,6 +78,54 @@ def build_menu_icon(source, size=32):
     return out
 
 
+MESSAGE_BOX_WIDTH = 128
+MESSAGE_BOX_HEIGHT = 64
+
+
+def build_message_box(source, width=MESSAGE_BOX_WIDTH, height=MESSAGE_BOX_HEIGHT):
+    """The real message panel, gDefaultMessageBackgroundTex.
+
+    An I4 texture: intensity only. In the original it is drawn translucent over
+    the scene; VDP1 has no per-texel alpha, so the intensity is mapped to a
+    dark blue-black ramp and drawn solid. Solid is deliberate -- the panel
+    exists so text stays readable over a bright scene, and a translucent one
+    made of the same texels would not achieve that.
+
+    The darkest texels are lifted off pure black, because VDP1 treats a zero
+    texel as transparent and the panel would be full of holes.
+    """
+    panel = source.convert('L').resize((width, height), Image.Resampling.LANCZOS)
+    out = Image.new('RGB', (width, height))
+    pixels, src = out.load(), panel.load()
+    for y in range(height):
+        for x in range(width):
+            level = src[x, y]
+            # OoT's box is a blue-tinted near-black; keep that cast.
+            pixels[x, y] = (max(1, level // 6), max(1, level // 5),
+                            max(2, level // 3))
+    return out
+
+
+MESSAGE_PROMPT_SIZE = 16
+
+
+def build_message_prompt(source, size=MESSAGE_PROMPT_SIZE):
+    """OoT's continue triangle and end square.
+
+    I4 intensity marks. The shape is the intensity, so it becomes plain white
+    and everything around it stays black -- VDP1 drops a zero texel, which is
+    what leaves the mark floating on the panel instead of in a box of its own.
+    """
+    mark = source.convert('L').resize((size, size), Image.Resampling.LANCZOS)
+    out = Image.new('RGB', (size, size))
+    pixels, src = out.load(), mark.load()
+    for y in range(size):
+        for x in range(size):
+            level = src[x, y]
+            pixels[x, y] = (0, 0, 0) if level < 64 else (level, level, level)
+    return out
+
+
 def build_equip_outline(source, size=32):
     """The real EQUIPPED marker, gEquippedItemOutlineTex.
 
@@ -185,6 +233,36 @@ def main(oot=None):
             big = build_menu_icon(source)
         (ROOT / ('build/cd/%sM.RGB' % name[:5])).write_bytes(b''.join(
             struct.pack('>H', rgb555(pixel)) for pixel in big.getdata()))
+
+    # The real message box, gDefaultMessageBackgroundTex. OoT draws this i4
+    # texture as a dark panel behind cutscene and dialogue text. VDP1 has no
+    # per-texel alpha, so the intensity becomes a dark blue-black ramp and the
+    # panel is drawn solid -- the box reads as the original's, and the text on
+    # it is legible over a bright scene, which is the whole point of it.
+    box = (Path(oot) / 'extracted/ntsc-1.2/assets/textures/message_static'
+           / 'gDefaultMessageBackgroundTex.i4.png')
+    if not box.is_file():
+        raise FileNotFoundError('extracted OoT message background missing')
+    with Image.open(box) as source:
+        panel = build_message_box(source)
+    panel.save(ROOT / 'build/generated/messagebox-preview.png')
+    (ROOT / 'build/cd/MSGBOX.RGB').write_bytes(b''.join(
+        struct.pack('>H', rgb555(pixel)) for pixel in panel.getdata()))
+
+    # The prompts that sit at the bottom of a box: OoT's own triangle when
+    # another page follows, and its square when the message ends. I4 again, so
+    # the intensity becomes a plain white mark.
+    for name, texture in (('MSGNEXT', 'gMessageContinueTriangleTex.i4.png'),
+                          ('MSGEND', 'gMessageEndSquareTex.i4.png')):
+        path = (Path(oot) / 'extracted/ntsc-1.2/assets/textures/message_static'
+                / texture)
+        if not path.is_file():
+            raise FileNotFoundError('extracted OoT message prompt missing: %s'
+                                    % path)
+        with Image.open(path) as source:
+            mark = build_message_prompt(source)
+        (ROOT / ('build/cd/%s.RGB' % name)).write_bytes(b''.join(
+            struct.pack('>H', rgb555(pixel)) for pixel in mark.getdata()))
 
     outline = (Path(oot) / 'extracted/ntsc-1.2/assets/textures/parameter_static'
                / 'gEquippedItemOutlineTex.ia8.png')
