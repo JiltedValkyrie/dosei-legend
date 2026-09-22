@@ -51,10 +51,20 @@ static int scene_for_cutscene(unsigned int scene)
     }
 }
 
+/*
+** The bank a CS_START_SEQ asks for, or NULL when we have not built it.
+**
+** NULL is honest silence: the cutscene leaves whatever is playing alone rather
+** than substituting an unrelated theme. NA_BGM_OPENING_GANON is the one still
+** missing -- its sequence uses percussion the score builder cannot bake.
+*/
 static const music_bank_t *bank_for_cutscene(unsigned int bank)
 {
-    (void)bank;
-    return ((const music_bank_t *)0);
+    switch (bank) {
+        case CUTSCENE_BANK_NAVI:      return (&music_bank_navi);
+        case CUTSCENE_BANK_DEKU_TREE: return (&music_bank_deku_tree);
+        default:                      return ((const music_bank_t *)0);
+    }
 }
 
 static int16_t read_be16(const unsigned char *p)

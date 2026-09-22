@@ -86,7 +86,7 @@ include $(COMPILER_DIR)/COMMON/jo_engine_makefile
 SYSOBJS = build/generated/sglarea.o
 
 # The converter writes kokiri_scene.h into generated/.
-_CCFLAGS += -Ibuild/generated -Isrc -Ilevels/kokiri/assets/audio -I../shared/assets/audio/title -I../shared/lib/camera -I../shared/lib/collision -I../shared/lib/music
+_CCFLAGS += -Ibuild/generated -Isrc -Ilevels/kokiri/assets/audio -Iassets/audio/cutscenes -I../shared/assets/audio/title -I../shared/lib/camera -I../shared/lib/collision -I../shared/lib/music
 _CCFLAGS += -include src/video_mode.h
 ifeq ($(CLEAN_TEST),1)
 _CCFLAGS += -DDOSEI_CLEAN_TEST

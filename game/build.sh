@@ -108,6 +108,15 @@ cp "$here/../shared/assets/audio/title/TITLE_PCM.RAW" "$here/build/cd/TITLE.PCM"
 cp "$here/../shared/assets/audio/title/TITLE_LEVELS.RAW" "$here/build/cd/TITLE.LVL"
 cp "$here/levels/kokiri/assets/audio/KOKIRI_PCM.RAW" "$here/build/cd/FOREST.PCM"
 cp "$here/levels/kokiri/assets/audio/KOKIRI_LEVELS.RAW" "$here/build/cd/FOREST.LVL"
+# The opening cutscenes' scores. Built by tools/build_cutscene_audio.py; a bank
+# whose sequence the player cannot build yet simply has no files here, and the
+# cutscene leaves the current score alone rather than substituting another.
+for cs_bank in CSNAVI CSDEKU; do
+    if [ -f "$here/assets/audio/cutscenes/${cs_bank}_PCM.RAW" ]; then
+        cp "$here/assets/audio/cutscenes/${cs_bank}_PCM.RAW" "$here/build/cd/$cs_bank.PCM"
+        cp "$here/assets/audio/cutscenes/${cs_bank}_LEVELS.RAW" "$here/build/cd/$cs_bank.LVL"
+    fi
+done
 
 cd "$here"
 # jo_engine_makefile picks its toolchain from $(OS), which does not reach make

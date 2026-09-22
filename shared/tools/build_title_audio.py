@@ -21,8 +21,14 @@ ROOT = Path(__file__).resolve().parents[1]
 FPS = 60
 VOICES = 24
 SAMPLE_BASE = 0x1000
+# Opcodes with no counterpart in the SCSP player, recorded per score rather
+# than silently dropped. `panweight` blends a note's own pan with its channel's;
+# this player takes pan from the channel alone, so the blend has nothing to
+# apply. The existing title and forest scores never emit it -- it turned up
+# first in the opening cutscene sequences.
 OMITTED = {'mutebhv', 'mutescale', 'initchan', 'freechan', 'notepri',
-           'reverb', 'vibdepth', 'ldfilter', 'filter', 'freefilter', 'noshort'}
+           'reverb', 'vibdepth', 'ldfilter', 'filter', 'freefilter', 'noshort',
+           'panweight'}
 
 
 def pitch(name):
@@ -73,23 +79,40 @@ class Script:
     value: int = 0
 
 
-def interpret(path, loop_label='SEQ_0027'):
+def interpret(path, loop_label='SEQ_0027', stop_at_loop=False):
+    """Play one sequence out and collect its notes.
+
+    Normally playback ends when the sequence reaches its `end` opcode. Some
+    sequences never do: the opening's cutscene cues sit in a `jump` back to
+    their own loop label and play until the game stops them. For those,
+    stop_at_loop takes the SECOND arrival at the loop label as the end, which
+    captures exactly one pass -- the whole cue, once.
+    """
     code, labels = parse(path)
     seq = Script(labels['SEQ_0000'])
     channels, notes, tempo, volumes = {}, [], [], {}
     ignored = set()
     loop_start = None
+    loop_visits = 0
     seq_volume = 127
     finished = False
     io = [-1] * 8  # Fresh playback, not a game-requested section resume.
 
     def run(script, tick, kind, channel=None, channel_id=None):
-        nonlocal finished, loop_start, seq_volume
+        nonlocal finished, loop_start, seq_volume, loop_visits
         if script.done or tick < script.wake:
             return
         for _ in range(10000):
             if kind == 'sequence' and script.pc == labels[loop_label]:
-                loop_start = tick
+                # First visit is the loop point; a later one is the wrap.
+                if loop_start is None or not stop_at_loop:
+                    loop_start = tick
+                loop_visits += 1
+                if stop_at_loop and loop_visits > 1:
+                    # Back at the top: one complete pass is captured.
+                    finished = True
+                    script.done = True
+                    return
             op, a = code[script.pc]
             script.pc += 1
             if op in ('delay', 'cdelay', 'ldelay'):
@@ -103,6 +126,12 @@ def interpret(path, loop_label='SEQ_0027'):
                     script.pc = script.stack.pop()
                 else:
                     script.done = True
+                    # A sequence that runs off its own end is over. Only a
+                    # `jump` back to the loop label used to count as finished,
+                    # so a one-shot cue -- the nightmare's fanfare has no loop
+                    # at all -- ran until the tick limit and was rejected.
+                    if kind == 'sequence':
+                        finished = True
                     return
             elif op == 'jump':
                 if kind == 'sequence' and a[0] == loop_label:
@@ -204,7 +233,15 @@ def wav_source(path):
         body = pos + 8
         if kind == b'smpl':
             unity = struct.unpack_from('<I', raw, body + 12)[0]
-            assert struct.unpack_from('<I', raw, body + 28)[0] == 1
+            loops = struct.unpack_from('<I', raw, body + 28)[0]
+            if loops == 0:
+                # A one-shot: percussion and similar, which the cutscene
+                # soundfonts use and the title's did not. The SCSP always
+                # loops, so the loop is pinned to the final sample, where the
+                # tail has already decayed. Playing it through and repeating
+                # one dead sample is the closest this player can get to "stop".
+                return pcm, rate, unity, max(0, len(pcm) - 1)
+            assert loops == 1, path
             start, end = struct.unpack_from('<II', raw, body + 44)
             assert 0 <= start < end <= len(pcm)
             return pcm[:end], rate, unity, start
@@ -257,6 +294,10 @@ def load_font(source, font_id=6):
         data = resample(pcm, actual_ratio, loop)
         start = int(loop * actual_ratio)
         end = len(data)
+        # A one-shot's loop point is its last sample, which resampling can push
+        # onto the end; keep it inside the data.
+        if start >= end:
+            start = end - 1
         assert 0 <= start < end < 65535
         # SCSP LEA is a sample index. Guard samples repeat LSA at LEA and
         # beyond, so interpolation cannot read the next instrument's data.
