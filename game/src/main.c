@@ -322,8 +322,6 @@ static void         cutscene_fade(void)
 ** the index is written into each character cell's pattern name as the cell is
 ** printed, so it stays per character rather than recolouring the layer.
 */
-#define CUTSCENE_TEXT_ROWS  6
-
 static unsigned int cutscene_text_colour(unsigned int colour)
 {
     switch (colour) {
@@ -334,80 +332,113 @@ static unsigned int cutscene_text_colour(unsigned int colour)
     }
 }
 
-/* Top row for the current message, from the original's box position. */
-static int          cutscene_text_row(void)
+/*
+** The box the text sits in.
+**
+** VDP2's text layer has only the ASCII font: there is no solid cell to fill a
+** rectangle with, and a character cell's background is transparent, so a black
+** box in the usual sense cannot be drawn here at all. A row of dense glyphs in
+** black is the nearest thing the layer can produce, and over the forest it is
+** the difference between readable text and none -- white text on sunlit bark
+** cannot be read at all.
+**
+** Left as a known approximation: a real box wants its own VDP2 layer (NBG2 is
+** free) with one solid tile and a priority between the text and the scene.
+** That is the proper fix; this is what the text layer alone can do.
+*/
+#define CUTSCENE_BOX_LEFT   2
+#define CUTSCENE_BOX_RIGHT  37
+#define CUTSCENE_BOX_WIDTH  (CUTSCENE_BOX_RIGHT - CUTSCENE_BOX_LEFT + 1)
+/* The densest glyph in the font, so the fill reads as shading not as text. */
+#define CUTSCENE_BOX_FILL   '#'
+
+/* Row the box starts on, for a message of `lines` lines.
+**
+** Bottom is the default and the common case, and the box grows upwards from a
+** fixed bottom edge so a three-line page and a one-line page share an edge
+** instead of drifting. Only a message the original places elsewhere moves. */
+static int          cutscene_box_top(unsigned int lines)
 {
+    int height = (int)lines + 2;        /* a padding row above and below */
+
     switch (message_position()) {
-        case CUTSCENE_POS_TOP:    return 3;
-        case CUTSCENE_POS_MIDDLE: return 12;
-        default:                  return 21;
+        case CUTSCENE_POS_TOP:    return 2;
+        case CUTSCENE_POS_MIDDLE: return 13 - height / 2;
+        default:                  return 25 - height;
     }
+}
+
+/* Wipe a box drawn earlier. VDP2 retains text, so every row it covered has to
+** be cleared or the last page stays on screen behind the next one. */
+static void         cutscene_box_clear(int top, int rows)
+{
+    int row;
+
+    for (row = 0; row < rows; ++row)
+        jo_printf(0, top + row, "%-40s", "");
 }
 
 static void         cutscene_text(void)
 {
     static bool     was_active;
-    static int      last_row;
-    unsigned int    line, run;
-    int             row;
+    static int      last_top, last_rows;
+    char            fill[CUTSCENE_BOX_WIDTH + 1];
+    unsigned int    line, run, lines;
+    int             top, rows, text_row, prompt_row;
 
-    /* The prompt row is included in every wipe. It sits BELOW the text rows,
-    ** and leaving it out left one "A" behind per box position the opening had
-    ** used -- three of them stacked down the side of the screen once play
-    ** began. */
     if (!message_is_active()) {
         if (was_active) {
-            for (line = 0; line <= CUTSCENE_TEXT_ROWS; ++line)
-                jo_printf(0, last_row + (int)line, "%-40s", "");
+            cutscene_box_clear(last_top, last_rows);
             was_active = false;
         }
         return;
     }
-    row = cutscene_text_row();
-    /* A message that moves up or down the screen has to wipe where it was, or
-    ** VDP2 keeps the old rows on screen underneath the new ones. */
-    if (was_active && row != last_row) {
-        for (line = 0; line <= CUTSCENE_TEXT_ROWS; ++line)
-            jo_printf(0, last_row + (int)line, "%-40s", "");
-    }
+
+    lines = message_lines();
+    top = cutscene_box_top(lines);
+    rows = (int)lines + 2;
+    text_row = top + 1;
+    prompt_row = top + rows - 1;
+
+    /* A box that moved or changed size must wipe where it was first. */
+    if (was_active && (top != last_top || rows != last_rows))
+        cutscene_box_clear(last_top, last_rows);
     was_active = true;
-    last_row = row;
+    last_top = top;
+    last_rows = rows;
 
-    /* PENDING: the original draws a black box behind a TEXTBOX_TYPE_BLACK
-    ** message. The VDP2 text layer has only the ASCII font and no solid cell,
-    ** so there is nothing here to fill one with -- printing a row of '#' in
-    ** black draws hatched glyphs, not a box, which reads worse than no box at
-    ** all. While the fill is opaque the screen is black anyway, which covers
-    ** the narration; a box over a visible scene still needs a real fill. */
-    for (line = 0; line < CUTSCENE_TEXT_ROWS; ++line) {
-        /* The original's SHIFT, which is what centres the narration. */
-        int column = 1 + (int)message_line_indent(line);
+    for (run = 0; run < CUTSCENE_BOX_WIDTH; ++run)
+        fill[run] = CUTSCENE_BOX_FILL;
+    fill[CUTSCENE_BOX_WIDTH] = '\0';
+    for (line = 0; line < (unsigned int)rows; ++line)
+        jo_printf_with_color(CUTSCENE_BOX_LEFT, top + (int)line,
+                             JO_COLOR_INDEX_Black, "%s", fill);
 
-        if (line >= message_lines()) {
-            jo_printf(0, row + (int)line, "%-40s", "");
-            continue;
-        }
-        /* Clear the row first: the previous page's line may be longer, and
-        ** each run is printed at its own column rather than padded. */
-        jo_printf(0, row + (int)line, "%-40s", "");
+    for (line = 0; line < lines; ++line) {
+        /* The original's SHIFT, which is what centres the narration, measured
+        ** from inside the box rather than from the screen edge. */
+        int column = CUTSCENE_BOX_LEFT + 1 + (int)message_line_indent(line);
+
         for (run = 0; run < message_line_runs(line); ++run) {
             const char *text = message_run_text(line, run);
 
-            jo_printf_with_color(column, row + (int)line,
+            jo_printf_with_color(column, text_row + (int)line,
                                  cutscene_text_colour(
                                      message_run_colour(line, run)),
                                  "%s", text);
             while (*text) { ++column; ++text; }
         }
     }
+
+    /* The prompt appears only when the page is genuinely waiting for it.
+    ** Anything else invites a press that would be ignored. */
+#define CUTSCENE_PROMPT "[A]"
+    if (message_waits_for_button())
+        jo_printf_with_color((40 - (int)sizeof(CUTSCENE_PROMPT) + 1) / 2,
+                             prompt_row, JO_COLOR_INDEX_White,
+                             "%s", CUTSCENE_PROMPT);
     /* Restore the default, or every other jo_printf on the screen inherits
-    ** whichever colour the last run happened to use. */
-    jo_set_printf_color_index(JO_COLOR_INDEX_White);
-    /* Only a page the player has to turn shows a prompt. A timed page must
-    ** not invite a press it would ignore. */
-    jo_printf_with_color(1, row + CUTSCENE_TEXT_ROWS, JO_COLOR_INDEX_White,
-                         "%-38s",
-              message_waits_for_button() ? "A" : "");
+    ** whichever colour was used last. */
     jo_set_printf_color_index(JO_COLOR_INDEX_White);
 }
 
