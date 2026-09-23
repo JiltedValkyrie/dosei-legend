@@ -1,7 +1,8 @@
 """Resident opening SFX from OoT's sequence-0 samples, in the action-bank tail.
 
-Bounded PCM8 at 5512.5 Hz; original layers/pitches, reduced envelopes and no
-reverb/portamento. The opening swaps this bank with ACTIONS.PCM at scene load.
+Bounded PCM8 at 5512.5 Hz (fairy flight 11025 Hz). Fairy sounds retain source
+sustain/pitch bends; other effects have reduced envelopes and no reverb.
+The opening swaps this bank with ACTIONS.PCM at scene load.
 """
 import argparse
 import hashlib
@@ -9,6 +10,7 @@ import json
 from pathlib import Path
 import xml.etree.ElementTree as ET
 import build_action_audio as audio
+import fairy_audio
 
 ROOT = Path(__file__).resolve().parents[1]
 # name, source channel, (instrument, note) layers, seconds, looping
@@ -56,6 +58,9 @@ def build(oot, source, output):
         count = max(map(len, rendered))
         mixed = [max(-127, min(127, round(sum(p[i] if i < len(p) else 0 for p in rendered)
                                             / len(rendered)))) for i in range(count)]
+        if name == 'dash':
+            mixed = [v if v < 128 else v-256 for v in fairy_audio.dash_sample(source, audio)]
+            count = len(mixed)
         if loop and count > 256:
             # Join the finite source window with a short crossfade.
             for i in range(128):
@@ -65,6 +70,11 @@ def build(oot, source, output):
                             channel=channel, layers=layers, samples=sources))
         bank.extend(v & 255 for v in mixed)
         bank.extend(bytes(4 + (-len(bank) % 2)))
+    fairy, fairy_loop = fairy_audio.flight_sample(oot, source, audio)
+    records.append(dict(name='navi_fly', offset=len(bank), length=len(fairy),
+                        loop=True, loop_start=fairy_loop, channel='CHAN_2582', rate=11025))
+    bank.extend(fairy)
+    bank.extend(bytes(4 + (-len(bank) % 2)))
     if audio.BASE + len(bank) > 0x80000:
         raise ValueError('Opening effects exceed reserved sound RAM')
     output.mkdir(parents=True, exist_ok=True)
@@ -74,7 +84,7 @@ def build(oot, source, output):
              '#define OPENING_PCM_COUNT %d' % len(records),
              'static const action_pcm_t opening_pcm[] = {']
     lines += ['    {%d, %d},' % (r['offset'], r['length']) for r in records]
-    lines += ['};', '#endif']
+    lines += ['};'] + fairy_audio.tables(fairy_loop) + ['#endif']
     (output / 'opening_audio_data.h').write_text('\n'.join(lines) + '\n')
     (output / 'opening_audio.json').write_text(json.dumps(
         dict(base=audio.BASE, bytes=len(bank), rate=audio.RATE, samples=records,

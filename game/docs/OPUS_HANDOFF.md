@@ -1,3 +1,135 @@
+# Fairy sound, wake camera and flight streaming correction — 2026-09-22
+
+Supersedes the earlier claims below that forest flight has no fairy SFX.
+`ObjectKankyo_Fairies` plays NAVY_FLY only in Kokiri scene layer 7. En_Elf
+does not own that loop. Gameplay now has catch-up dash cues only, no flight
+loop and no invented door/spawn dash. Hat/attention states remain pending.
+
+The loop uses instrument 69's WAV sustain loop, CHAN_2582's A4-to-D5 bend,
+and ENVELOPE_67D8. Camera travel changes frequency through func_800F436C;
+it does not change volume. Missing squared note velocity 50/127 caused the
+excessive loudness: restored (50/127)^2, about -16 dB. Dash now retains its
+sustain/bend and applies velocity (65/127)^2 as well. SCSP mixing and absent
+N64 reverb remain approximations; do not claim identical audible balance.
+
+Wake-up's second camera ended at frame 221, exposing the older door track
+underneath. The baker now holds the newest shot until the next shot. Regression
+covers frames 70–647; isolated Kronos screenshot at frame 624 shows Link/Navi.
+
+Flight banks preload once into the 4 MB cart. Identical texture tiles share
+NAVIPOOL.TEX; S2R*.MAP records retain original per-bank VRAM placement. Cache
+is 1,450,208 bytes versus 2,443,804 for raw mesh/textures. All 5,617 tile
+references reconstruct original banks byte-for-byte. Swaps perform RAM-to-VRAM
+copies without asset_loading/slSynch/CD reads; raw-cache OOM was fixed.
+
+Verification: 31 cutscene tests pass. Isolated replay passed forest flight into
+wake-up. OpenAL WAV capture of the quieter loop mix has no clipped samples in
+the 30–42 second excerpt (peak 12580/32768, RMS -25.1 dBFS). This checks actual
+emulator output, not a human listening comparison. Capture predates the final
+dash gain reduction; human timbre/balance check still needed. Normal and clean
+images build; SGL gaps are 2,160 / 12,928 bytes. Changed audio/Navi/cutscene
+objects contain no software-float helper references. No commit.
+
+# Astra review round 1 fixed - 2026-09-22
+
+- P2, Navi too high: demo.c was handing over `demo_link.y`, the CAMERA EYE at
+  floor+90, so she sat about 40 units over Link's head. All three call sites now
+  pass his FEET and navi.c adds `LINK_HEAD` (45) + the source's 12 rise.
+  45 is measured, not guessed: posing the idle frame's skeleton puts limb 10,
+  the head joint, 4291 model units up, which is 45 world units at
+  LINK_ANIM_SCALE_Q16 with LINK_ANIM_SHIFT_Y. The catch-up distance measures to
+  the head too, as the source measures to the hat.
+  `test_navi.test_head_anchor_matches_the_posed_model` re-derives that number
+  from the generated clip data so it cannot drift, and
+  `test_spawns_beside_links_head` checks the real spawn coordinates land inside
+  the model's own 66-unit height.
+- Minor, orbit order: `navi_orbit()` in cutscene.c already matched
+  func_80A02A20, but navi.c advanced the angles before sampling them. It now
+  builds the offset from the current angles and advances afterwards.
+
+510 host tests run, same two pre-existing setUpClass failures. Normal image
+rebuilt clean. Still unconfirmed in Kronos.
+
+# Navi companion and her cutscene flight sounds - done 2026-09-22
+
+Claude implemented the plan above. What changed:
+
+- `src/navi.c` / `navi.h`: Navi as Link's own actor, from En_Elf's idle follow
+  (state 1): the 7.5 x 5 orbit above his head, approached by func_80A03148's
+  fifth-of-the-gap velocity with the 5.0 / 32.0 easing rates and the 20-unit
+  vertical cap, all in Q8 integers. En_Elf updates at 20 Hz and the world steps
+  at 30 Hz, so navi_step() runs the source update on two ticks of every three
+  instead of rescaling the source constants.
+- She is snapped beside Link by `navi_reset()` in demo.c's `place_at_spawn()`
+  and the fallback spawn, so she is THERE on the first controllable frame --
+  after the opening, after a load, and on the far side of every door -- rather
+  than flying in. There is one of her: the cutscene keeps using channel 8 and
+  the Kokiri fairies are still the NPC markers.
+- `kokiri_navi_draw()` puts the existing FAIRY.RGB billboard where she is,
+  drawn with Link and only with him (not the title, not the file select).
+- Source catch-up: past 100 units she dashes at the source's higher cap until
+  she is back within 30. `navi_dash_started()` reports the frame the source
+  plays NA_SE_EV_FAIRY_DASH on.
+
+Cutscene sound, checked against `ovl_En_Elf/z_en_elf.c`:
+
+- The ONLY fairy sounds in the whole opening are NA_SE_EV_FAIRY_DASH at frame
+  55 and again on each downward turn while she wakes Link (the LINKS_HOUSE
+  layer-4 branch of func_80A03CF8). The Kokiri forest flight has no fairy SFX
+  at all -- its audio is NA_BGM_NAVI_OPENING, which is already cued. There is
+  no flight loop in the source and none was invented.
+- The wake-up repeat was silent before this change: cue id 3 holds ONE position
+  from frame 250 to 350, so nothing ever turned downward. En_Elf's own hover
+  (func_80A02A20) is what moves her there. `navi_orbit()` in cutscene.c now
+  adds that orbit, with the per-cue state func_80A0461C picks (4 -> 9, 3 -> 6,
+  1 -> 10), so she circles and bobs as in the original AND the existing
+  downward-turn dash cue fires about every 16 frames, which is the source rate.
+
+Still missing, recorded rather than faked:
+
+- Gameplay NA_SE_EV_FAIRY_DASH has NO sample. The resident action bank ends at
+  484352+39832 with 104 bytes to spare under the 512 KiB sound RAM limit, so a
+  new sample cannot be added without a bank budget change. `navi_dash_started()`
+  exists so the cue can be played the moment there is room.
+- NA_SE_EV_NAVY_VANISH / NA_SE_VO_NAVY_HELLO, the "Hey! Listen" prompt, the
+  fly-into-the-hat states (7/8/11) and the sparkle trail. POI targeting was
+  already out of scope for this handoff.
+
+Verified: normal image builds clean; 509 host tests run, the only failures the
+two pre-existing setUpClass compile errors (`test_equipment_draw`,
+`test_forest_partition`) that also fail on the parent commit. New coverage:
+`tests/test_navi.py` runs the real follow code on the host, and
+`test_cutscene_parity` now compiles navi_orbit() and checks she bobs during the
+wake-up cue. NOT yet confirmed in Kronos: the dash cue's audibility over the
+music, and how she looks beside Link in play. Codex's frame-99 bank-wait fix and
+the hair/face texture policy are untouched.
+
+# Navi story audio and gameplay companion - next task, 2026-09-22
+
+Claude: user requests fairy flight sound across the opening shots and Navi
+present when gameplay starts. Short implementation plan:
+
+1. Check OoT `ovl_En_Elf/z_en_elf.c` and opening actor cues for the original
+   flight/dash sounds and timing. `cutscene.c::step_sounds()` currently plays
+   `OPENING_DASH` during wake-up only; extend the Navi-flight scene with the
+   source cues. Reuse the existing sample where correct, extract missing ones
+   through `build_opening_audio.py`; do not invent a constant buzzing loop.
+2. Trigger once per cue, preserve pauses/camera cuts, and stop any sustained
+   sound on scene exit. Verify audibility against music without retriggering
+   every held text frame. Keep effects separate from music fades.
+3. Add one gameplay Navi companion on opening completion and appropriate save
+   loads. Reuse `FAIRY.RGB`; current cutscene channel 8 and NPC fairies are not
+   Link's persistent companion. Follow/orbit Link using source En_Elf behavior
+   and integer math, and retain her through room/interior transitions. Avoid
+   duplicate Navi when switching between cutscene and gameplay ownership.
+4. Verify with sound in Kronos: forest flight, wake-up, first controllable frame,
+   walking, room transition and save reload. Navi must be present immediately
+   at gameplay handoff. Record source behavior still missing; POI targeting is
+   a separate later slice task, not required to finish this companion handoff.
+
+Preserve Codex's uncommitted frame-99 bank-wait fix; see
+`game/docs/FRAME99_BANK_WAIT.md`. Do not undo the hair/face-only texture policy.
+
 # Control remap and manual roll - 2026-09-22 (branch feature/kokiri-slice-actions)
 
 Kokiri slice plan step 2 started. THIS SUPERSEDES the 2026-09-18 mapping below:
@@ -1540,3 +1672,43 @@ major bug. Accepted submissions and a high FPS counter alone do not prove a fix.
 
 Then resume walk/idle animation, one NPC conversation, menus and sound effects.
 Music timing and general efficiency are not gates. Update `VSLICEPROGRESS.md`.
+# Codex Navi review - 2026-09-22
+
+Follow-up verified: both findings below resolved. All three demo call sites
+pass feet; Navi adds the tested 45-unit head anchor plus 12-unit hover rise,
+and dash distance uses the head. Orbit now samples before advancing. Four Navi
+and eight cutscene parity tests pass; existing target navi.o has no soft-float
+references. Kronos visual/audio check remains pending. No commit.
+
+P2: gameplay Navi uses the wrong vertical anchor. `place_at_spawn()` sets
+`demo_link.y = floor + DEMO_LINK_EYE_HEIGHT` (90), then passes it unchanged to
+`navi_reset()`/`navi_step()`. `hover_point()` adds 12, putting Navi at floor+102
+over a roughly 62-unit Link model. This is the collision/camera eye proxy, not
+the source hat/focus anchor. Pass a model-relative head/focus position (and
+use the hat anchor for dash distance), consistently at spawn, load, doors and
+ordinary updates. Add an integration check with the real floor+90 input;
+current tests only check proximity to arbitrary caller coordinates.
+
+Minor source mismatch: gameplay `update()` advances orbit angles before
+sampling, while En_Elf `func_80A02A20` samples then advances. Fix the order or
+document the one-source-tick phase offset rather than claiming exact timing.
+
+Read-only review: 3 Navi tests and 8 cutscene parity tests pass. Existing target
+`navi.o` has no software-float references. Source supports no fairy SFX during
+forest flight and dash sounds during wake-up. Audio/gameplay visual acceptance
+in Kronos remains unverified. No runtime edits or commit by Codex in this review.
+# Navi sounds wired by Codex - 2026-09-22
+
+User explicitly requests audible fairy sounds in forest-flight shots and
+gameplay, and will perform listening/play checks. This supersedes the earlier
+decision to leave forest flight silent for strict source parity.
+
+- Reuse original FAIRY_DASH sample for forest cue changes and spaced accents
+  during the long travelling cue; held text/fades do not retrigger it.
+- Wake-up entrance/downward-turn cues use the same Navi playback function.
+- Add resident ACTION_NAVI_DASH; gameplay spawn/door/load and catch-up trigger
+  it. Dedicated slot 31 avoids stealing attacks, footsteps, UI or rupee notes.
+- Four Link attack voices are offline-resampled to 5512.5 Hz, retaining pitch
+  and duration at the corresponding SCSP playback rate. Other action sounds
+  retain 11025 Hz. Bank now 33,762 bytes with 6,174 sound-RAM bytes spare.
+- User requested no tests/emulator check. Build only; human verifies sound.

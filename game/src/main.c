@@ -17,6 +17,7 @@
 #include "music_banks.h"
 #include "action_audio.h"
 #include "demo.h"
+#include "navi.h"
 #include "gameplay.h"
 #include "kokiri_dialogue.h"
 #include "link_anim_state.h"
@@ -300,7 +301,13 @@ static void         viewer_draw(void)
         kokiri_link_draw(demo_link.x, demo_link.y - DEMO_LINK_EYE_HEIGHT,
                          demo_link.z, demo_link_yaw);
         frame_timer_end(FRAME_PHASE_LINK);
+        /* Link's own fairy, drawn with him and only with him: the title
+         * shot and the file select are not gameplay. */
+        if (navi_active())
+            kokiri_navi_draw(navi_x(), navi_y(), navi_z());
     }
+    if (!cutscene_is_playing() && (!demo_link_active || demo_title_is_visible()))
+        action_audio_navi_flight(0, false);
     if (cutscene_is_playing() && !cutscene_hides_scene())
         kokiri_cutscene_effects_draw();
     rejected_total += kokiri_scene_rejected();

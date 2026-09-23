@@ -18,6 +18,7 @@
 #include "game_mode.h"
 #include "cutscene.h"
 #include "kokiri_sgl.h"
+#include "navi.h"
 
 camera_position_t demo_camera;
 uint16_t demo_yaw;
@@ -203,6 +204,10 @@ static void         place_at_spawn(unsigned int scene, unsigned int spawn)
     link_anim_reset();
     link_anim_reset_state();
     kokiri_camera_reset_actor_motion();
+    /* Navi belongs to Link, not to a room: every spawn -- a new file, a loaded
+     * save, or the far side of a door -- puts her beside him at once, so she
+     * is there on the first controllable frame instead of flying in. */
+    navi_reset(demo_link.x, demo_link.y - DEMO_LINK_EYE_HEIGHT, demo_link.z);
     snap_camera_to_link();
 }
 
@@ -294,6 +299,7 @@ static void         enter_world(void)
         link_anim_reset();
         link_anim_reset_state();
         kokiri_camera_reset_actor_motion();
+        navi_reset(demo_link.x, demo_link.y - DEMO_LINK_EYE_HEIGHT, demo_link.z);
         /* gameplay_reset() clears per-scene state only. The quest state was
          * set by the file select -- save_new_game() for a new file, or the
          * loaded save for a continue -- so it must NOT be touched here. */
@@ -805,6 +811,14 @@ void demo_update(void)
                     if (recover_link_from_void())
                         recovered = true;
                 }
+                /* En_Elf updates with the world, so she is stepped here and
+                 * not per draw: her approach rates are per update. */
+                navi_step(demo_link.x, demo_link.y - DEMO_LINK_EYE_HEIGHT,
+                          demo_link.z);
+                if (navi_dash_started()) action_audio_navi_dash();
+                /* NAVY_FLY belongs only to Object_Kankyo's opening layer 7.
+                 * En_Elf gameplay uses occasional dash cues, no flying loop. */
+                action_audio_navi_flight(0, false);
                 link_anim_update(moved, grounded, fell, roll_pending);
                 roll_pending = false;
                 if (!gameplay_blocks_world() && !gameplay.swing && !gameplay.shielding)
