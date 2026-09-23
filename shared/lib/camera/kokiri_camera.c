@@ -18,6 +18,43 @@ void kokiri_camera_reset_actor_motion(void)
         actor_remainder_x = actor_remainder_z = 0;
 }
 
+bool kokiri_camera_input_heading(uint16_t camera_yaw, uint16_t buttons,
+    uint16_t *heading)
+{
+        int32_t sine, cosine, dx, dz;
+        const int horizontal = !!(buttons & CAMERA_LEFT) - !!(buttons & CAMERA_RIGHT);
+        const int vertical = !!(buttons & CAMERA_UP) - !!(buttons & CAMERA_DOWN);
+        if (!horizontal && !vertical)
+                return false;
+        kokiri_camera_sincos(camera_yaw, &sine, &cosine);
+        /* Same expressions as the movement path above, scaled down so the
+         * atan helper gets small values. */
+        dx = (horizontal * cosine + vertical * sine) / 256;
+        dz = (vertical * cosine - horizontal * sine) / 256;
+        if (!dx && !dz)
+                return false;
+        *heading = kokiri_camera_facing(dx, dz);
+        return true;
+}
+
+void kokiri_camera_move_heading(camera_position_t *position, uint16_t heading,
+    int32_t speed_q8)
+{
+        int32_t sine, cosine, dx, dz;
+        if (speed_q8 <= 0)
+                return;
+        kokiri_camera_sincos(heading, &sine, &cosine);
+        /* Forward is (sin, cos), the same basis the button path builds. */
+        actor_remainder_x += sine * speed_q8 / 256;
+        actor_remainder_z += cosine * speed_q8 / 256;
+        dx = actor_remainder_x / 65536;
+        dz = actor_remainder_z / 65536;
+        actor_remainder_x -= dx * 65536;
+        actor_remainder_z -= dz * 65536;
+        if (dx || dz)
+                kokiri_collision_move_actor(position, dx, 0, dz);
+}
+
 void kokiri_camera_update(camera_position_t *position, uint16_t *yaw,
     int32_t *pitch, uint16_t buttons, bool title_visible, bool actor_collision)
 {

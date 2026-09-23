@@ -22,7 +22,7 @@ def build(oot, rom_dir, out):
             face['limb'] = 0
             face['full_texture'] = True
         link.apply_primitive_colour(lists.faces)
-        link.write_model(lists.faces, out / (name + '.BIN'))
+        link.write_model(lists.faces, out / (name + '.BIN'), character=False)
 
 
 if __name__ == '__main__':

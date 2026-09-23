@@ -318,6 +318,8 @@ def main():
     for face in faces:
         face.setdefault('local', [tuple(v[:3]) for v in face['vertices']])
         face.setdefault('limb', 0)
+    link.character_textures.mark_faces(faces,
+        args.oot / 'assets/xml/objects' / (OBJECT + '.xml'))
     link.apply_primitive_colour(faces)
     # A body point belongs to one Skin modification (a precise set of
     # weighted bone owners). Rigid points retain original local XYZ and limb.

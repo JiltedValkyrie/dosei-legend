@@ -20,6 +20,7 @@
 #include "link_anim_state.h"
 #include "link_clips.h"
 #include "gameplay.h"
+#include "kokiri_camera.h"
 
 /* Thresholds in this file are world units per 30 Hz step, matching the
 ** movement constants in kokiri_camera.h rather than OoT's own speeds. */
@@ -36,6 +37,13 @@
 ** model units. They are not, and the 11 that rescale was derived from is
 ** ACTOR_GROUND_FOLLOW_DROP -- a downhill floor-following tolerance, not a
 ** measured fall. */
+/* Source floor of 3.0 against a regular run of about 9.0 units per source
+** frame: one third of the slice's run speed. */
+#define ROLL_MIN_SPEED_Q8   (LINK_RUN_SPEED_Q8 / 3)
+/* Math_StepToF(&speedXZ, target, ...) equivalent: the target is approached,
+** not snapped to, in whichever direction it lies. */
+#define ROLL_SPEED_STEP_Q8  128
+
 #define SHORT_LANDING_FALL  80
 #define ROLL_LANDING_FALL   800
 
@@ -49,6 +57,14 @@ static unsigned int     landings;
 static unsigned int     combat_clip, combat_frame, guard_steps;
 static bool             combat_active;
 static uint32_t         motion_events;
+/* Roll travel, in Q8 world units per step, and whether the pad still asks for
+** forward. Held across the clip rather than recomputed from motion, because
+** during a roll the motion IS this value. */
+static int32_t          roll_speed_q8;
+/* What locomotion would be giving right now, and whether it points forward.
+** Pushed every step, so the target can rise again as well as fall. */
+static int32_t          roll_input_speed_q8;
+static bool             roll_forward_held;
 
 uint32_t link_anim_motion_events(void) { return motion_events; }
 
@@ -138,6 +154,43 @@ static void             enter(link_state_t next)
     state = next;
     frame = 0;
     phase_ninths = 0;
+    if (next != LINK_STATE_ROLL)
+        roll_speed_q8 = 0;
+}
+
+/* The source's speedTarget: 1.5x the locomotion speed for the current input,
+** dropped to the floor when it is below it OR when the input is not forward. */
+static int32_t          roll_target_q8(int32_t locomotion_speed_q8, bool forward)
+{
+    int32_t target = locomotion_speed_q8 * 3 / 2;
+    if (!forward || target < ROLL_MIN_SPEED_Q8)
+        return ROLL_MIN_SPEED_Q8;
+    return target;
+}
+
+/* Enter a roll at the source's target speed. `speed` is integer world units
+** actually travelled on the step that just ran, so it is shifted into Q8. */
+static void             enter_roll(int32_t speed)
+{
+    enter(LINK_STATE_ROLL);
+    roll_speed_q8 = roll_target_q8(speed * 256, true);
+}
+
+/* One step of Math_StepToF toward the target the pad currently asks for, up or
+** down: letting go slows the roll to the floor, and pressing forward again
+** brings it back up. */
+static void             advance_roll_speed(void)
+{
+    int32_t target = roll_target_q8(roll_input_speed_q8, roll_forward_held);
+    if (roll_speed_q8 > target) {
+        roll_speed_q8 -= ROLL_SPEED_STEP_Q8;
+        if (roll_speed_q8 < target)
+            roll_speed_q8 = target;
+    } else if (roll_speed_q8 < target) {
+        roll_speed_q8 += ROLL_SPEED_STEP_Q8;
+        if (roll_speed_q8 > target)
+            roll_speed_q8 = target;
+    }
 }
 
 void                    link_anim_update(int32_t speed, bool grounded,
@@ -159,6 +212,8 @@ void                    link_anim_update(int32_t speed, bool grounded,
     ** leaves the ground again, which is what makes rolling off a ledge fall. */
     if (is_one_shot(state) && grounded)
     {
+        if (state == LINK_STATE_ROLL)
+            advance_roll_speed();
         advance();
         if (frame < clip_length(clip_for_state(state)))
             return;
@@ -186,7 +241,7 @@ void                    link_anim_update(int32_t speed, bool grounded,
         if (fall_units > SHORT_LANDING_FALL)
         {
             if (fall_units < ROLL_LANDING_FALL && speed >= WALK_SPEED_MIN)
-                enter(LINK_STATE_ROLL);
+                enter_roll(speed);
             else
                 enter(LINK_STATE_LANDING);
             return;
@@ -198,7 +253,7 @@ void                    link_anim_update(int32_t speed, bool grounded,
     /* A deliberate ground roll, distinct from the landing roll above. */
     if (roll_pressed && speed >= WALK_SPEED_MIN)
     {
-        enter(LINK_STATE_ROLL);
+        enter_roll(speed);
         return;
     }
 
@@ -210,6 +265,28 @@ void                    link_anim_update(int32_t speed, bool grounded,
         enter(LINK_STATE_IDLE);
 
     advance();
+}
+
+int32_t                 link_anim_roll_speed_q8(void)
+{
+    return state == LINK_STATE_ROLL ? roll_speed_q8 : 0;
+}
+
+void                    link_anim_roll_input(int32_t locomotion_speed_q8,
+                                             bool forward)
+{
+    roll_input_speed_q8 = locomotion_speed_q8;
+    roll_forward_held = forward;
+}
+
+void                    link_anim_cancel_roll(void)
+{
+    if (state != LINK_STATE_ROLL)
+        return;
+    state = LINK_STATE_IDLE;
+    frame = 0;
+    phase_ninths = 0;
+    roll_speed_q8 = 0;
 }
 
 link_state_t            link_anim_state(void)
@@ -252,6 +329,9 @@ void                    link_anim_reset_state(void)
     combat_active = false;
     motion_events = 0;
     guard_steps = 0;
+    roll_speed_q8 = 0;
+    roll_input_speed_q8 = 0;
+    roll_forward_held = false;
     /* Spawning is a fall onto the floor; that first contact is a real landing
     ** and should read as one rather than being swallowed. */
     was_grounded = false;

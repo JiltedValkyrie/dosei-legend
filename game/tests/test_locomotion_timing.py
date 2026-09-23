@@ -43,6 +43,12 @@ class LocomotionTiming(unittest.TestCase):
             ctypes.c_uint16, ctypes.c_bool, ctypes.c_bool]
         cls.lib.link_anim_update.argtypes = [ctypes.c_int32, ctypes.c_bool,
                                              ctypes.c_int32, ctypes.c_bool]
+        cls.lib.link_anim_roll_speed_q8.restype = ctypes.c_int32
+        cls.lib.link_anim_roll_input.argtypes = [ctypes.c_int32, ctypes.c_bool]
+        cls.lib.kokiri_camera_input_heading.argtypes = [ctypes.c_uint16,
+            ctypes.c_uint16, ctypes.POINTER(ctypes.c_uint16)]
+        cls.lib.kokiri_camera_move_heading.argtypes = [ctypes.POINTER(Position),
+            ctypes.c_uint16, ctypes.c_int32]
 
     @classmethod
     def tearDownClass(cls):
@@ -141,7 +147,7 @@ class LocomotionTiming(unittest.TestCase):
         self.assertGreater(self.lib.link_anim_fraction(), 0)
         self.assertLess(self.lib.link_anim_fraction(), 256)
 
-    def test_l_does_not_reach_gameplay_orbit(self):
+    def test_shoulders_do_not_reach_gameplay_orbit(self):
         text = (ROOT / 'src/demo.c').read_text()
         mask = text.split('uint16_t walk = buttons &', 1)[1].split(';', 1)[0]
         self.assertNotIn('CAMERA_L', mask.replace('CAMERA_LEFT', ''))
@@ -157,6 +163,145 @@ class LocomotionTiming(unittest.TestCase):
         # instead of assigning demo_yaw directly, so the check is that the
         # press reaches the camera's recenter entry point.
         self.assertIn('oot_follow_recenter(&link_follow)', text)
+
+    # --- manual roll ------------------------------------------------------
+
+    def settle(self):
+        self.lib.link_anim_reset_state()
+        for _ in range(50):
+            self.lib.link_anim_update(5, True, 0, False)
+
+    RUN_Q8 = 1408
+    ROLL_MIN_Q8 = RUN_Q8 // 3
+
+    def test_manual_roll_takes_its_speed_from_the_source_formula(self):
+        # z_player.c:9754: 1.5x what locomotion would give, floored at 3.0 --
+        # which is a third of a run here. It does NOT decay to a stop; the
+        # roll ends because the animation ends.
+        self.settle()
+        self.lib.link_anim_roll_input(self.RUN_Q8, True)
+        self.lib.link_anim_update(5, True, 0, True)
+        self.assertEqual(self.lib.link_anim_state(), 5)  # roll
+        self.assertEqual(self.lib.link_anim_roll_speed_q8(), 5 * 256 * 3 // 2)
+        speeds = []
+        while self.lib.link_anim_state() == 5:
+            speeds.append(self.lib.link_anim_roll_speed_q8())
+            self.lib.link_anim_update(0, True, 0, False)
+        # Held forward the whole way: it approaches the running target and
+        # stays there -- never the floor, and never a decay to a stop.
+        self.assertEqual(speeds[-1], self.RUN_Q8 * 3 // 2)
+        self.assertGreater(min(speeds), self.ROLL_MIN_Q8)
+        self.assertEqual(self.lib.link_anim_roll_speed_q8(), 0)
+
+    def test_a_slow_roll_still_gets_the_source_floor(self):
+        self.settle()
+        self.lib.link_anim_roll_input(self.RUN_Q8, True)
+        self.lib.link_anim_update(1, True, 0, True)
+        self.assertEqual(self.lib.link_anim_roll_speed_q8(), self.ROLL_MIN_Q8)
+
+    def test_releasing_the_pad_eases_the_roll_to_the_floor_not_to_a_stop(self):
+        self.settle()
+        self.lib.link_anim_roll_input(self.RUN_Q8, True)
+        self.lib.link_anim_update(5, True, 0, True)
+        self.lib.link_anim_roll_input(self.RUN_Q8, False)
+        speeds = []
+        while self.lib.link_anim_state() == 5:
+            speeds.append(self.lib.link_anim_roll_speed_q8())
+            self.lib.link_anim_update(0, True, 0, False)
+        self.assertGreater(speeds[0], speeds[-1])
+        self.assertEqual(speeds[-1], self.ROLL_MIN_Q8)
+
+    def test_forward_again_restores_the_roll_speed(self):
+        # The target is recomputed from the CURRENT input every step, so the
+        # speed comes back up; taking the current speed as the target would
+        # make every release permanent.
+        self.settle()
+        self.lib.link_anim_roll_input(self.RUN_Q8, True)
+        self.lib.link_anim_update(5, True, 0, True)
+        peak = self.lib.link_anim_roll_speed_q8()
+        self.lib.link_anim_roll_input(self.RUN_Q8, False)
+        for _ in range(3):
+            self.lib.link_anim_update(0, True, 0, False)
+        self.assertLess(self.lib.link_anim_roll_speed_q8(), peak)
+        self.lib.link_anim_roll_input(self.RUN_Q8, True)
+        for _ in range(3):
+            self.lib.link_anim_update(0, True, 0, False)
+        self.assertGreater(self.lib.link_anim_roll_speed_q8(),
+                           self.ROLL_MIN_Q8)
+
+    def test_only_forward_input_keeps_the_roll_fast(self):
+        # Source drops non-forward input to the floor outright.
+        self.settle()
+        self.lib.link_anim_roll_input(self.RUN_Q8, True)
+        self.lib.link_anim_update(5, True, 0, True)
+        self.lib.link_anim_roll_input(self.RUN_Q8, False)
+        while self.lib.link_anim_state() == 5:
+            last = self.lib.link_anim_roll_speed_q8()
+            self.lib.link_anim_update(0, True, 0, False)
+        self.assertEqual(last, self.ROLL_MIN_Q8)
+
+    def test_input_heading_is_measured_against_links_facing(self):
+        # A direction is only "forward" when it points where Link is facing;
+        # demo.c compares this heading with his yaw.
+        heading = ctypes.c_uint16()
+        UP, DOWN, LEFT = 0x1000, 0x2000, 0x4000
+        self.assertTrue(self.lib.kokiri_camera_input_heading(0, UP,
+                                                             ctypes.byref(heading)))
+        self.assertEqual(heading.value, 0)
+        self.lib.kokiri_camera_input_heading(0, DOWN, ctypes.byref(heading))
+        self.assertEqual(heading.value, 32768)          # 180 degrees
+        self.lib.kokiri_camera_input_heading(0, LEFT, ctypes.byref(heading))
+        self.assertEqual(heading.value, 16384)          # 90 degrees
+        self.assertFalse(self.lib.kokiri_camera_input_heading(0, 0,
+                                                              ctypes.byref(heading)))
+
+    def test_demo_compares_the_input_heading_with_links_yaw(self):
+        text = (ROOT / 'src/demo.c').read_text()
+        block = text.split('kokiri_camera_input_heading(demo_yaw, walk', 1)[1]
+        block = block.split('link_anim_roll_input', 1)[0]
+        self.assertIn('heading - demo_link_yaw', block)
+        self.assertIn('8192', block)                    # 45 degree quadrant
+
+    def test_cancelling_a_roll_stops_its_travel_immediately(self):
+        self.settle()
+        self.lib.link_anim_roll_input(self.RUN_Q8, True)
+        self.lib.link_anim_update(5, True, 0, True)
+        self.assertGreater(self.lib.link_anim_roll_speed_q8(), 0)
+        self.lib.link_anim_cancel_roll()
+        self.assertNotEqual(self.lib.link_anim_state(), 5)
+        self.assertEqual(self.lib.link_anim_roll_speed_q8(), 0)
+
+    def test_a_blocked_or_fighting_link_cancels_the_roll_not_just_its_start(self):
+        text = (ROOT / 'src/demo.c').read_text()
+        blocked = text.split('if (blocked_before || gameplay_blocks_world())', 1)[1]
+        self.assertIn('link_anim_cancel_roll();', blocked.split('}', 1)[0])
+        combat = text.split('if (gameplay.swing || gameplay.shielding)', 1)[1]
+        self.assertIn('link_anim_cancel_roll();', combat.split('}', 1)[0])
+        # The pad's "stick still forward" stand-in must be pushed every step.
+        self.assertIn('link_anim_roll_input(kokiri_camera_walking()', text)
+
+    def test_standing_still_cannot_roll(self):
+        self.settle()
+        self.lib.link_anim_update(0, True, 0, True)
+        self.assertNotEqual(self.lib.link_anim_state(), 5)
+        self.assertEqual(self.lib.link_anim_roll_speed_q8(), 0)
+
+    def test_roll_travel_follows_the_heading_through_collision(self):
+        for yaw, axis in ((0, 'z'), (16384, 'x')):
+            p = Position()
+            self.lib.kokiri_camera_reset_actor_motion()
+            for _ in range(10):
+                self.lib.kokiri_camera_move_heading(ctypes.byref(p), yaw, 1408)
+            self.assertGreater(getattr(p, axis), 0, yaw)
+            self.assertEqual(getattr(p, 'x' if axis == 'z' else 'z'), 0, yaw)
+
+    def test_a_press_claimed_by_the_world_never_also_rolls(self):
+        text = (ROOT / 'src/demo.c').read_text()
+        claim = text.split('roll_pending = interact_pending', 1)[1].split(';', 1)[0]
+        for event in ('GP_EVENT_TALK_OPEN', 'GP_EVENT_PICKUP',
+                      'GP_EVENT_MENU_OPEN', 'GP_EVENT_EQUIP'):
+            self.assertIn(event, claim)
+        self.assertIn('gameplay_blocks_world()', claim)
 
     def test_combat_poses_follow_action_clock_and_release(self):
         self.lib.link_anim_reset_state()

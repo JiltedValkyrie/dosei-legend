@@ -18,6 +18,7 @@
 
 #include <jo/jo.h>
 #include "asset_loading.h"
+#include "vdp1_draw_wait.h"
 #include <stdint.h>
 #include "frame_timer.h"
 
@@ -206,10 +207,13 @@ static bool          msgmark_ready;
 ** `tiles` and `cluts` have identical layouts for every mesh, so the generated
 ** kokiri_tile type stands in for all of them.
 */
+static unsigned char *opening_pixel_pool;
+static int opening_pixel_pool_bytes;
+
 static bool         mesh_load(const char *file, unsigned int pixel_bytes,
                               const kokiri_tile *tiles, unsigned int tile_count,
                               const unsigned short (*cluts)[16],
-                              PDATA *pdata, unsigned int polygons)
+                              PDATA *pdata, unsigned int polygons, const void *cached_pixels)
 {
     unsigned char   *base = (unsigned char *)JO_VDP1_VRAM
                             + texture_base;
@@ -237,9 +241,23 @@ static bool         mesh_load(const char *file, unsigned int pixel_bytes,
     /* Read straight into VDP1 VRAM. Passing a buffer to jo_fs_read_file_ptr()
     ** avoids jo_malloc()'ing a staging copy of the whole blob. */
     pixel_vram = base + vram_used;
-    asset_loading(file);
-    loaded = jo_fs_read_file_ptr(file, pixel_vram, &length);
-    asset_loading_done();
+    if (cached_pixels) {
+        const unsigned int *offsets = cached_pixels;
+        for (i = 0; i < tile_count; ++i) {
+            if (offsets[i] > (unsigned int)opening_pixel_pool_bytes ||
+                tiles[i].length > (unsigned int)opening_pixel_pool_bytes - offsets[i] ||
+                tiles[i].offset > pixel_bytes || tiles[i].length > pixel_bytes - tiles[i].offset)
+                return false;
+            jo_dma_copy(opening_pixel_pool + offsets[i],
+                        pixel_vram + tiles[i].offset, tiles[i].length);
+        }
+        loaded = (char *)pixel_vram;
+        length = pixel_bytes;
+    } else {
+        asset_loading(file);
+        loaded = jo_fs_read_file_ptr(file, pixel_vram, &length);
+        asset_loading_done();
+    }
     if (loaded == JO_NULL)
     {
         jo_core_error("cannot read %s", file);
@@ -378,8 +396,58 @@ static bool         fairy_load(void)
 }
 
 #ifdef KOKIRI_STREAM_ROOMS
-static bool room_read(jo_file *file, void *target, unsigned int bytes)
+typedef struct { void *mesh, *pixels; int mesh_bytes, pixel_bytes; } opening_cache_t;
+static opening_cache_t opening_cache[10];
+
+void kokiri_opening_cache_free(void)
 {
+    unsigned int i;
+    if (opening_pixel_pool) jo_free(opening_pixel_pool);
+    opening_pixel_pool = 0;
+    opening_pixel_pool_bytes = 0;
+    for (i = 0; i < 10; ++i) {
+        if (opening_cache[i].mesh) jo_free(opening_cache[i].mesh);
+        if (opening_cache[i].pixels) jo_free(opening_cache[i].pixels);
+        opening_cache[i].mesh = opening_cache[i].pixels = 0;
+    }
+}
+
+bool kokiri_opening_cache_load(void)
+{
+    unsigned int i;
+    kokiri_opening_cache_free();
+    asset_loading("NAVIPOOL.TEX");
+    opening_pixel_pool = jo_fs_read_file_ptr("NAVIPOOL.TEX", 0, &opening_pixel_pool_bytes);
+    if (!opening_pixel_pool) return false;
+    for (i = 0; i < 10; ++i) {
+        char mesh[] = "S2R0.MSH", pixels[] = "S2R0.MAP";
+        mesh[3] += i; pixels[3] += i;
+        asset_loading(mesh);
+        opening_cache[i].mesh = jo_fs_read_file_ptr(mesh, 0, &opening_cache[i].mesh_bytes);
+        asset_loading(pixels);
+        opening_cache[i].pixels = jo_fs_read_file_ptr(pixels, 0, &opening_cache[i].pixel_bytes);
+        if (!opening_cache[i].mesh || !opening_cache[i].pixels) {
+            kokiri_opening_cache_free();
+            jo_core_error("Opening cache does not fit RAM cart");
+            return false;
+        }
+    }
+    asset_loading_done();
+    return true;
+}
+
+static bool room_read(jo_file *file, void *target, unsigned int bytes,
+                      const unsigned char **cached)
+{
+    if (*cached) {
+        unsigned int i;
+        unsigned int *dst = target;
+        const unsigned int *src = (const unsigned int *)*cached;
+        if (bytes & 3) return false; /* All KRM1 sections are word-aligned. */
+        for (i = 0; i < bytes / 4; ++i) dst[i] = src[i];
+        *cached += bytes;
+        return true;
+    }
     return jo_fs_read_next_bytes(file, (char *)target, bytes) == (int)bytes;
 }
 
@@ -514,11 +582,19 @@ static bool room_load_bank(unsigned int scene, unsigned int room)
     jo_file file;
     bool ok;
     if (scene > 9 || room > 9 || !kokiri_bank_allocate()) return false;
+    const unsigned char *cached = scene == 2 ? opening_cache[room].mesh : 0;
+    bool from_cache = cached != 0;
+    if (from_cache && opening_cache[room].mesh_bytes < (int)sizeof(header)) return false;
     mesh_name[1] += scene; pixel_name[1] += scene;
     mesh_name[3] += room;  pixel_name[3] += room;
-    asset_loading(mesh_name);
-    if (!jo_fs_open(&file, mesh_name)) return false;
-    if (!room_read(&file, header, sizeof(header))) { jo_fs_close(&file); return false; }
+    if (!from_cache) {
+        asset_loading(mesh_name);
+        if (!jo_fs_open(&file, mesh_name)) return false;
+    }
+    if (!room_read(&file, header, sizeof(header), &cached)) {
+        if (!from_cache) jo_fs_close(&file);
+        return false;
+    }
     expected = 32 + header[1]*12 + header[2]*32 + header[3]*44 +
                ((header[2]+3)&~3u) + header[5]*24;
     /* A bank with no tiles is flat shaded: every face carries its own colour
@@ -528,20 +604,22 @@ static bool room_load_bank(unsigned int scene, unsigned int room)
     if (header[0] != 0x4b524d31 || !header[1] || !header[2] ||
         header[1] > KOKIRI_VERTEX_COUNT || header[2] > KOKIRI_POLYGON_COUNT ||
         header[3] > KOKIRI_TILE_COUNT || header[4] > KOKIRI_PIXEL_BYTES ||
-        header[5] > KOKIRI_OBJECT_COUNT || (unsigned int)file.size != expected ||
+        header[5] > KOKIRI_OBJECT_COUNT ||
+        (unsigned int)(from_cache ? opening_cache[room].mesh_bytes : file.size) != expected ||
+        (from_cache && (unsigned int)opening_cache[room].pixel_bytes != header[3]*4) ||
         resident_bytes + header[4] + header[3]*32 > TEXTURE_CAPACITY ||
         resident_sprites + header[3] > JO_MAX_SPRITE) {
-        jo_fs_close(&file); return false;
+        if (!from_cache) jo_fs_close(&file);
+        return false;
     }
-    ok = room_read(&file, kokiri_pdata.pntbl, header[1]*sizeof(POINT)) &&
-         room_read(&file, kokiri_pdata.pltbl, header[2]*sizeof(POLYGON)) &&
-         room_read(&file, kokiri_pdata.attbl, header[2]*sizeof(ATTR)) &&
-         room_read(&file, kokiri_tiles, header[3]*sizeof(kokiri_tile)) &&
-         room_read(&file, kokiri_cluts, header[3]*32) &&
-         room_read(&file, kokiri_objects, (header[2]+3)&~3u) &&
-         room_read(&file, kokiri_bounds, header[5]*sizeof(kokiri_object));
-    jo_fs_close(&file);
-    asset_loading_done();
+    ok = room_read(&file, kokiri_pdata.pntbl, header[1]*sizeof(POINT), &cached) &&
+         room_read(&file, kokiri_pdata.pltbl, header[2]*sizeof(POLYGON), &cached) &&
+         room_read(&file, kokiri_pdata.attbl, header[2]*sizeof(ATTR), &cached) &&
+         room_read(&file, kokiri_tiles, header[3]*sizeof(kokiri_tile), &cached) &&
+         room_read(&file, kokiri_cluts, header[3]*32, &cached) &&
+         room_read(&file, kokiri_objects, (header[2]+3)&~3u, &cached) &&
+         room_read(&file, kokiri_bounds, header[5]*sizeof(kokiri_object), &cached);
+    if (!from_cache) { jo_fs_close(&file); asset_loading_done(); }
     if (!ok) return false;
     relocate_resident(scene == KOKIRI_FIELD_SCENE ? CUTSCENE_TEXTURE_BASE : GAME_TEXTURE_BASE);
     /* Every bank replaces the same forest slots; Link/fairies stay resident. */
@@ -552,7 +630,8 @@ static bool room_load_bank(unsigned int scene, unsigned int room)
     ** and mesh_load() would only patch texno/colno over them. */
     if (header[3] &&
         !mesh_load(pixel_name,header[4],kokiri_tiles,header[3],
-                   (const unsigned short (*)[16])kokiri_cluts,&kokiri_pdata,header[2]))
+                   (const unsigned short (*)[16])kokiri_cluts,&kokiri_pdata,header[2],
+                   from_cache ? opening_cache[room].pixels : 0))
         return false;
     forest_vertex_count = kokiri_pdata.nbPoint = header[1];
     forest_polygon_count = kokiri_pdata.nbPolygon = header[2];
@@ -576,12 +655,12 @@ bool                kokiri_scene_load(void)
 #ifndef KOKIRI_STREAM_ROOMS
     if (!mesh_load(KOKIRI_PIXEL_FILE, KOKIRI_PIXEL_BYTES, kokiri_tiles,
                    KOKIRI_TILE_COUNT, kokiri_cluts, &kokiri_pdata,
-                   KOKIRI_POLYGON_COUNT))
+                   KOKIRI_POLYGON_COUNT, 0))
         return (false);
 #endif
     if (!mesh_load(LINK_PIXEL_FILE, LINK_PIXEL_BYTES,
                    (const kokiri_tile *)link_tiles, LINK_TILE_COUNT,
-                   link_cluts, &link_pdata, LINK_POLYGON_COUNT))
+                   link_cluts, &link_pdata, LINK_POLYGON_COUNT, 0))
         return (false);
     if (!fairy_load()) return (false);
 #ifdef KOKIRI_STREAM_ROOMS
@@ -633,9 +712,9 @@ bool kokiri_scene_update(void)
     }
     requested_room = target;
     if (target != forest_room) {
-        /* Do not overwrite texture RAM while VDP1 still reads last frame.
-         * Defer until draw end instead of spinning inside the game callback. */
-        if (!(JO_VDP1_EDSR & 2)) return true;
+        /* Wait for the in-flight draw without resubmitting it on every retry.
+         * A timed-out draw leaves the bank untouched for the next callback. */
+        if (!vdp1_wait_for_draw_end()) return true;
         return room_load_bank(SCENE_SPOT04, (unsigned int)target);
     }
 #endif
@@ -1134,6 +1213,22 @@ void                kokiri_fairies_draw(unsigned int tick)
         attr.atrb |= (FAIRY_COLMODE_RGB & 7) << 3;
         if (slPutSprite(pos, &attr, 0) == FALSE) ++kokiri_rejected;
     }
+}
+
+/* Navi in gameplay. Her position is En_Elf's, stepped in src/navi.c; this
+ * only puts the shared fairy billboard where she already is. */
+void                kokiri_navi_draw(int x, int y, int z)
+{
+    FIXED pos[5];
+    SPR_ATTR attr = SPR_ATTRIBUTE(0, No_Palet, No_Gouraud, ECdis,
+                                  sprNoflip | FUNC_Sprite);
+    pos[0] = x * 65536;
+    pos[1] = -y * 65536;
+    pos[2] = z * 65536;
+    pos[3] = pos[4] = toFIXED(1);
+    attr.texno = (Uint16)fairy_sprite;
+    attr.atrb |= (FAIRY_COLMODE_RGB & 7) << 3;
+    if (slPutSprite(pos, &attr, 0) == FALSE) ++kokiri_rejected;
 }
 
 void                kokiri_pickups_draw(unsigned int tick)

@@ -1,4 +1,4 @@
-"""Saturn pad -> OoT control mapping (approved 2026-09-18).
+"""Saturn pad -> OoT control mapping (2026-09-22 layout: Z targets, L looks).
 
 Executes the real player_input.c, kokiri_camera.c and oot_follow.c on the host.
 These checks cover the MAPPING and its consumption rules only: they say nothing
@@ -118,11 +118,11 @@ class PlayerControls(unittest.TestCase):
         self.assertEqual(self.lib.control_move_buttons(), 0)
         self.assertFalse(self.lib.control_look_mode())
 
-    def test_l_recenters_on_a_press_edge(self):
-        self.tap(L)
+    def test_z_recenters_on_a_press_edge(self):
+        self.tap(Z)
         self.assertTrue(self.lib.control_recenter())
-        # Holding L must not recenter every step.
-        self.hold(L, steps=5)
+        # Holding Z must not recenter every step.
+        self.hold(Z, steps=5)
         self.assertFalse(self.lib.control_recenter())
 
     # --- B walk/run toggle ------------------------------------------------
@@ -209,7 +209,7 @@ class PlayerControls(unittest.TestCase):
         self.assertFalse(self.lib.control_jump())
 
     def test_y_is_consumed_in_look_mode_not_queued(self):
-        self.lib.control_sample(Z | Y)
+        self.lib.control_sample(L | Y)
         self.lib.control_step(True)
         self.assertFalse(self.lib.control_jump())
         self.hold(0)
@@ -222,13 +222,21 @@ class PlayerControls(unittest.TestCase):
         self.assertEqual(self.lib.control_move_buttons(), 0)
         self.assertEqual(self.lib.control_c_held(), C_UP)
 
-    def test_z_consumes_the_dpad(self):
-        self.hold(Z | LEFT)
+    def test_look_consumes_the_dpad(self):
+        self.hold(L | LEFT)
         self.assertEqual(self.lib.control_move_buttons(), 0)
         self.assertTrue(self.lib.control_look_mode())
 
-    def test_z_outranks_c(self):
-        self.hold(Z | C | RIGHT)
+    def test_target_keeps_the_dpad_for_strafing(self):
+        # Z does NOT consume the direction: holding it strafes and backs up
+        # around the facing, so the movement bits must still come through.
+        self.hold(Z | LEFT)
+        self.assertEqual(self.lib.control_move_buttons(), LEFT)
+        self.assertTrue(self.lib.control_target_held())
+        self.assertFalse(self.lib.control_look_mode())
+
+    def test_look_outranks_c(self):
+        self.hold(L | C | RIGHT)
         self.assertTrue(self.lib.control_look_mode())
         self.assertEqual(self.lib.control_c_held(), C_NONE)
         self.assertEqual(self.lib.control_c_pressed(), C_NONE)
@@ -244,7 +252,7 @@ class PlayerControls(unittest.TestCase):
         self.assertEqual(self.lib.control_move_buttons(), UP)
         self.hold(C | UP)
         self.assertEqual(self.lib.control_move_buttons(), 0)
-        self.hold(Z | UP)
+        self.hold(L | UP)
         self.assertEqual(self.lib.control_move_buttons(), 0)
 
     def test_releasing_modifier_resumes_movement_without_phantom_action(self):
@@ -289,35 +297,35 @@ class PlayerControls(unittest.TestCase):
         self.lib.control_step(True)
         self.assertEqual(self.lib.control_c_pressed(), C_RIGHT)
 
-    # --- Z look mode ------------------------------------------------------
+    # --- L look mode ------------------------------------------------------
 
     def test_look_aims_with_the_dpad_and_moves_nothing(self):
         # Looking RIGHT DECREASES yaw. With the camera's +Y-up, +Z-forward
         # convention, screen right is (f x up) = -X, so increasing yaw swings
         # the view left. This assertion used to expect the opposite, from when
         # the renderer itself was mirrored; see main.c's screen X flip.
-        self.hold(Z | RIGHT)
+        self.hold(L | RIGHT)
         self.assertLess(self.lib.control_look_yaw(), 0)
         self.lib.control_reset()
-        self.hold(Z | LEFT)
+        self.hold(L | LEFT)
         self.assertGreater(self.lib.control_look_yaw(), 0)
         self.lib.control_reset()
-        self.hold(Z | RIGHT)
+        self.hold(L | RIGHT)
         self.assertEqual(self.lib.control_look_pitch(), 0)
         self.assertEqual(self.lib.control_move_buttons(), 0)
         self.lib.control_reset()
-        self.hold(Z | UP)
+        self.hold(L | UP)
         self.assertGreater(self.lib.control_look_pitch(), 0)
-        self.hold(Z | DOWN)
+        self.hold(L | DOWN)
         self.assertLess(self.lib.control_look_pitch(), 0)
 
     def test_look_never_raises_the_shield(self):
-        self.hold(Z | R | UP)
+        self.hold(L | R)
         self.assertTrue(self.lib.control_look_mode())
         self.assertFalse(self.lib.control_shield())
 
-    def test_releasing_z_exits_look_mode_once(self):
-        self.hold(Z | UP, steps=3)
+    def test_releasing_look_exits_look_mode_once(self):
+        self.hold(L | UP, steps=3)
         self.hold(0)
         self.assertFalse(self.lib.control_look_mode())
         self.assertTrue(self.lib.control_look_exited())
@@ -411,18 +419,24 @@ class PlayerControls(unittest.TestCase):
     # --- shoulders never orbit -------------------------------------------
 
     def test_shoulders_never_orbit_the_gameplay_camera(self):
-        for buttons in (L, R, L | R, L | UP, R | UP, Z | R):
+        for buttons in (L, R, L | R, L | UP, R | UP, Z | R, Z | UP):
             p, angle, pitch = Position(), ctypes.c_uint16(4321), ctypes.c_int32()
             self.lib.kokiri_camera_update(ctypes.byref(p), ctypes.byref(angle),
                 ctypes.byref(pitch), buttons, False, True)
             self.assertEqual(angle.value, 4321, hex(buttons))
 
-    def test_shoulders_are_not_routed_into_movement_or_look(self):
+    def test_shoulders_never_translate_link(self):
+        # L aims and R guards; neither is a movement button. L DOES enter look
+        # mode now, so only translation is asserted here.
         for buttons in (L, R, L | R):
             self.lib.control_reset()
             self.hold(buttons, steps=2)
             self.assertEqual(self.lib.control_move_buttons(), 0, hex(buttons))
-            self.assertFalse(self.lib.control_look_mode(), hex(buttons))
+
+    def test_diagnostics_chord_leaves_plain_look_plus_guard_alone(self):
+        self.lib.control_reset()
+        self.hold(L | R, steps=2)
+        self.assertTrue(self.lib.control_look_mode())
 
     # --- source guards ----------------------------------------------------
 
@@ -440,7 +454,10 @@ class PlayerControls(unittest.TestCase):
     def test_diagnostics_chord_is_gated_out_of_the_clean_build(self):
         text = (ROOT / 'src/player_input.c').read_text()
         chord = text.split('#ifndef DOSEI_CLEAN_TEST', 1)[1]
-        self.assertIn('CAMERA_L', chord.split('#endif', 1)[0])
+        chord = chord.split('#endif', 1)[0]
+        self.assertIn('CAMERA_L', chord)
+        # A direction is required, or the chord would eat look-plus-guard.
+        self.assertIn('CAMERA_UP | CAMERA_DOWN', chord)
 
 
 if __name__ == '__main__':

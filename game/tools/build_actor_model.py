@@ -49,7 +49,7 @@ ACTOR_SCALE = 0.01
 # offset their XML gives them; an actor with one animation simply has one.
 ACTORS = {
     'zelda': dict(object='object_zl4', xml='object_zl4', anim_object='object_opening_demo1', anim=0x450,
-                  head=None),
+                  head=None, texture_head=16),  # z_en_zl4.c: head callback limbIndex 17 (one-based)
     'impa':  dict(object='object_im', xml='object_im', head=None, anim_object='object_opening_demo1', anim=0x29CC),
     'ganon': dict(object='object_gndd', xml='object_gndd', anim=0x2928,
                   head='gYoungGanondorfHeadLimb'),
@@ -215,6 +215,9 @@ def build(oot, rom_dir, name, out, frame, clip_frames, stride, flat):
         raise ValueError(name + ': unresolved texture segment')
     if not faces:
         raise SystemExit('%s: no geometry walked' % name)
+    link.character_textures.mark_faces(faces,
+        oot / 'assets/xml/objects' / (spec['xml'] + '.xml'),
+        head_index if head_index >= 0 else spec.get('texture_head'), expressions[name])
     link.apply_primitive_colour(faces)
     flattened = link.flatten_faces(faces) if flat else 0
     if not flat:

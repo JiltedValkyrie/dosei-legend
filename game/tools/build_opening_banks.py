@@ -116,6 +116,30 @@ def house_panorama(oot):
     return vertices, faces, tiles
 
 
+def emit_flight_cache(out):
+    """Share identical tiles across flight banks; keep original VRAM layouts."""
+    pool, offsets = bytearray(), {}
+    for bank in range(10):
+        mesh = (out / ('S2R%d.MSH' % bank)).read_bytes()
+        pixels = (out / ('S2R%d.TEX' % bank)).read_bytes()
+        header = struct.unpack_from('>8I', mesh)
+        refs = bytearray()
+        for tile in range(header[3]):
+            _, _, offset, length = struct.unpack_from('>HHII', mesh,
+                32 + header[1]*12 + header[2]*32 + tile*12)
+            blob = pixels[offset:offset + length]
+            if len(blob) != length:
+                raise ValueError('Truncated flight texture')
+            if blob not in offsets:
+                offsets[blob] = len(pool)
+                pool.extend(blob)
+                pool.extend(bytes((-len(pool)) % 8))
+            refs.extend(struct.pack('>I', offsets[blob]))
+        (out / ('S2R%d.MAP' % bank)).write_bytes(refs)
+    (out / 'NAVIPOOL.TEX').write_bytes(pool)
+    print('Opening shared texture cache: %d bytes' % len(pool))
+
+
 def emit_opening_banks(oot, out, rooms, normal):
     from build_room_scene import pack_room
     import build_cutscenes as cutscenes
@@ -149,6 +173,7 @@ def emit_opening_banks(oot, out, rooms, normal):
     for room, start in enumerate(range(0, len(track), BANK_FRAMES)):
         emit(2, room, forest_bank(rooms, track[start:start + BANK_FRAMES]))
     emit(4, 0, house_panorama(oot))
+    emit_flight_cache(out)
     import json
     (out / 'opening_banks.json').write_text(json.dumps(summaries, indent=2) + '\n')
     return summaries

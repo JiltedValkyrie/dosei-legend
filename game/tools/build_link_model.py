@@ -27,6 +27,7 @@ import re
 import struct
 import sys
 import xml.etree.ElementTree as ET
+import character_textures
 
 OOT_DEFAULT = pathlib.Path('D:/Workspace-Claude/game-decomps/n64/oot')
 ROM_MD5 = '57a9719ad547c516342e1a15d5c28c3d'
@@ -334,7 +335,7 @@ def emit_equipment(out, faces):
 
 
 def flatten_faces(faces):
-    """Flatten body materials, preserving the complete head's textures.
+    """Flatten body materials, preserving marked hair and facial textures.
 
     Link is 62 units tall and his median face spans 7 units, so a 16x16 tile
     gives him 0.4 world units per texel -- roughly 35x finer than the scene's
@@ -342,12 +343,12 @@ def flatten_faces(faces):
     That detail is invisible in play and the VRAM it costs is needed by the
     ground, which is what actually smears.
 
-    Head artwork (including hair/skin, not just eyes/mouth) carries facial shape
+    Hair and face artwork (not headwear) carries facial shape
     at the close gameplay camera and must not be replaced by per-face averages.
     """
     flattened = 0
     for face in faces:
-        if face.get('texture_segment') in FACE_SEGMENTS or face.get('limb') == HEAD_LIMB:
+        if character_textures.keep_texture(face):
             continue
         texture = face['texture']
         if not texture:
@@ -404,7 +405,7 @@ def ground_and_centre(faces):
     return faces, shift
 
 
-def write_model(faces, out_path, skinned=False):
+def write_model(faces, out_path, skinned=False, character=True):
     """Same KFR1 v2 container as FOREST.BIN, with no collision triangles.
 
     When `skinned`, vertices are deduplicated by (local position, limb), not by
@@ -413,6 +414,8 @@ def write_model(faces, out_path, skinned=False):
     limbs together the moment an animation moves them apart. The cost is a few
     extra vertices; the benefit is that every vertex has one unambiguous owner.
     """
+    if character:
+        flatten_faces(faces)
     if skinned:
         # Pair each posed vertex with the limb-local coordinate it came from.
         # collect_faces() kept face['local'] in the same order as the vertices,
@@ -450,13 +453,13 @@ def write_model(faces, out_path, skinned=False):
         # A face collapsed to one colour needs no resolution: the smallest
         # tile VDP1 addresses carries it exactly as well as a 16x16 would, and
         # the difference is VRAM the ground needs.
-        # Human directive: every character -- Link, NPCs and enemies -- is
-        # plain-shaded, EXCEPT hair and face. Those live in the head limb's
-        # display list, so the head keeps real texture and everything else
-        # (tunic, skin, belt, boots, sword, shield) collapses to one colour.
+        # Every character uses flat body colours regardless of importer flags.
+        # Only marked hair and facial materials keep artwork. Retained hair
+        # uses the shared reduced resolution; faces keep their previous detail.
         # Cutout alpha inside a flattened material is lost; nothing outside the
         # head currently relies on it.
-        flat = face.get('limb') != HEAD_LIMB and not face.get('full_texture')
+        flat = (not character_textures.keep_texture(face) if character else
+                face.get('limb') != HEAD_LIMB and not face.get('full_texture'))
         if flat:
             # One lit colour per flat face, deduplicated after RGB555 conversion.
             # Keep eye/mouth artwork on the normal textured path.
@@ -471,11 +474,14 @@ def write_model(faces, out_path, skinned=False):
             tile = struct.pack('>16H', 0, colour, *([0] * 14)) + bytes([0x11] * 8)
             width, height = 8, 2
         else:
-            # Keep eye/mouth detail at 16; other head materials retain their
-            # real texture at 8, instead of one flat color per triangle.
+            # Original import sizes: eye/mouth 16, other head materials 8.
+            # Apply the character reduction once, after choosing that baseline.
             size = 8 if face.get('limb') == HEAD_LIMB and face.get('texture_segment') not in FACE_SEGMENTS else 16
-            tile = scene_tool.bake(face, size)
-            width, height = size, size
+            if character:
+                tile, width, height = character_textures.bake_character_tile(face, size, scene_tool.bake)
+            else:
+                tile = scene_tool.bake(face, size)
+                width, height = size, size
         if tile not in tiles:
             tiles[tile] = len(texture)
             texture.extend(tile)
@@ -700,6 +706,8 @@ def main():
                                              args.frame, LIMB_COUNT)
     placed = walk_skeleton(limbs, rotations, root)
     faces, original = collect_equipment(data, keep, placed, args.oot)
+    character_textures.mark_faces(faces, args.oot / 'assets/xml/objects/object_link_child.xml',
+                                 HEAD_LIMB, FACE_SEGMENTS)
     flattened = flatten_faces(faces) if args.flat else 0
     tinted = apply_primitive_colour(faces)
     faces = scale_faces(faces, args.scale)

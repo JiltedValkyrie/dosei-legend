@@ -25,6 +25,9 @@ bool            kokiri_scene_load_backdrop(unsigned int scene, unsigned int room
 /* True while a prerendered backdrop is being shown instead of geometry. */
 bool            kokiri_scene_backdrop_active(void);
 bool            kokiri_scene_update(void);
+/* Preload forest-flight banks into the required RAM cart before playback. */
+bool            kokiri_opening_cache_load(void);
+void            kokiri_opening_cache_free(void);
 
 /** @brief VDP1 bytes consumed, valid after kokiri_scene_load(). */
 unsigned int    kokiri_scene_vram_used(void);
@@ -60,6 +63,8 @@ int             kokiri_warp_probe(unsigned int field);
 void            kokiri_fairies_draw(unsigned int tick);
 /* Gear pickup billboards, drawn only while the item is still uncollected. */
 void            kokiri_pickups_draw(unsigned int tick);
+/* Link's companion fairy, at the position src/navi.c keeps for her. */
+void            kokiri_navi_draw(int x, int y, int z);
 void            kokiri_grass_draw(void);
 unsigned int    kokiri_scene_room(void);
 void            kokiri_rupees_draw(unsigned int tick);

@@ -81,19 +81,20 @@ pause screen (Start) lists the same mapping.
 | Hold R | Guard with the collected shield; never rotates the camera |
 | A | Talk to a nearby fairy and advance the text box one page |
 | B (text box open) | Close the dialogue. That press does not also toggle walk/run |
-| L | Lock onto the nearest valid target, or release an existing lock |
-| L (no target) | Recenter the camera behind Link |
-| D-pad while locked | Strafe around the target and back up; Link keeps facing it |
-| Hold Z + D-pad | Look camera: aim the view, bounded. No movement, no shield |
+| Hold Z | Lock onto the nearest valid target; releasing drops it. A tap recenters |
+| D-pad while holding Z | Strafe and back up; Link holds his facing, locked or not |
+| A (nothing to talk to) | Roll forward. The roll commits and carries him itself |
+| Hold L + D-pad | Look camera: aim the view, bounded. No movement, no shield |
 | Start | Open/close the item menu during gameplay; leaves the title screen |
 | Menu: D-pad / A / B | Pick a slot, equip the selected item, close the menu |
 | Hold C + D-pad | C-Up/Down/Left/Right. Routed and consumed, but no item system exists yet |
-| L + R | Switch diagnostic overlay views; compiled out of the clean player-test image |
+| L + R + Down | Switch diagnostic overlay views; compiled out of the clean player-test image |
 | L + R + Up | Developer camera comparison: current follow / old camera |
 
-Camera follows automatically. Rolling is automatic on landing, not a button.
-Pickups auto-equip when collected. Targeting is a simple Switch-style toggle
-against nearby NPCs, not full OoT Z-targeting. The C buttons reach the input
+Camera follows automatically. Landing still rolls on its own after a fall; A
+now also rolls on demand when no talk, pickup or menu claims the press.
+Pickups auto-equip when collected. Targeting is hold-style against nearby NPCs
+only, not yet full OoT Z-targeting over every attention actor. The C buttons reach the input
 layer and show in the diagnostic overlay, but the item system they should
 drive does not exist yet.
 
