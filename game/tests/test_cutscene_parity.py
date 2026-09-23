@@ -17,17 +17,27 @@ class CueRuntime(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         source = (ROOT / 'src/cutscene.c').read_text()
-        start = source.index('static void update_cues(const cutscene_t *cs)\n{')
+        # navi_orbit() is part of the cue update: the cutscene fairy's path
+        # is the cue plus En_Elf's hover around it.
+        start = source.index('static void navi_orbit(unsigned int cue_id')
         end = source.index('\nunsigned int cutscene_actor_channels', start)
         # Compile the production function against overlapping synthetic cues.
         harness = '''#include <stdint.h>
+#include <math.h>
 #include <string.h>
 #include "cutscenes.h"
 static struct {
     unsigned short frame;
     const cutscene_cue_t *player_cue, *actor_cues[10];
     int32_t actor_pos[10][3], navi_pos[3], navi_velocity[3];
+    uint16_t navi_orbit_xz, navi_orbit_y;
 } state;
+static void kokiri_camera_sincos(uint16_t yaw, int32_t *sine, int32_t *cosine)
+{
+    double radians = yaw * 6.283185307179586 / 65536.0;
+    *sine = (int32_t)(sin(radians) * 65536);
+    *cosine = (int32_t)(cos(radians) * 65536);
+}
 ''' + source[start:end] + '''
 static cutscene_cue_t cues[] = {
     {0, 10, 20, 100,0,0,200,0,0,0,1},
@@ -43,6 +53,12 @@ void step(int frame) {
 int visible(void) { return state.actor_cues[0] != 0; }
 int cue_id(void) { return visible() ? state.actor_cues[0]->id : 0; }
 int position(void) { return state.actor_pos[0][0]; }
+int navi_height(void) { return state.actor_pos[8][1]; }
+void navi_cue(int id) {
+    static cutscene_cue_t navi;
+    navi = (cutscene_cue_t){0, 0, 400, 0, 50, 110, 0, 50, 110, 0, (unsigned char)id};
+    state.actor_cues[8] = &navi;
+}
 '''
         cls.tmp = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
         path = Path(cls.tmp.name)
@@ -78,6 +94,21 @@ int position(void) { return state.actor_pos[0][0]; }
             self.assertEqual(self.lib.position(), 190)
         self.lib.step(31)
         self.assertEqual(self.lib.position(), 510)
+
+    def test_navi_bobs_while_she_wakes_link(self):
+        """Cue id 3 holds one position for 100 frames; En_Elf's state 6 orbit
+        is what moves her, and what the source dash cue is timed off."""
+        self.lib.navi_cue(3)
+        heights = []
+        for frame in range(1, 60):
+            self.lib.step(frame)
+            heights.append(self.lib.navi_height())
+        falls = sum(1 for a, b in zip(heights, heights[1:]) if b < a)
+        rises = sum(1 for a, b in zip(heights, heights[1:]) if b > a)
+        self.assertGreater(falls, 5)
+        self.assertGreater(rises, 5)
+        # A 0x1000 step per frame is one bob every 16 frames, as in state 6.
+        self.assertGreater(max(heights) - min(heights), 10)
 
 
 @unittest.skipUnless(GCC.exists() and (GEN / 'link_clips.c').exists(), 'host assets required')

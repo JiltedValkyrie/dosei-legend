@@ -15,6 +15,13 @@ void kokiri_camera_sincos(uint16_t yaw, int32_t *sine, int32_t *cosine)
     *cosine = (int32_t)(cos(radians) * 65536);
 }
 
+/* Same basis as demo_camera.c's Saturn version: atan2(dx, dz). */
+uint16_t kokiri_camera_facing(int32_t dx, int32_t dz)
+{
+    double a = atan2((double)dx, (double)dz) * 65536.0 / 6.283185307179586;
+    return (uint16_t)(int32_t)(a < 0 ? a + 65536.0 : a);
+}
+
 void kokiri_collision_move_actor(camera_position_t *p, int32_t x,
                                  int32_t y, int32_t z)
 {
@@ -75,6 +82,7 @@ int control_cancel(void)   { return mapped.cancel_pending; }
 int control_menu_step(void){ return mapped.menu_step; }
 int control_attack(void) { return mapped.attack_pending; }
 int control_shield(void) { return mapped.shield_held; }
+int control_target_held(void) { return mapped.target_held; }
 
 /* Follow-camera look aim, so the bounds and the clean exit are checked against
 ** the real camera rather than a restatement of them. */

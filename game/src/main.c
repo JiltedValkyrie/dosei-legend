@@ -17,6 +17,7 @@
 #include "music_banks.h"
 #include "action_audio.h"
 #include "demo.h"
+#include "navi.h"
 #include "gameplay.h"
 #include "kokiri_dialogue.h"
 #include "link_anim_state.h"
@@ -300,7 +301,13 @@ static void         viewer_draw(void)
         kokiri_link_draw(demo_link.x, demo_link.y - DEMO_LINK_EYE_HEIGHT,
                          demo_link.z, demo_link_yaw);
         frame_timer_end(FRAME_PHASE_LINK);
+        /* Link's own fairy, drawn with him and only with him: the title
+         * shot and the file select are not gameplay. */
+        if (navi_active())
+            kokiri_navi_draw(navi_x(), navi_y(), navi_z());
     }
+    if (!cutscene_is_playing() && (!demo_link_active || demo_title_is_visible()))
+        action_audio_navi_flight(0, false);
     if (cutscene_is_playing() && !cutscene_hides_scene())
         kokiri_cutscene_effects_draw();
     rejected_total += kokiri_scene_rejected();
@@ -671,17 +678,17 @@ static void         inventory_menu(void)
     jo_printf(2, row++, "%-36s", "X swing/cut  Hold R shield");
     jo_printf(2, row++, "%-36s", "Y jump       A talk/next page");
     jo_printf(2, row++, "%-36s", "B closes dialogue");
-    jo_printf(2, row++, "%-36s", "Hold L: lock on + strafe");
-    jo_printf(2, row++, "%-36s", "Release L: release lock");
-    jo_printf(2, row++, "%-36s", "Tap L: re-centre camera");
-    jo_printf(2, row++, "%-36s", "Locked: D-pad strafe/back up");
-    jo_printf(2, row++, "%-36s", "Hold Z + D-pad: look (unlocked)");
+    jo_printf(2, row++, "%-36s", "Hold Z: lock on + strafe");
+    jo_printf(2, row++, "%-36s", "Release Z: release lock");
+    jo_printf(2, row++, "%-36s", "Tap Z: re-centre camera");
+    jo_printf(2, row++, "%-36s", "Hold Z: D-pad strafe/back up");
+    jo_printf(2, row++, "%-36s", "Hold L + D-pad: look around");
     jo_printf(2, row++, "%-36s", "Hold C + D-pad: C items (pending)");
-    jo_printf(2, row++, "%-36s", "Roll: automatic after landing");
+    jo_printf(2, row++, "%-36s", "A: roll; also rolls on landing");
     jo_printf(2, row++, "%-36s", "Start opens/closes items");
     jo_printf(2, row++, "%-36s", "MENU: D-pad pick A equip B back");
 #ifndef DOSEI_CLEAN_TEST
-    jo_printf(2, row++, "%-36s", "L+R debug; +Up camera compare");
+    jo_printf(2, row++, "%-36s", "L+R+Down debug; +Up camera compare");
 #endif
 }
 

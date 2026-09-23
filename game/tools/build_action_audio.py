@@ -2,7 +2,7 @@
 
 Rupee pickup includes its source three-note synthetic layer plus sample bed.
 Other effects use one layer; full N64 sequencing/reverb remain absent. Child attack voice rotates through the four source EFFECT entries.
-Offline resampling only; Saturn plays signed 8-bit PCM at 11025 Hz.
+Offline resampling only; signed PCM8 at 11025 Hz, voices/fairy at 5512.5 Hz.
 """
 import argparse
 import hashlib
@@ -13,6 +13,8 @@ import re
 import struct
 import wave
 import xml.etree.ElementTree as ET
+import fairy_audio
+import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 BASE = 0x76400  # above largest music bank end (484178), aligned to 1 KiB
@@ -27,6 +29,7 @@ EFFECTS = (
     ('footstep', 'LAYER_0333', 5, 'A3', .10),
     ('roll', 'CHAN_0731', 27, 'D2', .18),
     ('rupee', 'LAYER_587A', 91, 'C5', .30),  # NA_SE_SY_GET_RUPY sample layer
+    ('navi_dash', 'CHAN_1B01', 69, 'B5', .65),  # NA_SE_EV_FAIRY_DASH
 )
 
 
@@ -53,14 +56,15 @@ def decode(path):
     return pcm, rate, unity
 
 
-def render(pcm, rate, unity, key, duration):
+def render(pcm, rate, unity, key, duration, output_rate=None):
+    output_rate = RATE if output_rate is None else output_rate
     playback = rate * 2 ** ((key - unity) / 12)
-    count = min(round(duration * RATE), int(len(pcm) * RATE / playback))
+    count = min(round(duration * output_rate), int(len(pcm) * output_rate / playback))
     output = bytearray()
     # Low-pass windowed sinc; zero extension, never loop into another sound.
-    cutoff = min(1., RATE / playback) * .95
+    cutoff = min(1., output_rate / playback) * .95
     for i in range(count):
-        x = i * playback / RATE
+        x = i * playback / output_rate
         value = weight = 0.
         for j in range(int(x)-15, int(x)+17):
             d = x-j
@@ -163,12 +167,16 @@ def build(oot, source, out):
     bank, records = bytearray(), []
     for name, sample, key, duration, label in entries:
         path = source / ('samples/SampleBank_0/Sample%03d.wav' % int(sample.rsplit('_',1)[1]))
-        pcm = render(*decode(path), key, duration)
+        # Keep all four voices and their duration/pitch. Lower their stored
+        # rate to make space for resident Navi without overlapping music RAM.
+        sample_rate = RATE / 2 if name.startswith('voice') or name == 'navi_dash' else RATE
+        pcm = (fairy_audio.dash_sample(source, sys.modules[__name__]) if name == 'navi_dash'
+               else render(*decode(path), key, duration, output_rate=sample_rate))
         untrimmed_length = len(pcm)
         # PCM8 zero is exact digital silence. Keep every audible byte unchanged;
         # one-shot playback stops at LEA, with four zero guard bytes below.
         pcm = pcm.rstrip(b'\0') or bytes(1)
-        records.append(dict(name=name, offset=len(bank), length=len(pcm),
+        records.append(dict(name=name, offset=len(bank), length=len(pcm), rate=sample_rate,
                             source=label, sample=sample, trimmed_silence=untrimmed_length-len(pcm), sha256=hashlib.sha256(path.read_bytes()).hexdigest()))
         bank.extend(pcm)
         bank.extend(bytes(4 + (-len(bank) % 2)))

@@ -434,15 +434,23 @@ def bake_camera(eye_shots, at_shots, frames, scene=None):
     cutscene camera command is active.
     """
     track = [None] * frames
-    for eye, at in zip(eye_shots, at_shots):
+    pairs = list(zip(eye_shots, at_shots))
+    for shot_index, (eye, at) in enumerate(pairs):
         if len(eye['points']) < 4 or len(at['points']) < 4:
             continue                      # a spline needs four control points
-        span = max(0, min(eye['end'], frames) - eye['start'])
+        # Once a new shot takes over, the camera holds its final point until
+        # the next shot. An older, longer command must never reappear behind
+        # it (wake-up's door command lasts beyond the bed command).
+        next_start = pairs[shot_index + 1][0]['start'] if shot_index + 1 < len(pairs) else frames
+        span = max(0, min(eye['end'], next_start, frames) - eye['start'])
         shot = bake_shot(Spline(eye['points']), Spline(at['points']), span)
         for i, sample in enumerate(shot):
             at_frame = eye['start'] + i
             if 0 <= at_frame < frames:
                 track[at_frame] = sample
+        if shot:
+            for at_frame in range(eye['start'] + len(shot), min(next_start, frames)):
+                track[at_frame] = shot[-1]
 
     baked, last = [], None
     for frame, sample in enumerate(track):

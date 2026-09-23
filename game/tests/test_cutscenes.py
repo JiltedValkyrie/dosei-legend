@@ -225,6 +225,14 @@ class Cutscenes(unittest.TestCase):
             self.assertEqual(positions, {(0, 34, 0)},
                              key + ' moved the camera inside Link\'s house')
 
+    def test_wake_camera_keeps_link_after_bed_shot_ends(self):
+        track = self.baked['WAKE_UP']['track']
+        self.assertEqual(track[69][3], -32768)  # Navi enters at the door.
+        # The bed command ends at 221; the old door command lasts to 1121.
+        # Finishing a command cannot reactivate a superseded camera.
+        for frame in range(70, len(track)):
+            self.assertEqual(track[frame][3], 0, 'door returned at %d' % frame)
+
     def test_every_baked_value_fits_the_s16_the_runtime_reads(self):
         for key, cs in self.baked.items():
             for point in cs['track']:

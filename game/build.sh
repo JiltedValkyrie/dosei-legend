@@ -113,7 +113,7 @@ cp "$here/build/generated/CHAINS.BIN" "$here/build/cd/CHAINS.BIN"
 if [ "${STREAM_ROOMS:-1}" = 1 ]; then
     # One bank per (scene, room). Only scenes whose rooms are real geometry
     # have banks; OoT interiors are prerendered backdrops and have none.
-    for bank in "$here"/build/generated/S*R*.MSH "$here"/build/generated/S*R*.TEX; do
+    for bank in "$here"/build/generated/S*R*.MSH "$here"/build/generated/S*R*.TEX "$here"/build/generated/S2R*.MAP "$here"/build/generated/NAVIPOOL.TEX; do
         [ -e "$bank" ] && cp "$bank" "$here/build/cd/"
     done
 else

@@ -124,3 +124,24 @@ Current checks: `game/tests/test_link_geometry_precision.py` and
 `game/tests/test_link_animation.py`. Actor inspection: `PERF_PROBE=3`; rebuild
 without the option before shipping. Other model formats need their own adapter,
 not a claim that Link's segment-D scheme fits every model.
+
+## Character textures: hair and face only
+
+Permanent user rule, updated 2026-09-22 after another reported crash. This
+supersedes the earlier quarter-resolution body-texture rule.
+
+- All characters, including Link, NPCs, enemies, riders and horses: remove
+  body, clothes, headwear, equipment and weapon artwork; use flat colours.
+- Keep hair and face artwork. Faces keep their existing imported detail;
+  hair retains the reduced resolution from the previous budget policy.
+- Enforce in the shared offline writer regardless of an importer's
+  `full_texture` setting. New importers must mark hair and facial materials
+  from source XML, head limbs and expression bindings before writing.
+- Unknown head materials conservatively keep facial detail. Named hats,
+  hoods, veils and neck materials do not receive the exemption.
+- Scenery, UI, title art, effects and non-character props keep their own rules.
+
+Implementation: `game/tools/character_textures.py` and `build_link_model.py`.
+The existing KFR1/SGL path represents flat colours with deduplicated constant
+8x2 tiles (40 bytes including palette), not body artwork. Hair widths below
+VDP1's eight-pixel minimum use repeated columns. No runtime resampling.

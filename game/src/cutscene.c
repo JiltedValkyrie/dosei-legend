@@ -12,6 +12,8 @@
 #include "kokiri_sgl.h"
 #include "cutscene_actor.h"
 #include "action_audio.h"
+#include "vdp1_draw_wait.h"
+#include "kokiri_camera.h"
 
 typedef struct
 {
@@ -35,6 +37,9 @@ typedef struct
     const cutscene_cue_t *actor_cues[10];
     int32_t actor_pos[10][3];
     int32_t navi_pos[3], navi_velocity[3];
+    /* En_Elf's own hover, func_80A02A20: the cue gives Navi a path, the
+    ** orbit around it is what makes her circle and bob on it. */
+    uint16_t navi_orbit_xz, navi_orbit_y;
     unsigned short applied_frame;
     unsigned char rain, flash;
     short bridge_start;
@@ -43,6 +48,8 @@ typedef struct
     short sound_bridge_angle;
     int32_t sound_navi_y;
     bool sound_hooves, sound_navi_falling;
+    int32_t sound_eye[3];
+    bool sound_eye_valid;
 }                   cutscene_state_t;
 
 static cutscene_state_t state;
@@ -154,6 +161,7 @@ bool cutscene_start(unsigned int id)
         state.track = 0;
     }
     message_stop();
+    kokiri_opening_cache_free();
     cs = &cutscenes[id];
     state.active = false;
     state.finished = false;
@@ -166,10 +174,12 @@ bool cutscene_start(unsigned int id)
     state.sound_frame = 65535;
     state.sound_bridge_angle = -16384;
     state.sound_navi_y = 0;
+    state.sound_eye_valid = false;
     state.sound_hooves = state.sound_navi_falling = false;
     state.player_cue = 0;
     { unsigned int axis; for (axis = 0; axis < 3; ++axis)
         state.navi_pos[axis] = state.navi_velocity[axis] = 0; }
+    state.navi_orbit_xz = state.navi_orbit_y = 0;
     {
         unsigned int i;
         for (i = 0; i < 10; ++i) {
@@ -201,6 +211,7 @@ bool cutscene_start(unsigned int id)
             cutscene_actors_load();
     } else if (cs->scene == CUTSCENE_SCENE_SPOT04) {
         cutscene_actors_free();
+        if (!kokiri_opening_cache_load()) return false;
         state.scene_loaded = kokiri_scene_load_bank(2, 0);
     } else if (cs->scene == CUTSCENE_SCENE_LINK_HOME) {
         cutscene_actors_free();
@@ -313,7 +324,10 @@ static void apply_camera(const cutscene_point_t *point)
 static void step_sounds(void)
 {
     unsigned int i;
-    if (state.sound_frame == state.frame) return; /* held text is not a new cue */
+    if (state.sound_frame == state.frame) {
+        if (state.id == CUTSCENE_NAVI_FLY) action_audio_navi_flight(0, true);
+        return; /* held text is not a new cue */
+    }
     state.sound_frame = state.frame;
     if (state.id == CUTSCENE_NIGHTMARE) {
         /* EnViewer_UpdateImpl, scene layer 4: the original shot-cut accents. */
@@ -348,13 +362,26 @@ static void step_sounds(void)
         if (state.frame == 391) action_audio_opening_play(OPENING_HOOVES, 6, false);
         if (ganon && ganon->id == 2 && state.frame == (unsigned int)ganon->start + 25)
             action_audio_opening_play(OPENING_DUST, 6, false);
+    } else if (state.id == CUTSCENE_NAVI_FLY) {
+        int32_t eye[3] = {demo_camera.x, demo_camera.y, demo_camera.z};
+        unsigned int sum = 0, speed = 0;
+        for (i = 0; i < 3; ++i) {
+            int delta = state.sound_eye_valid ? eye[i] - state.sound_eye[i] : 0;
+            if (delta < 0) delta = -delta;
+            if (delta > 30) delta = 30;
+            sum += delta * delta;
+            state.sound_eye[i] = eye[i];
+        }
+        state.sound_eye_valid = true;
+        while (speed < 30 && (speed + 1) * (speed + 1) <= sum) ++speed;
+        action_audio_navi_flight(speed, true);
     } else if (state.id == CUTSCENE_WAKE_UP) {
         const cutscene_cue_t *navi = state.actor_cues[8];
         int32_t y = state.actor_pos[8][1];
         bool falling = y < state.sound_navi_y;
         /* EnElf: entrance frame 55, then each downward turn while waking Link. */
         if (state.frame == 55 || (navi && navi->id == 3 && falling && !state.sound_navi_falling))
-            action_audio_opening_play(OPENING_DASH, 1, false);
+            action_audio_navi_dash();
         state.sound_navi_y = y;
         state.sound_navi_falling = falling;
     }
@@ -411,7 +438,7 @@ bool cutscene_step(bool confirm)
     if (cs->scene == CUTSCENE_SCENE_SPOT04 &&
         state.frame / 100 != state.scenery_bank) {
         /* Wait for the previous VDP1 draw before replacing its textures. */
-        if (!(JO_VDP1_EDSR & 2)) return true;
+        if (!vdp1_wait_for_draw_end()) return true;
         state.scenery_bank = (unsigned char)(state.frame / 100);
         state.scene_loaded = kokiri_scene_load_bank(2, state.scenery_bank);
     }
@@ -493,6 +520,35 @@ static const cutscene_cue_t *current_actor_cue(unsigned int channel)
     return state.active && channel < 10 ? state.actor_cues[channel] : 0;
 }
 
+
+/*
+** En_Elf's hover offset for the cutscene fairy (func_80A02A20), with the
+** state func_80A0461C picks from the channel 8 cue id: 4 is state 9, 3 the
+** wide bob she wakes Link with, 1 the still entrance. The cue path alone is
+** motionless while she nags him at frames 250-350 -- this orbit is what
+** actually moves her, and so what the source's downward-turn dash cue is
+** measured from.
+*/
+static void navi_orbit(unsigned int cue_id, int32_t *offset)
+{
+    /* step_y, step_xz, amplitude_y, amplitude_xz */
+    static const struct { unsigned short step_y, step_xz; short y, xz; }
+        states[4] = {{0x0400, 0x0200,  5, 20},   /* no id: state 0 */
+                     {0x0400, 0x0000,  5,  0},   /* id 1: state 10 */
+                     {0x1000, 0x0800, 60, 20},   /* id 3: state 6 */
+                     {0x1000, 0x0200,  3, 10}};  /* id 4: state 9 */
+    unsigned int which = cue_id == 1 ? 1 : cue_id == 3 ? 2 : cue_id == 4 ? 3 : 0;
+    int32_t sine, cosine;
+
+    kokiri_camera_sincos(state.navi_orbit_xz, &sine, &cosine);
+    offset[0] = (int32_t)(((int64_t)sine * states[which].xz * 256) >> 16);
+    offset[2] = (int32_t)(((int64_t)cosine * states[which].xz * 256) >> 16);
+    kokiri_camera_sincos(state.navi_orbit_y, &sine, &cosine);
+    offset[1] = (int32_t)(((int64_t)sine * states[which].y * 256) >> 16);
+    state.navi_orbit_xz = (uint16_t)(state.navi_orbit_xz + states[which].step_xz);
+    state.navi_orbit_y = (uint16_t)(state.navi_orbit_y + states[which].step_y);
+}
+
 /* Last matching command wins; gaps retain the previous pointer and position. */
 static void update_cues(const cutscene_t *cs)
 {
@@ -513,12 +569,14 @@ static void update_cues(const cutscene_t *cs)
         if (i == 8 && cue) {
             int starts[3] = {cue->x, cue->y, cue->z};
             int ends[3] = {cue->ex, cue->ey, cue->ez};
+            int32_t offset[3];
             unsigned int axis;
+            navi_orbit(cue->id, offset);
             span = cue->end - cue->start;
             into = state.frame - cue->start;
             if (into > span) into = span;
             for (axis = 0; axis < 3; ++axis) {
-                int32_t target = starts[axis] * 256;
+                int32_t target = starts[axis] * 256 + offset[axis];
                 int32_t velocity, change, step = axis == 1 ? 8192 : 384;
                 if (span > 0) target += (int32_t)((int64_t)(ends[axis] - starts[axis]) * into * 256 / span);
                 velocity = (target - state.navi_pos[axis]) / 5;

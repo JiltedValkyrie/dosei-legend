@@ -329,7 +329,7 @@ class LandingRules(unittest.TestCase):
 
 
 class DiagnosticsChord(unittest.TestCase):
-    """The L+R chord must consume both buttons and leave A alone.
+    """The L+R+direction chord must consume its buttons and leave A alone.
 
     A is reserved for the action button, and the g/L/d readout is the only
     evidence for the unexplained rolling, so losing the toggle to a conflict
@@ -345,11 +345,14 @@ class DiagnosticsChord(unittest.TestCase):
         cls.input = (ROOT / 'src' / 'player_input.c').read_text()
 
     def test_chord_still_detects_both_shoulders(self):
-        self.assertIn('if ((held & CAMERA_L) && (held & CAMERA_R))', self.input)
+        # A direction is required as of the 2026-09-22 remap: L alone is look,
+        # so plain L+R has to stay available as looking while guarding.
+        self.assertIn('(held & CAMERA_L) && (held & CAMERA_R) &&', self.input)
+        self.assertIn('(dpad & (CAMERA_UP | CAMERA_DOWN))', self.input)
 
     def test_recenter_is_skipped_while_the_chord_is_held(self):
         """Otherwise asking for diagnostics also recenters the camera."""
-        chord = self.input.index('if ((held & CAMERA_L) && (held & CAMERA_R))')
+        chord = self.input.index('(held & CAMERA_L) && (held & CAMERA_R) &&')
         recenter = self.input.index('out->recenter = recentered;')
         self.assertGreater(recenter, chord,
                            'recenter must sit after the chord early return')
@@ -357,7 +360,7 @@ class DiagnosticsChord(unittest.TestCase):
     def test_chord_is_gated_out_of_the_player_facing_build(self):
         """L+R must not block targeting plus shielding for the player."""
         gate = self.input.index('#ifndef DOSEI_CLEAN_TEST')
-        chord = self.input.index('if ((held & CAMERA_L) && (held & CAMERA_R))')
+        chord = self.input.index('(held & CAMERA_L) && (held & CAMERA_R) &&')
         self.assertGreater(chord, gate)
 
     def test_a_no_longer_toggles_diagnostics(self):

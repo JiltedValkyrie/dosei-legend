@@ -1,4 +1,4 @@
-/* Music owns slots 0..23. Resident actions own 24..30, no CD reads in play. */
+/* Music owns 0..23, actions 24..30, Navi 31. No CD reads in play. */
 #include <jo/jo.h>
 #include "action_audio.h"
 #include "action_audio_data.h"
@@ -13,7 +13,12 @@ static unsigned int voice;
 static volatile bool rupee_active;
 static volatile unsigned int rupee_clock, rupee_note;
 static unsigned int sound_refresh;
+static volatile bool navi_flying;
+static volatile unsigned int navi_frequency;
+static unsigned int navi_note_clock, navi_env_clock, navi_env_tick;
+static bool navi_first_envelope;
 static void rupee_vblank(void);
+static void navi_vblank(void);
 
 static bool load_pcm(const char *name, unsigned int bytes)
 {
@@ -22,6 +27,7 @@ static bool load_pcm(const char *name, unsigned int bytes)
     unsigned int offset = 0, i;
     volatile unsigned short *ram = (volatile unsigned short *)0x25a00000UL;
     ready = false;
+    navi_flying = false;
     if (ACTION_PCM_BASE < MUSIC_SAMPLE_LIMIT ||
         ACTION_PCM_BASE + bytes > 0x80000 ||
         !jo_fs_open(&file, name)) return false;
@@ -37,7 +43,7 @@ static bool load_pcm(const char *name, unsigned int bytes)
         offset += count;
     }
     jo_fs_close(&file);
-    for (i = 24; i < 31; ++i) { SLOT(i,0) = 0; SLOT(i,12) = 255; }
+    for (i = 24; i < 32; ++i) { SLOT(i,0) = 0; SLOT(i,12) = 255; }
     voice = 0;
     rupee_active = false;
     ready = true;
@@ -58,7 +64,8 @@ bool action_audio_set_opening(bool opening)
 {
     unsigned int i;
     rupee_active = false;
-    for (i = 24; i < 31; ++i) { SLOT(i,12) = 255; SLOT(i,0) = 0x1000; }
+    navi_flying = false;
+    for (i = 24; i < 32; ++i) { SLOT(i,12) = 255; SLOT(i,0) = 0x1000; }
     if (opening == opening_bank && ready) return true;
     if (!load_pcm(opening ? "OPENING.PCM" : "ACTIONS.PCM",
                   opening ? OPENING_PCM_BYTES : ACTION_PCM_BYTES)) return false;
@@ -108,7 +115,65 @@ void action_audio_opening_stop(unsigned int channel)
 
 static void play(unsigned int id, unsigned int slot)
 {
-    play_sample(id, slot, 14 << 11, 12, false); /* 11025 Hz one-shot */
+    unsigned int octave = (id >= ACTION_VOICE0 && id <= ACTION_VOICE3) ? 13 : 14;
+    play_sample(id, slot, octave << 11, 12, false);
+}
+
+void action_audio_navi_dash(void)
+{
+    play_sample(opening_bank ? OPENING_DASH : ACTION_NAVI_DASH,
+                26, 13 << 11, 0, false);
+}
+
+void action_audio_navi_flight(unsigned int speed, bool active)
+{
+    unsigned int scale;
+    if (!ready) return;
+    if (!active || !opening_bank) {
+        navi_flying = false;
+        SLOT(31,12) = 255; SLOT(31,0) = 0x1000;
+        return;
+    }
+    if (speed > 30) speed = 30;
+    /* ObjectKankyo_Fairies -> func_800F436C: speed changes frequency, not
+     * volume. arg=0.6+0.4*min(cameraTravel/30,1), then the low-end mapping. */
+    scale = 614 + speed * 410 / 30;
+    navi_frequency = scale < 768 ? 512 + scale / 3 : scale;
+    if (navi_flying) return;
+    navi_note_clock = navi_env_clock = navi_env_tick = 0;
+    navi_first_envelope = true;
+    play_sample(OPENING_NAVI_FLY, 31, 14 << 11, 255, true);
+    SLOT(31,4) = NAVI_FLY_LOOP_START;
+    navi_flying = true;
+}
+
+static void navi_vblank(void)
+{
+    unsigned int ratio, index, amplitude, phase;
+    int octave = 0;
+    if (!ready || !navi_flying) return;
+    /* Sequence 0: 120 BPM, 48 ticks/beat, repeated 32-tick legato note.
+     * The sample stays keyed on; only pitch/envelope registers change. */
+    index = navi_note_clock * 128 / (32 * sound_refresh);
+    ratio = (navi_fly_pitch[index] * navi_frequency) >> 10;
+    while (ratio < 65536) { ratio <<= 1; --octave; }
+    SLOT(31,16) = ((octave & 15) << 11) | ((ratio - 65536) >> 6);
+    navi_note_clock = (navi_note_clock + 96) % (32 * sound_refresh);
+    /* ENVELOPE_67D8: 400 audio updates to 32700, 400 to 20000, repeat.
+     * NTSC audio uses three synthesis updates per 60 Hz frame. */
+    phase = navi_env_tick;
+    if (phase < 400) {
+        unsigned int start = navi_first_envelope ? 0 : 20000;
+        amplitude = start + (32700 - start) * phase / 400;
+    } else amplitude = 32700 - 12700 * (phase - 400) / 400;
+    /* CHAN_2582 note velocity 50: OoT squares velocity / 127 before
+     * multiplying the envelope (seqplayer.c / effects.c). */
+    amplitude = amplitude * (50u * 50u) / (127u * 127u);
+    SLOT(31,12) = navi_fly_level[amplitude >> 8];
+    navi_env_clock += 180;
+    navi_env_tick += navi_env_clock / sound_refresh;
+    navi_env_clock %= sound_refresh;
+    if (navi_env_tick >= 800) { navi_env_tick -= 800; navi_first_envelope = false; }
 }
 
 static void rupee_start(void)
@@ -124,6 +189,7 @@ static void rupee_start(void)
 static void rupee_vblank(void)
 {
     unsigned int tick, previous, start, age;
+    navi_vblank();
     if (!ready || !rupee_active) return;
     if (music_busy()) {
         SLOT(30,12) = 255;
