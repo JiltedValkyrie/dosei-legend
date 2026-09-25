@@ -78,7 +78,10 @@ Generated files, disc staging and binaries go in ignored `game/build/`, never
 mixed with source assets. Do not resume archived `legacy/libyaul/` work.
 Use `launch-game.bat` for the standard/hi-res selector. See the root README for
 the complete layout and current build commands.
-Current next-task handoff: [OoT progression plan](game/docs/OOT_PROGRESSION_PLAN.md).
+Current next-task handoff: [Public demo plan](game/docs/DEMO_PLAN.md) (approved
+2026-09-25: Kokiri Forest, interiors, shop, Deku Tree + Gohma, Lost Woods,
+Hyrule Field explore/owl). Characters: NO texture except face. Builds on the
+[OoT progression plan](game/docs/OOT_PROGRESSION_PLAN.md).
 Approved 2026-09-21: game state, save, three areas and the full opening
 progression through the Kokiri Emerald. The game now REQUIRES the 4 MB RAM
 expansion cart. That plan supersedes `game/docs/GAMEPLAY_NEXT_STEP.md` and the

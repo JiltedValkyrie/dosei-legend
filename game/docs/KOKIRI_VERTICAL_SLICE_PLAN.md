@@ -1,5 +1,9 @@
 # Kokiri gameplay completion plan
 
+> **Endpoint superseded 2026-09-25** by [DEMO_PLAN.md](DEMO_PLAN.md): the demo
+> continues into the Deku Tree, Gohma, Lost Woods and Hyrule Field. Steps 1-5
+> here remain useful detail for DEMO_PLAN M1-M3; step 6 "return to title" is void.
+
 Status: proposed implementation sequence, 2026-09-22. No gameplay changes in
 this planning task. Implement on `dev`. Latest user requirements supersede
 older control mappings and the dungeon scope in OOT_PROGRESSION_PLAN.md.

@@ -1,3 +1,14 @@
+# Public demo plan approved - 2026-09-25
+
+Human approved [DEMO_PLAN.md](DEMO_PLAN.md): full opening -> Kokiri Forest with
+all homes/shop/NPCs -> sword/shield/Mido -> Deku Tree + Gohma -> Emerald ->
+Lost Woods (all 10 rooms, access gates 1:1 with source) -> Saria bridge ocarina
+-> Hyrule Field (explore, owl, music, ocarina free play). Extras in scope:
+grottos, gold skulltula tokens, Deku scrub shops, Lost Woods owls. Target:
+emulators with 4 MB cart. Characters: NO texture except face (hair goes flat).
+Milestone owners are assigned by the human in the DEMO_PLAN table. Planning
+only; no code changed.
+
 # Fairy sound, wake camera and flight streaming correction — 2026-09-22
 
 Supersedes the earlier claims below that forest flight has no fairy SFX.
