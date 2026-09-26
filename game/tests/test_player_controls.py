@@ -492,6 +492,40 @@ class PlayerControls(unittest.TestCase):
             self.lib.link_anim_update(moved, True, 0, False)
         self.assertEqual(self.lib.link_anim_state(), 2)   # LINK_STATE_RUN
 
+    def test_slow_travel_rounding_does_not_define_facing(self):
+        # At a shallow angle the fixed-point remainder emits different whole-
+        # unit deltas each step. Both digital walk and analog creep must retain
+        # their requested heading rather than feeding those deltas to the camera.
+        self.lib.kokiri_camera_move_heading.argtypes = [
+            ctypes.POINTER(Position), ctypes.c_uint16, ctypes.c_int32]
+        for analog in (False, True):
+            self.lib.control_reset()
+            self.lib.kokiri_camera_reset_actor_motion()
+            if analog:
+                self.analog(y=100)
+            else:
+                self.tap(B)
+                self.hold(UP)
+            p = Position()
+            heading = self.lib.control_motion_heading(5000)
+            speed = self.lib.control_motion_speed()
+            rounded_headings = set()
+            for _ in range(120):
+                before = (p.x, p.z)
+                self.lib.kokiri_camera_move_heading(ctypes.byref(p), heading, speed)
+                dx, dz = p.x - before[0], p.z - before[1]
+                if dx or dz:
+                    rounded_headings.add(round(math.atan2(dx, dz) * 65536 / math.tau))
+                self.assertEqual(self.lib.control_motion_heading(5000), heading)
+            self.assertGreater(len(rounded_headings), 1)
+            self.assertGreater(max(rounded_headings) - min(rounded_headings), 3000)
+
+    def test_demo_faces_input_not_quantized_displacement(self):
+        text = (ROOT / 'src/demo.c').read_text()
+        self.assertNotIn('kokiri_camera_facing(demo_link.x - step_x', text)
+        self.assertIn('player_input_motion(&input, demo_yaw, &demo_link_yaw,', text)
+        self.assertIn('walk && roll_speed <= 0 &&', text)
+
     # --- shoulders never orbit -------------------------------------------
 
     def test_shoulders_never_orbit_the_gameplay_camera(self):

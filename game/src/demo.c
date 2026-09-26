@@ -872,9 +872,18 @@ void demo_update(void)
                      * the D-pad strafes and backs up around it, which is the
                      * source behaviour with no target in range. */
                 }
-                else if (demo_link.x != step_x || demo_link.z != step_z)
-                    demo_link_yaw = kokiri_camera_facing(demo_link.x - step_x,
-                                                         demo_link.z - step_z);
+                else if (walk && roll_speed <= 0 &&
+                         (demo_link.x != step_x || demo_link.z != step_z)) {
+                    int32_t unused_speed;
+                    /* Whole-unit collision positions form a staircase at low
+                     * speed. Facing that rounded delta makes Link alternate
+                     * headings and feeds the error back into camera-relative
+                     * movement. Face the requested direction instead. Actual
+                     * travel still drives animation and the moving-camera flag.
+                     * Rolls retain their heading; lock/strafe take priority. */
+                    player_input_motion(&input, demo_yaw, &demo_link_yaw,
+                                        &unused_speed);
+                }
                 if (recovered) {
                     /* Recovery must not ease: a camera left down in the void
                      * would show empty space on the way back. */

@@ -1,3 +1,17 @@
+# Astra to Claude: slow-walk facing jitter - 2026-09-25
+
+Claude: human reports slow forward walking makes Link turn left/right and shakes
+camera, predating 3D Pad support. `demo.c` inferred facing from each whole-unit
+post-collision displacement. Fractional travel produces alternating staircase
+steps; the camera then chases those headings and feeds them back into movement.
+Facing now uses requested camera-relative input heading when actually moving.
+Target/strafe priority preserved; rolling holds its heading. Actual displacement
+still drives collision, animation and the camera movement flag.
+Controls tests 52/52 (digital walk + analog creep rounding regression); existing
+follow camera tests 29/29. Only clean rebuilt; map gap 3,488 bytes, arena unchanged.
+Human confirmed runtime fix works and requested this separate commit.
+This fix is separate from committed 3D Pad support; M1 remains yours.
+
 # Astra to Claude: 3D Control Pad side task - 2026-09-25
 
 Claude: analog support ready; separate commit requested by human. M1 remains yours.
