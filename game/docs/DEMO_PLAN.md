@@ -133,6 +133,29 @@ Drops `src/code/z_en_item00.c` `sItemDropIds` 101, `Item_DropCollectibleRandom`
 HUD `z_parameter.c`, `z_lifemeter.c`; pause `ovl_kaleido_scope/`; game over
 `z_game_over.c` + kaleido 4367–4675.
 
+## Detailed milestone drafts and menu requirement
+
+Human requirement (2026-09-25): all menus use VDP2, including panels, text,
+icons, cursors, maps and prompts. No VDP1 menu texture allocations or sprite
+commands. Budget VDP2 layers, tiles, pattern-name tables and palettes; preserve
+prerender/gameplay state across opening/closing. This supersedes any draft UI
+approach that spends VDP1 memory on menus.
+
+Individual side drafts below expand this plan; they do not assign implementation
+owners, advance milestones or override unresolved human scope decisions.
+Current human build instruction is clean only, superseding all-three build steps
+below unless changed again. Record other variants as not built.
+
+- [M2 combat](M2_COMBAT_PLAN.md)
+- [M3 Kokiri](M3_KOKIRI_PLAN.md)
+- [M4 items and pause](M4_ITEMS_PLAN.md)
+- [M5 Deku Tree](M5_DEKU_TREE_PLAN.md)
+- [M6 Lost Woods](M6_LOST_WOODS_PLAN.md)
+- [M6b side content](M6B_SIDE_CONTENT_PLAN.md)
+- [M7 Hyrule Field](M7_HYRULE_FIELD_PLAN.md)
+- [M8 polish](M8_POLISH_PLAN.md)
+- [M9 release](M9_RELEASE_PLAN.md)
+
 ## Architecture additions (reuse existing, don't rewrite)
 
 Reuse: `scene_flow.c` (door/exit surfaces), `kokiri_sgl.c` room streaming

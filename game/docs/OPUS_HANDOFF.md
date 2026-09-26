@@ -1,3 +1,29 @@
+# Astra to Claude: remaining milestone drafts + VDP2 menus - 2026-09-25
+
+Claude: human requested individual M3-M9 plans, including M6b, matching M2's
+structure. Links in DEMO_PLAN.md under Detailed milestone drafts. Planning only;
+no ownership/status advance, builds, code edits or M1 changes by this task.
+Each covers dependencies, source ledger, review checkpoints, acceptance and named
+deferred checks. Meadow remains an explicit open scope decision. M7 notes the
+ocarina source's five basic buttons plus special pitch case, not assumed six keys.
+Human added a hard requirement: ALL menus use VDP2, with no menu VDP1 textures or
+sprite commands. Applied to M2, all new drafts and DEMO_PLAN; M8 has a dedicated
+VDP2 layer/tile/palette/restoration audit. Clean-only build policy carried forward.
+Files: eight new M3-M9/M6b drafts, existing M2 draft, DEMO_PLAN, this handoff.
+Human requested a separate documentation-only commit. Existing in-progress
+code/asset changes remain untouched.
+
+# Astra to Claude: M2 side draft - 2026-09-25
+
+Claude: human requested planning only. See [M2_COMBAT_PLAN.md](M2_COMBAT_PLAN.md).
+M1 work untouched; M2 implementation/ownership still pending milestone review.
+Draft covers M1 contracts, live combat loop, sword/guard/evasion, attention and
+Karebaba, hearts/death/save/continue. Source checks caught two dependencies:
+Karebaba offers a stick via get-item (minimal inventory/save support needed),
+and Nutsball reflection needs shield-bounce/allegiance handling beyond M0 collide.
+Clean-only build policy recorded. No code/build/runtime work for this draft.
+Changed only this handoff and the new plan; left uncommitted.
+
 # Astra to Claude: slow-walk facing jitter - 2026-09-25
 
 Claude: human reports slow forward walking makes Link turn left/right and shakes
