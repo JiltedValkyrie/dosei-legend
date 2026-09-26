@@ -4,6 +4,8 @@
 
 #include <jo/jo.h>
 #include "scene_flow.h"
+#include "asset_names.h"
+#include "action_audio.h"
 #include "kokiri_sgl.h"
 #include "kokiri_collision.h"
 
@@ -82,9 +84,9 @@ static bool     collision_load(unsigned int scene)
     int         length = 0;
     unsigned int count;
 
-    if (scene > 9)
+    if (scene >= ASSET_ID_LIMIT)
         return (false);
-    name[1] = (char)('0' + scene);
+    name[1] = asset_name_digit(scene);
     data = jo_fs_read_file(name, &length);
     if (!data || length <= 0 ||
         length % (int)sizeof(collision_triangle_t) != 0) {
@@ -139,6 +141,9 @@ bool            scene_flow_load(unsigned int scene, unsigned int spawn)
         if (!kokiri_scene_load_bank(scene, 0))
             return (false);
     }
+    /* Area SFX follow the scene. A failed bank load leaves those sounds
+    ** silent rather than blocking the scene. */
+    action_audio_set_area(entry->sfx_bank);
     current_scene = scene;
     loaded = true;
     door_armed = false;

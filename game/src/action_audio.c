@@ -9,6 +9,8 @@
 #define SLOT(s,o) (*(volatile unsigned short *)(0x25b00000UL + (s)*32 + (o)))
 static volatile bool ready;
 static bool opening_bank;
+static unsigned int area_bank;          /* SFX bank index, 0 = none */
+static bool area_ready;
 static unsigned int voice;
 static volatile bool rupee_active;
 static volatile unsigned int rupee_clock, rupee_note;
@@ -18,18 +20,18 @@ static volatile unsigned int navi_frequency;
 static unsigned int navi_note_clock, navi_env_clock, navi_env_tick;
 static bool navi_first_envelope;
 static void rupee_vblank(void);
+static bool load_area(void);
 static void navi_vblank(void);
 
-static bool load_pcm(const char *name, unsigned int bytes)
+/* Copy one PCM file into sound RAM at `base`. Bounds: never below the music
+** sample limit, never past the end of sound RAM. */
+static bool upload(const char *name, unsigned int base, unsigned int bytes)
 {
     jo_file file;
     unsigned short buffer[256];
     unsigned int offset = 0, i;
     volatile unsigned short *ram = (volatile unsigned short *)0x25a00000UL;
-    ready = false;
-    navi_flying = false;
-    if (ACTION_PCM_BASE < MUSIC_SAMPLE_LIMIT ||
-        ACTION_PCM_BASE + bytes > 0x80000 ||
+    if (base < MUSIC_SAMPLE_LIMIT || (base & 1) || base + bytes > 0x80000 ||
         !jo_fs_open(&file, name)) return false;
     if ((unsigned int)file.size != bytes) { jo_fs_close(&file); return false; }
     while (offset < bytes) {
@@ -39,10 +41,20 @@ static bool load_pcm(const char *name, unsigned int bytes)
             jo_fs_close(&file); return false;
         }
         for (i = 0; i < count/2; ++i)
-            ram[(ACTION_PCM_BASE + offset)/2+i] = buffer[i];
+            ram[(base + offset)/2+i] = buffer[i];
         offset += count;
     }
     jo_fs_close(&file);
+    return true;
+}
+
+static bool load_pcm(const char *name, unsigned int bytes)
+{
+    unsigned int i;
+    ready = false;
+    navi_flying = false;
+    area_ready = false;                 /* whole region overwritten */
+    if (!upload(name, ACTION_PCM_BASE, bytes)) return false;
     for (i = 24; i < 32; ++i) { SLOT(i,0) = 0; SLOT(i,12) = 255; }
     voice = 0;
     rupee_active = false;
@@ -54,10 +66,35 @@ bool action_audio_init(void)
 {
     opening_bank = false;
     if (!load_pcm("ACTIONS.PCM", ACTION_PCM_BYTES)) return false;
+    area_bank = 0;
+    if (!load_area()) return false;
     sound_refresh = (JO_VDP2_TVSTAT & 1) ? 50 : 60;
     if (!jo_core_add_vblank_callback(rupee_vblank)) return false;
     ready = true;
     return true;
+}
+
+/* Area bank sits after the core. Bank 0 has no file. While the opening bank
+** owns the region, only remember the choice; it loads when gameplay returns. */
+static bool load_area(void)
+{
+    area_ready = false;
+    if (opening_bank) return true;
+    SLOT(26,12) = 255; SLOT(26,0) = 0x1000;     /* area one-shot slot */
+    if (sfx_bank_file[area_bank] &&
+        (sfx_bank_bytes[area_bank] > SFX_AREA_LIMIT ||
+         !upload(sfx_bank_file[area_bank], SFX_AREA_BASE, sfx_bank_bytes[area_bank])))
+        return false;
+    area_ready = true;
+    return true;
+}
+
+bool action_audio_set_area(unsigned int bank)
+{
+    if (bank >= SFX_BANK_COUNT) return false;
+    if (bank == area_bank && (area_ready || opening_bank)) return true;
+    area_bank = bank;
+    return load_area();
 }
 
 bool action_audio_set_opening(bool opening)
@@ -70,7 +107,7 @@ bool action_audio_set_opening(bool opening)
     if (!load_pcm(opening ? "OPENING.PCM" : "ACTIONS.PCM",
                   opening ? OPENING_PCM_BYTES : ACTION_PCM_BYTES)) return false;
     opening_bank = opening;
-    return true;
+    return opening || load_area();
 }
 
 static void play_sample(unsigned int id, unsigned int slot, unsigned int pitch,
@@ -117,6 +154,33 @@ static void play(unsigned int id, unsigned int slot)
 {
     unsigned int octave = (id >= ACTION_VOICE0 && id <= ACTION_VOICE3) ? 13 : 14;
     play_sample(id, slot, octave << 11, 12, false);
+}
+
+/* Area one-shot: silent when the current area bank lacks the sound. */
+static void play_area(unsigned int id, unsigned int slot)
+{
+    const action_pcm_t *sample;
+    unsigned int address, key;
+    if (!ready || opening_bank || !area_ready || id >= AREA_SFX_COUNT) return;
+    sample = &sfx_bank_pcm[area_bank][id];
+    if (!sample->length) return;
+    address = SFX_AREA_BASE + sample->offset;
+    SLOT(slot,0) = 0x1000;
+    SLOT(slot,12) = 255;
+    key = 0x0010 | ((address >> 16) & 15);
+    SLOT(slot,0) = key;
+    SLOT(slot,2) = address & 65535;
+    SLOT(slot,4) = 0;
+    SLOT(slot,6) = sample->length;
+    SLOT(slot,8) = 31;
+    SLOT(slot,10) = 31;
+    SLOT(slot,14) = 0;
+    SLOT(slot,16) = 14 << 11;
+    SLOT(slot,18) = 0;
+    SLOT(slot,20) = 0;
+    SLOT(slot,22) = 7 << 13;
+    SLOT(slot,12) = 12;
+    SLOT(slot,0) = key | 0x1800;
 }
 
 void action_audio_navi_dash(void)
@@ -227,7 +291,7 @@ void action_audio_events(uint32_t events)
         play(ACTION_VOICE0 + (voice++ & 3), 25);
     }
     if (events & GP_EVENT_RUPEE) rupee_start();
-    if (events & GP_EVENT_CUT) play(ACTION_CUT, 26);
+    if (events & GP_EVENT_CUT) play_area(AREA_SFX_CUT, 26);
     if (events & GP_EVENT_SHIELD_UP) play(ACTION_SHIELD, 24);
     if (events & GP_EVENT_JUMP) play(ACTION_JUMP, 25);
     if (events & GP_EVENT_ROLL_VOICE) play(ACTION_VOICE0 + (voice++ & 3), 25);

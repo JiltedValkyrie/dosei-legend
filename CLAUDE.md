@@ -29,7 +29,8 @@ Human directive: after the manual-jump checkpoint, work on `dev` from now on.
 `main` keeps the pushed checkpoint; do not default new development to main.
 The new 2026-09-18 control directive supersedes that checkpoint: A interact,
 X attack, Y jump, B toggles walk/run, hold C+D-pad supplies the four N64 C
-directions, and hold Z+D-pad looks around. Read the authoritative requirements
+directions. The 2026-09-22 remap supersedes that look/target mapping:
+hold L+D-pad looks around; Z targets/recenters. Read the authoritative requirements
 at the top of `game/docs/OPUS_HANDOFF.md` before changing input code.
 
 ## BIG RULE NUMBER 1

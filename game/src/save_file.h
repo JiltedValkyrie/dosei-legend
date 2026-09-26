@@ -32,10 +32,10 @@
 
 /* Bump whenever the packed layout changes. Older versions are REJECTED, not
 ** guessed at: a half-understood save is worse than starting a new file. */
-#define SAVE_FILE_VERSION       1
+#define SAVE_FILE_VERSION       2
 
 /* magic(4) + version(2) + reserved(2) + payload + checksum(2). */
-#define SAVE_FILE_PAYLOAD_BYTES 210
+#define SAVE_FILE_PAYLOAD_BYTES 290
 #define SAVE_FILE_BYTES         (8 + SAVE_FILE_PAYLOAD_BYTES + 2)
 
 /* Why a load was refused, so the file select can say something true rather

@@ -22,8 +22,8 @@ architecture, verified gate table and flag research of `OOT_PROGRESSION_PLAN.md`
 
 | Milestone | Owner | Status |
 |---|---|---|
-| M0 scope, face-only textures, naming, actor pool, SFX banks | unassigned | not started |
-| M1 traversal | unassigned | not started |
+| M0 scope, face-only textures, naming, actor pool, SFX banks | Claude | code review approved 2026-09-25; uncommitted; remaining runtime checks pending |
+| M1 traversal | Claude | cleared to start 2026-09-25; world-collision contract first |
 | M2 combat core, hearts, death | unassigned | not started |
 | M3 Kokiri Forest alive (NPCs, interiors, shop, chests) | unassigned | not started |
 | M4 items, C buttons, pause subscreens | unassigned | not started |
@@ -41,6 +41,10 @@ with all shops/homes/NPCs, all child combat + crawl/climb + dialogue, full Deku
 Tree + Gohma, Kokiri Emerald, Deku Tree death, Saria bridge ocarina, then Hyrule
 Field (explore + owl + music only; no field enemies/other content). Target:
 emulators with 4 MB cart (Kronos/SSF/Mednafen). Real hardware not a gate.
+
+Review corrections: `DEMO_PLAN_REVIEW.md` (Astra, 2026-09-25) applied —
+child Lost Woods Mido gate was wrong; save version moved to M0; M1 collision
+contract added.
 
 Human decisions (2026-09-25): full Deku Tree + Gohma yes; emulator-only target;
 all 10 Lost Woods rooms exist with source-exact access gates; include grottos, gold skulltula tokens,
@@ -94,7 +98,7 @@ exits, spawns per alternate header; layer 0 child day, 1 child night, 4+ cutscen
 | link_home | 1 | have (prerender) |
 | kokiri_home / home3 / home4 / home5 | 1 each | Know-It-All, Twins, Mido (4 chests), Saria (hearts) |
 | kokiri_shop | 1 | En_Ossan + En_Tana, 8 items |
-| spot10 Lost Woods | 10 | **room 5 = bridge** (Saria ocarina, Demo_Sa); Mido blocks until Saria's Song/flag 0x0A |
+| spot10 Lost Woods | 10 | **room 5 = bridge** (Saria ocarina, Demo_Sa); only En_Md is room 3 alt list = layer 2 adult day → **no child Mido gate** (review 09-25) |
 | ydan Deku Tree | 12 | 4516 tris, 9 Door_Shutter, 3 En_Holl |
 | ydan_boss | 2 | Boss_Goma + 8 En_Kusa |
 | spot00 Hyrule Field | 1 | ~1639 tris, 1579 col polys (< 2048 cap), bounds 18k×18k |
@@ -188,6 +192,19 @@ Astra review. Check drop code for every new actor in same task (Bible rule).
   scene load. Measure bytes; free room for Navi dash, enemies, chest, door.
 
 ### M1 — traversal (Link moves like OoT)
+Prerequisites (review 09-25): world-collision contract first — queries return
+hit polygon, surface bits and owner (static vs dynamic bgId) for floor/wall/
+ceiling + clearance probes; DynaPoly-style moving/removable collision owned by
+actors (push block `Obj_Oshihiki` registers DynaPoly) with one small
+representative actor; export+query water boxes (CollisionHeader waterBoxes),
+not floor types. Port `z_bgcheck.c` wall type → flag mapping (types 2/3/4 ≠
+WALL_FLAG_1/2/3; `func_8083EC18` also checks flag 2). Ledge thresholds pick a
+category only; keep source rejects (<18, ceiling, obstructed top, normal, wall
+flags) and handler timing. Physics feet separate from floor+90 camera anchor;
+convert 20 Hz source timing to 30 Hz, no double root motion. Use symbols, not
+line numbers. Fall damage/drown/lift/ydan cases: bring minimal hooks/fixtures
+forward or mark pending until M2/M3/M5 — never mark M1 done from forest-only
+tests. Liftables need source drops same task.
 Order: collision metadata (wall types, floor types, bgCam) → ledge hop/step-up
 by source heights → ledge grab/hang/pull-up/drop → ladder/vine climb (Link's
 house ladder, Deku Tree vines/web walls) → crawlspace enter/travel/reverse/exit
@@ -269,15 +286,17 @@ dungeon returns to dungeon entrance; boss beatable with source weakness.
   guard lifts per source.
 - Human: all 10 Lost Woods rooms EXIST, but reachability is 1:1 with game code
   at this story point — no invented walls or open paths. Whatever source gates
-  (Mido at meadow while !0x0A, wrong-way loop exits, bomb rocks, Saria's Song
-  checks, child/day layer) block, stays blocked the same way; whatever source
+  (wrong-way loop exits, bomb rocks, Saria's Song checks, child/day layer)
+  block, stays blocked the same way; whatever source
   lets a post-Emerald child reach, is reachable. Import geometry + source actors:
   En_Kusa, En_Okuta, En_Shopnuts business scrubs (sell per source table),
   En_Skj Skull Kid (talk; Saria's Song branches closed), En_Dnt_Nomal target
   game (needs slingshot — child OK), owls room 2/8 (En_Owl talk + fly), Lost
-  Woods wrong-way loop-back exits per source, Mido meadow block (0x0A).
-  Obj_Bombiwa rocks stay (no bombs pre-Hyrule, source-correct). Sacred Forest
-  Meadow not included (blocked by source gates / Mido).
+  Woods wrong-way loop-back exits per source. **No child Mido meadow block**:
+  child-day layer has no En_Md in spot10 (review 09-25). Obj_Bombiwa rocks
+  stay (no bombs pre-Hyrule, source-correct). Sacred Forest Meadow: source
+  leaves it reachable for child → **open human scope decision** (acknowledged
+  demo boundary vs add meadow). Do not invent a Mido gate.
 - Saria bridge cutscene (Demo_Sa, gLostWoodsFairyOcarinaCs), Fairy Ocarina GI.
 
 ### M6b — side content (human: include all)
@@ -313,7 +332,8 @@ dungeon returns to dungeon entrance; boss beatable with source weakness.
   bug report template, how to send save file/screenshot).
 - Crash handler: on exception show PC/PR/build hash on screen (existing
   DEBUGGING notes) so testers can report.
-- Save versioning: bump save version, reject old saves cleanly.
+- Save versioning: done in M0 with the scene-count change (v2); bump again on
+  any later layout change, reject old saves cleanly.
 - Clean player image only (no diagnostics).
 
 ### M9 — release checks (bounded)

@@ -33,6 +33,7 @@ import build_kokiri_scene as source
 from build_scene_table import SCENES
 
 from PIL import Image
+import asset_names
 
 WIDTH = 320
 HEIGHT = 240
@@ -116,7 +117,7 @@ def main():
                                                    width, height, WIDTH, HEIGHT))
             blob = convert(data, width, height)
             assert len(blob) == WIDTH * HEIGHT * 2
-            name = 'S%dR%d.RGB' % (index, room_id)
+            name = asset_names.room_asset(index, room_id, 'RGB')
             (args.cd / name).write_bytes(blob)
             staged += 1
             print('backdrop: %-10s room %d -> %s  %dx%d  %d bytes  '

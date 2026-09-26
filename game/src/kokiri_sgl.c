@@ -18,6 +18,7 @@
 
 #include <jo/jo.h>
 #include "asset_loading.h"
+#include "asset_names.h"
 #include "vdp1_draw_wait.h"
 #include <stdint.h>
 #include "frame_timer.h"
@@ -421,7 +422,7 @@ bool kokiri_opening_cache_load(void)
     if (!opening_pixel_pool) return false;
     for (i = 0; i < 10; ++i) {
         char mesh[] = "S2R0.MSH", pixels[] = "S2R0.MAP";
-        mesh[3] += i; pixels[3] += i;
+        mesh[3] = pixels[3] = asset_name_digit(i);
         asset_loading(mesh);
         opening_cache[i].mesh = jo_fs_read_file_ptr(mesh, 0, &opening_cache[i].mesh_bytes);
         asset_loading(pixels);
@@ -506,8 +507,8 @@ bool kokiri_scene_load_backdrop(unsigned int scene, unsigned int room)
     int         row;
     bool        ok = true;
 
-    if (scene > 9 || room > 9 || !kokiri_bank_allocate()) return false;
-    name[1] += scene; name[3] += room;
+    if (scene >= ASSET_ID_LIMIT || room >= ASSET_ID_LIMIT || !kokiri_bank_allocate()) return false;
+    name[1] = asset_name_digit(scene); name[3] = asset_name_digit(room);
     asset_loading(name);
     asset_loading(name);
     if (!jo_fs_open(&file, name)) return false;
@@ -581,12 +582,12 @@ static bool room_load_bank(unsigned int scene, unsigned int room)
     char mesh_name[] = "S0R0.MSH", pixel_name[] = "S0R0.TEX";
     jo_file file;
     bool ok;
-    if (scene > 9 || room > 9 || !kokiri_bank_allocate()) return false;
-    const unsigned char *cached = scene == 2 ? opening_cache[room].mesh : 0;
+    if (scene >= ASSET_ID_LIMIT || room >= ASSET_ID_LIMIT || !kokiri_bank_allocate()) return false;
+    const unsigned char *cached = scene == 2 && room < 10 ? opening_cache[room].mesh : 0;
     bool from_cache = cached != 0;
     if (from_cache && opening_cache[room].mesh_bytes < (int)sizeof(header)) return false;
-    mesh_name[1] += scene; pixel_name[1] += scene;
-    mesh_name[3] += room;  pixel_name[3] += room;
+    mesh_name[1] = pixel_name[1] = asset_name_digit(scene);
+    mesh_name[3] = pixel_name[3] = asset_name_digit(room);
     if (!from_cache) {
         asset_loading(mesh_name);
         if (!jo_fs_open(&file, mesh_name)) return false;

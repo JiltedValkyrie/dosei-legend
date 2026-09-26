@@ -749,7 +749,7 @@ class Gameplay(unittest.TestCase):
         menu's SAVE does, wipe everything as returning to the title and loading
         a file would, then read the block back and re-enter the scene.
         """
-        SAVE_FILE_BYTES = 220
+        SAVE_FILE_BYTES = 300  # save_file.h v2: 8 + 290 + 2
         for index in range(2):
             x, y, z, _ = self.pickup(index)
             self.step(x, y, z)

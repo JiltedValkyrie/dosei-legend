@@ -25,6 +25,19 @@
 #define RAM_CART_BANK2_ADDRESS  0x22600000u
 #define RAM_CART_BANK2_BYTES    0x200000u
 
+/* The top of bank 2 is kept OUT of jo_malloc for fixed runtime pools (actor
+** pool first). A fixed carve keeps these off the 56 KB work-RAM malloc arena,
+** which jo_malloc would otherwise fill first. */
+#define RAM_CART_FIXED_BYTES    0x4000u
+#define RAM_CART_FIXED_ADDRESS  (RAM_CART_BANK2_ADDRESS + RAM_CART_BANK2_BYTES - RAM_CART_FIXED_BYTES)
+
+/* Fixed carve for the actor pool (actor_sys_bytes() must fit). */
+#define RAM_CART_ACTOR_POOL_OFFSET  0u
+#define RAM_CART_ACTOR_POOL_BYTES   0x2000u
+
+/* Pointer into the fixed carve, or 0 when no cart / out of range. */
+void   *ram_cart_fixed(unsigned int offset, unsigned int bytes);
+
 /* True when a 32 Mbit cart is present. Cheap; reads the cart id byte. */
 bool    ram_cart_present(void);
 

@@ -343,8 +343,8 @@ def flatten_faces(faces):
     That detail is invisible in play and the VRAM it costs is needed by the
     ground, which is what actually smears.
 
-    Hair and face artwork (not headwear) carries facial shape
-    at the close gameplay camera and must not be replaced by per-face averages.
+    Face artwork carries facial shape at the close gameplay camera and must
+    not be replaced by per-face averages. Hair is flat (human rule, face only).
     """
     flattened = 0
     for face in faces:

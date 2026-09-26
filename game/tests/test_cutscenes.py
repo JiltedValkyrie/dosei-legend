@@ -216,6 +216,18 @@ class Cutscenes(unittest.TestCase):
             self.assertGreater(len(positions), 50,
                                key + ' baked a camera that barely moves')
 
+    def test_skip_boundaries_are_source_camera_shots(self):
+        # Includes the long flight and wake-up shots: neither may be split
+        # into arbitrary time chunks merely to make skipping faster.
+        expected = {
+            'SLEEP': [0, 130, 180],
+            'NIGHTMARE': [0, 20, 60, 70, 130, 140, 220, 280, 320, 360, 380, 410, 440],
+            'NAVI_FLY': [0, 200],
+            'WAKE_UP': [0, 70],
+        }
+        for key, shots in expected.items():
+            self.assertEqual(self.baked[key]['shots'], shots, key)
+
     def test_links_house_is_filmed_from_one_fixed_point(self):
         """Both house cutscenes are ROOM_SHAPE_TYPE_IMAGE in the original, so
         the eye never moves -- which is why a backdrop interior can render

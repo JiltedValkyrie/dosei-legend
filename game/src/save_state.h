@@ -102,7 +102,12 @@
 #define SAVE_SCENE_DEKU_TREE_BOSS   3
 #define SAVE_SCENE_KOKIRI_SHOP      4
 #define SAVE_SCENE_LINKS_HOUSE      5
-#define SAVE_SCENE_COUNT            6
+#define SAVE_SCENE_KNOW_IT_ALL_HOUSE 6  /* kokiri_home  */
+#define SAVE_SCENE_TWINS_HOUSE      7   /* kokiri_home3 */
+#define SAVE_SCENE_MIDOS_HOUSE      8   /* kokiri_home4 */
+#define SAVE_SCENE_SARIAS_HOUSE     9   /* kokiri_home5 */
+#define SAVE_SCENE_HYRULE_FIELD     10  /* spot00       */
+#define SAVE_SCENE_COUNT            11
 
 /* Per-scene flag words, mirroring SavedSceneFlags (include/save.h:96).
 ** The original keeps a persisted half and a temp half and deliberately does

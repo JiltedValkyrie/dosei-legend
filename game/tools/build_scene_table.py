@@ -33,6 +33,7 @@ import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[2] / 'shared/tools'))
 import build_kokiri_scene as source
+import asset_names
 
 # The scenes this slice contains, in runtime order. `save` is the SAVE_SCENE_*
 # id in src/save_state.h; `scene` is the decomp SCENE_* name, used to resolve
@@ -47,10 +48,10 @@ import build_kokiri_scene as source
 #              costs no VDP1 texture space at all.
 SCENES = (
     dict(prefix='link_home', rooms=1, shape='image',
-         scene='SCENE_LINKS_HOUSE',
+         scene='SCENE_LINKS_HOUSE', sfx=0,
          save='SAVE_SCENE_LINKS_HOUSE', name='Link\'s House'),
     dict(prefix='spot04', rooms=3, shape='mesh',
-         scene='SCENE_KOKIRI_FOREST',
+         scene='SCENE_KOKIRI_FOREST', sfx=1,
          save='SAVE_SCENE_KOKIRI_FOREST', name='Kokiri Forest'),
 )
 
@@ -246,9 +247,9 @@ def main():
         scene = segments[entry['prefix'] + '_scene']
         surfaces = source.collision_surfaces(scene)
         records = collision_records(surfaces)
-        (args.cd / ('S%d.COL' % index)).write_bytes(records)
+        (args.cd / asset_names.scene_asset(index, 'COL')).write_bytes(records)
         flags = surface_records(surfaces)
-        (args.cd / ('S%d.SUR' % index)).write_bytes(flags)
+        (args.cd / asset_names.scene_asset(index, 'SUR')).write_bytes(flags)
         first_spawn = len(spawns)
         for spawn in source.spawn_points(scene):
             spawns.append(dict(scene=index, **spawn))
@@ -333,6 +334,7 @@ def main():
                '    uint8_t  first_spawn; /* index into scene_spawns */',
                '    uint8_t  spawns;',
                '    uint8_t  save_scene;  /* SAVE_SCENE_* for the flag store */',
+               '    uint8_t  sfx_bank;    /* build_action_audio AREA_BANKS index */',
                '} scene_entry_t;', '',
                'typedef struct {',
                '    int16_t  x, y, z;',
@@ -363,12 +365,12 @@ def main():
         dist = 0
         if half > 0:
             dist = int(round(120.0 / math.tan(math.radians(half))))
-        body.append('    { %d, %d, %d, %d, 0x%04X, 0x%04X, %d, %d, %d, %d, %d, %s },'
+        body.append('    { %d, %d, %d, %d, 0x%04X, 0x%04X, %d, %d, %d, %d, %d, %s, %d },'
                     % (1 if entry['shape'] == 'image' else 0,
                        cam['x'], cam['y'], cam['z'],
                        cam['pitch'] & 0xFFFF, cam['yaw'] & 0xFFFF, cam['fov'],
                        dist, entry['rooms'], summary['first_spawn'],
-                       summary['spawns'], entry['save']))
+                       summary['spawns'], entry['save'], entry['sfx']))
     body += ['};', '', 'const scene_spawn_t scene_spawns[SCENE_SPAWN_COUNT] = {']
     for spawn in spawns:
         body.append('    { %d, %d, %d, 0x%04X, %d },'

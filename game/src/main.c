@@ -25,6 +25,7 @@
 #include "frame_timer.h"
 #include "oot_follow.h"
 #include "ram_cart.h"
+#include "actor_sys.h"
 #include "save_device.h"
 #include "file_select.h"
 #include "scene_flow.h"
@@ -344,6 +345,15 @@ static void         viewer_draw(void)
     file_select_screen();
     if (!gameplay_blocks_world() && !cutscene_is_playing()) viewer_hud();
     action_hint();
+    {
+        static bool skip_was_visible;
+        bool visible = demo_skip_prompt();
+        if (visible)
+            jo_printf(6, 3, "Skip? Press Start Again");
+        else if (skip_was_visible)
+            jo_printf(6, 3, "                       ");
+        skip_was_visible = visible;
+    }
     if (!demo_title_is_visible() && !demo_file_select_is_visible() &&
         !cutscene_is_playing())
         kokiri_rupee_hud_draw();
@@ -1046,6 +1056,15 @@ void                jo_main(void)
         jo_printf(2, 15, "In Kronos: set Cartridge/Type to");
         jo_printf(2, 16, "the 32 Mbit DRAM cart (type 7).");
         jo_core_run();
+        return;
+    }
+
+    /* Actor pool lives in the cart's fixed carve, never in work RAM. */
+    if (actor_sys_bytes() > RAM_CART_ACTOR_POOL_BYTES ||
+        !actor_sys_init(ram_cart_fixed(RAM_CART_ACTOR_POOL_OFFSET,
+                                       RAM_CART_ACTOR_POOL_BYTES),
+                        RAM_CART_ACTOR_POOL_BYTES)) {
+        jo_core_error("Actor pool does not fit its cart carve");
         return;
     }
 

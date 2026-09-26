@@ -32,6 +32,17 @@ EFFECTS = (
     ('navi_dash', 'CHAN_1B01', 69, 'B5', .65),  # NA_SE_EV_FAIRY_DASH
 )
 
+# Per-area SFX banks (demo plan M0). Core = ACTIONS.PCM, resident in every
+# gameplay scene (Link, UI, Navi, rupee). Area sounds live in one swappable
+# bank loaded right after the core on scene load; bank 0 is "no area sounds".
+# A sound may appear in several banks. Scenes pick a bank by `sfx` in
+# build_scene_table.SCENES. OPENING.PCM still replaces the whole region.
+AREA_SOUNDS = ('cut',)
+AREA_BANKS = (
+    (None, ()),                     # 0: interiors, nothing area-specific
+    ('SFXFRST.PCM', ('cut',)),      # 1: outdoor forest (grass cutting)
+)
+
 
 def note(name):
     match = re.fullmatch(r'(C|DF|D|EF|E|F|GF|G|AF|A|BF|B)(\d)', name)
@@ -164,7 +175,7 @@ def build(oot, source, out):
         raise ValueError('Child jump voice array changed')
     sample = font.find('.//Effect[@Name="EFFECT_53"]').attrib['Sample']
     entries.append(('jump', sample, 60, .30, 'ARRAY_64C5'))
-    bank, records = bytearray(), []
+    bank, records, area_pcm = bytearray(), [], {}
     for name, sample, key, duration, label in entries:
         path = source / ('samples/SampleBank_0/Sample%03d.wav' % int(sample.rsplit('_',1)[1]))
         # Keep all four voices and their duration/pitch. Lower their stored
@@ -176,6 +187,11 @@ def build(oot, source, out):
         # PCM8 zero is exact digital silence. Keep every audible byte unchanged;
         # one-shot playback stops at LEA, with four zero guard bytes below.
         pcm = pcm.rstrip(b'\0') or bytes(1)
+        if name in AREA_SOUNDS:
+            area_pcm[name] = (pcm, dict(name=name, rate=sample_rate, source=label, sample=sample,
+                                        trimmed_silence=untrimmed_length-len(pcm),
+                                        sha256=hashlib.sha256(path.read_bytes()).hexdigest()))
+            continue
         records.append(dict(name=name, offset=len(bank), length=len(pcm), rate=sample_rate,
                             source=label, sample=sample, trimmed_silence=untrimmed_length-len(pcm), sha256=hashlib.sha256(path.read_bytes()).hexdigest()))
         bank.extend(pcm)
@@ -186,10 +202,27 @@ def build(oot, source, out):
                         sha256=melody['sha256']))
     bank.extend(wave)
     bank.extend(bytes(4 + (-len(bank) % 2)))
+    area_base = BASE + len(bank)
+    area_limit = 0x80000 - area_base
+    area_banks = []
+    for file_name, names in AREA_BANKS:
+        blob, table = bytearray(), {}
+        for name in names:
+            pcm, record = area_pcm[name]
+            table[name] = (len(blob), len(pcm))
+            blob.extend(pcm)
+            blob.extend(bytes(4 + (-len(blob) % 2)))
+        if len(blob) > area_limit:
+            raise ValueError('Area SFX bank %s exceeds sound RAM after core: %d > %d'
+                             % (file_name, len(blob), area_limit))
+        area_banks.append((file_name, bytes(blob), table))
     if BASE + len(bank) > 0x80000:
         raise ValueError('Action bank exceeds reserved sound RAM')
     out.mkdir(parents=True, exist_ok=True)
     (out/'ACTIONS.PCM').write_bytes(bank)
+    for file_name, blob, _ in area_banks:
+        if file_name:
+            (out/file_name).write_bytes(blob)
     lines = ['/* Generated from local OoT samples; see action_audio.json. */',
              '#ifndef ACTION_AUDIO_DATA_H', '#define ACTION_AUDIO_DATA_H',
              '#define ACTION_PCM_BASE %d' % BASE, '#define ACTION_PCM_BYTES %d' % len(bank),
@@ -204,12 +237,35 @@ def build(oot, source, out):
               'static const unsigned short rupee_pitches[3] = {%s};' % ','.join(map(str,melody['pitches'])),
               'static const unsigned char rupee_ends[3] = {6,12,36};',
               'static const unsigned char rupee_levels[24] = {%s};' % ','.join(map(str,melody['levels']))]
+    lines += ['', '/* Area SFX banks: loaded at SFX_AREA_BASE, after the core. */',
+              '#define SFX_AREA_BASE %d' % area_base,
+              '#define SFX_AREA_LIMIT %d' % area_limit,
+              '#define SFX_BANK_COUNT %d' % len(area_banks),
+              '#define AREA_SFX_COUNT %d' % len(AREA_SOUNDS)]
+    lines += ['#define AREA_SFX_%s %d' % (n.upper(), i) for i, n in enumerate(AREA_SOUNDS)]
+    lines += ['static const char *const sfx_bank_file[SFX_BANK_COUNT] = {%s};'
+              % ', '.join('"%s"' % f if f else '0' for f, _, _ in area_banks),
+              'static const unsigned int sfx_bank_bytes[SFX_BANK_COUNT] = {%s};'
+              % ', '.join(str(len(b)) for _, b, _ in area_banks),
+              '/* length 0 = sound absent from that bank */',
+              'static const action_pcm_t sfx_bank_pcm[SFX_BANK_COUNT][AREA_SFX_COUNT] = {']
+    for _, _, table in area_banks:
+        lines.append('    {%s},' % ', '.join('{%d, %d}' % table.get(n, (0, 0)) for n in AREA_SOUNDS))
+    lines += ['};']
     lines += ['#endif']
     (out/'action_audio_data.h').write_text('\n'.join(lines)+'\n')
+    area_json = [dict(file=f, bytes=len(b), samples=[dict(area_pcm[n][1], offset=o, length=l)
+                                                     for n, (o, l) in t.items()])
+                 for f, b, t in area_banks]
     (out/'action_audio.json').write_text(json.dumps(dict(base=BASE, bytes=len(bank), rate=RATE,
-        limitations=__doc__, samples=records, rupee_melody=melody), indent=2)+'\n')
-    print('Action audio: %d samples, %d bytes, %d sound RAM bytes spare' %
-          (len(records), len(bank), 0x80000-BASE-len(bank)))
+        limitations=__doc__, samples=records, rupee_melody=melody,
+        area_base=area_base, area_limit=area_limit, area_banks=area_json), indent=2)+'\n')
+    worst = max(len(b) for _, b, _ in area_banks)
+    print('Action audio: core %d samples, %d bytes; area slot %d bytes, largest bank %d, '
+          '%d sound RAM bytes spare' % (len(records), len(bank), area_limit, worst,
+                                         area_limit - worst))
+    for f, b, t in area_banks:
+        print('  area bank %-12s %5d bytes  %s' % (f or '(none)', len(b), ' '.join(t) or '-'))
 
 
 if __name__ == '__main__':

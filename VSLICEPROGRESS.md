@@ -1,5 +1,24 @@
 # Vertical slice progress
 
+## Save crash repair and permanent shot skip (2026-09-25, uncommitted)
+
+- Save crash traced to stale save_device.o: 220-byte v1 stack buffer called
+  the 300-byte v2 packer. Compiler header dependencies now rebuild consumers;
+  makefile edits invalidate all objects, including SDK configuration.
+- Permanent Start confirmation: "Skip? Press Start Again", two-second window,
+  current source camera shot only. Final shot follows normal sequence cleanup.
+- Work-RAM malloc arena now 51,200 bytes; cart remains allocator fallback.
+- Focused host tests pass. Fixed save/skip still need a player replay in Kronos.
+
+## Demo M0 foundations (2026-09-25, uncommitted)
+
+- Face-only character textures (hair flat); Link 143 tiles.
+- Base-36 scene/room asset names (36 scenes x 36 rooms, still 8.3).
+- Save v2 with 11 scenes; old saves rejected as older version.
+- Actor pool (cart carve) + actor collision check skeleton, host tested.
+- Area SFX banks: core + swappable area slot; forest bank holds grass cut.
+- Builds: all three images; Kronos check still pending.
+
 ## Opening freeze, sound and close-up (2026-09-22)
 
 - Reproduced nightmare stall at Kronos's 2048-command guard; project-local

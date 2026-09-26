@@ -72,10 +72,15 @@ spot; the landing/roll split follows OoT's own rule. `RUN_SPEED_MIN` there is
 the walk/run threshold. Diagnostics show heap use and animation state; L+R
 switches views in regular builds. Clean player-test builds hide all of it.
 
-Note that prebuilt SDK objects under `build/obj*/` do not rebuild when a
-makefile define changes. After editing `JO_GLOBAL_MEMORY_SIZE_FOR_MALLOC`,
-delete `build/obj/core.o` and `build/obj-hires/core.o` or the old arena size
-silently persists.
+All objects track included headers through compiler-generated `.d` files.
+Changing the makefile also rebuilds all objects, including the SDK arena.
+This prevents mixed save layouts after changing save headers. Command-line
+configuration changes still require rebuilding affected objects.
+
+During cutscenes, press Start to show "Skip? Press Start Again". Press again
+within two seconds to skip the current camera shot. The next shot continues;
+the last shot follows the normal sequence transition or returns to gameplay.
+This works in normal, hires and clean builds.
 
 The title uses five slow, wide camera routes generated from `FOREST.BIN` by
 `tools/build_title_paths.py`. The generator searches connected free space,

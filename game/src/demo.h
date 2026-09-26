@@ -11,6 +11,7 @@ bool demo_file_select_is_visible(void);
 /* Outcome of the last pause-menu save: -1 none yet, 0 failed, 1 succeeded. */
 int demo_save_report(void);
 unsigned int demo_clock(void);
+bool demo_skip_prompt(void);
 extern camera_position_t demo_camera;
 extern uint16_t demo_yaw;
 extern int32_t demo_pitch;

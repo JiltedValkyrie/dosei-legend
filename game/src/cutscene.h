@@ -7,6 +7,8 @@
 
 bool            cutscene_start(unsigned int id);
 bool            cutscene_step(bool confirm);
+void            cutscene_skip_shot(void);
+unsigned int    cutscene_shot_key(void);
 bool            cutscene_is_playing(void);
 bool            cutscene_finished(void);
 unsigned int    cutscene_id(void);

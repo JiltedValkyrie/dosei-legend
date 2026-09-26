@@ -9,6 +9,7 @@
 #include "oot_follow.h"
 #include "frame_timer.h"
 #include "input_edge.h"
+#include "skip_input.h"
 #include "player_input.h"
 #include "gameplay.h"
 #include "file_select.h"
@@ -76,6 +77,7 @@ static int last_blink = -1;
  * sampled a second time in main.c. */
 bool demo_diagnostics_toggled;
 static input_edge_t start_edge;
+static skip_input_t skip_input;
 static bool jump_pending;
 /* Action intents latched from the sampled input, consumed once per fixed step
  * exactly like jump_pending. A short X tap must survive a slow rendered frame. */
@@ -380,6 +382,10 @@ static void demo_vblank(void)
      * across slow draws instead of relying on its one-VBlank on_keydown. */
     bool connected = jo_is_pad1_available();
     input_edge_sample(&start_edge, connected && jo_is_pad1_key_pressed(JO_KEY_START));
+    skip_input_sample(&skip_input, game_mode() == GAME_MODE_CUTSCENE &&
+                      cutscene_is_playing(),
+                      connected && jo_is_pad1_key_pressed(JO_KEY_START),
+                      ticks, cutscene_shot_key());
     /* One normalized snapshot per VBlank. All button state -- including every
      * chord -- is read from this single sample, so two consumers can never
      * disagree about which buttons were down on a given frame. */
@@ -481,6 +487,8 @@ void demo_update(void)
     uint16_t buttons = 0;
     bool recenter = false;
     bool start_pressed = input_edge_consume(&start_edge);
+    if (game_mode() != GAME_MODE_CUTSCENE)
+        input_edge_consume(&skip_input.request);
     unsigned int now = ticks, elapsed = now - previous_tick, steps;
     jo_img patch;
     /* One consume per rendered frame. The mapping itself lives in
@@ -605,9 +613,17 @@ void demo_update(void)
         pause_pending = false;
         menu_step = 0;
         player_input_set_dialogue(true);
+        if (input_edge_consume(&skip_input.request) &&
+            skip_input.request_shot == cutscene_shot_key()) {
+            cutscene_skip_shot();
+            interact_pending = false;
+            cutscene_phase = 0;
+            cutscene_tick = ticks;
+            now = ticks;
+        }
         cutscene_phase += (now - cutscene_tick) * CUTSCENE_TICK_HZ;
         cutscene_tick = now;
-        while (cutscene_phase >= refresh) {
+        while (cutscene_phase >= refresh && cutscene_is_playing()) {
             cutscene_phase -= refresh;
 #ifdef DOSEI_CUTSCENE_PROBE_FRAME
             if (cutscene_frame() >= DOSEI_CUTSCENE_PROBE_FRAME) continue;
@@ -932,6 +948,12 @@ bool demo_file_select_is_visible(void)
 bool demo_title_is_visible(void)
 {
     return title_visible;
+}
+
+bool demo_skip_prompt(void)
+{
+    return game_mode() == GAME_MODE_CUTSCENE && cutscene_is_playing() &&
+           skip_input.armed;
 }
 
 unsigned int demo_clock(void)

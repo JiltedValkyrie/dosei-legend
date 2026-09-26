@@ -125,17 +125,19 @@ Current checks: `game/tests/test_link_geometry_precision.py` and
 without the option before shipping. Other model formats need their own adapter,
 not a claim that Link's segment-D scheme fits every model.
 
-## Character textures: hair and face only
+## Character textures: face only
 
-Permanent user rule, updated 2026-09-22 after another reported crash. This
-supersedes the earlier quarter-resolution body-texture rule.
+Permanent user rule, updated 2026-09-25 (demo plan): hair is flat too. The
+2026-09-22 hair-and-face rule and the earlier quarter-resolution rule are
+superseded.
 
 - All characters, including Link, NPCs, enemies, riders and horses: remove
   body, clothes, headwear, equipment and weapon artwork; use flat colours.
-- Keep hair and face artwork. Faces keep their existing imported detail;
-  hair retains the reduced resolution from the previous budget policy.
+- Keep face artwork only (eyes, mouth, nose; enemy/boss eyes count as
+  face). Faces keep their imported detail. Hair, manes and sideburns are
+  flat colours.
 - Enforce in the shared offline writer regardless of an importer's
-  `full_texture` setting. New importers must mark hair and facial materials
+  `full_texture` setting. New importers must mark facial materials (hair still tagged, not kept)
   from source XML, head limbs and expression bindings before writing.
 - Unknown head materials conservatively keep facial detail. Named hats,
   hoods, veils and neck materials do not receive the exemption.

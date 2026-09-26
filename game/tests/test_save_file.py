@@ -19,9 +19,9 @@ import unittest
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 GCC = pathlib.Path('C:/msys64/mingw64/bin/gcc.exe')
 
-SAVE_FILE_PAYLOAD_BYTES = 210
+SAVE_FILE_PAYLOAD_BYTES = 290
 SAVE_FILE_BYTES = 8 + SAVE_FILE_PAYLOAD_BYTES + 2
-SAVE_FILE_VERSION = 1
+SAVE_FILE_VERSION = 2
 
 SAVE_FILE_OK = 0
 SAVE_FILE_EMPTY = 1
@@ -184,6 +184,27 @@ class SaveFile(unittest.TestCase):
         block = self.pack()
         block[4] = 0
         block[5] = SAVE_FILE_VERSION - 1 if SAVE_FILE_VERSION else 0
+        self.assertEqual(SAVE_FILE_BAD_VERSION, self.unpack(block))
+
+    def test_highest_new_scene_flags_round_trip(self):
+        hyrule_field = 10  # SAVE_SCENE_HYRULE_FIELD, last of SAVE_SCENE_COUNT 11
+        self.lib.save_set_treasure(hyrule_field, 31)
+        self.lib.save_set_switch(hyrule_field, 0)
+        self.lib.save_set_clear(hyrule_field, 7)
+        self.lib.save_set_collectible(hyrule_field, 19)
+        block = self.pack()
+        self.lib.save_new_game()
+        self.assertFalse(self.lib.save_get_treasure(hyrule_field, 31))
+        self.assertEqual(SAVE_FILE_OK, self.unpack(block))
+        self.assertTrue(self.lib.save_get_treasure(hyrule_field, 31))
+        self.assertTrue(self.lib.save_get_switch(hyrule_field, 0))
+        self.assertTrue(self.lib.save_get_clear(hyrule_field, 7))
+        self.assertTrue(self.lib.save_get_collectible(hyrule_field, 19))
+        self.assertFalse(self.lib.save_get_treasure(hyrule_field, 30))
+
+    def test_a_version_1_block_of_the_old_size_reads_as_old_version(self):
+        block = self.pack()[:8 + 210 + 2]
+        block[4], block[5] = 0, 1
         self.assertEqual(SAVE_FILE_BAD_VERSION, self.unpack(block))
 
     def test_a_future_layout_is_also_refused(self):

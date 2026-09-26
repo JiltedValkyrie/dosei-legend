@@ -43,7 +43,7 @@ class CharacterTextures(unittest.TestCase):
         self.assertEqual([f['face_detail'] for f in faces],
                          [True, True, False, False, True, False, True, False])
         self.assertEqual([textures.keep_texture(f) for f in faces],
-                         [True, True, True, False, True, False, True, True])
+                         [True, True, False, False, True, False, True, False])
 
     def test_full_texture_cannot_restore_body_art(self):
         self.assertFalse(textures.keep_texture({'full_texture': True, 'limb': 10}))
@@ -57,7 +57,7 @@ class CharacterTextures(unittest.TestCase):
             textures.mark_faces(faces, xml, 10, (8, 9))
         self.assertTrue(all(not textures.keep_texture(f) for f in faces))
 
-    def test_writer_flattens_body_and_keeps_hair_face_and_props(self):
+    def test_writer_flattens_body_and_hair_keeps_face_and_props(self):
         import build_link_model as model
         import struct
         from unittest.mock import patch
@@ -66,7 +66,7 @@ class CharacterTextures(unittest.TestCase):
                     (0, 10, 0, 0, 0, 255, 255, 255, 255)]
         for detail, character, expected in [({}, True, 0x102),
                 ({'face_detail': True}, True, 0x210),
-                ({'hair_detail': True}, True, 0x108), ({}, False, 0x210)]:
+                ({'hair_detail': True}, True, 0x102), ({}, False, 0x210)]:
             face = dict(vertices=vertices, texture=None, lighting=False,
                         transparent=False, cull=True, limb=0, full_texture=True, **detail)
             with tempfile.TemporaryDirectory() as tmp, patch.object(model.scene_tool, 'bake', bake):

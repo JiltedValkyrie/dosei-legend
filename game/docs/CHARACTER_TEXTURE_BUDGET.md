@@ -1,4 +1,13 @@
-# Character texture budget — 2026-09-22
+# Character texture budget — 2026-09-25
+
+UPDATE 2026-09-25 (demo plan M0): face only. Hair/mane/sideburn flat.
+`keep_texture()` returns `face_detail` only. Link: 179 -> 143 tiles
+(13,400 B incl. CLUTs after change). Forest VRAM spare 4,768-4,896 B in the
+two Kokiri room banks after rebuild. Actors after rebuild: GANON 113 tiles,
+IMPA 162, ZELDA 221, HZELDA 112, HGANON 48 (no pre-change actor baseline
+recorded).
+
+## 2026-09-22 (historical)
 
 UPDATE: user still reports a crash. Current policy is flat colours everywhere
 on characters except hair and face. Shared writer enforces this even for

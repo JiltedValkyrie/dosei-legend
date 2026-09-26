@@ -126,6 +126,7 @@ for rider in GANON ZELDA IMPA HZELDA HGANON; do
 done
 cp "$here/build/generated/ACTIONS.PCM" "$here/build/cd/ACTIONS.PCM"
 cp "$here/build/generated/OPENING.PCM" "$here/build/cd/OPENING.PCM"
+cp "$here"/build/generated/SFX*.PCM "$here/build/cd/"
 cp "$here/../shared/assets/audio/title/TITLE_PCM.RAW" "$here/build/cd/TITLE.PCM"
 cp "$here/../shared/assets/audio/title/TITLE_LEVELS.RAW" "$here/build/cd/TITLE.LVL"
 cp "$here/levels/kokiri/assets/audio/KOKIRI_PCM.RAW" "$here/build/cd/FOREST.PCM"

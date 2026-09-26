@@ -377,6 +377,7 @@ def read_cutscene(entry):
     # Preserve source order: the last active cue in file order wins.
 
     out['frames'] = cutscene_length(out, eye_shots, at_shots)
+    out['shots'] = sorted({0} | {s['start'] for s in eye_shots if 0 <= s['start'] < out['frames']})
     out['track'] = bake_camera(eye_shots, at_shots, out['frames'], out['scene'])
     return out
 
@@ -710,6 +711,7 @@ def emit(cutscenes, header_path, source_path, cd_dir, messages):
           '    ** one actor on screen -- the dream has two. */',
           '    const cutscene_cue_t   *actor_cues;',
           '    unsigned char           actor_cue_count;',
+          '    const unsigned short *shots; unsigned char shot_count;',
           '} cutscene_t;', '',
           'extern const cutscene_t cutscenes[CUTSCENE_COUNT];', '']
 
@@ -728,6 +730,8 @@ def emit(cutscenes, header_path, source_path, cd_dir, messages):
     c += ['};', '']
     h += ['#endif']
     for index, cs in enumerate(cutscenes):
+        c.append('static const unsigned short shots_%d[] = {%s};' %
+                 (index, ','.join(map(str, cs['shots']))))
         c.append('static const cutscene_text_t text_%d[] = {' % index)
         for item in cs['text']:
             c.append('    {0x%04X,%d,%d},' % (item['id'] if item['id'] else 0,
@@ -774,13 +778,13 @@ def emit(cutscenes, header_path, source_path, cd_dir, messages):
             destination_frame = cs['destination']['start']
         c.append('    { "CS%d.BIN", %d, CUTSCENE_SCENE_%s, %d, %d, %d,'
                  ' text_%d, %d, cues_%d, %d, fades_%d, %d, music_%d, %d,'
-                 ' actor_cues_%d, %d },' %
+                 ' actor_cues_%d, %d, shots_%d, %d },' %
                  (index, len(cs['track']), cs['scene'],
                   cs['stop_frame'] if cs['stop_frame'] is not None else -1,
                   destination, destination_frame,
                   index, len(cs['text']), index, len(cs['player_cues']),
                   index, len(cs['transitions']), index, len(cs['music']),
-                  index, len(cs['actor_cues'])))
+                  index, len(cs['actor_cues']), index, len(cs['shots'])))
     c += ['};', '']
 
     header_path.write_text('\n'.join(h) + '\n')

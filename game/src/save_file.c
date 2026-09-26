@@ -158,7 +158,9 @@ static save_file_status validate(const uint8_t *in, unsigned int bytes)
 {
     uint16_t    version, stored;
 
-    if (!in || bytes < SAVE_FILE_BYTES)
+    /* Header first: an older layout is also a different size, and must be
+    ** reported as an old version, not as a truncated block. */
+    if (!in || bytes < 8)
         return (bytes == 0 ? SAVE_FILE_EMPTY : SAVE_FILE_BAD_SIZE);
     if (in[0] != SAVE_FILE_MAGIC_0 || in[1] != SAVE_FILE_MAGIC_1 ||
         in[2] != SAVE_FILE_MAGIC_2 || in[3] != SAVE_FILE_MAGIC_3) {
@@ -176,6 +178,8 @@ static save_file_status validate(const uint8_t *in, unsigned int bytes)
     version = (uint16_t)((in[4] << 8) | in[5]);
     if (version != SAVE_FILE_VERSION)
         return (SAVE_FILE_BAD_VERSION);
+    if (bytes < SAVE_FILE_BYTES)
+        return (SAVE_FILE_BAD_SIZE);
     stored = (uint16_t)((in[8 + SAVE_FILE_PAYLOAD_BYTES] << 8) |
                         in[8 + SAVE_FILE_PAYLOAD_BYTES + 1]);
     if (stored != save_file_checksum(in + 8, SAVE_FILE_PAYLOAD_BYTES))

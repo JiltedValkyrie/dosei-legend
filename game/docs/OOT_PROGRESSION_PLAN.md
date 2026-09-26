@@ -226,7 +226,7 @@ is just `eventChkInf[flag >> 4] & (1 << (flag & 15))`. A direct, trivial port.
 | Talk to Mido again, unarmed | `INFTABLE_0C` set → text `0x1030` | — |
 | Talk to Mido with sword **and** shield | `CUR_EQUIP_VALUE(SHIELD)==DEKU && CUR_EQUIP_VALUE(SWORD)==KOKIRI` → text `0x1033` | talk state ACTION → `SET_EVENTCHKINF(EVENTCHKINF_04)` (`z_en_md.c:777`); Mido steps aside |
 | Mido after standing down | `EVENTCHKINF_04` → text `0x1034` | — |
-| Mido blocks Lost Woods | `SCENE_LOST_WOODS && !EVENTCHKINF_0A` | talking sets `EVENTCHKINF_0A` |
+| Mido blocks Lost Woods | `SCENE_LOST_WOODS && !EVENTCHKINF_0A` in `EnMd_ShouldSpawn`, but spot10's only En_Md is room 3 alt list (layer 2, adult day) → **not present for child** (DEMO_PLAN_REVIEW 09-25) | talking sets `EVENTCHKINF_0A` |
 | Saria, first talk | baseline **`0x1001`** | `INFTABLE_SARIA_GREETED_LINK` |
 | Saria, after Mido refused | `EVENTCHKINF_MIDO_DENIED_DEKU_TREE_ACCESS` → `0x1031`/`0x1032` | `INFTABLE_SARIA_WAS_TOLD_ABOUT_MIDO` |
 | Kokiri Emerald awarded | blue warp after Gohma: `Item_Give(play, ITEM_KOKIRI_EMERALD)` (`ovl_Door_Warp1/z_door_warp1.c:530`) | `questItems \|= QUEST_KOKIRI_EMERALD` (`z_parameter.c:1436`) |
@@ -277,8 +277,9 @@ Safe to stub or omit entirely: `En_River_Sound`, `Object_Kankyo`, `En_A_Obj`,
 (Navi hint volumes), gold skulltulas.
 
 Only remaining research gap: the spot10 (Lost Woods) room actor lists, which the
-scout did not reach. Mido also blocks there while `!EVENTCHKINF_0A` and listens
-for Saria's Song. That affects Phase 3 only.
+scout did not reach. Correction 2026-09-25 (Astra review): spot10's only
+En_Md is in room 3's adult-day alternate list, so child Link meets no Mido
+meadow gate. See `DEMO_PLAN_REVIEW.md`.
 
 **Verified actor placement** (dumped from the ROM room actor lists):
 

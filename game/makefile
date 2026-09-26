@@ -74,9 +74,14 @@ JO_MAX_SPRITE = 2800
 # must live in work RAM and is what caps polygons per frame.
 # Resident opening sound control uses a few more bytes of work RAM; large
 # scene allocations already use the expansion cart.
-JO_GLOBAL_MEMORY_SIZE_FOR_MALLOC ?= 57344
+# Demo plan M0 (2026-09-25): actor pool + collide + area SFX code took ~4.7 KB
+# below the boundary. Known arena demand stays ~32 KB (collision index 16 KB,
+# largest camera track ~13 KB, small blocks); 52 KB keeps >1.5x that.
+# Header-complete rebuild + permanent shot skip crossed the normal boundary
+# by 16 bytes. Keep ~2 KB clear; jo_malloc spills into the cart zones.
+JO_GLOBAL_MEMORY_SIZE_FOR_MALLOC ?= 51200
 
-SRCS = src/main.c src/ram_cart.c src/game_mode.c src/message.c src/cutscene.c src/cutscene_actor.c src/save_state.c src/save_file.c src/save_device.c src/file_select.c src/scene_flow.c src/kokiri_sgl.c ../shared/lib/music/music.c src/music_banks.c src/demo.c src/navi.c src/player_input.c src/gameplay.c src/action_audio.c src/demo_camera.c src/demo_collision.c src/demo_follow.c src/link_anim.c src/link_anim_state.c src/frame_timer.c build/generated/kokiri_scene.c build/generated/kokiri_textures.c build/generated/link_scene.c build/generated/link_textures.c build/generated/link_clips.c build/generated/scene_table.c build/generated/kokiri_actors.c build/generated/kokiri_dialogue.c build/generated/cutscenes.c
+SRCS = src/main.c src/ram_cart.c src/game_mode.c src/message.c src/cutscene.c src/cutscene_actor.c src/save_state.c src/actor_sys.c src/collide.c src/save_file.c src/save_device.c src/file_select.c src/scene_flow.c src/kokiri_sgl.c ../shared/lib/music/music.c src/music_banks.c src/demo.c src/navi.c src/player_input.c src/gameplay.c src/action_audio.c src/demo_camera.c src/demo_collision.c src/demo_follow.c src/link_anim.c src/link_anim_state.c src/frame_timer.c build/generated/kokiri_scene.c build/generated/kokiri_textures.c build/generated/link_scene.c build/generated/link_textures.c build/generated/link_clips.c build/generated/scene_table.c build/generated/kokiri_actors.c build/generated/kokiri_dialogue.c build/generated/cutscenes.c
 override ASSETS_DIR = ./build/cd
 
 JO_ENGINE_SRC_DIR = ../../joengine/jo_engine
@@ -144,7 +149,11 @@ $(OBJDIR)/kokiri_sgl.o: src/scene_actor_order.h src/actor_order.h src/sgl_order_
 # Instead declare our own link/convert targets against an obj/ object list and
 # cancel the inherited suffix rule so it can never fire on an SDK source.
 MY_OBJS = $(patsubst %.c,$(OBJDIR)/%.o,$(notdir $(SRCS)))
-$(MY_OBJS): build/generated/toolchain.stamp
+# Header layout changes must rebuild every consumer (save v2 otherwise wrote
+# 300 bytes into a stale 220-byte stack buffer). makefile bootstraps .d files
+# for existing objects and also invalidates compiled configuration changes.
+$(MY_OBJS): build/generated/toolchain.stamp makefile
+-include $(MY_OBJS:.o=.d)
 
 # The parent expanded $(TARGET)'s prerequisites from its own OBJS while reading
 # its rules; make unions prerequisites across rules for the same target, so
@@ -155,7 +164,7 @@ $(foreach s,$(SRCS),$(eval $(s:.c=.o): $(OBJDIR)/$(notdir $(s:.c=.o))))
 %.o: %.c
 
 $(OBJDIR)/%.o: src/%.c src/video_mode.h | $(OBJDIR)
-	$(CC) $< $(DFLAGS) $(CCFLAGS) $(_CCFLAGS) -o $@
+	$(CC) $< $(DFLAGS) $(CCFLAGS) $(_CCFLAGS) -MMD -MP -MF $(@:.o=.d) -MT $@ -o $@
 
 $(OBJDIR)/demo_camera.o: ../shared/lib/camera/kokiri_camera.c ../shared/lib/camera/kokiri_camera.h ../shared/lib/collision/kokiri_collision.h
 $(OBJDIR)/demo_follow.o: ../shared/lib/camera/oot_follow.c ../shared/lib/camera/oot_follow.h ../shared/lib/camera/kokiri_camera.h
@@ -171,15 +180,15 @@ $(OBJDIR)/kokiri_sgl.o: build/generated/link_equipment.h
 $(OBJDIR)/message.o $(OBJDIR)/cutscene.o $(OBJDIR)/cutscenes.o $(OBJDIR)/demo.o $(OBJDIR)/main.o: build/generated/cutscenes.h src/message.h src/cutscene.h
 
 $(OBJDIR)/music.o: ../shared/lib/music/music.c ../shared/lib/music/music.h src/video_mode.h | $(OBJDIR)
-	$(CC) $< $(DFLAGS) $(CCFLAGS) $(_CCFLAGS) -o $@
+	$(CC) $< $(DFLAGS) $(CCFLAGS) $(_CCFLAGS) -MMD -MP -MF $(@:.o=.d) -MT $@ -o $@
 
 $(OBJDIR)/core.o: makefile
 
 $(OBJDIR)/%.o: build/generated/%.c src/video_mode.h | $(OBJDIR)
-	$(CC) $< $(DFLAGS) $(CCFLAGS) $(_CCFLAGS) -o $@
+	$(CC) $< $(DFLAGS) $(CCFLAGS) $(_CCFLAGS) -MMD -MP -MF $(@:.o=.d) -MT $@ -o $@
 
 $(OBJDIR)/%.o: $(JO_ENGINE_SRC_DIR)/%.c src/video_mode.h | $(OBJDIR)
-	$(CC) $< $(DFLAGS) $(CCFLAGS) $(_CCFLAGS) -o $@
+	$(CC) $< $(DFLAGS) $(CCFLAGS) $(_CCFLAGS) -MMD -MP -MF $(@:.o=.d) -MT $@ -o $@
 
 $(OBJDIR):
 	mkdir -p $(OBJDIR)

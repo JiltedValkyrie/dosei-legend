@@ -29,6 +29,27 @@ class AudioBank(unittest.TestCase):
             self.assertEqual(blob[start+length:start+length+4], bytes(4))
 
 
+    def test_area_banks_fit_after_core_and_match_header(self):
+        manifest = json.loads((GEN/'action_audio.json').read_text())
+        self.assertEqual(manifest['area_base'], manifest['base'] + manifest['bytes'])
+        self.assertEqual(manifest['area_base'] % 2, 0)
+        self.assertEqual(manifest['area_base'] + manifest['area_limit'], 0x80000)
+        header = (GEN/'action_audio_data.h').read_text()
+        for bank in manifest['area_banks']:
+            self.assertLessEqual(bank['bytes'], manifest['area_limit'])
+            if bank['file']:
+                blob = (GEN/bank['file']).read_bytes()
+                self.assertEqual(len(blob), bank['bytes'])
+                self.assertIn('"%s"' % bank['file'], header)
+                for sample in bank['samples']:
+                    start, length = sample['offset'], sample['length']
+                    self.assertTrue(any(blob[start:start+length]))
+                    self.assertEqual(blob[start+length:start+length+4], bytes(4))
+        core = {s['name'] for s in manifest['samples']}
+        self.assertNotIn('cut', core)
+        self.assertIn('swing', core)
+
+
 @unittest.skipUnless(GCC.is_file(), 'host compiler required')
 class AudioEvents(unittest.TestCase):
     @classmethod
@@ -58,7 +79,8 @@ static void jo_fs_close(jo_file *f) {}
 static int jo_fs_read_next_bytes(jo_file *f, char *b, unsigned int n) { return -1; }
 '''
         wrapper = '''
-void reset(void) { memset(regs, 0, sizeof(regs)); ready = true; opening_bank = false; busy = false; voice = 0; rupee_active = false; rupee_clock = rupee_note = 0; sound_refresh = 60; }
+void set_area(unsigned int bank, bool loaded) { area_bank = bank; area_ready = loaded; }
+void reset(void) { memset(regs, 0, sizeof(regs)); ready = true; opening_bank = false; area_bank = 1; area_ready = true; busy = false; voice = 0; rupee_active = false; rupee_clock = rupee_note = 0; sound_refresh = 60; }
 void use_opening(void) { opening_bank = true; }
 unsigned int reg(unsigned int s, unsigned int o) { return SLOT(s,o); }
 void set_busy(bool b) { busy = b; }
@@ -79,9 +101,10 @@ void refresh(unsigned int hz) { sound_refresh = hz; }
 
     def test_swing_plays_blade_and_voice_without_touching_music_slots(self):
         self.lib.action_audio_events(2)
-        for slot in (24,25):
+        # Voices are stored at half rate (build_action_audio), so octave 13.
+        for slot, octave in ((24,14),(25,13)):
             self.assertEqual(self.lib.reg(slot,0) & 0x1830, 0x1810)
-            self.assertEqual(self.lib.reg(slot,16), 14 << 11)
+            self.assertEqual(self.lib.reg(slot,16), octave << 11)
             self.assertGreater(self.lib.reg(slot,6), 0)
         for slot in range(24):
             self.assertEqual(self.lib.reg(slot,0), 0)
@@ -92,6 +115,18 @@ void refresh(unsigned int hz) { sound_refresh = hz; }
             self.lib.reset()
             self.lib.action_audio_events(event)
             self.assertTrue(self.lib.reg(slot,0) & 0x800)
+
+    def test_cut_uses_area_bank_address_and_is_silent_without_it(self):
+        self.lib.action_audio_events(4)
+        address = ((self.lib.reg(26,0) & 15) << 16) | self.lib.reg(26,2)
+        header = (GEN/'action_audio_data.h').read_text()
+        base = int(re.search(r'#define SFX_AREA_BASE (\d+)', header)[1])
+        self.assertEqual(address, base)
+        for bank, loaded in ((0, True), (1, False)):
+            self.lib.reset()
+            self.lib.set_area(bank, loaded)
+            self.lib.action_audio_events(4)
+            self.assertEqual(self.lib.reg(26,0), 0)
 
     def test_rupee_sound_has_own_slot_even_when_gear_is_collected_too(self):
         self.lib.action_audio_events((1<<18) | 1)

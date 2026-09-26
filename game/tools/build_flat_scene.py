@@ -29,6 +29,7 @@ import sys
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
 from build_sgl_scene import face_normal                         # noqa: E402
+import asset_names
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 
@@ -178,7 +179,7 @@ def main():
 
     vertices, faces = convert(args.obj, args.cull)
     mesh, bounds = pack(vertices, faces)
-    (args.out / ('S%dR0.MSH' % args.scene)).write_bytes(mesh)
+    (args.out / asset_names.room_asset(args.scene, 0, 'MSH')).write_bytes(mesh)
 
     summary = dict(scene=args.scene, vertices=len(vertices),
                    polygons=len(faces), tiles=0, pixel_bytes=0,
