@@ -30,7 +30,10 @@ Human directive: after the manual-jump checkpoint, work on `dev` from now on.
 The new 2026-09-18 control directive supersedes that checkpoint: A interact,
 X attack, Y jump, B toggles walk/run, hold C+D-pad supplies the four N64 C
 directions. The 2026-09-22 remap supersedes that look/target mapping:
-hold L+D-pad looks around; Z targets/recenters. Read the authoritative requirements
+hold L+D-pad looks around; Z targets/recenters.
+3D Control Pad in analog mode: stick moves with proportional speed (B selects
+walk/run ceiling); L+stick looks. D-pad navigates menus while open, otherwise
+provides C directions without holding C. Digital mode keeps the standard layout. Read the authoritative requirements
 at the top of `game/docs/OPUS_HANDOFF.md` before changing input code.
 
 ## BIG RULE NUMBER 1

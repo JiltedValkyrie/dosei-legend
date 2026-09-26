@@ -389,7 +389,10 @@ static void demo_vblank(void)
     /* One normalized snapshot per VBlank. All button state -- including every
      * chord -- is read from this single sample, so two consumers can never
      * disagree about which buttons were down on a given frame. */
-    player_input_sample(connected ? demo_pad_snapshot() : 0);
+    player_input_sample_pad(connected ? demo_pad_snapshot() : 0,
+        connected && jo_is_input_analog(0),
+        connected ? jo_get_input_axis(0, JoAxis1) : 128,
+        connected ? jo_get_input_axis(0, JoAxis2) : 128);
     /* BDCLMD=0 keeps the border outside the active picture black. */
     JO_VDP2_TVMD &= (unsigned short)~0x0100;
     phase += 60;
@@ -779,8 +782,9 @@ void demo_update(void)
                  * would give right now, which is what the source scales. */
                 {
                     uint16_t heading = demo_link_yaw;
-                    bool forward = kokiri_camera_input_heading(demo_yaw, walk,
-                                                               &heading);
+                    int32_t speed;
+                    bool forward = player_input_motion(&input, demo_yaw,
+                                                       &heading, &speed) && walk;
                     if (forward) {
                         int32_t turn = (int32_t)(int16_t)
                             (uint16_t)(heading - demo_link_yaw);
@@ -788,15 +792,19 @@ void demo_update(void)
                         /* Source quadrant: within 45 degrees of his facing. */
                         forward = turn <= 8192;
                     }
-                    link_anim_roll_input(kokiri_camera_walking()
-                                             ? LINK_WALK_SPEED_Q8
-                                             : LINK_RUN_SPEED_Q8,
-                                         forward);
+                    link_anim_roll_input(speed, forward);
                 }
                 roll_speed = link_anim_roll_speed_q8();
                 if (roll_speed > 0)
                     kokiri_camera_move_heading(&demo_link, demo_link_yaw,
                                                roll_speed);
+                else if (input.analog)
+                {
+                    uint16_t heading;
+                    int32_t speed;
+                    if (walk && player_input_motion(&input, demo_yaw, &heading, &speed))
+                        kokiri_camera_move_heading(&demo_link, heading, speed);
+                }
                 else
                     kokiri_camera_update(&demo_link, &demo_yaw, &unused_pitch,
                                          walk, false, true);

@@ -1,3 +1,22 @@
+# Astra to Claude: 3D Control Pad side task - 2026-09-25
+
+Claude: analog support ready; separate commit requested by human. M1 remains yours.
+- `demo.c` samples the SGL/Jo 3D Pad ID and X/Y axes in VBlank. Movement
+  uses the existing heading/collision/remainder path. No world-collision edits.
+- `player_input.[ch]`: circular deadzone 16, continuous camera-relative heading,
+  proportional speed; B selects walk/run ceiling. L+stick looks; Z targets.
+  3D D-pad supplies C directions during gameplay, raw menu navigation while
+  menus/dialogue own input. Stick movement and C input can coexist. Digital
+  controllers (including a 3D Pad in digital mode) keep the existing mapping.
+- `main.c` pause help adapts to the detected pad. C-item gameplay remains pending;
+  this supplies the existing C input interface, not item implementations.
+- Host controls 50/50, diff check clean. SH-2 input object has no float helpers.
+  Only clean image rebuilt per human request: `game/build/game-clean.cue`.
+  Map checked: 3,552 bytes below SGL work area; arena remains 51,200.
+- Kronos not launched. Human should choose 3D Control Pad/analog mode, check
+  small/full stick travel, camera-relative direction, L look, D-pad C input,
+  pause/file menu navigation, and switching back to a digital controller.
+
 # Astra to Claude: M0 re-review approved - 2026-09-25
 
 Claude: both fixes accepted. Capsule repros/misses/reversal covered; unsigned

@@ -12,6 +12,8 @@
 #define DPAD_MASK (CAMERA_UP | CAMERA_DOWN | CAMERA_LEFT | CAMERA_RIGHT)
 
 static volatile uint16_t    held_snapshot;
+static volatile bool analog_snapshot;
+static volatile uint8_t axis_x, axis_y;
 static player_move_mode_t   move_mode;
 static bool                 dialogue_open;
 static input_edge_t         edge_walk_toggle;   /* B */
@@ -43,6 +45,8 @@ void player_input_reset(void)
     unsigned int i;
 
     held_snapshot = 0;
+    analog_snapshot = false;
+    axis_x = axis_y = 128;
     /* Run, not walk: this preserves the speed the slice already shipped. */
     move_mode = PLAYER_MOVE_RUN;
     dialogue_open = false;
@@ -61,11 +65,18 @@ void player_input_reset(void)
 
 void player_input_sample(uint16_t held)
 {
+    player_input_sample_pad(held, false, 128, 128);
+}
+
+void player_input_sample_pad(uint16_t held, bool analog, uint8_t x, uint8_t y)
+{
     unsigned int i;
     bool look = (held & CAMERA_L) != 0;
-    bool c_mode = !look && (held & CAMERA_C) != 0;
+    bool c_mode = !look && (analog || (held & CAMERA_C) != 0);
 
     held_snapshot = held;
+    analog_snapshot = analog;
+    axis_x = x; axis_y = y;
     input_edge_sample(&edge_walk_toggle, (held & CAMERA_B) != 0);
     input_edge_sample(&edge_jump, (held & CAMERA_Y) != 0);
     input_edge_sample(&edge_interact, (held & CAMERA_A) != 0);
@@ -83,14 +94,25 @@ void player_input_sample(uint16_t held)
     }
 }
 
+/* Integer radius, bounded to 181 for the two signed byte axes. */
+static int stick_radius(int x, int y)
+{
+    unsigned int square = x * x + y * y;
+    unsigned int root = 0, bit;
+    for (bit = 128; bit; bit >>= 1)
+        if ((root + bit) * (root + bit) <= square) root += bit;
+    return (int)root;
+}
+
 /* Priority order: L look, then C buttons, then ordinary movement. Z is the
 ** target button and is read on the movement path, so holding it strafes. */
 void player_input_step(bool in_gameplay, player_input_t *out)
 {
+    bool analog = analog_snapshot;
     uint16_t held = held_snapshot;
     uint16_t dpad = held & DPAD_MASK;
     bool look = (held & CAMERA_L) != 0;
-    bool c_mode = !look && (held & CAMERA_C) != 0;
+    bool c_mode = !look && (analog || (held & CAMERA_C) != 0);
     bool toggled = input_edge_consume(&edge_walk_toggle);
     bool jumped = input_edge_consume(&edge_jump);
     bool interacted = input_edge_consume(&edge_interact);
@@ -109,6 +131,8 @@ void player_input_step(bool in_gameplay, player_input_t *out)
         c_release_consumed[i] = releases;
     }
 
+    out->analog = analog;
+    out->stick_x = out->stick_y = 0;
     out->move_buttons = 0;
     out->look_mode = false;
     out->look_exited = false;
@@ -144,7 +168,7 @@ void player_input_step(bool in_gameplay, player_input_t *out)
     ** chord must not swallow. Up swaps the camera, Down toggles the panel.
     ** Gated to diagnostic builds; the clean player disc has neither. */
 #ifndef DOSEI_CLEAN_TEST
-    if ((held & CAMERA_L) && (held & CAMERA_R) &&
+    if (!dialogue_open && (held & CAMERA_L) && (held & CAMERA_R) &&
         (dpad & (CAMERA_UP | CAMERA_DOWN)))
     {
         bool swap = (dpad & CAMERA_UP) != 0;
@@ -196,6 +220,19 @@ void player_input_step(bool in_gameplay, player_input_t *out)
         return;
     }
 
+    if (analog)
+    {
+        int x = (int)axis_x - 128, y = 128 - (int)axis_y;
+        int radius = stick_radius(x, y);
+        /* Circular 16-unit deadzone; full throw at 127. Preserve direction. */
+        if (radius > 16)
+        {
+            int strength = radius >= 127 ? 127 : (radius - 16) * 127 / 111;
+            out->stick_x = x * strength / radius;
+            out->stick_y = y * strength / radius;
+        }
+    }
+
     if (look)
     {
         /* Look mode aims the view only: no translation, no C items, no shield
@@ -207,8 +244,11 @@ void player_input_step(bool in_gameplay, player_input_t *out)
         ** +Y-up, +Z-forward camera, screen right is (f x up) = -X, so
         ** INCREASING yaw swings the view to the left. Pressing right must
         ** therefore decrease it. */
-        out->look_yaw_delta = -horizontal * PLAYER_LOOK_YAW_SPEED;
-        out->look_pitch_delta = vertical * PLAYER_LOOK_PITCH_SPEED;
+        out->look_yaw_delta = analog ? -out->stick_x * PLAYER_LOOK_YAW_SPEED / 127
+                                    : -horizontal * PLAYER_LOOK_YAW_SPEED;
+        out->look_pitch_delta = analog ? out->stick_y * PLAYER_LOOK_PITCH_SPEED / 127
+                                      : vertical * PLAYER_LOOK_PITCH_SPEED;
+        out->stick_x = out->stick_y = 0;
         out->shield_held = false;
         look_was_active = true;
         /* Y is consumed rather than queued: a jump must not fire the instant L
@@ -232,7 +272,7 @@ void player_input_step(bool in_gameplay, player_input_t *out)
             if (c_released[i])
                 out->c_released = (player_c_button_t)(PLAYER_C_UP + i);
         }
-        return;
+        if (!analog) return;
     }
     /* Report C releases that happened as C itself was let go, so a held item
     ** cannot be left stuck on. */
@@ -240,7 +280,10 @@ void player_input_step(bool in_gameplay, player_input_t *out)
         if (c_released[i])
             out->c_released = (player_c_button_t)(PLAYER_C_UP + i);
 
-    out->move_buttons = dpad;
+    out->move_buttons = analog
+        ? ((out->stick_x > 0 ? CAMERA_RIGHT : out->stick_x < 0 ? CAMERA_LEFT : 0) |
+           (out->stick_y > 0 ? CAMERA_UP : out->stick_y < 0 ? CAMERA_DOWN : 0))
+        : dpad;
     out->jump = jumped;
     out->recenter = recentered;
     /* Set only on the path that reaches here: the diagnostics chord and the
@@ -257,4 +300,23 @@ void    player_input_set_dialogue(bool open)
 player_move_mode_t player_input_move_mode(void)
 {
     return move_mode;
+}
+
+/* Use the same movement basis and collision/remainder path as digital input. */
+bool player_input_motion(const player_input_t *input, uint16_t yaw,
+                         uint16_t *heading, int32_t *speed_q8)
+{
+    int32_t sine, cosine;
+    int speed = input->move_mode == PLAYER_MOVE_WALK
+              ? LINK_WALK_SPEED_Q8 : LINK_RUN_SPEED_Q8;
+    *speed_q8 = speed;
+    if (!input->analog)
+        return kokiri_camera_input_heading(yaw, input->move_buttons, heading);
+    *speed_q8 = speed * stick_radius(input->stick_x, input->stick_y) / 127;
+    if (!*speed_q8) return false;
+    kokiri_camera_sincos(yaw, &sine, &cosine);
+    *heading = kokiri_camera_facing(
+        (-input->stick_x * cosine + input->stick_y * sine) / 256,
+        (input->stick_y * cosine + input->stick_x * sine) / 256);
+    return true;
 }

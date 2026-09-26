@@ -116,3 +116,12 @@ void look_eye(camera_position_t *player, camera_position_t *eye_out,
 {
     oot_follow_update(&follow, player, 0, false, eye_out, yaw_out, pitch_out);
 }
+
+int control_motion_heading(int yaw) {
+    uint16_t heading = 0; int32_t speed;
+    return player_input_motion(&mapped, yaw, &heading, &speed) ? heading : -1;
+}
+int control_motion_speed(void) {
+    uint16_t heading; int32_t speed;
+    return player_input_motion(&mapped, 0, &heading, &speed) ? speed : 0;
+}

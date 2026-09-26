@@ -84,6 +84,82 @@ class PlayerControls(unittest.TestCase):
         self.lib.control_tap(bits, vblanks)
         self.lib.control_step(in_gameplay)
 
+    def analog(self, bits=0, x=128, y=128):
+        self.lib.player_input_sample_pad(bits, True, x, y)
+        self.lib.control_step(True)
+
+    def test_analog_deadzone_and_proportional_speed(self):
+        for x, y in ((128, 128), (140, 138), (128, 112)):
+            self.analog(x=x, y=y)
+            self.assertEqual(self.lib.control_motion_speed(), 0)
+        self.analog(y=64)
+        half = self.lib.control_motion_speed()
+        self.assertGreater(half, 0)
+        self.analog(y=0)
+        self.assertEqual(self.lib.control_motion_speed(), 1408)
+        self.assertLess(half, 1408)
+        self.analog(x=255, y=0)
+        self.assertLessEqual(self.lib.control_motion_speed(), 1408)
+        self.assertGreater(self.lib.control_motion_speed(), 1380)
+
+    def test_analog_handedness_and_continuous_heading(self):
+        for x, y, heading in ((128, 0, 0), (255, 128, 49152),
+                               (0, 128, 16384), (128, 255, 32768)):
+            self.analog(x=x, y=y)
+            self.assertEqual(self.lib.control_motion_heading(0), heading)
+            self.assertEqual(self.lib.control_motion_heading(16384), (heading + 16384) & 65535)
+        self.analog(x=160, y=0)
+        heading = self.lib.control_motion_heading(0)
+        self.assertGreater(heading, 57344)
+        self.assertLess(heading, 65536)
+
+    def test_analog_c_and_stick_together_then_menu(self):
+        self.analog(LEFT | Y | Z, y=0)
+        self.assertEqual(self.lib.control_c_pressed(), C_LEFT)
+        self.assertEqual(self.lib.control_move_buttons(), UP)
+        self.assertTrue(self.lib.control_jump())
+        self.assertTrue(self.lib.control_target_held())
+        self.lib.player_input_set_dialogue(True)
+        self.analog()
+        self.analog(DOWN, y=0)
+        self.assertEqual(self.lib.control_menu_step(), 1)
+        self.assertEqual(self.lib.control_c_pressed(), C_NONE)
+        self.assertEqual(self.lib.control_motion_speed(), 0)
+        self.lib.player_input_set_dialogue(False)
+        self.analog(DOWN)
+        self.assertEqual(self.lib.control_c_pressed(), C_NONE)
+        self.assertEqual(self.lib.control_motion_speed(), 0)
+
+    def test_analog_look_and_digital_reconnect(self):
+        self.analog(L, x=255)
+        self.assertEqual(self.lib.control_look_yaw(), -420)
+        self.assertEqual(self.lib.control_motion_speed(), 0)
+        self.hold(0)
+        self.assertEqual(self.lib.control_motion_speed(), 0)
+        self.hold(RIGHT)
+        self.assertEqual(self.lib.control_c_pressed(), C_NONE)
+        self.assertEqual(self.lib.control_motion_heading(0), 49152)
+
+    def test_analog_c_tap_survives_slow_frame_and_disconnect(self):
+        self.lib.player_input_sample_pad(RIGHT, True, 128, 128)
+        self.lib.player_input_sample_pad(0, True, 128, 128)
+        self.lib.control_step(True)
+        self.assertEqual(self.lib.control_c_pressed(), C_RIGHT)
+        self.assertEqual(self.lib.control_c_released(), C_RIGHT)
+        self.analog(UP, y=0)
+        self.hold(0)
+        self.assertEqual(self.lib.control_motion_speed(), 0)
+        self.assertEqual(self.lib.control_c_released(), C_UP)
+
+    def test_analog_walk_cap_and_menu_owns_debug_chord(self):
+        self.analog(B, y=0)
+        self.assertEqual(self.lib.control_motion_speed(), 768)
+        self.lib.player_input_set_dialogue(True)
+        self.analog(L | R | UP)
+        self.assertEqual(self.lib.control_menu_step(), -1)
+        self.assertEqual(self.lib.control_c_pressed(), C_NONE)
+        self.assertEqual(self.lib.control_motion_speed(), 0)
+
     # --- button mapping ---------------------------------------------------
 
     def test_menu_blocks_world_and_consumes_attack_jump_look(self):

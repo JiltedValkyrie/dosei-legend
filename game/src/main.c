@@ -684,16 +684,16 @@ static void         inventory_menu(void)
     }
     row++;
     jo_printf(2, row++, "%-36s", "CONTROLS");
-    jo_printf(2, row++, "%-36s", "D-pad move   B walk/run");
+    jo_printf(2, row++, "%-36s", jo_is_input_analog(0) ? "Stick move   B walk/run" : "D-pad move   B walk/run");
     jo_printf(2, row++, "%-36s", "X swing/cut  Hold R shield");
     jo_printf(2, row++, "%-36s", "Y jump       A talk/next page");
     jo_printf(2, row++, "%-36s", "B closes dialogue");
     jo_printf(2, row++, "%-36s", "Hold Z: lock on + strafe");
     jo_printf(2, row++, "%-36s", "Release Z: release lock");
     jo_printf(2, row++, "%-36s", "Tap Z: re-centre camera");
-    jo_printf(2, row++, "%-36s", "Hold Z: D-pad strafe/back up");
-    jo_printf(2, row++, "%-36s", "Hold L + D-pad: look around");
-    jo_printf(2, row++, "%-36s", "Hold C + D-pad: C items (pending)");
+    jo_printf(2, row++, "%-36s", jo_is_input_analog(0) ? "Hold Z: stick strafe/back up" : "Hold Z: D-pad strafe/back up");
+    jo_printf(2, row++, "%-36s", jo_is_input_analog(0) ? "Hold L + stick: look around" : "Hold L + D-pad: look around");
+    jo_printf(2, row++, "%-36s", jo_is_input_analog(0) ? "D-pad: C items (pending)" : "Hold C + D-pad: C items (pending)");
     jo_printf(2, row++, "%-36s", "A: roll; also rolls on landing");
     jo_printf(2, row++, "%-36s", "Start opens/closes items");
     jo_printf(2, row++, "%-36s", "MENU: D-pad pick A equip B back");

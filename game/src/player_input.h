@@ -15,7 +15,7 @@
 **
 ** The N64 reference is the manual at game/docs/refs: C is FOUR C BUTTONS, not
 ** an analog stick. Holding the Saturn C button turns the D-pad into that
-** cluster. Z holds the look camera. Chord priority is Z, then C, then movement,
+** cluster. L holds the look camera; Z targets. Chord priority is L, then C, then movement,
 ** and a direction consumed by a modifier never leaks into locomotion.
 */
 
@@ -45,10 +45,12 @@ typedef struct
     ** are already removed. */
     uint16_t            move_buttons;
     player_move_mode_t  move_mode;
+    bool                analog;
+    int16_t             stick_x, stick_y; /* right/up positive, deadzone removed */
     /* Look camera. yaw/pitch deltas are binang per fixed step, zero unless
     ** look_mode is set. */
     bool                look_mode;
-    bool                look_exited;        /* Z released this step */
+    bool                look_exited;        /* L released this step */
     int32_t             look_yaw_delta;
     int32_t             look_pitch_delta;
     /* C interface. `c_held` is the direction currently held (for future aiming);
@@ -58,10 +60,10 @@ typedef struct
     player_c_button_t   c_released;
     /* Wired behavior. */
     bool                jump;               /* Y */
-    bool                recenter;           /* L press edge, unless consumed by a chord */
-    /* L HELD, unless consumed by a chord. Hold targeting needs the button's
+    bool                recenter;           /* Z press edge, unless consumed by a chord */
+    /* Z HELD, unless consumed by a chord. Hold targeting needs the button's
     ** state every step, not just its press edge: the lock lasts exactly as
-    ** long as L is down. Whether a press recentres is decided in gameplay.c,
+    ** long as Z is down. Whether a press recentres is decided in gameplay.c,
     ** because it depends on whether the hold became a lock-on. */
     bool                target_held;
     /* Pending: no system implemented yet. */
@@ -86,6 +88,11 @@ void    player_input_reset(void);
 /* Sample from VBlank: `held` is the normalized CAMERA_* snapshot. Maintains the
 ** press edges for B, Y, A, X and the four C directions. */
 void    player_input_sample(uint16_t held);
+/* 3D Pad axes: unsigned 0..255, centre 128, Y grows downward. */
+void    player_input_sample_pad(uint16_t held, bool analog, uint8_t x, uint8_t y);
+/* Camera-relative heading and proportional speed, including digital fallback. */
+bool    player_input_motion(const player_input_t *input, uint16_t yaw,
+                            uint16_t *heading, int32_t *speed_q8);
 /* Consume one fixed step's worth of decisions. `in_gameplay` false discards
 ** queued actions so title input never leaks into the world. */
 void    player_input_step(bool in_gameplay, player_input_t *out);
