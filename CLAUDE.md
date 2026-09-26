@@ -7,6 +7,15 @@ Always use caveman talk. No waste human tokens. Bad. You caveman talking? Good g
 
 # Project handoff - 2026-09-16
 
+## Human rule: playable progress, severity-first bug/feature triage
+
+For future work: fix severe current blockers immediately; log small bugs,
+potential issues and optional features, then keep progressing the assigned game
+milestone. Do not block advancement on minor follow-ups or speculative cleanup.
+Use [BUG_FEATURE_LOG.md](game/docs/BUG_FEATURE_LOG.md) for priority, evidence,
+owner and revisit trigger. Required features stay required; optional additions
+need scope assignment. Existing M1a review/fix requirements remain unchanged.
+
 ## Human rule: actor drops belong in the same task
 
 Add grass, pots, enemies, props or items: always check real OoT drop code and
