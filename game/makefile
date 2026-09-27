@@ -81,7 +81,7 @@ JO_MAX_SPRITE = 2800
 # by 16 bytes. Keep ~2 KB clear; jo_malloc spills into the cart zones.
 JO_GLOBAL_MEMORY_SIZE_FOR_MALLOC ?= 51200
 
-SRCS = src/main.c src/ram_cart.c src/game_mode.c src/message.c src/cutscene.c src/cutscene_actor.c src/save_state.c src/actor_sys.c src/collide.c src/save_file.c src/save_device.c src/file_select.c src/scene_flow.c src/kokiri_sgl.c ../shared/lib/music/music.c src/music_banks.c src/demo.c src/navi.c src/player_input.c src/gameplay.c src/action_audio.c src/demo_camera.c src/demo_collision.c src/demo_follow.c src/link_anim.c src/link_anim_state.c src/frame_timer.c build/generated/kokiri_scene.c build/generated/kokiri_textures.c build/generated/link_scene.c build/generated/link_textures.c build/generated/link_clips.c build/generated/scene_table.c build/generated/kokiri_actors.c build/generated/kokiri_dialogue.c build/generated/cutscenes.c
+SRCS = src/main.c src/ram_cart.c src/game_mode.c src/message.c src/cutscene.c src/cutscene_actor.c src/save_state.c src/actor_sys.c src/collide.c src/save_file.c src/save_device.c src/file_select.c src/scene_flow.c src/kokiri_sgl.c ../shared/lib/music/music.c src/music_banks.c src/demo.c src/navi.c src/player_input.c src/gameplay.c src/action_audio.c src/demo_camera.c src/demo_collision.c src/demo_follow.c src/link_anim.c src/link_anim_state.c src/player_air.c src/player_bg.c src/player_climb.c src/player_crawl.c src/frame_timer.c build/generated/kokiri_scene.c build/generated/kokiri_textures.c build/generated/link_scene.c build/generated/link_textures.c build/generated/link_clips.c build/generated/scene_table.c build/generated/kokiri_actors.c build/generated/kokiri_dialogue.c build/generated/cutscenes.c
 override ASSETS_DIR = ./build/cd
 
 JO_ENGINE_SRC_DIR = ../../joengine/jo_engine
@@ -103,6 +103,8 @@ SYSOBJS = build/generated/sglarea.o
 # The converter writes kokiri_scene.h into generated/.
 _CCFLAGS += -Ibuild/generated -Isrc -Ilevels/kokiri/assets/audio -Iassets/audio/cutscenes -I../shared/assets/audio/title -I../shared/lib/camera -I../shared/lib/collision -I../shared/lib/music
 _CCFLAGS += -include src/video_mode.h
+# Link's per-frame clip tables come from LINKANIM.BIN (cart), not .rodata.
+_CCFLAGS += -DLINK_FRAMES_FROM_DISC
 ifeq ($(CLEAN_TEST),1)
 _CCFLAGS += -DDOSEI_CLEAN_TEST
 endif
@@ -148,6 +150,7 @@ $(OBJDIR)/kokiri_sgl.o: src/scene_actor_order.h src/actor_order.h src/sgl_order_
 # time the include returns, so redefining OBJS alone cannot redirect them.
 # Instead declare our own link/convert targets against an obj/ object list and
 # cancel the inherited suffix rule so it can never fire on an SDK source.
+SRCS += src/push_block.c src/player_push.c src/player_lift.c src/player_slope.c src/player_water.c src/player_camera.c
 MY_OBJS = $(patsubst %.c,$(OBJDIR)/%.o,$(notdir $(SRCS)))
 # Header layout changes must rebuild every consumer (save v2 otherwise wrote
 # 300 bytes into a stale 220-byte stack buffer). makefile bootstraps .d files

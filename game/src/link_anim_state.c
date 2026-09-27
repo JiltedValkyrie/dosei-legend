@@ -61,10 +61,45 @@ static uint32_t         motion_events;
 ** forward. Held across the clip rather than recomputed from motion, because
 ** during a roll the motion IS this value. */
 static int32_t          roll_speed_q8;
+static int32_t          bonk_speed_q8;
 /* What locomotion would be giving right now, and whether it points forward.
 ** Pushed every step, so the target can rise again as well as fall. */
 static int32_t          roll_input_speed_q8;
 static bool             roll_forward_held;
+/* Automatic jump: which clip, and whether the descent has started. */
+static bool             jump_run;
+static unsigned int     jump_clip = LINK_CLIP_JUMP;
+static bool             air_falling;
+/* Ledge climbs (Player_Action_80845668). LinkAnimation_PlayOnceSetSpeed
+** 1.3: curFrame += 1.3 * R_UPDATE_RATE * 0.5 per 20 Hz update, i.e. 1.3
+** frames per 30 Hz step. Phase in 30ths of a frame: +39 per step. */
+#define CLIMB_RATE_30THS        39
+#define CLIMB_INTERRUPT_FRAMES  4   /* Player_TryActionInterrupt(..., 4.0f) */
+#define CLIMB_OFFSET_STEP_Q8    256 /* Math_StepToF(yOffset, 0, 150) x 2/3 */
+static unsigned int     climb_clip = LINK_CLIP_STEP100;
+static unsigned int     climb_phase;
+/* Hang: the clip playing, actionVar1 (0 until the grab frame, 1 after a
+** walk-off, -1 after a mid-air grab), and the pull-up's result. */
+static unsigned int     hang_clip = LINK_CLIP_CLIMB_HOLD;
+static int              hang_var;
+static bool             pull_up_done;
+/* AnimMovement play: direction, prevTransl, ADJUST_STARTING_POS, and the
+** phase before the last step (for OnFrame). */
+static bool             move_reverse;
+static int32_t          move_prev[3];
+static bool             move_adjust;
+static unsigned int     move_before;
+static int32_t          move_kept[3];
+#define HANG_RATE_30THS         30  /* LinkAnimation_PlayOnce / PlayLoop: 1.0 */
+#define PULL_UP_RATE_30THS      39  /* func_8083A9B8: 1.3 */
+
+/* The per-frame tables: host arrays, or LINKANIM.BIN in cart RAM. */
+#ifdef LINK_FRAMES_FROM_DISC
+extern const int16_t    (*link_root)[3];
+extern const int16_t    (*link_rotations)[LINK_LIMB_COUNT * 3];
+#endif
+static int32_t          climb_offset_q8;
+static bool             jump250_launch;
 
 uint32_t link_anim_motion_events(void) { return motion_events; }
 
@@ -110,6 +145,20 @@ static unsigned int     clip_for_state(link_state_t s)
         case LINK_STATE_FALL:    return LINK_CLIP_FALL;
         case LINK_STATE_LANDING: return LINK_CLIP_LANDING;
         case LINK_STATE_ROLL:    return LINK_CLIP_ROLL;
+        case LINK_STATE_JUMP:    return jump_clip;
+        case LINK_STATE_JUMP_LANDING: return LINK_CLIP_RUN_JUMP_END;
+        case LINK_STATE_STEP_UP: return climb_clip;
+        case LINK_STATE_JUMP_START: return LINK_CLIP_JUMP250;
+        case LINK_STATE_HANG:    return hang_clip;
+        case LINK_STATE_PULL_UP: return climb_clip;
+        case LINK_STATE_CLIMB:   return climb_clip;
+        case LINK_STATE_CRAWL:   return LINK_CLIP_TUNNEL_START;
+        case LINK_STATE_TURN:    return LINK_CLIP_TURN45;
+        case LINK_STATE_BONK:    return LINK_CLIP_HIP_DOWN;
+        case LINK_STATE_PUSH:
+        case LINK_STATE_SWIM:    return climb_clip;
+        case LINK_STATE_SLIDE:
+        case LINK_STATE_SLIDE_END: return climb_clip;
         case LINK_STATE_IDLE:
         default:                 return LINK_CLIP_IDLE;
     }
@@ -120,7 +169,8 @@ static unsigned int     clip_for_state(link_state_t s)
 ** forever and locking control. */
 static bool             is_one_shot(link_state_t s)
 {
-    return s == LINK_STATE_LANDING || s == LINK_STATE_ROLL;
+    return s == LINK_STATE_LANDING || s == LINK_STATE_ROLL ||
+           s == LINK_STATE_JUMP_LANDING || s == LINK_STATE_BONK || s == LINK_STATE_SLIDE_END;
 }
 
 /* Deliberately slower slice cadence: 20 source frames/s at 30 Hz.
@@ -130,9 +180,12 @@ static void             advance(void)
 {
     unsigned int length = clip_length(clip_for_state(state));
     unsigned int previous_frame = frame;
-    phase_ninths += state == LINK_STATE_FALL ? 2 : 6;
-    if (state == LINK_STATE_FALL && phase_ninths >= (length - 1) * 9)
-        phase_ninths = (length - 1) * 9;
+    phase_ninths += state == LINK_STATE_FALL ? 2 :
+                    (state == LINK_STATE_TURN || state == LINK_STATE_BONK ||
+                     state == LINK_STATE_SLIDE || state == LINK_STATE_SLIDE_END) ? 9 : 6;
+    if ((state == LINK_STATE_FALL || state == LINK_STATE_JUMP) &&
+        phase_ninths >= (length - 1) * 9)
+        phase_ninths = (length - 1) * 9;   /* ANIMMODE_ONCE: hold the end */
     else if (!is_one_shot(state) && phase_ninths >= length * 9)
         phase_ninths %= length * 9;
     frame = phase_ninths / 9;
@@ -193,12 +246,190 @@ static void             advance_roll_speed(void)
     }
 }
 
+static bool             is_climb(link_state_t s)
+{
+    return s == LINK_STATE_STEP_UP || s == LINK_STATE_JUMP_START ||
+           s == LINK_STATE_HANG || s == LINK_STATE_PULL_UP ||
+           s == LINK_STATE_CLIMB || s == LINK_STATE_CRAWL || s == LINK_STATE_PUSH ||
+           s == LINK_STATE_SWIM;
+}
+
+/* Source frames a stored clip spans: sampled every `stride`, last kept. */
+static unsigned int     source_length(unsigned int clip)
+{
+    return (link_clips[clip].count - 1) * link_clip_stride[clip] + 1;
+}
+
+/* Stored row of the frame `phase` (30ths of a source frame) is on. */
+static unsigned int     stored_row(unsigned int clip, unsigned int phase)
+{
+    unsigned int index = phase / (30 * link_clip_stride[clip]);
+    if (index >= link_clips[clip].count)
+        index = link_clips[clip].count - 1;
+    return link_clips[clip].first + index;
+}
+
+/* Model units -> Q8 world units at the drawn scale. */
+static int32_t          model_q8(int32_t v)
+{
+    return v * LINK_ANIM_SCALE_Q16 / 256;
+}
+
+/* LinkAnimation_OnFrame: `frame` passed on this step's advance. */
+static bool             crossed(unsigned int before, unsigned int after,
+                                unsigned int mark)
+{
+    return before < mark * 30 && mark * 30 <= after;
+}
+
+/* One step of Player_Action_80845668. True once the action is over and
+** locomotion takes this step. */
+static bool             climb_step(void)
+{
+    unsigned int length = clip_length(clip_for_state(state));
+    unsigned int end = (length - 1) * 30;
+    unsigned int before = climb_phase;
+    /* LinkAnimation_Once reports done on the update that starts at the end. */
+    bool finished = climb_phase >= end;
+
+    if (!finished) {
+        climb_phase += CLIMB_RATE_30THS;
+        if (climb_phase > end)
+            climb_phase = end;
+    }
+    if (state == LINK_STATE_JUMP_START) {
+        /* speedXZ 1.0 until frame 8, then func_80838940 jumps; the clip plays
+        ** on as the jump's animation (it passes no new one). */
+        if (crossed(before, climb_phase, 8)) {
+            jump250_launch = true;
+            state = LINK_STATE_JUMP;
+            jump_clip = LINK_CLIP_JUMP250;
+            jump_run = false;
+            air_falling = false;
+            phase_ninths = climb_phase * 9 / 30;
+            frame = phase_ninths / 9;
+        }
+        return false;
+    }
+    /* Player_TryActionInterrupt: the last 4 frames yield to movement. */
+    if (finished || (climb_phase + CLIMB_INTERRUPT_FRAMES * 30 >= end &&
+                     roll_input_speed_q8 > 0)) {
+        climb_offset_q8 = 0;
+        return true;
+    }
+    if (crossed(before, climb_phase, climb_clip == LINK_CLIP_STEP150 ? 30 : 16))
+        motion_events |= GP_EVENT_CLIMB_END;
+    if (climb_clip == LINK_CLIP_STEP100 || climb_phase > 5 * 30) {
+        if (climb_offset_q8 > CLIMB_OFFSET_STEP_Q8) climb_offset_q8 -= CLIMB_OFFSET_STEP_Q8;
+        else if (climb_offset_q8 < -CLIMB_OFFSET_STEP_Q8) climb_offset_q8 += CLIMB_OFFSET_STEP_Q8;
+        else climb_offset_q8 = 0;
+    }
+    return false;
+}
+
+/* Player_Action_8084BBE4's animation half: the grab clip once, then its
+** wait loop; the grab frame (11 of normal_fall, 1 of jump_climb_hold) sets
+** actionVar1 and plays the floor sound. */
+static void             hang_step(void)
+{
+    unsigned int length = source_length(hang_clip) * 30;
+    unsigned int before = climb_phase;
+
+    if (hang_clip == LINK_CLIP_HANG_FALL || hang_clip == LINK_CLIP_CLIMB_HOLD) {
+        if (climb_phase >= length - 30) {
+            hang_clip = hang_var > 0 ? LINK_CLIP_FALL_WAIT : LINK_CLIP_CLIMB_WAIT;
+            climb_phase = 0;
+            return;
+        }
+        climb_phase += HANG_RATE_30THS;
+        if (climb_phase > length - 30)
+            climb_phase = length - 30;
+        if (hang_var == 0 &&
+            crossed(before, climb_phase, hang_clip == LINK_CLIP_HANG_FALL ? 11 : 1)) {
+            hang_var = hang_clip == LINK_CLIP_HANG_FALL ? 1 : -1;
+            motion_events |= GP_EVENT_FOOTSTEP;   /* NA_SE_PL_WALK_GROUND */
+        }
+        return;
+    }
+    climb_phase = (climb_phase + HANG_RATE_30THS) % length;
+}
+
+/* Player_Action_8084BDFC. True once the clip has ended. */
+static bool             pull_up_step(void)
+{
+    unsigned int end = (source_length(climb_clip) - 1) * 30;
+    unsigned int before = climb_phase;
+
+    if (climb_phase >= end)
+        return true;
+    climb_phase += PULL_UP_RATE_30THS;
+    if (climb_phase > end)
+        climb_phase = end;
+    if (crossed(before, climb_phase, end / 30 - 6))
+        motion_events |= GP_EVENT_FOOTSTEP;       /* Player_PlayLandingSfx */
+    else if (crossed(before, climb_phase, end / 30 - 34))
+        motion_events |= GP_EVENT_CLIMB_END;      /* CLIMB_CLIFF + CLIMB_END */
+    return false;
+}
+
 void                    link_anim_update(int32_t speed, bool grounded,
                                          int32_t fall_units, bool roll_pressed)
 {
     bool    landed = grounded && !was_grounded;
 
     motion_events = 0;
+    jump250_launch = false;
+
+    if (state == LINK_STATE_SLIDE && grounded) {
+        was_grounded=true;
+        advance();
+        return;
+    }
+    if (state == LINK_STATE_TURN && grounded && speed == 0 && !roll_pressed)
+    {
+        was_grounded = true;
+        advance();
+        return;
+    }
+    if (state == LINK_STATE_HANG)
+    {
+        was_grounded = grounded;
+        hang_step();
+        return;
+    }
+    if (state == LINK_STATE_CLIMB || state == LINK_STATE_CRAWL || state == LINK_STATE_PUSH ||
+        state == LINK_STATE_SWIM)
+    {
+        /* Driven by link_anim_move_step from the climbing action. */
+        was_grounded = grounded;
+        return;
+    }
+    if (state == LINK_STATE_PULL_UP)
+    {
+        was_grounded = grounded;
+        if (!pull_up_step())
+            return;
+        pull_up_done = true;
+        state = LINK_STATE_IDLE;
+        frame = 0;
+        phase_ninths = 0;
+        landed = false;
+    }
+    else if (is_climb(state) && grounded)
+    {
+        was_grounded = true;
+        if (!climb_step())
+            return;
+        state = LINK_STATE_IDLE;
+        frame = 0;
+        phase_ninths = 0;
+        landed = false;
+    }
+    else if (is_climb(state))
+    {
+        climb_offset_q8 = 0;
+        state = LINK_STATE_IDLE;
+    }
 
     was_grounded = grounded;
     if (landed)
@@ -214,6 +445,13 @@ void                    link_anim_update(int32_t speed, bool grounded,
     {
         if (state == LINK_STATE_ROLL)
             advance_roll_speed();
+        if (state == LINK_STATE_BONK) {
+            bonk_speed_q8 += 341;
+            if (bonk_speed_q8 > 0) bonk_speed_q8 = 0;
+            if (roll_input_speed_q8 > 0 &&
+                frame >= clip_length(LINK_CLIP_HIP_DOWN) - 1 - 5)
+                phase_ninths = clip_length(LINK_CLIP_HIP_DOWN) * 9;
+        }
         advance();
         if (frame < clip_length(clip_for_state(state)))
             return;
@@ -228,8 +466,20 @@ void                    link_anim_update(int32_t speed, bool grounded,
     ** flag. An ungrounded step is a real departure and needs no debouncing. */
     if (!grounded)
     {
-        enter(LINK_STATE_FALL);
+        /* The jump clip plays until the descent passes the departure height;
+        ** then the ordinary falling pose takes over, as the source swaps to
+        ** its landing-ready animation there. */
+        if (state != LINK_STATE_JUMP || air_falling)
+            enter(LINK_STATE_FALL);
         advance();
+        return;
+    }
+
+    if (landed && state == LINK_STATE_JUMP && jump_run)
+    {
+        /* Player_Action_8084411C: a run jump lands with run_jump_end ahead
+        ** of the short-landing and roll choices. */
+        enter(LINK_STATE_JUMP_LANDING);
         return;
     }
 
@@ -272,6 +522,53 @@ int32_t                 link_anim_roll_speed_q8(void)
     return state == LINK_STATE_ROLL ? roll_speed_q8 : 0;
 }
 
+void link_anim_turn(bool requested, uint16_t target, uint16_t *facing)
+{
+    int32_t delta = (int16_t)(uint16_t)(target - *facing);
+    if (!requested) {
+        if (state == LINK_STATE_TURN) enter(LINK_STATE_IDLE);
+        return;
+    }
+    if (state != LINK_STATE_IDLE && state != LINK_STATE_TURN &&
+        state != LINK_STATE_WALK && state != LINK_STATE_RUN) return;
+    if (delta > 800 || delta < -800) {
+        enter(LINK_STATE_TURN);
+        *facing = (uint16_t)(*facing + (delta > 0 ? 800 : -800));
+    } else {
+        if (state == LINK_STATE_TURN) *facing = target;
+        enter(LINK_STATE_IDLE);
+    }
+}
+
+bool link_anim_bonk(bool wall_interact, uint16_t wall_angle)
+{
+    if (state != LINK_STATE_ROLL || roll_speed_q8 < 7 * 256 ||
+        !wall_interact || wall_angle >= 0x2000) return false;
+    bonk_speed_q8 = -roll_speed_q8;
+    enter(LINK_STATE_BONK);
+    return true;
+}
+
+int32_t link_anim_bonk_speed_q8(void)
+{
+    return state == LINK_STATE_BONK ? bonk_speed_q8 : 0;
+}
+
+void link_anim_slide(bool face_up)
+{
+    enter(LINK_STATE_SLIDE);
+    climb_clip=face_up?LINK_CLIP_SLIDE_UP:LINK_CLIP_SLIDE_DOWN;
+}
+void link_anim_slide_end(bool face_up)
+{
+    enter(LINK_STATE_SLIDE_END);
+    climb_clip=face_up?LINK_CLIP_SLIDE_UP_END:LINK_CLIP_SLIDE_DOWN_END;
+}
+void link_anim_slide_cancel(void)
+{
+    if(state==LINK_STATE_SLIDE || state==LINK_STATE_SLIDE_END)enter(LINK_STATE_IDLE);
+}
+
 void                    link_anim_roll_input(int32_t locomotion_speed_q8,
                                              bool forward)
 {
@@ -279,14 +576,273 @@ void                    link_anim_roll_input(int32_t locomotion_speed_q8,
     roll_forward_held = forward;
 }
 
+void                    link_anim_auto_jump(bool run)
+{
+    link_anim_cancel_roll();
+    jump_run = run;
+    jump_clip = run ? LINK_CLIP_RUN_JUMP : LINK_CLIP_JUMP;
+    air_falling = false;
+    state = LINK_STATE_JUMP;
+    frame = 0;
+    phase_ninths = 0;
+    roll_speed_q8 = 0;
+}
+
+void                    link_anim_hop(void)
+{
+    link_anim_auto_jump(false);
+}
+
+void                    link_anim_step_up(bool tall, int32_t y_dist)
+{
+    link_anim_cancel_roll();
+    state = LINK_STATE_STEP_UP;
+    climb_clip = tall ? LINK_CLIP_STEP150 : LINK_CLIP_STEP100;
+    climb_phase = 0;
+    frame = 0;
+    phase_ninths = 0;
+    roll_speed_q8 = 0;
+    /* shape.yOffset -= (yDistToLedge - rise) : start where he stood. */
+    climb_offset_q8 = (tall ? LINK_STEP150_RISE_Q8 : LINK_STEP100_RISE_Q8) -
+                      y_dist * 256;
+}
+
+void                    link_anim_jump_start(void)
+{
+    link_anim_cancel_roll();
+    state = LINK_STATE_JUMP_START;
+    climb_phase = 0;
+    frame = 0;
+    phase_ninths = 0;
+    roll_speed_q8 = 0;
+    climb_offset_q8 = 0;
+}
+
+void                    link_anim_hang(bool walk_off)
+{
+    link_anim_cancel_roll();
+    state = LINK_STATE_HANG;
+    hang_clip = walk_off ? LINK_CLIP_HANG_FALL : LINK_CLIP_CLIMB_HOLD;
+    hang_var = 0;
+    climb_phase = 0;
+    frame = 0;
+    phase_ninths = 0;
+    roll_speed_q8 = 0;
+    climb_offset_q8 = 0;
+    pull_up_done = false;
+}
+
+bool                    link_anim_hang_ready(void)
+{
+    return state == LINK_STATE_HANG && hang_var != 0;
+}
+
+void                    link_anim_pull_up(void)
+{
+    if (state != LINK_STATE_HANG)
+        return;
+    /* Player_Action_8084BBE4: fall_up after a walk-off, else jump_climb_up. */
+    link_anim_pull_up_clip(hang_var > 0 ? LINK_CLIP_FALL_UP : LINK_CLIP_CLIMB_UP);
+}
+
+void                    link_anim_pull_up_clip(unsigned int clip)
+{
+    link_anim_cancel_roll();
+    climb_clip = clip;
+    state = LINK_STATE_PULL_UP;
+    climb_phase = 0;
+    climb_offset_q8 = 0;
+    pull_up_done = false;
+}
+
+/* Root at a phase of the current play, interpolated like the pose. */
+static void             move_root(unsigned int phase, int32_t out[3])
+{
+    unsigned int base = link_clips[climb_clip].first;
+    unsigned int last = link_clips[climb_clip].count - 1;
+    unsigned int index = phase / 30, fraction = phase % 30, next, k;
+
+    if (index >= last) { index = last; fraction = 0; }
+    next = index < last ? index + 1 : index;
+    for (k = 0; k < 3; ++k)
+        out[k] = link_root[base + index][k] +
+            (link_root[base + next][k] - link_root[base + index][k]) *
+            (int32_t)fraction / 30;
+}
+
+void                    link_anim_move_play(unsigned int clip, bool reverse,
+                                            bool adjust_start)
+{
+    link_anim_cancel_roll();
+    state = LINK_STATE_CLIMB;
+    climb_clip = clip;
+    move_reverse = reverse;
+    climb_phase = reverse ? (source_length(clip) - 1) * 30 : 0;
+    move_before = climb_phase;
+    move_adjust = adjust_start;
+    move_kept[0] = move_prev[0];
+    move_kept[1] = move_prev[1];
+    move_kept[2] = move_prev[2];
+    move_root(climb_phase, move_prev);
+    frame = 0;
+    phase_ninths = 0;
+    roll_speed_q8 = 0;
+    climb_offset_q8 = 0;
+}
+
+void link_anim_push_play(unsigned int clip)
+{
+    link_anim_move_play(clip,false,false);
+    state=LINK_STATE_PUSH;
+}
+
+void link_anim_swim_play(unsigned int clip)
+{
+    link_anim_move_play(clip, false, false);
+    state = LINK_STATE_SWIM;
+}
+
+bool                    link_anim_move_step(unsigned int speed_30ths, int32_t delta[3])
+{
+    unsigned int end = (source_length(climb_clip) - 1) * 30;
+    int32_t now[3];
+    unsigned int k;
+
+    delta[0] = delta[1] = delta[2] = 0;
+    move_before = climb_phase;
+    if (move_reverse ? climb_phase == 0 : climb_phase >= end)
+        return true;
+    if (move_reverse)
+        climb_phase = climb_phase > speed_30ths ? climb_phase - speed_30ths : 0;
+    else {
+        climb_phase += speed_30ths;
+        if (climb_phase > end)
+            climb_phase = end;
+    }
+    move_root(climb_phase, now);
+    for (k = 0; k < 3; ++k) {
+        if (!move_adjust)
+            delta[k] = now[k] - move_prev[k];
+        move_prev[k] = now[k];
+    }
+    move_adjust = false;
+    return false;
+}
+
+unsigned int            link_anim_move_clip(void)
+{
+    return climb_clip;
+}
+
+bool                    link_anim_move_crossed(unsigned int mark)
+{
+    if (move_reverse)
+        return climb_phase <= mark * 30 && mark * 30 < move_before;
+    return crossed(move_before, climb_phase, mark);
+}
+
+void                    link_anim_fall(void)
+{
+    link_anim_cancel_roll();
+    state = LINK_STATE_FALL;
+    frame = 0;
+    phase_ninths = 0;
+    air_falling = true;
+    was_grounded = false;
+    climb_offset_q8 = 0;
+}
+
+void                    link_anim_crawl_hold(void)
+{
+    state = LINK_STATE_CRAWL;
+    climb_clip = LINK_CLIP_TUNNEL_START;
+    climb_phase = (source_length(climb_clip) - 1) * 30;
+}
+
+void                    link_anim_move_keep_prev(void)
+{
+    move_prev[0] = move_kept[0];
+    move_prev[1] = move_kept[1];
+    move_prev[2] = move_kept[2];
+}
+
+unsigned int            link_anim_move_phase(void)
+{
+    return climb_phase;
+}
+
+bool                    link_anim_move_reversed(void)
+{
+    return move_reverse;
+}
+
+void                    link_anim_move_end(void)
+{
+    if (state != LINK_STATE_CLIMB && state != LINK_STATE_PUSH && state != LINK_STATE_SWIM)
+        return;
+    state = LINK_STATE_IDLE;
+    frame = 0;
+    phase_ninths = 0;
+}
+
+bool                    link_anim_pull_up_done(int32_t *local_x_q8, int32_t *local_z_q8,
+                                               uint16_t *yaw)
+{
+    unsigned int row;
+
+    if (!pull_up_done)
+        return false;
+    pull_up_done = false;
+    row = link_clips[climb_clip].first + link_clips[climb_clip].count - 1;
+    /* Measured from sSkeletonBaseTransl (x0.64: these clips are stored
+    ** child-adjusted). */
+    *local_x_q8 = model_q8(link_root[row][0] - LINK_PINNED_ROOT_X);
+    *local_z_q8 = model_q8(link_root[row][2] - LINK_PINNED_ROOT_Z);
+    *yaw = (uint16_t)link_rotations[row][1];
+    return true;
+}
+
+void                    link_anim_let_go(int32_t *local_x_q8, int32_t *y_q8,
+                                         int32_t *local_z_q8)
+{
+    unsigned int row = stored_row(hang_clip, climb_phase);
+
+    /* Player_ApplyAnimMovementScaledByAge measures from baseTransl. */
+    *local_x_q8 = model_q8(link_root[row][0] - LINK_PINNED_ROOT_X);
+    *y_q8 = model_q8(link_root[row][1] - LINK_PINNED_ROOT_Y);
+    *local_z_q8 = model_q8(link_root[row][2] - LINK_PINNED_ROOT_Z);
+    /* func_80837B9C: Player_Action_8084411C falling. */
+    state = LINK_STATE_FALL;
+    frame = 0;
+    phase_ninths = 0;
+    air_falling = true;
+    was_grounded = false;
+}
+
+bool                    link_anim_jump250_launch(void)
+{
+    return jump250_launch;
+}
+
+int32_t                 link_anim_y_offset_q8(void)
+{
+    return state == LINK_STATE_STEP_UP ? climb_offset_q8 : 0;
+}
+
+void                    link_anim_set_air(bool falling_below_start)
+{
+    air_falling = falling_below_start;
+}
+
 void                    link_anim_cancel_roll(void)
 {
-    if (state != LINK_STATE_ROLL)
+    if (state != LINK_STATE_ROLL && state != LINK_STATE_BONK)
         return;
     state = LINK_STATE_IDLE;
     frame = 0;
     phase_ninths = 0;
     roll_speed_q8 = 0;
+    bonk_speed_q8 = 0;
 }
 
 link_state_t            link_anim_state(void)
@@ -303,12 +859,21 @@ unsigned int            link_anim_clip(void)
 unsigned int            link_anim_frame(void)
 {
     if (combat_active) return combat_frame;
+    if (is_climb(state))
+        return stored_row(clip_for_state(state), climb_phase) -
+               link_clips[clip_for_state(state)].first;
     return frame;
 }
 
 unsigned int            link_anim_fraction(void)
 {
+    unsigned int span;
+
     if (combat_active) return 0;
+    if (is_climb(state)) {
+        span = 30 * link_clip_stride[clip_for_state(state)];
+        return (climb_phase % span) * 256 / span;
+    }
     return (phase_ninths % 9) * 256 / 9;
 }
 
@@ -321,6 +886,7 @@ unsigned int            link_anim_fraction(void)
 ** until he next touches the floor. */
 void                    link_anim_reset_state(void)
 {
+    bonk_speed_q8 = 0;
     state = LINK_STATE_IDLE;
     frame = 0;
     phase_ninths = 0;
@@ -332,6 +898,14 @@ void                    link_anim_reset_state(void)
     roll_speed_q8 = 0;
     roll_input_speed_q8 = 0;
     roll_forward_held = false;
+    jump_run = false;
+    jump_clip = LINK_CLIP_JUMP;
+    air_falling = false;
+    climb_phase = 0;
+    climb_offset_q8 = 0;
+    jump250_launch = false;
+    hang_var = 0;
+    pull_up_done = false;
     /* Spawning is a fall onto the floor; that first contact is a real landing
     ** and should read as one rather than being swallowed. */
     was_grounded = false;
@@ -339,7 +913,7 @@ void                    link_anim_reset_state(void)
 
 bool                    link_anim_is_locked(void)
 {
-    return is_one_shot(state);
+    return is_one_shot(state) || is_climb(state);
 }
 
 int32_t                 link_anim_last_fall(void)

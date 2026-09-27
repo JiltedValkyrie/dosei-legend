@@ -5,6 +5,7 @@
 #include "texture_probe.h"
 #include "title_paths.h"
 #include "link_anim_state.h"
+#include "link_clips.h"
 #include "action_audio.h"
 #include "oot_follow.h"
 #include "frame_timer.h"
@@ -20,6 +21,17 @@
 #include "cutscene.h"
 #include "kokiri_sgl.h"
 #include "navi.h"
+#include "player_air.h"
+#include "player_bg.h"
+#include "player_climb.h"
+#include "player_crawl.h"
+#include "player_push.h"
+#include "actor_sys.h"
+#include "player_lift.h"
+#include "player_slope.h"
+#include "player_water.h"
+#include "player_camera.h"
+#include "kokiri_actors.h"
 
 camera_position_t demo_camera;
 uint16_t demo_yaw;
@@ -29,12 +41,131 @@ uint16_t demo_link_yaw;
 bool demo_link_active;
 static int32_t link_velocity_y_q8;
 static int32_t link_fall_remainder_q8;
-/* Highest point since Link last left the ground, so the drop can be measured
- * at the moment he lands -- that distance is what OoT's landing branch picks
- * the short landing, ordinary landing or roll from. */
+/* Height Link last left the ground from (OoT fallStartHeight: set while
+ * grounded, NOT raised by a jump), so the drop measured at landing is
+ * departure minus landing -- what the landing branch picks short landing,
+ * ordinary landing or roll from. Eye-anchor units, like demo_link.y. */
 static int32_t link_fall_peak_y;
+/* Grounded on the previous step, and that floor's SurfaceType floorProperty
+ * (sPrevFloorProperty): func_8083AA10 decides a departure from these. */
+static bool link_on_ground;
+static uint8_t link_floor_property;
 static camera_position_t link_safe_position;
 static bool link_safe_position_valid;
+/* Wall contact and ledge probe (Player_ProcessSceneCollision), and the
+** yDistToLedge a 250 jump launches from on its frame 8. */
+static player_bg_t link_bg;
+static int32_t link_jump250_dist;
+/* speedXZ an action set that no input is steering (250 jump 1.0, hop 2.5,
+** let go of a ledge -0.8 away from it). The air steering func_8083DFE0
+** takes it toward zero by 0.1 a frame (17 Q8 a step) with the stick
+** centred; input replaces it, as for every jump in this port. */
+static int32_t link_air_speed_q8;
+static uint16_t link_air_yaw;
+/* The hang began by walking off (func_8083A6AC) rather than grabbing. */
+static bool link_hang_walk_off;
+/* Ladder / vine climbing (player_climb.c). */
+static player_climb_t link_climb;
+static player_push_t link_push;
+static player_lift_t link_lift;
+static player_slope_t link_slope;
+static player_water_t link_water;
+static player_camera_t link_camera;
+
+/* Existing scene bushes: child-without-strength attempts do not detach or
+ * destroy the prop, so no collectible/drop path runs. Successful actor carry
+ * needs the prop owner to consume player_lift's events (M3 integration). */
+static int lift_bush_candidate(void)
+{
+    int found=-1;
+    int32_t best=50*50;
+    unsigned i;
+    if (save_state.scene_id!=SAVE_SCENE_KOKIRI_FOREST) return -1;
+    for (i=0;i<KOKIRI_GRASS_COUNT;i++) {
+        const kokiri_prop_t *g=&kokiri_grass[i];
+        int32_t dx=g->x-demo_link.x,dz=g->z-demo_link.z;
+        int32_t dy=g->y-(demo_link.y-DEMO_LINK_EYE_HEIGHT);
+        int32_t dist=dx*dx+dz*dz;
+        int32_t turn=(int16_t)(uint16_t)(kokiri_camera_facing(dx,dz)-demo_link_yaw);
+        if (g->room==kokiri_scene_room() && !gameplay_grass_cut(i) &&
+            dy>=-10 && dy<=10 && dist<best && turn>-0x3000 && turn<0x3000) {
+            bg_vec_t from={demo_link.x,demo_link.y-DEMO_LINK_EYE_HEIGHT+26,demo_link.z};
+            bg_vec_t to={g->x,g->y+26,g->z},at;
+            bg_hit_t hit;
+            if (!bg_line(&from,&to,&at,BG_CHECK_WALL,BG_IGNORE_ENTITY,&hit)) {
+                found=(int)i; best=dist;
+            }
+        }
+    }
+    return found;
+}
+/* Crawlspaces (player_crawl.c), and last step's sphere wall: the crawl exit
+** acts on the previous update's collision, as the source does. */
+static player_crawl_t link_crawl;
+static bool link_last_wall;
+static bg_hit_t link_last_wall_hit;
+/* PLAYER_STATE2_DO_ACTION_ENTER this step (the HUD's "A: Enter"). */
+static bool link_enter_prompt;
+
+bool demo_enter_prompt(void) { return link_enter_prompt; }
+
+/* Camera_Subj4 (CAM_SET_CRAWLSPACE): first person on the crawlspace's bgCam
+** line -- points [1] and [n-2] -- at the point nearest Link, looking down
+** the tunnel, bobbing toward (r 5, pitch 50 deg) as he moves. */
+static bool crawl_cam_valid;
+static bg_vec_t crawl_cam_point;
+static int32_t crawl_cam_dir[3];
+static uint16_t crawl_cam_yaw, crawl_cam_phase;
+
+bool demo_first_person(void)
+{
+    return crawl_cam_valid && link_crawl.phase == PLAYER_CRAWL_IN;
+}
+
+static void crawl_camera_begin(void)
+{
+    bg_vec_t feet = { demo_link.x, demo_link.y - DEMO_LINK_EYE_HEIGHT + 1, demo_link.z };
+    const bg_mesh_t *mesh = bg_scene_mesh();
+    bg_hit_t floor;
+    uint32_t index;
+    crawl_cam_valid = false;
+    if (bg_floor(&feet, BG_IGNORE_ENTITY, &floor) == BG_Y_MIN || !mesh)
+        return;
+    index = bg_bgcam(&floor);
+    if (!player_camera_crawl_line(mesh, index, &crawl_cam_point, crawl_cam_dir))
+        return;
+    /* He faces into the tunnel on entering: that is the forward yaw. */
+    crawl_cam_yaw = demo_link_yaw;
+    crawl_cam_phase = 0;
+    crawl_cam_valid = true;
+}
+
+static void crawl_camera(bool moving)
+{
+    int64_t len = (int64_t)crawl_cam_dir[0] * crawl_cam_dir[0] +
+                  (int64_t)crawl_cam_dir[1] * crawl_cam_dir[1] +
+                  (int64_t)crawl_cam_dir[2] * crawl_cam_dir[2];
+    int64_t along = (int64_t)(demo_link.x - crawl_cam_point.x) * crawl_cam_dir[0] +
+                    (int64_t)(demo_link.y - DEMO_LINK_EYE_HEIGHT - crawl_cam_point.y) * crawl_cam_dir[1] +
+                    (int64_t)(demo_link.z - crawl_cam_point.z) * crawl_cam_dir[2];
+    int32_t sine, cosine, bob, ex, ey, ez;
+    if (!len) return;
+    /* Math3D_LineClosestToPoint. */
+    ex = crawl_cam_point.x + (int32_t)(along * crawl_cam_dir[0] / len);
+    ey = crawl_cam_point.y + (int32_t)(along * crawl_cam_dir[1] / len);
+    ez = crawl_cam_point.z + (int32_t)(along * crawl_cam_dir[2] / len);
+    /* eyeLerpPhase += 0xBB8 an update (0x7D0 a 30 Hz step) while moving;
+    ** the eye leans |cos| of the way to (r 5, pitch 0x238C, forward). */
+    if (moving) crawl_cam_phase = (uint16_t)(crawl_cam_phase + 0x7D0);
+    kokiri_camera_sincos(crawl_cam_phase, &sine, &cosine);
+    bob = cosine < 0 ? -cosine : cosine;            /* Q16 */
+    kokiri_camera_sincos(crawl_cam_yaw, &sine, &cosine);
+    demo_camera.x = ex + (int32_t)((int64_t)3 * sine / 65536 * bob / 65536);
+    demo_camera.y = ey + (int32_t)((int64_t)4 * bob / 65536);
+    demo_camera.z = ez + (int32_t)((int64_t)3 * cosine / 65536 * bob / 65536);
+    demo_yaw = crawl_cam_yaw;
+    demo_pitch = 0;
+}
 
 /* Link's follow camera state. Geometry and easing rates come from OoT's
  * Normal1; see shared/lib/camera/oot_follow.c for the derivation. */
@@ -149,6 +280,110 @@ static void title_showcase_camera(unsigned int tick)
     demo_pitch = a->pitch + (b->pitch-a->pitch)*fraction/TITLE_SHOT_TICKS;
 }
 
+/* Standing exactly on a floor, the test kokiri_collision_fall uses. */
+static bool link_standing(void)
+{
+    int32_t floor;
+    return kokiri_collision_floor(demo_link.x, demo_link.z,
+                                  demo_link.y - DEMO_LINK_EYE_HEIGHT + 4, &floor) &&
+           demo_link.y == floor + DEMO_LINK_EYE_HEIGHT;
+}
+
+/* Model-local (x, z) -> world, as SkelAnime_UpdateTranslation turns root
+** motion by the facing: x cos + z sin, z cos - x sin. Q8 in, whole units out. */
+static void link_local_move(int32_t local_x_q8, int32_t local_z_q8, uint16_t yaw)
+{
+    int32_t sine, cosine;
+    kokiri_camera_sincos(yaw, &sine, &cosine);
+    demo_link.x += (local_x_q8 * (cosine / 256) + local_z_q8 * (sine / 256)) / 65536;
+    demo_link.z += (local_z_q8 * (cosine / 256) - local_x_q8 * (sine / 256)) / 65536;
+}
+
+/* func_8083A5C4, then the source's next floor ray from +50, which stands the
+** actor on the ledge top while the clip hangs the body below it. */
+static bool link_start_hang(const bg_hit_t *wall, int32_t dist, bg_vec_t feet,
+                            bool walk_off)
+{
+    int32_t floor;
+    uint16_t facing;
+    player_hang_place(wall, dist, &feet, &facing, !walk_off);
+    if (!kokiri_collision_floor(feet.x, feet.z, feet.y + 49, &floor) ||
+        floor < feet.y)
+        return false;
+    demo_link.x = feet.x;
+    demo_link.y = floor + DEMO_LINK_EYE_HEIGHT;
+    demo_link.z = feet.z;
+    demo_link_yaw = facing;
+    link_velocity_y_q8 = 0;
+    link_fall_remainder_q8 = 0;
+    link_fall_peak_y = demo_link.y;
+    link_air_speed_q8 = 0;
+    link_hang_walk_off = walk_off;
+    link_anim_hang(walk_off);
+    /* NA_SE_VO_LI_HANG (and SLIPDOWN walking off): no resident sample
+    ** (BUG-007). */
+    return true;
+}
+
+/* func_8083AA10 on the step Link walks or rolls off an edge: revert, fall,
+** jump automatically (player_air.c), or hang (func_8083A6AC). */
+static void link_leave_ground(int32_t from_x, int32_t from_z,
+                              int32_t speed_q8, uint16_t heading)
+{
+    player_leave_t leave;
+    int32_t floor, launch = 0;
+    int32_t feet = demo_link.y - DEMO_LINK_EYE_HEIGHT;
+    player_leave_action_t act;
+
+    leave.ground_leave = true;
+    leave.swinging = gameplay.swing != 0;
+    leave.prev_floor_property = link_floor_property;
+    leave.y_dist_to_floor = kokiri_collision_floor(demo_link.x, demo_link.z,
+                                                   feet, &floor)
+                          ? feet - floor : 32000;
+    leave.speed_q8 = speed_q8;
+    leave.yaw_diff = (int16_t)(uint16_t)(heading - demo_link_yaw);
+    act = player_leave_ground(&leave, &launch);
+    if (act == PLAYER_LEAVE_REVERT_XZ || act == PLAYER_LEAVE_REVERT_STOP) {
+        demo_link.x = from_x;
+        demo_link.z = from_z;
+        if (act == PLAYER_LEAVE_REVERT_STOP)
+            link_anim_cancel_roll();
+    } else if (act == PLAYER_LEAVE_JUMP || act == PLAYER_LEAVE_RUN_JUMP) {
+        link_velocity_y_q8 = launch;
+        link_fall_remainder_q8 = 0;
+        link_anim_auto_jump(act == PLAYER_LEAVE_RUN_JUMP);
+        /* NA_SE_VO_LI_AUTO_JUMP + jumping sfx: the Y jump's cue already. */
+        action_audio_events(GP_EVENT_JUMP);
+    } else if (act == PLAYER_LEAVE_HANG) {
+        /* The line test runs after this step's first fall (PLAYER_HANG_LINE_DROP). */
+        bg_vec_t pos = { demo_link.x, feet - PLAYER_HANG_LINE_DROP, demo_link.z };
+        bg_vec_t prev = { from_x, feet, from_z };
+        bg_hit_t wall;
+        const bg_waterbox_t *box;
+        int32_t dist = 0, surface, depth = BG_Y_MIN;
+        if (bg_water_surface(pos.x, pos.z, kokiri_scene_room(), &surface, &box))
+            depth = surface - pos.y;
+        player_hang_t hang = player_hang_walk_off(&pos, &prev, depth,
+                                                  link_floor_property, &wall, &dist);
+        if (hang == PLAYER_HANG_LEDGE)
+            link_start_hang(&wall, dist, pos, true);
+        else if (hang == PLAYER_HANG_CLIMB) {
+            /* func_8083A5C4 with Fclimb_startB, then onto the vine. */
+            uint16_t facing;
+            player_hang_place(&wall, dist, &pos, &facing, false);
+            demo_link.x = pos.x;
+            demo_link.y = pos.y + DEMO_LINK_EYE_HEIGHT;
+            demo_link.z = pos.z;
+            demo_link_yaw = facing;
+            link_velocity_y_q8 = 0;
+            link_fall_remainder_q8 = 0;
+            link_air_speed_q8 = 0;
+            player_climb_start_walk_off(&link_climb, &wall, &demo_link_yaw);
+        }
+    }
+}
+
 static bool recover_link_from_void(void)
 {
     int32_t floor;
@@ -180,6 +415,7 @@ static bool recover_link_from_void(void)
  * second call per draw would double-advance the easing rates. */
 static void         snap_camera_to_link(void)
 {
+    player_camera_reset(&link_camera);
     oot_follow_snap(&link_follow, &demo_link, demo_link_yaw);
     oot_follow_update(&link_follow, &demo_link, demo_link_yaw, false,
                       &demo_camera, &demo_yaw, &demo_pitch);
@@ -200,6 +436,16 @@ static void         place_at_spawn(unsigned int scene, unsigned int spawn)
     link_velocity_y_q8 = 0;
     link_fall_remainder_q8 = 0;
     link_fall_peak_y = demo_link.y;
+    link_on_ground = false;
+    link_floor_property = 0;
+    player_water_reset(&link_water);
+    player_bg_reset(&link_bg);
+    player_push_cancel(&link_push);
+    player_lift_cancel(&link_lift);
+    link_slope=(player_slope_t){0};
+    link_crawl.phase = PLAYER_CRAWL_NONE;
+    kokiri_collision_actor_set_crawl(false);
+    link_air_speed_q8 = 0;
     link_safe_position = demo_link;
     link_safe_position_valid = true;
     demo_link_active = true;
@@ -292,6 +538,16 @@ static void         enter_world(void)
         link_velocity_y_q8 = 0;
         link_fall_remainder_q8 = 0;
         link_fall_peak_y = demo_link.y;
+        link_on_ground = false;
+        link_floor_property = 0;
+        player_water_reset(&link_water);
+        player_bg_reset(&link_bg);
+        player_push_cancel(&link_push);
+        player_lift_cancel(&link_lift);
+        link_slope=(player_slope_t){0};
+        link_crawl.phase = PLAYER_CRAWL_NONE;
+        kokiri_collision_actor_set_crawl(false);
+        link_air_speed_q8 = 0;
         link_safe_position = demo_link;
         link_safe_position_valid = true;
         demo_link_active = true;
@@ -670,6 +926,10 @@ void demo_update(void)
         int32_t roll_speed = 0;
         bool roll_pending = false;
         while (steps--) {
+            bool water_stroke = attack_pending;
+            /* DynaPoly_UpdateBgActorTransforms: last step's mesh placement
+             * becomes "previous", so riders carry by this step's motion. */
+            bg_dyna_step();
             /* Z is both the target button and the recenter tap. Targeting gets
              * the press first: recentring on the same press would swing the view
              * away from the actor just locked, or away from the one just dropped. */
@@ -681,16 +941,17 @@ void demo_update(void)
                 action.y = demo_link.y - DEMO_LINK_EYE_HEIGHT;
                 action.z = demo_link.z;
                 action.yaw = demo_link_yaw;
-                action.attack = attack_pending;
-                action.shield = shield_held;
-                action.target_held = target_held;
-                action.interact = interact_pending;
+                action.attack = attack_pending && !link_water.phase;
+                action.shield = shield_held && !link_water.phase;
+                action.target_held = target_held && !link_water.phase;
+                action.interact = interact_pending &&
+                                  (!link_water.phase || gameplay_blocks_world());
                 action.cancel = cancel_pending;
                 action.pause = pause_pending;
                 /* One slot per press: the menu cursor steps on the D-pad's own
                  * press edges, so holding a direction cannot run down the list. */
                 action.menu_step = menu_step;
-                action.grounded = link_velocity_y_q8 == 0;
+                action.grounded = !link_water.phase && link_velocity_y_q8 == 0;
                 gameplay_step(&action);
                 if (gameplay.events & GP_EVENT_SAVE) {
                     /* Record the outcome. A save that quietly failed is the
@@ -738,6 +999,8 @@ void demo_update(void)
                      * would keep carrying him across the floor behind the
                      * text. */
                     link_anim_cancel_roll();
+                    player_push_cancel(&link_push);
+                    player_lift_cancel(&link_lift);
                 }
                 /* Pause freezes the world outright. A text box only stops input --
                  * gravity and the camera keep easing under it, which is what OoT
@@ -753,6 +1016,8 @@ void demo_update(void)
                      * away, so it cancels the roll rather than letting the
                      * travel run on underneath the pose. */
                     link_anim_cancel_roll();
+                    player_push_cancel(&link_push);
+                    player_lift_cancel(&link_lift);
                 }
             }
             if (recenter) {
@@ -762,9 +1027,137 @@ void demo_update(void)
             }
             recenter = false;
             {
+                bg_vec_t feet={demo_link.x,demo_link.y-DEMO_LINK_EYE_HEIGHT+1,demo_link.z};
+                bg_hit_t floor;
+                unsigned rider=BG_NONE;
+                if (link_on_ground && bg_floor(&feet,BG_IGNORE_ENTITY,&floor)!=BG_Y_MIN)
+                    rider=floor.bg_id;
+                actor_sys_update();
+                feet.y--;
+                if (rider<BG_DYNA_MAX && !link_push.phase &&
+                    bg_dyna_carry(rider,&feet,&demo_link_yaw)) {
+                    demo_link.x=feet.x;
+                    demo_link.y=feet.y+DEMO_LINK_EYE_HEIGHT;
+                    demo_link.z=feet.z;
+                }
+            }
+            /* Water owns a full fixed step: no land gravity, auto-jump, roll,
+             * or falling animation can run a second time underneath it. */
+            {
+                link_state_t st = link_anim_state();
+                bool was_water = link_water.phase != PLAYER_WATER_DRY;
+                bool eligible = was_water || st == LINK_STATE_IDLE ||
+                    st == LINK_STATE_WALK || st == LINK_STATE_RUN ||
+                    st == LINK_STATE_FALL || st == LINK_STATE_JUMP ||
+                    st == LINK_STATE_LANDING || st == LINK_STATE_JUMP_LANDING ||
+                    st == LINK_STATE_ROLL || st == LINK_STATE_BONK ||
+                    st == LINK_STATE_TURN || st == LINK_STATE_SLIDE ||
+                    st == LINK_STATE_SLIDE_END;
+                if (eligible) {
+                    player_water_input_t wi = {0};
+                    bg_vec_t feet = {demo_link.x, demo_link.y-DEMO_LINK_EYE_HEIGHT, demo_link.z};
+                    int32_t old_x = feet.x, old_z = feet.z;
+                    wi.yaw = demo_link_yaw;
+                    if (!player_input_motion(&input, demo_yaw, &wi.yaw, &wi.speed_q8))
+                        wi.speed_q8 = 0;
+                    wi.room = kokiri_scene_room();
+                    wi.dive_pressed = roll_pending;
+                    wi.dive_held = input.interact_held;
+                    wi.stroke_pressed = water_stroke;
+                    wi.blocked = gameplay_blocks_world();
+                    /* Child has no scale upgrade in the current inventory. */
+                    wi.scale = 0;
+                    if (player_water_step(&link_water, &wi, &feet, &demo_link_yaw,
+                                          link_velocity_y_q8, link_on_ground)) {
+                        demo_link.x = feet.x;
+                        demo_link.y = feet.y + DEMO_LINK_EYE_HEIGHT;
+                        demo_link.z = feet.z;
+                        link_velocity_y_q8 = link_water.velocity_q8;
+                        link_fall_remainder_q8 = 0;
+                        link_air_speed_q8 = 0;
+                        link_on_ground = link_water.grounded;
+                        link_fall_peak_y = demo_link.y;
+                        link_slope = (player_slope_t){0};
+                        jump_pending = roll_pending = false;
+                        link_enter_prompt = false;
+                        player_bg_reset(&link_bg);
+                        gameplay.swing = 0;
+                        gameplay.shielding = false;
+                        link_anim_combat(0, false);
+                        navi_step(feet.x, feet.y, feet.z);
+                        if (navi_dash_started()) action_audio_navi_dash();
+                        action_audio_navi_flight(0, false);
+                        if (scene_flow_is_interior()) interior_camera();
+                        else player_camera_update(&link_camera, &link_follow,
+                                PLAYER_CAMERA_NORMAL, &demo_link, demo_link_yaw,
+                                feet.x != old_x || feet.z != old_z,
+                                &demo_camera, &demo_yaw, &demo_pitch);
+                        if (take_door()) break;
+                        continue;
+                    }
+                    if (was_water) {
+                        link_velocity_y_q8 = 0;
+                        link_fall_remainder_q8 = 0;
+                        link_fall_peak_y = demo_link.y;
+                    }
+                }
+            }
+            {
                 bool grounded;
                 int32_t step_x = demo_link.x, step_z = demo_link.z;
+                int32_t intent_speed = 0;
+                uint16_t intent_heading = demo_link_yaw;
                 int32_t dx, dz, moved, fell;
+                /* Player_Action_80845668 owns Link while he climbs: no walk,
+                 * jump or roll input reaches him (the last frames of a step
+                 * up still yield to movement, in link_anim_update). */
+                bool climbing = link_anim_state() == LINK_STATE_STEP_UP ||
+                                link_anim_state() == LINK_STATE_JUMP_START ||
+                                link_anim_state() == LINK_STATE_HANG ||
+                                link_anim_state() == LINK_STATE_PULL_UP ||
+                                link_anim_state() == LINK_STATE_CLIMB ||
+                                link_anim_state() == LINK_STATE_CRAWL ||
+                                link_anim_state() == LINK_STATE_PUSH;
+                bool ledge_started = false;
+                bool bonking = link_anim_state() == LINK_STATE_BONK;
+                bool sloping = false;
+                uint16_t step_walk = climbing ? 0 : walk;
+                bg_hit_t wall_hit;
+                bool wall, stepped;
+                /* An A press nothing else claimed: a climbing Link lets go. */
+                bool interact_seen = roll_pending;
+                kokiri_collision_actor_begin_step();
+                if (climbing || bonking) {
+                    jump_pending = false;
+                    roll_pending = false;
+                }
+                /* Player_Action_8084BBE4, once the grab frame has passed: a
+                 * pushed stick pulls up, else A held lets go. */
+                if (link_anim_hang_ready() && !gameplay_blocks_world()) {
+                    if (player_input_stick_pushed(&input)) {
+                        link_anim_pull_up();
+                    } else if (input.interact_held) {
+                        int32_t lx, ly, lz, floor;
+                        uint16_t away = link_hang_walk_off ? demo_link_yaw
+                                        : (uint16_t)(demo_link_yaw + 0x8000);
+                        /* func_80837B60: the actor goes to the hanging pelvis. */
+                        link_anim_let_go(&lx, &ly, &lz);
+                        link_local_move(lx, lz, demo_link_yaw);
+                        demo_link.y += ly / 256;
+                        if (kokiri_collision_floor(demo_link.x, demo_link.z,
+                                                   demo_link.y - DEMO_LINK_EYE_HEIGHT + 49,
+                                                   &floor) &&
+                            demo_link.y - DEMO_LINK_EYE_HEIGHT < floor)
+                            demo_link.y = floor + DEMO_LINK_EYE_HEIGHT;
+                        link_velocity_y_q8 = 0;
+                        link_fall_remainder_q8 = 0;
+                        /* speedXZ +-0.8: away from the wall either way. */
+                        link_air_speed_q8 = 205;
+                        link_air_yaw = away;
+                        /* Already airborne: not a departure from the ledge. */
+                        link_on_ground = false;
+                    }
+                }
                 if (jump_pending) {
                     if (kokiri_collision_jump(&demo_link, &link_velocity_y_q8,
                                                &link_fall_remainder_q8))
@@ -782,9 +1175,19 @@ void demo_update(void)
                  * would give right now, which is what the source scales. */
                 {
                     uint16_t heading = demo_link_yaw;
-                    int32_t speed;
-                    bool forward = player_input_motion(&input, demo_yaw,
-                                                       &heading, &speed) && walk;
+                    int32_t speed = 0;
+                    bool moving = player_input_motion(&input, demo_yaw,
+                                                      &heading, &speed);
+                    bool forward = moving && step_walk;
+                    /* speedXZ and this->yaw for a departure this step. */
+                    intent_speed = forward ? speed : 0;
+                    intent_heading = heading;
+                    link_anim_turn(input.analog && moving && speed == 0 &&
+                        step_walk && link_on_ground && link_velocity_y_q8 == 0 &&
+                        !gameplay_blocks_world() && !gameplay.swing &&
+                        !gameplay.shielding && !target_held && !gameplay.face_locked,
+                        heading, &demo_link_yaw);
+                    if (input.analog && speed == 0) step_walk = 0;
                     if (forward) {
                         int32_t turn = (int32_t)(int16_t)
                             (uint16_t)(heading - demo_link_yaw);
@@ -792,24 +1195,294 @@ void demo_update(void)
                         /* Source quadrant: within 45 degrees of his facing. */
                         forward = turn <= 8192;
                     }
-                    link_anim_roll_input(speed, forward);
+                    /* A released digital pad still reports its base speed;
+                     * only a held direction is input (BUG-011). */
+                    link_anim_roll_input(moving ? speed : 0, forward);
                 }
                 roll_speed = link_anim_roll_speed_q8();
-                if (roll_speed > 0)
+                if (!gameplay_blocks_world() &&
+                    link_anim_bonk(link_bg.interact, link_bg.world_yaw_to_wall)) {
+                    bonking = true;
+                    roll_speed = 0;
+                    action_audio_events(GP_EVENT_CLIMB_END);
+                }
+                if (bonking) {
+                    step_walk = 0;
+                    intent_speed = 0;
+                    roll_pending = false;
+                }
+                {
+                    link_state_t st=link_anim_state();
+                    bool eligible=link_on_ground && !link_velocity_y_q8 &&
+                        !gameplay_blocks_world() && !gameplay.swing && !gameplay.shielding &&
+                        (st==LINK_STATE_IDLE || st==LINK_STATE_WALK || st==LINK_STATE_RUN ||
+                         st==LINK_STATE_TURN || st==LINK_STATE_SLIDE);
+                    if (eligible) {
+                        bg_vec_t feet={demo_link.x,demo_link.y-DEMO_LINK_EYE_HEIGHT+1,demo_link.z};
+                        bg_hit_t floor;
+                        bool was_sliding=link_slope.active;
+                        bool hit=bg_floor(&feet,BG_IGNORE_ENTITY,&floor)!=BG_Y_MIN;
+                        player_slope_update(&link_slope,hit?&floor:0,intent_heading,
+                                            intent_speed,&demo_link_yaw);
+                        if (link_slope.active) link_anim_slide(link_slope.face_up);
+                        else if (was_sliding && hit) link_anim_slide_end(link_slope.face_up);
+                    } else {
+                        link_slope=(player_slope_t){0};
+                        if (gameplay_blocks_world() || gameplay.swing || gameplay.shielding ||
+                            link_velocity_y_q8) link_anim_slide_cancel();
+                    }
+                    sloping=link_anim_state()==LINK_STATE_SLIDE ||
+                            link_anim_state()==LINK_STATE_SLIDE_END;
+                    if (sloping) { step_walk=0; roll_pending=false; intent_speed=0; }
+                }
+                if (roll_speed > 0) {
+                    intent_speed = roll_speed;
+                    intent_heading = demo_link_yaw;
+                }
+                /* Player_ActionHandler_12, in the walk/run action lists: the
+                 * probe from the end of the last step, before this step's
+                 * move. An A press nothing else claimed counts, ahead of the
+                 * roll (list order). */
+                if (!climbing && roll_speed <= 0 && intent_speed > 0 &&
+                    link_on_ground && link_velocity_y_q8 == 0 &&
+                    (link_anim_state() == LINK_STATE_IDLE ||
+                     link_anim_state() == LINK_STATE_WALK ||
+                     link_anim_state() == LINK_STATE_RUN)) {
+                    int32_t hop = 0;
+                    player_ledge_act_t act = player_ledge_action(&link_bg, true,
+                                                                 roll_pending, &hop);
+                    if (act == PLAYER_LEDGE_ACT_STEP100 || act == PLAYER_LEDGE_ACT_STEP150) {
+                        bg_vec_t feet = { demo_link.x, demo_link.y - DEMO_LINK_EYE_HEIGHT,
+                                          demo_link.z };
+                        player_ledge_step_target(&link_bg, &feet, &demo_link_yaw);
+                        demo_link.x = feet.x;
+                        demo_link.y = feet.y + DEMO_LINK_EYE_HEIGHT;
+                        demo_link.z = feet.z;
+                        link_velocity_y_q8 = 0;
+                        link_fall_remainder_q8 = 0;
+                        link_fall_peak_y = demo_link.y;
+                        link_anim_step_up(act == PLAYER_LEDGE_ACT_STEP150,
+                                          link_bg.y_dist_to_ledge);
+                        ledge_started = true;
+                    } else if (act == PLAYER_LEDGE_ACT_JUMP250) {
+                        demo_link_yaw = (uint16_t)(link_bg.wall_yaw + 0x8000);
+                        link_air_speed_q8 = 256;
+                        link_air_yaw = demo_link_yaw;
+                        link_jump250_dist = link_bg.y_dist_to_ledge;
+                        link_anim_jump_start();
+                        ledge_started = true;
+                    } else if (act == PLAYER_LEDGE_ACT_HOP) {
+                        /* func_808389E8: jump clip, SWORD_N voice. Air X/Z stay
+                         * input-driven, as for the automatic jump. */
+                        link_velocity_y_q8 = hop;
+                        link_fall_remainder_q8 = 0;
+                        link_air_speed_q8 = 640;      /* speedXZ 2.5 */
+                        link_air_yaw = demo_link_yaw;
+                        link_anim_hop();
+                        action_audio_events(GP_EVENT_HOP_VOICE);
+                    }
+                    /* Player_ActionHandler_5, after 12 in the list: a ladder or
+                     * vine wall (func_8083EC18). */
+                    if (act == PLAYER_LEDGE_ACT_NONE && link_bg.interact &&
+                        link_bg.shape_yaw_to_wall < 0x3000) {
+                        bg_vec_t feet = { demo_link.x, demo_link.y - DEMO_LINK_EYE_HEIGHT,
+                                          demo_link.z };
+                        if (player_climb_start(&link_climb, &link_bg, &feet,
+                                               &demo_link_yaw, true)) {
+                            demo_link.x = feet.x;
+                            demo_link.y = feet.y + DEMO_LINK_EYE_HEIGHT;
+                            demo_link.z = feet.z;
+                            link_velocity_y_q8 = 0;
+                            link_fall_remainder_q8 = 0;
+                            ledge_started = true;
+                        }
+                    }
+                    if (act != PLAYER_LEDGE_ACT_NONE)
+                        roll_pending = false;
+                }
+                /* Player_ActionHandler_5 -> Player_TryEnteringCrawlspace: in
+                 * the idle list too, so no speed is needed, only A. */
+                if (!climbing && !ledge_started && roll_pending && roll_speed <= 0 &&
+                    link_on_ground && link_velocity_y_q8 == 0 &&
+                    link_bg.interact && link_bg.shape_yaw_to_wall < 0x3000 &&
+                    (link_anim_state() == LINK_STATE_IDLE ||
+                     link_anim_state() == LINK_STATE_WALK ||
+                     link_anim_state() == LINK_STATE_RUN)) {
+                    bg_vec_t feet = { demo_link.x, demo_link.y - DEMO_LINK_EYE_HEIGHT,
+                                      demo_link.z };
+                    if (player_crawl_enter(&link_crawl, &link_bg, true, &feet,
+                                           &demo_link_yaw)) {
+                        demo_link.x = feet.x;
+                        demo_link.z = feet.z;
+                        roll_pending = false;
+                        ledge_started = true;
+                    }
+                }
+                if (!climbing && !ledge_started && !bonking && link_on_ground &&
+                    link_velocity_y_q8==0 && !gameplay_blocks_world() &&
+                    !gameplay.swing && !gameplay.shielding &&
+                    (link_anim_state()==LINK_STATE_IDLE || link_anim_state()==LINK_STATE_WALK ||
+                     link_anim_state()==LINK_STATE_RUN)) {
+                    if (player_push_start(&link_push,&link_bg,input.interact_held,&demo_link_yaw)) {
+                        ledge_started=true;
+                        roll_pending=false;
+                    }
+                }
+                if (!climbing && !ledge_started && !bonking && roll_pending &&
+                    link_on_ground && !link_velocity_y_q8 && !gameplay_blocks_world() &&
+                    !gameplay.swing && !gameplay.shielding &&
+                    (link_anim_state()==LINK_STATE_IDLE || link_anim_state()==LINK_STATE_WALK ||
+                     link_anim_state()==LINK_STATE_RUN)) {
+                    int bush=lift_bush_candidate();
+                    if (bush>=0) {
+                        const kokiri_prop_t *g=&kokiri_grass[bush];
+                        int32_t sn,cs;
+                        demo_link_yaw=kokiri_camera_facing(g->x-demo_link.x,g->z-demo_link.z);
+                        kokiri_camera_sincos(demo_link_yaw,&sn,&cs);
+                        demo_link.x=g->x-20*sn/65536;
+                        demo_link.z=g->z-20*cs/65536;
+                        player_lift_begin(&link_lift,true,0,false);
+                        roll_pending=false; ledge_started=true;
+                    }
+                }
+                if (ledge_started || climbing) {
+                    step_walk = 0;
+                    roll_speed = 0;
+                    intent_speed = 0;
+                    if (climbing && link_lift.phase)
+                        player_lift_update(&link_lift,false,0);
+                    if (climbing && link_push.phase) {
+                        bg_vec_t feet={demo_link.x,demo_link.y-DEMO_LINK_EYE_HEIGHT,demo_link.z};
+                        uint16_t heading=demo_link_yaw;
+                        int32_t speed=0;
+                        if (!player_input_motion(&input,demo_yaw,&heading,&speed)) speed=0;
+                        player_push_update(&link_push,input.interact_held,speed,heading,
+                                           &feet,demo_link_yaw);
+                        demo_link.x=feet.x; demo_link.z=feet.z;
+                    }
+                    /* The 250 jump start walks into the wall at speedXZ 1.0. */
+                    if (link_anim_state() == LINK_STATE_JUMP_START)
+                        kokiri_camera_move_heading(&demo_link, demo_link_yaw, 256);
+                    /* Player_Action_8084C760 / 8084C81C: the crawlspace. */
+                    if (climbing && link_crawl.phase != PLAYER_CRAWL_NONE) {
+                        bg_vec_t feet = { demo_link.x, demo_link.y - DEMO_LINK_EYE_HEIGHT,
+                                          demo_link.z };
+                        int32_t stick_y = input.analog ? input.stick_y * 80 / 127 :
+                            (input.move_buttons & CAMERA_UP ? 80 : 0) -
+                            (input.move_buttons & CAMERA_DOWN ? 80 : 0);
+                        player_crawl_update(&link_crawl, stick_y, link_last_wall,
+                                            &link_last_wall_hit, &feet, &demo_link_yaw);
+                        demo_link.x = feet.x;
+                        demo_link.z = feet.z;
+                        if (link_crawl.phase == PLAYER_CRAWL_IN && link_crawl.speed_q8)
+                            kokiri_camera_move_heading(&demo_link,
+                                link_crawl.speed_q8 > 0 ? demo_link_yaw
+                                                        : (uint16_t)(demo_link_yaw + 0x8000),
+                                link_crawl.speed_q8 > 0 ? link_crawl.speed_q8
+                                                        : -link_crawl.speed_q8);
+                        if (link_crawl.phase == PLAYER_CRAWL_DONE)
+                            link_crawl.phase = PLAYER_CRAWL_NONE;
+                    }
+                    /* Player_Action_8084BF1C / 8084C5F8, from the step after
+                     * the start (the action runs on the next update). */
+                    if (climbing && link_anim_state() == LINK_STATE_CLIMB &&
+                        (link_climb.phase == PLAYER_CLIMB_ON ||
+                         link_climb.phase == PLAYER_CLIMB_ENDING)) {
+                        player_climb_input_t cin;
+                        bg_vec_t feet = { demo_link.x, demo_link.y - DEMO_LINK_EYE_HEIGHT,
+                                          demo_link.z };
+                        /* rel.stick, raw N64 scale: a digital direction is
+                         * a full push (80). Not camera-relative. */
+                        if (input.analog) {
+                            cin.stick_x = input.stick_x * 80 / 127;
+                            cin.stick_y = input.stick_y * 80 / 127;
+                        } else {
+                            cin.stick_x = (input.move_buttons & CAMERA_RIGHT ? 80 : 0) -
+                                          (input.move_buttons & CAMERA_LEFT ? 80 : 0);
+                            cin.stick_y = (input.move_buttons & CAMERA_UP ? 80 : 0) -
+                                          (input.move_buttons & CAMERA_DOWN ? 80 : 0);
+                        }
+                        cin.a_pressed = interact_seen;
+                        cin.stick_pushed = player_input_stick_pushed(&input);
+                        player_climb_update(&link_climb, &cin, &feet, &demo_link_yaw);
+                        demo_link.x = feet.x;
+                        demo_link.y = feet.y + DEMO_LINK_EYE_HEIGHT;
+                        demo_link.z = feet.z;
+                        if (link_climb.events)
+                            action_audio_events(link_climb.events);
+                        if (link_climb.phase == PLAYER_CLIMB_DONE)
+                            link_climb.phase = PLAYER_CLIMB_NONE;
+                        else if (link_climb.phase == PLAYER_CLIMB_VINE_TOP) {
+                            /* func_8083A5C4(wall, unk_3C, ...), facing the
+                             * wall, then func_8083A9B8(jump_climb_up_free). */
+                            uint16_t facing;
+                            link_anim_move_end();
+                            player_hang_place(&link_climb.wall, 12, &feet, &facing, true);
+                            demo_link.x = feet.x;
+                            demo_link.z = feet.z;
+                            demo_link_yaw = facing;
+                            link_anim_pull_up_clip(LINK_CLIP_CLIMB_UP_FREE);
+                            link_climb.phase = PLAYER_CLIMB_NONE;
+                        } else if (link_climb.phase == PLAYER_CLIMB_LET_GO) {
+                            /* func_8083FB7C: fall, speedXZ -0.4. */
+                            link_anim_move_end();
+                            link_anim_fall();
+                            link_air_speed_q8 = 102;
+                            link_air_yaw = (uint16_t)(demo_link_yaw + 0x8000);
+                            link_on_ground = false;
+                            link_climb.phase = PLAYER_CLIMB_NONE;
+                        }
+                    }
+                }
+                else if (sloping) {
+                    if (link_slope.active)
+                        kokiri_camera_move_heading(&demo_link,link_slope.yaw,link_slope.speed_q8);
+                }
+                else if (bonking) {
+                    int32_t recoil = link_anim_bonk_speed_q8();
+                    if (recoil < 0)
+                        kokiri_camera_move_heading(&demo_link,
+                            (uint16_t)(demo_link_yaw + 0x8000), -recoil);
+                }
+                else if (link_air_speed_q8 > 0 && !link_on_ground &&
+                         intent_speed == 0 && roll_speed <= 0) {
+                    kokiri_camera_move_heading(&demo_link, link_air_yaw,
+                                               link_air_speed_q8);
+                    link_air_speed_q8 -= 17;
+                    if (link_air_speed_q8 < 0) link_air_speed_q8 = 0;
+                }
+                else if (roll_speed > 0)
                     kokiri_camera_move_heading(&demo_link, demo_link_yaw,
                                                roll_speed);
                 else if (input.analog)
                 {
                     uint16_t heading;
                     int32_t speed;
-                    if (walk && player_input_motion(&input, demo_yaw, &heading, &speed))
+                    if (step_walk && player_input_motion(&input, demo_yaw, &heading, &speed))
                         kokiri_camera_move_heading(&demo_link, heading, speed);
                 }
                 else
                     kokiri_camera_update(&demo_link, &demo_yaw, &unused_pitch,
-                                         walk, false, true);
-                grounded = kokiri_collision_fall(&demo_link, &link_velocity_y_q8,
-                                                  &link_fall_remainder_q8);
+                                         step_walk, false, true);
+                if (!climbing && !bonking && !sloping && link_slope.push_q8)
+                    kokiri_camera_move_heading(&demo_link,link_slope.push_yaw,link_slope.push_q8);
+                if (link_slope.active && link_on_ground && !link_velocity_y_q8) {
+                    bg_vec_t feet={demo_link.x,demo_link.y-DEMO_LINK_EYE_HEIGHT,demo_link.z};
+                    if (player_slope_ground(&feet)) demo_link.y=feet.y+DEMO_LINK_EYE_HEIGHT;
+                }
+                if (!sloping && link_on_ground && link_velocity_y_q8 == 0 && !link_standing())
+                    link_leave_ground(step_x, step_z, intent_speed, intent_heading);
+                /* ANIM_FLAG_OVERRIDE_MOVEMENT: no gravity while the climb's
+                 * root motion owns him; fallStartHeight follows him. */
+                if (link_anim_state() == LINK_STATE_CLIMB) {
+                    link_velocity_y_q8 = 0;
+                    link_fall_remainder_q8 = 0;
+                    grounded = true;
+                } else
+                    grounded = kokiri_collision_fall(&demo_link, &link_velocity_y_q8,
+                                                      &link_fall_remainder_q8);
+                if (!grounded && link_push.phase) player_push_cancel(&link_push);
+                if (!grounded && link_lift.phase) player_lift_cancel(&link_lift);
                 /* Actual travel length, not the largest axis: diagonal running
                  * must select the same clip and cadence as straight running. */
                 dx = demo_link.x - step_x;
@@ -830,11 +1503,11 @@ void demo_update(void)
                     link_safe_position_valid = true;
                 } else {
                     fell = 0;
-                    if (demo_link.y > link_fall_peak_y)
-                        link_fall_peak_y = demo_link.y;
                     if (recover_link_from_void())
                         recovered = true;
                 }
+                link_anim_set_air(link_velocity_y_q8 < 0 &&
+                                  demo_link.y < link_fall_peak_y);
                 /* En_Elf updates with the world, so she is stepped here and
                  * not per draw: her approach rates are per update. */
                 navi_step(demo_link.x, demo_link.y - DEMO_LINK_EYE_HEIGHT,
@@ -845,6 +1518,29 @@ void demo_update(void)
                 action_audio_navi_flight(0, false);
                 link_anim_update(moved, grounded, fell, roll_pending);
                 roll_pending = false;
+                {
+                    int32_t lx, lz;
+                    uint16_t turn;
+                    /* Player_Action_8084BDFC's end: the clip's root x/z moves
+                     * the actor, then its root yaw turns him. */
+                    if (link_anim_pull_up_done(&lx, &lz, &turn)) {
+                        link_local_move(lx, lz, demo_link_yaw);
+                        demo_link_yaw = (uint16_t)(demo_link_yaw + turn);
+                    }
+                }
+                bool launched = link_anim_jump250_launch();
+                if (launched) {
+                    /* Frame 8 of the 250 jump start: func_80838940 with
+                     * NA_SE_VO_LI_AUTO_JUMP. No mid-air ledge grab yet (M1d):
+                     * he comes back down. */
+                    link_velocity_y_q8 = player_ledge_jump250_velocity_q8(link_jump250_dist);
+                    link_fall_remainder_q8 = 0;
+                    /* speedXZ 1.0 carries into the jump (BUG-012: the
+                     * grounded start steps cleared it). */
+                    link_air_speed_q8 = 256;
+                    link_air_yaw = demo_link_yaw;
+                    action_audio_events(GP_EVENT_JUMP);
+                }
                 if (!gameplay_blocks_world() && !gameplay.swing && !gameplay.shielding)
                     action_audio_events(link_anim_motion_events());
                 link_anim_combat(gameplay_is_talking() ? 0 : gameplay.swing,
@@ -852,8 +1548,18 @@ void demo_update(void)
                 /* Follow him while he is on the ground, so the next departure
                  * measures from where he actually left. Left alone while airborne,
                  * which is what makes the landing drop the full fall. */
-                if (grounded)
+                if (grounded) {
+                    bg_vec_t feet;
+                    bg_hit_t floor_hit;
                     link_fall_peak_y = demo_link.y;
+                    feet.x = demo_link.x;
+                    feet.y = demo_link.y - DEMO_LINK_EYE_HEIGHT + 1;
+                    feet.z = demo_link.z;
+                    link_floor_property = bg_floor(&feet, BG_IGNORE_ENTITY,
+                                                   &floor_hit) != BG_Y_MIN
+                        ? (uint8_t)bg_floor_property(&floor_hit) : 0;
+                }
+                link_on_ground = grounded;
 
                 /* The camera advances per FIXED STEP, not per draw.
                  *
@@ -861,7 +1567,9 @@ void demo_update(void)
                  * on the frame rate: a 6-step turn takes 0.2 s at 30 Hz but 0.75 s
                  * at 8 FPS, and OoT's rates are defined per update. Facing is
                  * recomputed here so the camera follows the step it just took. */
-                if (gameplay.face_locked) {
+                if (sloping) {
+                    /* Slope action owns facing, including its uphill pose. */
+                } else if (gameplay.face_locked) {
                     /* Recompute after movement: both Link and camera track the
                      * target from this step's position, not the previous one. */
                     gameplay_update_facing(demo_link.x, demo_link.z);
@@ -872,7 +1580,7 @@ void demo_update(void)
                      * the D-pad strafes and backs up around it, which is the
                      * source behaviour with no target in range. */
                 }
-                else if (walk && roll_speed <= 0 &&
+                else if (step_walk && roll_speed <= 0 &&
                          (demo_link.x != step_x || demo_link.z != step_z)) {
                     int32_t unused_speed;
                     /* Whole-unit collision positions form a staircase at low
@@ -884,21 +1592,98 @@ void demo_update(void)
                     player_input_motion(&input, demo_yaw, &demo_link_yaw,
                                         &unused_speed);
                 }
+                /* Player_ProcessSceneCollision's wall block, on this step's
+                 * wall contact and final facing. A step whose integer travel
+                 * came to nothing keeps the last probe rather than dropping
+                 * the contact the source would still report. */
+                kokiri_collision_actor_probe_still(&demo_link);
+                wall = kokiri_collision_actor_wall(&stepped, &wall_hit);
+                link_last_wall = wall;
+                if (wall)
+                    link_last_wall_hit = wall_hit;
+                /* Handler 5's crawlspace test, short of the press. */
+                {
+                    bg_vec_t feet = { demo_link.x, demo_link.y - DEMO_LINK_EYE_HEIGHT,
+                                      demo_link.z };
+                    link_enter_prompt = grounded && !gameplay_blocks_world() &&
+                        link_crawl.phase == PLAYER_CRAWL_NONE &&
+                        (link_anim_state() == LINK_STATE_IDLE ||
+                         link_anim_state() == LINK_STATE_WALK ||
+                         link_anim_state() == LINK_STATE_RUN) &&
+                        link_bg.interact && link_bg.shape_yaw_to_wall < 0x3000 &&
+                        player_crawl_prompt(&link_bg, &feet);
+                }
+                if (stepped || intent_speed == 0) {
+                    bg_vec_t feet = { demo_link.x, demo_link.y - DEMO_LINK_EYE_HEIGHT,
+                                      demo_link.z };
+                    int32_t air_speed = intent_speed ? intent_speed : link_air_speed_q8;
+                    player_bg_update(&link_bg, wall, &wall_hit, &feet, demo_link_yaw,
+                                     intent_heading, air_speed);
+                    /* Player_Action_8084411C, descending: grab a ledge ahead. */
+                    if (!grounded && link_velocity_y_q8 < 0 && !climbing) {
+                        int32_t floor;
+                        uint16_t off = (uint16_t)(intent_heading - demo_link_yaw);
+                        if (!kokiri_collision_floor(feet.x, feet.z, feet.y, &floor))
+                            floor = BG_Y_MIN;
+                        /* yDistToLedge >= 150 with the stick forward: grab the
+                         * wall itself if it is a ladder or vines. */
+                        if (link_bg.interact && air_speed > 0 &&
+                            link_bg.y_dist_to_ledge >= PLAYER_CLIMB_AIR_WALL &&
+                            player_input_stick_pushed(&input) &&
+                            (off < 0x2000 || off > 0xE000)) {
+                            if (player_climb_start(&link_climb, &link_bg, &feet,
+                                                   &demo_link_yaw, false)) {
+                                demo_link.x = feet.x;
+                                demo_link.y = feet.y + DEMO_LINK_EYE_HEIGHT;
+                                demo_link.z = feet.z;
+                                link_velocity_y_q8 = 0;
+                                link_fall_remainder_q8 = 0;
+                                link_air_speed_q8 = 0;
+                            }
+                        } else if (player_hang_grab(&link_bg, air_speed, feet.y, floor)) {
+                            feet.y += link_bg.y_dist_to_ledge;
+                            link_start_hang(&link_bg.wall_hit, link_bg.dist_to_wall,
+                                            feet, false);
+                        }
+                    }
+                }
+                /* Not on the launch step: that step still reads grounded,
+                 * and would drop the 250 jump's speedXZ 1.0 (BUG-012). */
+                if ((grounded && !launched) || intent_speed)
+                    link_air_speed_q8 = 0;
                 if (recovered) {
                     /* Recovery must not ease: a camera left down in the void
                      * would show empty space on the way back. */
                     oot_follow_snap(&link_follow, &demo_link, demo_link_yaw);
                     recovered = false;
+                    player_camera_reset(&link_camera);
                 }
                 /* A prerendered interior keeps the one viewpoint its
                  * backdrop was drawn from; easing a follow camera around
                  * inside it would slide the room off the picture. */
-                if (scene_flow_is_interior())
+                if (link_crawl.phase == PLAYER_CRAWL_IN) {
+                    if (!crawl_cam_valid) crawl_camera_begin();
+                    if (crawl_cam_valid) crawl_camera(link_crawl.speed_q8 != 0);
+                } else if (crawl_cam_valid) {
+                    /* Out of Subj4: the follow camera starts behind him. */
+                    crawl_cam_valid = false;
+                    oot_follow_snap(&link_follow, &demo_link, demo_link_yaw);
+                    player_camera_reset(&link_camera);
+                }
+                if (demo_first_person())
+                    ;
+                else if (scene_flow_is_interior())
                     interior_camera();
-                else
-                    oot_follow_update(&link_follow, &demo_link, demo_link_yaw,
+                else {
+                    link_state_t pose = link_anim_state();
+                    unsigned mode = pose == LINK_STATE_CLIMB ? PLAYER_CAMERA_CLIMB :
+                        (pose == LINK_STATE_HANG || pose == LINK_STATE_PULL_UP) ?
+                            PLAYER_CAMERA_HANG : PLAYER_CAMERA_NORMAL;
+                    player_camera_update(&link_camera, &link_follow, mode,
+                                      &demo_link, demo_link_yaw,
                                       demo_link.x != step_x || demo_link.z != step_z,
                                       &demo_camera, &demo_yaw, &demo_pitch);
+                }
                 /* Checked after the move, so standing ON the doorway is what
                  * triggers it -- the same collision triangle the original
                  * uses. Abandons the rest of the catch-up: the scene those

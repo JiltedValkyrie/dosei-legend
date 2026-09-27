@@ -7,9 +7,9 @@
 ** exhaust it. Baked per-frame limb *rotations* are const instead, and there is
 ** exactly one posed POINT table, rewritten in place when the frame changes.
 **
-** The clip data still shares the RAM below SGL's work area with .bss, so the
-** malloc arena in the makefile was trimmed to measured demand to pay for it.
-** Rotations are kept at full 16-bit binang precision.
+** The per-frame clip tables (~57 KB) are read from LINKANIM.BIN into cart RAM
+** by link_anim_load(); only host builds link them as .rodata. Rotations are
+** kept at full 16-bit binang precision.
 **
 ** Cost control: the skeleton is walked once per frame to build 21 limb
 ** matrices (21 rotations), then each vertex is one matrix-vector product.
@@ -44,6 +44,70 @@ typedef struct
 }           limb_matrix_t;
 
 static limb_matrix_t limb_matrices[LINK_LIMB_COUNT];
+
+#ifdef LINK_FRAMES_FROM_DISC
+/* Per-frame tables live in cart RAM, read from LINKANIM.BIN at boot. Same
+** indexing as the host arrays in link_clips.c. Disc data is big-endian, the
+** SH-2's own order, so the file body is used in place. */
+/* Not static: link_anim_state.c reads roots for the hang's root motion. */
+const int16_t (*link_root)[3];
+const int16_t (*link_rotations)[LINK_LIMB_COUNT * 3];
+
+static uint32_t read_be32(const unsigned char *p)
+{
+    return ((uint32_t)p[0] << 24) | ((uint32_t)p[1] << 16) |
+           ((uint32_t)p[2] << 8) | p[3];
+}
+
+bool            link_anim_load(void)
+{
+    static const unsigned int roots = LINK_FRAME_COUNT * 3;
+    static const unsigned int rotations = LINK_FRAME_COUNT * LINK_LIMB_COUNT * 3;
+    unsigned char   *data;
+    uint32_t        digest = 0x811C9DC5u;   /* FNV-1a, frames_digest() */
+    unsigned int    i;
+    int             length = 0;
+
+    if (link_root)
+        return (true);
+    data = (unsigned char *)jo_fs_read_file("LINKANIM.BIN", &length);
+    if (!data)
+        return (false);
+    if (length != (int)(16 + (roots + rotations) * 2) ||
+        data[0] != 'L' || data[1] != 'A' || data[2] != 'N' || data[3] != '1' ||
+        read_be32(data + 4) != LINK_FRAME_COUNT ||
+        read_be32(data + 8) != LINK_LIMB_COUNT ||
+        read_be32(data + 12) != LINK_FRAMES_DIGEST) {
+        jo_free(data);
+        return (false);
+    }
+    /* Bind the file to THIS executable: digest this ELF's own clip layout,
+    ** then every body byte in order, and compare with the digest the
+    ** generator compiled in. A same-shape file from another build fails. */
+    for (i = 0; i < LINK_CLIP_COUNT; ++i) {
+        const uint8_t layout[4] = {
+            (uint8_t)(link_clips[i].first >> 8), (uint8_t)link_clips[i].first,
+            (uint8_t)(link_clips[i].count >> 8), (uint8_t)link_clips[i].count };
+        unsigned int k;
+        for (k = 0; k < 4; ++k)
+            digest = (digest ^ layout[k]) * 0x01000193u;
+    }
+    for (i = 16; i < (unsigned int)length; ++i)
+        digest = (digest ^ data[i]) * 0x01000193u;
+    if (digest != LINK_FRAMES_DIGEST) {
+        jo_free(data);
+        return (false);
+    }
+    link_root = (const int16_t (*)[3])(data + 16);
+    link_rotations = (const int16_t (*)[LINK_LIMB_COUNT * 3])(data + 16 + roots * 2);
+    return (true);
+}
+#else
+bool            link_anim_load(void)
+{
+    return (true);
+}
+#endif
 
 /* The frame currently resident in link_points, so an unchanged frame costs
 ** nothing. -1 forces the first pose. */
@@ -254,6 +318,10 @@ void            link_anim_pose(unsigned int clip, unsigned int frame,
 
     if (clip >= LINK_CLIP_COUNT)
         clip = LINK_CLIP_IDLE;
+#ifdef LINK_FRAMES_FROM_DISC
+    if (!link_root)
+        return;                     /* link_anim_load failed; boot refuses */
+#endif
     entry = &link_clips[clip];
     if (entry->count == 0)
         return;
@@ -279,10 +347,28 @@ void            link_anim_pose(unsigned int clip, unsigned int frame,
     next = absolute + 1;
     if (next >= entry->first + entry->count)
         next = (clip == LINK_CLIP_FALL || clip == LINK_CLIP_LANDING ||
-                clip == LINK_CLIP_ROLL) ? absolute : entry->first;
+                clip == LINK_CLIP_ROLL || clip == LINK_CLIP_JUMP ||
+                clip == LINK_CLIP_RUN_JUMP || clip == LINK_CLIP_RUN_JUMP_END ||
+                clip == LINK_CLIP_STEP100 || clip == LINK_CLIP_STEP150 ||
+                clip == LINK_CLIP_JUMP250 || clip == LINK_CLIP_HANG_FALL ||
+                clip == LINK_CLIP_CLIMB_HOLD || clip == LINK_CLIP_FALL_UP ||
+                clip == LINK_CLIP_CLIMB_UP || clip == LINK_CLIP_CLIMB_UP_FREE ||
+                clip == LINK_CLIP_SWIM_ENTER || clip == LINK_CLIP_SWIM_FALL ||
+                clip == LINK_CLIP_DIVE_START || clip == LINK_CLIP_DIVE_END ||
+                link_clip_pinned[clip])
+               ? absolute : entry->first;
     for (i = 0; i < 3; ++i)
         root[i] = link_root[absolute][i] +
             (link_root[next][i] - link_root[absolute][i]) * (int)fraction / 256;
+    if (link_clip_pinned[clip]) {
+        /* AnimMovement clip: its root moves the actor (link_anim_state.c),
+        ** the drawn root stays at baseTransl as a child draws it. Without
+        ** UPDATE_Y (2) the clip's own y is drawn. */
+        root[0] = LINK_PINNED_ROOT_X;
+        if (link_clip_pinned[clip] == 1)
+            root[1] = LINK_PINNED_ROOT_Y;
+        root[2] = LINK_PINNED_ROOT_Z;
+    }
     for (i = 0; i < LINK_LIMB_COUNT * 3; ++i) {
         /* Interpolate across the short side of the 16-bit angle wrap. */
         int32_t delta = (uint16_t)(link_rotations[next][i] - link_rotations[absolute][i]);

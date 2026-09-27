@@ -58,6 +58,25 @@ def extract(root, rom_dir=None, prefix='spot04', expect=None):
     return segments
 
 
+def extract_object(root, rom_dir, name):
+    """One object segment (gameplay_dangeon_keep, object_...) by exact name."""
+    config = root / 'baseroms/ntsc-1.2'
+    roms = [p for p in (Path(rom_dir) if rom_dir else config).glob('*.z64') if hashlib.md5(p.read_bytes()).hexdigest()
+            == '57a9719ad547c516342e1a15d5c28c3d']
+    assert len(roms) == 1, 'Verified US 1.2 ROM required'
+    rom = roms[0].read_bytes()
+    dma = int(re.search(r'dmadata_start: (\w+)', (config / 'config.yml').read_text())[1], 16)
+    with (config / 'segments.csv').open() as f:
+        for index, row in enumerate(csv.DictReader(f)):
+            if row['Name'] != name:
+                continue
+            start, end, physical, packed_end = struct.unpack_from('>4I', rom, dma + index * 16)
+            data = yaz0(rom[physical:packed_end]) if packed_end else rom[physical:physical + end - start]
+            assert len(data) == end - start
+            return bytes(data)
+    raise ValueError('object %s not in segments.csv' % name)
+
+
 def rgba16(value):
     return ((value >> 11 & 31) * 255 // 31, (value >> 6 & 31) * 255 // 31,
             (value >> 1 & 31) * 255 // 31, 255 if value & 1 else 0)
@@ -411,6 +430,77 @@ def collision_surfaces(scene):
         assert out
         return out
     raise ValueError('No collision header in US 1.2 scene')
+
+
+def collision_data(scene):
+    """The whole CollisionHeader, with nothing the runtime might need dropped.
+
+    decomp include/bgcheck.h CollisionHeader: minBounds +0, maxBounds +6,
+    numVertices +12, vtxList +16, numPolygons +20, polyList +24,
+    surfaceTypeList +28, bgCamList +32, numWaterBoxes +36, waterBoxes +40.
+    CollisionPoly (16 bytes): u16 type, u16 flags_vIA (bits 13-15 ignore
+    camera/entity/projectiles), u16 flags_vIB (bit 13 floor conveyor), u16 vIC,
+    Vec3s normal (Q15), s16 dist. SurfaceType is two raw u32 words, kept whole.
+    WaterBox (16 bytes): s16 xMin, ySurface, zMin, xLength, zLength, pad,
+    u32 properties. BgCamInfo: u16 setting, s16 count, Vec3s* data.
+
+    Neither surface types nor bgCams store a count: the highest index any
+    polygon (or water box, for bgCams) refers to bounds what is safe to read.
+    """
+    for pos in range(0, 0x400, 8):
+        if scene[pos] == 0x14:
+            break
+        if scene[pos] != 3:
+            continue
+        return collision_header_data(scene, _segment_offset(scene[pos:pos + 8]))
+    raise ValueError('No collision header in US 1.2 scene')
+
+
+def collision_header_data(scene, header):
+    """collision_data() for a CollisionHeader at a known offset in `scene`.
+
+    Objects carry their own headers (a push block's gPushBlockCol in
+    gameplay_dangeon_keep, say); every pointer is taken as an offset into the
+    same segment, as it is for a scene.
+    """
+    nv = struct.unpack_from('>H', scene, header + 12)[0]
+    vp = struct.unpack_from('>I', scene, header + 16)[0] & 0xFFFFFF
+    count = struct.unpack_from('>H', scene, header + 20)[0]
+    pp = struct.unpack_from('>I', scene, header + 24)[0] & 0xFFFFFF
+    types = struct.unpack_from('>I', scene, header + 28)[0] & 0xFFFFFF
+    cams = struct.unpack_from('>I', scene, header + 32)[0]
+    nwater = struct.unpack_from('>H', scene, header + 36)[0]
+    wp = struct.unpack_from('>I', scene, header + 40)[0] & 0xFFFFFF
+    vertices = [struct.unpack_from('>3h', scene, vp + 6 * i)
+                for i in range(nv)]
+    polys = []
+    for i in range(count):
+        kind, via, vib, vic, nx, ny, nz, _dist = struct.unpack_from(
+            '>4H4h', scene, pp + 16 * i)
+        polys.append(dict(
+            vertices=[vertices[v & 0x1FFF] for v in (via, vib, vic)],
+            normal=[round(n / 2) for n in (nx, ny, nz)],
+            surface=kind, ignore=via >> 13, conveyor=(vib >> 13) & 1))
+    surface_count = max(p['surface'] for p in polys) + 1
+    surfaces = [struct.unpack_from('>2I', scene, types + 8 * i)
+                for i in range(surface_count)]
+    water = [struct.unpack_from('>5h2xI', scene, wp + 16 * i)
+             for i in range(nwater)] if nwater else []
+    bgcams = []
+    if cams:
+        highest = max([s[0] & 0xFF for s in surfaces] +
+                      [w[5] & 0xFF for w in water])
+        base = cams & 0xFFFFFF
+        for i in range(highest + 1):
+            setting, n, data = struct.unpack_from('>HhI', scene, base + 8 * i)
+            vectors = []
+            if data and n > 0:
+                at = data & 0xFFFFFF
+                vectors = [struct.unpack_from('>3h', scene, at + 6 * k)
+                           for k in range(n)]
+            bgcams.append(dict(setting=setting, vectors=vectors))
+    assert polys
+    return dict(polys=polys, surfaces=surfaces, water=water, bgcams=bgcams)
 
 
 def collision_triangles(scene):

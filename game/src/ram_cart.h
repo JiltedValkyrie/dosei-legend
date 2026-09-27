@@ -28,12 +28,17 @@
 /* The top of bank 2 is kept OUT of jo_malloc for fixed runtime pools (actor
 ** pool first). A fixed carve keeps these off the 56 KB work-RAM malloc arena,
 ** which jo_malloc would otherwise fill first. */
-#define RAM_CART_FIXED_BYTES    0x4000u
+#define RAM_CART_FIXED_BYTES    0x8000u
 #define RAM_CART_FIXED_ADDRESS  (RAM_CART_BANK2_ADDRESS + RAM_CART_BANK2_BYTES - RAM_CART_FIXED_BYTES)
 
 /* Fixed carve for the actor pool (actor_sys_bytes() must fit). */
 #define RAM_CART_ACTOR_POOL_OFFSET  0u
 #define RAM_CART_ACTOR_POOL_BYTES   0x2000u
+
+/* Fixed carve for world copies of actor-owned (DynaPoly) collision:
+** 512 triangles x 36 bytes. */
+#define RAM_CART_DYNA_OFFSET        0x2000u
+#define RAM_CART_DYNA_BYTES         0x4800u
 
 /* Pointer into the fixed carve, or 0 when no cart / out of range. */
 void   *ram_cart_fixed(unsigned int offset, unsigned int bytes);

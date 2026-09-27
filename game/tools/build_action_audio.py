@@ -175,12 +175,22 @@ def build(oot, source, out):
         raise ValueError('Child jump voice array changed')
     sample = font.find('.//Effect[@Name="EFFECT_53"]').attrib['Sample']
     entries.append(('jump', sample, 60, .30, 'ARRAY_64C5'))
+    # NA_SE_VO_LI_CLIMB_END_KID (CHAN_639A) picks rand 2 over this array.
+    # Only EFFECT_35 fits the sound RAM left above the area bank (the second
+    # take is logged in BUG_FEATURE_LOG).
+    climb_array = seq.split('.array ARRAY_63AB', 1)[1].split('.array', 1)[0]
+    for i, effect in enumerate((35,)):
+        if 'SF0_EFFECT_%d' % effect not in climb_array:
+            raise ValueError('Child climb-end voice array changed')
+        sample = font.find('.//Effect[@Name="EFFECT_%d"]' % effect).attrib['Sample']
+        entries.append(('climb%d' % i, sample, 60, .6, 'ARRAY_63AB'))
     bank, records, area_pcm = bytearray(), [], {}
     for name, sample, key, duration, label in entries:
         path = source / ('samples/SampleBank_0/Sample%03d.wav' % int(sample.rsplit('_',1)[1]))
         # Keep all four voices and their duration/pitch. Lower their stored
         # rate to make space for resident Navi without overlapping music RAM.
-        sample_rate = RATE / 2 if name.startswith('voice') or name == 'navi_dash' else RATE
+        sample_rate = (RATE / 2 if name.startswith(('voice', 'climb')) or name == 'navi_dash'
+                       else RATE)
         pcm = (fairy_audio.dash_sample(source, sys.modules[__name__]) if name == 'navi_dash'
                else render(*decode(path), key, duration, output_rate=sample_rate))
         untrimmed_length = len(pcm)

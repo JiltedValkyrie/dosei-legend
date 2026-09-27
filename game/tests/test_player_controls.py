@@ -88,6 +88,29 @@ class PlayerControls(unittest.TestCase):
         self.lib.player_input_sample_pad(bits, True, x, y)
         self.lib.control_step(True)
 
+    def test_light_tilt_turns_without_translation(self):
+        self.analog(x=180)  # mapped strength 41: turn only
+        self.assertEqual(self.lib.control_motion_speed(), 0)
+        self.assertEqual(self.lib.control_motion_heading(0), 49152)
+        self.analog(x=181)  # last turn-only strength: 42
+        self.assertEqual(self.lib.control_motion_speed(), 0)
+        self.analog(x=182)  # mapped strength 43: movement
+        self.assertGreater(self.lib.control_motion_speed(), 0)
+        self.lib.link_anim_turn.argtypes = [ctypes.c_bool, ctypes.c_uint16,
+                                          ctypes.POINTER(ctypes.c_uint16)]
+        self.lib.link_anim_reset_state()
+        facing = ctypes.c_uint16(0)
+        self.lib.link_anim_turn(True, 49152, ctypes.byref(facing))
+        self.assertEqual(facing.value, 65536 - 800)
+        self.assertEqual(self.lib.link_anim_state(), 14)
+        for _ in range(30):
+            self.lib.link_anim_turn(True, 49152, ctypes.byref(facing))
+        self.assertEqual(facing.value, 49152)
+        self.assertEqual(self.lib.link_anim_state(), 0)
+        self.lib.link_anim_turn(True, 50000, ctypes.byref(facing))
+        self.lib.link_anim_turn(False, 0, ctypes.byref(facing))
+        self.assertEqual(self.lib.link_anim_state(), 0)
+
     def test_analog_deadzone_and_proportional_speed(self):
         for x, y in ((128, 128), (140, 138), (128, 112)):
             self.analog(x=x, y=y)
@@ -187,6 +210,23 @@ class PlayerControls(unittest.TestCase):
         self.assertTrue(self.lib.control_attack())
         self.assertFalse(self.lib.control_jump())
         self.assertFalse(self.lib.control_interact())
+
+    def test_a_held_and_stick_pushed_for_the_ledge_hang(self):
+        """Player_Action_8084BBE4 reads A held (let go) and a stick pushed
+        55 of 60 (pull up); digital directions are full throw."""
+        self.hold(A, steps=3)
+        self.assertTrue(self.lib.control_interact_held())
+        self.assertFalse(self.lib.control_stick_pushed())
+        self.hold(0)
+        self.assertFalse(self.lib.control_interact_held())
+        self.hold(UP)
+        self.assertTrue(self.lib.control_stick_pushed())
+        self.analog(y=64)                 # half throw
+        self.assertFalse(self.lib.control_stick_pushed())
+        self.analog(y=0)                  # full throw
+        self.assertTrue(self.lib.control_stick_pushed())
+        self.analog()
+        self.assertFalse(self.lib.control_stick_pushed())
 
     def test_r_is_shield_only(self):
         self.hold(R)
@@ -502,7 +542,7 @@ class PlayerControls(unittest.TestCase):
             self.lib.control_reset()
             self.lib.kokiri_camera_reset_actor_motion()
             if analog:
-                self.analog(y=100)
+                self.analog(y=64)  # above the turn-only band
             else:
                 self.tap(B)
                 self.hold(UP)

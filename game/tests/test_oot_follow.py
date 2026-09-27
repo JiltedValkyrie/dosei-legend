@@ -362,13 +362,16 @@ class CameraStepTiming(unittest.TestCase):
         return body[:end]
 
     def test_camera_updates_inside_the_step_loop(self):
-        self.assertIn('oot_follow_update', self.step_loop(),
+        self.assertIn('player_camera_update', self.step_loop(),
                       'camera easing would be frame-rate dependent')
 
     def test_camera_updates_only_inside_the_step_loop(self):
         """A second call per draw would double-advance the easing."""
-        self.assertEqual(self.source.count('oot_follow_update('), 2,
-                         'expected exactly the spawn snap and the step call')
+        self.assertEqual(self.source.count('oot_follow_update('), 1,
+                         'only the spawn snap bypasses traversal camera selection')
+        self.assertEqual(self.source.count('player_camera_update('),
+                         self.step_loop().count('player_camera_update('),
+                         'water/land camera calls must stay in the fixed-step loop')
 
     def test_skinning_stays_outside_the_step_loop(self):
         self.assertNotIn('link_anim_pose', self.step_loop(),

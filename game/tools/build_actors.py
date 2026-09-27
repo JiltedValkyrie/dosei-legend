@@ -66,6 +66,15 @@ def read_actors(data):
     return out
 
 
+def entity_floor_triangles(scene):
+    """Exclude source entity-ignore surfaces, including tall-grass tops."""
+    geometry = source.collision_triangles(scene)
+    metadata = source.collision_data(scene)['polys']
+    assert len(geometry) == len(metadata)
+    return [tri for tri, poly in zip(geometry, metadata)
+            if not (poly['ignore'] & 2)]
+
+
 def floor_under(triangles, x, z, y):
     """Highest walkable collision floor at or below y+tolerance, or None.
 
@@ -131,7 +140,7 @@ def main():
     args = ap.parse_args()
 
     segments = source.extract(args.oot, args.rom_dir)
-    triangles = source.collision_triangles(segments['spot04_scene'])
+    triangles = entity_floor_triangles(segments['spot04_scene'])
 
     people, grass, signs, rupees = [], [], [], []
     for name in sorted(segments):

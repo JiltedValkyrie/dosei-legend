@@ -72,6 +72,9 @@ typedef struct
     bool                interact_pending;   /* A */
     bool                attack_pending;     /* X */
     bool                shield_held;        /* R */
+    /* A HELD: letting go of a ledge (Player_Action_8084BBE4 reads the button
+    ** state, not a press). */
+    bool                interact_held;
     bool                diagnostics_toggled;
     bool                camera_swap_toggled;
 }                       player_input_t;
@@ -90,9 +93,14 @@ void    player_input_reset(void);
 void    player_input_sample(uint16_t held);
 /* 3D Pad axes: unsigned 0..255, centre 128, Y grows downward. */
 void    player_input_sample_pad(uint16_t held, bool analog, uint8_t x, uint8_t y);
-/* Camera-relative heading and proportional speed, including digital fallback. */
+/* Camera-relative heading and proportional speed, including digital fallback.
+** A light analog tilt (strength 1..42) returns a heading with zero speed for
+** turning in place. False means no direction, not merely zero translation. */
 bool    player_input_motion(const player_input_t *input, uint16_t yaw,
                             uint16_t *heading, int32_t *speed_q8);
+/* controlStickSpinAngles >= 0: the stick is pushed at least 55 of 60
+** (Player_ProcessControlStick). A digital direction is always full throw. */
+bool    player_input_stick_pushed(const player_input_t *input);
 /* Consume one fixed step's worth of decisions. `in_gameplay` false discards
 ** queued actions so title input never leaks into the world. */
 void    player_input_step(bool in_gameplay, player_input_t *out);

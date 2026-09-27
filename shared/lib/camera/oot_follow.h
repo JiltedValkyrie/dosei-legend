@@ -63,6 +63,15 @@ typedef struct
     bool        targeting;     /* behind-Link lock, independent of movement */
 }               oot_follow_t;
 
+/* Traversal adapter parameters. Normal callers retain the existing camera. */
+typedef struct {
+    int32_t y_offset, pitch_target, pitch_rate;
+    unsigned yaw_policy; /* 0 normal, 1 climb (face wall), 2 hang (hold view) */
+} oot_follow_profile_t;
+void oot_follow_update_profile(oot_follow_t *camera, const camera_position_t *player,
+    uint16_t facing, bool moving, camera_position_t *eye, uint16_t *yaw,
+    int32_t *pitch, const oot_follow_profile_t *profile);
+
 /* Bounds for the Z-look aim, in binang. Yaw is limited rather than free so the
 ** look camera cannot be used as an unbounded orbit. */
 #define OOT_LOOK_YAW_LIMIT      16384

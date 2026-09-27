@@ -24,11 +24,11 @@
  * and func_80A03CF8 adds that rise on top of it.
  *
  * LINK_HEAD is measured from our own model: posing the idle frame's skeleton
- * puts limb 10, the head joint, 4291 model units up, which is 45 world units
- * over his feet at LINK_ANIM_SCALE_Q16 with LINK_ANIM_SHIFT_Y. It is NOT the
+ * (child root x0.64, M1c) puts limb 10, the head joint, 45.6 world units over
+ * his feet at LINK_ANIM_SCALE_Q16 with LINK_ANIM_SHIFT_Y. It is NOT the
  * camera eye height (90): anchoring there floated her a head and a half above
  * him. tests/test_navi.py re-derives it from the generated clip data. */
-#define LINK_HEAD           45
+#define LINK_HEAD           46
 #define HOVER_RISE          12
 /* Source thresholds on the distance to PLAYER_BODYPART_HAT. */
 #define DASH_ENTER          100

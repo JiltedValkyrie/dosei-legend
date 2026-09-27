@@ -122,26 +122,66 @@ def _segment_offset_local(command):
     return int.from_bytes(command[4:8], 'big') & 0xFFFFFF
 
 
-def collision_records(surfaces):
-    """The 36-byte collision records the runtime already expects.
+# S<scene>.COL, version 2 ("KBG2"). Everything big-endian, 4-byte aligned:
+#
+#   header  16 B  'KBG2', u16 triangles, surfaces, waterboxes, bgcams,
+#                 camera vectors, reserved 0
+#   triangles     36 B each, the layout shared/lib/collision always read:
+#                 int16 vertex[3][3], normal[3] (Q14), minimum[3], maximum[3]
+#   info          u16 per triangle: bits 0-7 surface index, 8-10 the poly's
+#                 ignore flags (camera, entity, projectiles: flags_vIA >> 13),
+#                 bit 11 floor conveyor (flags_vIB bit 13); padded to 4 bytes
+#   surfaces      raw SurfaceType data[0], data[1] (u32 each), ALL bits kept
+#   waterboxes    raw 16 B WaterBox: s16 xMin, ySurface, zMin, xLength,
+#                 zLength, pad, u32 properties
+#   bgcams        u16 setting, s16 vector count, u32 first vector index
+#   vectors       Vec3s camera data (6 B each), referenced by bgcams
+#
+# Surface bits are decoded at runtime with the SurfaceType_Get* layout, and
+# wall flags through D_80119D90, so nothing here pre-interprets the ROM.
+COLLISION_MAGIC = b'KBG2'
+COLLISION_TRIANGLES_MAX = 2048      # scene_flow.c SCENE_COLLISION_MAX
+COLLISION_SURFACES_MAX = 256        # info keeps an 8-bit surface index
 
-    Same layout as FOREST.COL so shared/lib/collision needs no change:
-    vertex[3][3], normal[3], minimum[3], maximum[3], all int16.
-    """
-    data = bytearray()
-    for poly in surfaces:
+
+def collision_file(data):
+    polys = data['polys']
+    if len(polys) > COLLISION_TRIANGLES_MAX:
+        sys.exit('collision: %d triangles > %d' % (len(polys), COLLISION_TRIANGLES_MAX))
+    if len(data['surfaces']) > COLLISION_SURFACES_MAX:
+        sys.exit('collision: %d surface types > %d'
+                 % (len(data['surfaces']), COLLISION_SURFACES_MAX))
+    vectors = [v for cam in data['bgcams'] for v in cam['vectors']]
+    out = bytearray(COLLISION_MAGIC)
+    out += struct.pack('>6H', len(polys), len(data['surfaces']),
+                       len(data['water']), len(data['bgcams']), len(vectors), 0)
+    for poly in polys:
         abc = poly['vertices']
         minimum = [min(v[k] for v in abc) for k in range(3)]
         maximum = [max(v[k] for v in abc) for k in range(3)]
-        values = [n for v in abc for n in v] + poly['normal'] + minimum + maximum
-        data.extend(struct.pack('>18h', *values))
-    return bytes(data)
+        out += struct.pack('>18h', *([n for v in abc for n in v] + poly['normal']
+                                     + minimum + maximum))
+    for poly in polys:
+        out += struct.pack('>H', poly['surface'] | (poly['ignore'] << 8)
+                           | (poly['conveyor'] << 11))
+    if len(polys) & 1:
+        out += b'\0\0'
+    for data0, data1 in data['surfaces']:
+        out += struct.pack('>2I', data0, data1)
+    for box in data['water']:
+        out += struct.pack('>5h2xI', *box)
+    first = 0
+    for cam in data['bgcams']:
+        out += struct.pack('>HhI', cam['setting'], len(cam['vectors']), first)
+        first += len(cam['vectors'])
+    for vector in vectors:
+        out += struct.pack('>3h', *vector)
+    return bytes(out)
 
 
 # Wall flags per WALL_TYPE, from the decomp's D_80119D90 table
-# (src/code/z_bgcheck.c:69). Link climbs a wall carrying WALL_FLAG_3 (a
-# ladder), WALL_FLAG_1 or WALL_FLAG_2 -- func_8083EC18, z_player.c:7491.
-# Crawlspaces have their own pair of flags.
+# (src/code/z_bgcheck.c). The runtime has its own copy (kokiri_collision.c
+# bg_wall_flags); this one only feeds the build summary.
 WALL_FLAGS = (
     0,                  # WALL_TYPE_0  ordinary wall
     0x01,               # WALL_TYPE_1  WALL_FLAG_0
@@ -153,41 +193,20 @@ WALL_FLAGS = (
     0x40,               # WALL_TYPE_7  WALL_FLAG_6
 )
 
-# One byte per collision triangle, in S<scene>.SUR.
-SURFACE_CLIMBABLE  = 0x01   # WALL_FLAG_1/2/3: vines, climbable walls, ladders
-SURFACE_LADDER     = 0x02   # WALL_FLAG_3 specifically
-SURFACE_CRAWLSPACE = 0x04
+
+# Moving/removable collision (DynaPoly). Actor-owned meshes, same KBG2 layout;
+# untransformed (actor scale and position are applied at runtime, as
+# DynaPoly_ExpandSRT does). Generated only, not staged on the disc, until an
+# actor that places one lands (Obj_Oshihiki: M1 push/pull, ydan room 5).
+DYNA_MESHES = (
+    # name       object                    CollisionHeader  (decomp symbol)
+    ('PUSHBLK', 'gameplay_dangeon_keep', 0x4E98),         # gPushBlockCol
+)
 
 
-def surface_records(surfaces):
-    """How Link may interact with each collision triangle.
-
-    Rides ALONGSIDE the geometry rather than changing it: S<scene>.COL keeps
-    the exact 36-byte records shared/lib/collision already reads, and this is a
-    parallel byte array in the same triangle order.
-
-    Without it the ladder up to Link's house is just a wall, so jumping down
-    strands the player outside with no way back in, and the crawlspace to the
-    sword maze is impassable. Both exist in the ROM: Kokiri Forest has two
-    ladder triangles and eight crawlspace triangles.
-
-    The footstep material rides in the high nibble. The slice currently plays
-    one footstep sound for the whole forest; this is the data that fixes it.
-    """
-    data = bytearray()
-    for poly in surfaces:
-        wall = poly['wall_type']
-        flags = WALL_FLAGS[wall] if wall < len(WALL_FLAGS) else 0
-        byte = 0
-        if flags & (0x02 | 0x04 | 0x08):
-            byte |= SURFACE_CLIMBABLE
-        if flags & 0x08:
-            byte |= SURFACE_LADDER
-        if flags & (0x10 | 0x20):
-            byte |= SURFACE_CRAWLSPACE
-        byte |= (poly['material'] & 0x0F) << 4
-        data.append(byte)
-    return bytes(data)
+def wall_flags(data, poly):
+    wall = (data['surfaces'][poly['surface']][0] >> 21) & 0x1F
+    return WALL_FLAGS[wall] if wall < len(WALL_FLAGS) else 0
 
 
 def scene_doors(index, prefix, scene, entrances, by_scene_name, report):
@@ -246,10 +265,10 @@ def main():
                                   expect=entry['rooms'] + 1)
         scene = segments[entry['prefix'] + '_scene']
         surfaces = source.collision_surfaces(scene)
-        records = collision_records(surfaces)
-        (args.cd / asset_names.scene_asset(index, 'COL')).write_bytes(records)
-        flags = surface_records(surfaces)
-        (args.cd / asset_names.scene_asset(index, 'SUR')).write_bytes(flags)
+        collision = source.collision_data(scene)
+        (args.cd / asset_names.scene_asset(index, 'COL')).write_bytes(
+            collision_file(collision))
+        flags = [wall_flags(collision, poly) for poly in collision['polys']]
         first_spawn = len(spawns)
         for spawn in source.spawn_points(scene):
             spawns.append(dict(scene=index, **spawn))
@@ -263,13 +282,20 @@ def main():
                                         entrances, by_scene_name, report)
         doors.extend(scene_doors_found)
         summaries.append(dict(index=index, prefix=entry['prefix'],
-                              climbable=sum(1 for b in flags if b & SURFACE_CLIMBABLE),
-                              ladders=sum(1 for b in flags if b & SURFACE_LADDER),
-                              crawlspaces=sum(1 for b in flags if b & SURFACE_CRAWLSPACE),
+                              climbable=sum(1 for b in flags if b & 0x0E),
+                              ladders=sum(1 for b in flags if b & 0x08),
+                              crawlspaces=sum(1 for b in flags if b & 0x30),
+                              waterboxes=len(collision['water']),
+                              bgcams=len(collision['bgcams']),
                               rooms=entry['rooms'], triangles=len(surfaces),
                               spawns=len(spawns) - first_spawn,
                               doors=len(scene_doors_found),
                               first_spawn=first_spawn))
+
+    for name, obj, offset in DYNA_MESHES:
+        mesh = source.collision_header_data(
+            source.extract_object(args.oot, args.rom_dir, obj), offset)
+        (args.out / (name + '.COL')).write_bytes(collision_file(mesh))
 
     # A spawn sitting on a doorway would send the player straight back through
     # it. The runtime guards against the loop by requiring Link to step off a

@@ -52,6 +52,11 @@
 ** here rather than read straight off the pad in demo.c, because whether a
 ** press recentres depends on whether it became a lock-on. */
 #define GP_EVENT_RECENTER   (1u << 21)
+/* Ledge climbs (Player_Action_80845668 / func_808389E8). CLIMB_END = the
+** step-up's landing frame: NA_SE_VO_LI_CLIMB_END. HOP_VOICE = the ledge
+** hop's NA_SE_VO_LI_SWORD_N. */
+#define GP_EVENT_CLIMB_END  (1u << 22)
+#define GP_EVENT_HOP_VOICE  (1u << 23)
 #define GP_WALLET_CAPACITY  99
 #define GP_DROP_DELAY      15
 

@@ -1,5 +1,92 @@
 # Vertical slice progress
 
+## M1l traversal camera core (2026-09-26, uncommitted)
+
+- Hang/climb framing, eased return and traversal camera collision added;
+  malformed crawl-camera paths fall back without hiding Link. Normal follow
+  behavior preserved. Source adaptation gaps remain BUG-027/017/025.
+- 161 focused tests pass. Clean built; SGL gap 16,592 B. Human camera check pending.
+- Human has no available pond test; water acceptance remains pending.
+- Dialogue special-character rendering and VDP2 dither backdrop logged separately
+  as BUG-026, per human request. No dialogue UI change this turn.
+
+## Astra continuation through M1k water core (2026-09-26, uncommitted)
+
+- BUG-021 grass pass-through and pickup height fixed; human test passed.
+  Rustle FX/SFX follow-up is BUG-024.
+- M1g turn/bonk human pass. M1h push core, M1i lift hooks/strengthless bush
+  failure, M1j slope motion/fall policy added; remaining live actor and health
+  integration is explicit in BUG-020/022/023. Push-block live fixture deferred.
+- M1k swim, A-held dive/release, float and sloped-bank exits wired; six clips
+  in cart animation data. 14 water tests and 210 affected tests pass. Real
+  forest pond-to-bank and ydan water-room filtering tested on source geometry.
+- Clean image built, SGL gap 18,144 B. New water runtime needs human check.
+  BUG-025 tracks source subset gaps and M2/M5 drowning/dungeon dependencies;
+  full M1 is not complete. Remaining traversal camera modes come next.
+
+## Demo M1f crawlspaces (2026-09-26, uncommitted)
+
+- A at a crawlspace hole enters; crawl forward/back; exits at the far wall
+  or backs out. Real sword-maze tunnel host-tested both ways.
+- Fixed grounded ceiling range (BUG-016) and still-standing wall contact.
+- Clean image built. Kronos check pending.
+
+## Demo M1e ladder and vine climbing (2026-09-26, uncommitted)
+
+- func_8083EC18 starts (walk into a ladder / vines / FLAG_2 top, jump onto a
+  tall climbable wall, walk off onto vines); Player_Action_8084BF1C climbs by
+  the clips' root motion (15-unit rungs), stick speed, vine sideways, A lets
+  go; ladder top/bottom step-offs, vine top pull-up.
+- Link's house ladder climbed up onto the porch and the forest vine wall
+  (host tests on S1.COL). Climb-down from the porch: see BUG-015.
+- Source point-in-poly slack (BUG-013) fixed; BUG-012 fixed.
+- 12 new host tests. Clean image built. Kronos check pending.
+
+## Demo M1d ledge hang, pull-up, let go (2026-09-26, uncommitted)
+
+- Walking off a drop deeper than 45 hangs on the face just left
+  (func_8083A6AC); a descending jump or fall grabs a ledge ahead
+  (Player_Action_8084411C), including the 250 jump from M1c.
+- Hanging: stick pushed pulls up (fall_up / jump_climb_up), A held lets go.
+  Six new clips; LINKANIM 103,752 B.
+- BUG-011 fixed (released pad no longer interrupts a climb).
+- 10 new host tests (test_player_bg 37, controls 53). Clean image built.
+  Kronos check pending.
+
+## Demo M1c step-up, wall/ledge probe, ledge climbs (2026-09-26, uncommitted)
+
+- Link's movement follows Actor_UpdateBgCheckInfo's order: wall sphere
+  (r14 at +26), ceiling headroom 40, floor ray from +50. Steps up to 24
+  are walked up (before: walked through, or blocked at 15+); 25+ block at
+  the wall. Roofs lower than 40 stop him.
+- Player_ProcessSceneCollision wall/ledge probe + Player_ActionHandler_12:
+  hop (25-26), 100 step up (27-38), 150 step up (39-46), 250 jump start
+  (47+; mid-air grab is M1d, he lands back). Timer 9 steps, or A.
+- Child root x0.64 in every gameplay clip (source); ground shift +18.
+  New clips step100/step150/jump250. CLIMB_END voice added.
+- 28 new host tests (incl. real S1.COL ledges). Clean image built. Kronos
+  check pending.
+
+## Demo M1b gravity + automatic ledge jump (2026-09-26, uncommitted)
+
+- Source gravity (-171 Q8, terminal -20/step). Y jump keeps 51 apex.
+- Running off an edge auto-jumps per func_8083AA10/func_8083A4A8 (run_jump
+  or jump clip, run_jump_end landing). Walking off falls. Floor property
+  7/8 and swinging block leaving.
+- 13 new host tests. Clean image built. Kronos check pending.
+
+## Demo M1a world-collision contract (2026-09-25, uncommitted)
+
+- S<n>.COL now KBG2: raw SurfaceType words, poly ignore/conveyor flags, water
+  boxes, bgCams. `.SUR` retired. Runtime `bg_*` queries report hit poly,
+  owner (static 50 / dyna id), surface bits; D_80119D90 wall flags.
+- DynaPoly slots (cart carve): register/set/enable/remove/carry; real
+  gPushBlockCol mesh host-tested. Old movement API unchanged, sees dyna.
+- Link clip frames moved to LINKANIM.BIN in cart: clean SGL gap
+  4,624 -> 49,568 bytes.
+- 19 new contract tests on real S1/S0/PUSHBLK. Clean image built.
+  Kronos check pending (no emulator run).
+
 ## Save crash repair and permanent shot skip (2026-09-25, uncommitted)
 
 - Save crash traced to stale save_device.o: 220-byte v1 stack buffer called

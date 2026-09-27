@@ -23,7 +23,7 @@ architecture, verified gate table and flag research of `OOT_PROGRESSION_PLAN.md`
 | Milestone | Owner | Status |
 |---|---|---|
 | M0 scope, face-only textures, naming, actor pool, SFX banks | Claude | code review approved 2026-09-25; uncommitted; remaining runtime checks pending |
-| M1 traversal | Claude | cleared to start 2026-09-25; world-collision contract first |
+| M1 traversal | Claude | M1a approved 2026-09-26; M1b (gravity, auto-jump) done, uncommitted, awaiting Astra review |
 | M2 combat core, hearts, death | unassigned | not started |
 | M3 Kokiri Forest alive (NPCs, interiors, shop, chests) | unassigned | not started |
 | M4 items, C buttons, pause subscreens | unassigned | not started |
@@ -197,8 +197,8 @@ spawns, BGM, SFX bank, layer rules). Check asset naming limits for > 9 scenes /
 
 ## Milestones (each = playable disc checkpoint, reviewed before next)
 
-Each milestone: host tests for rules, build all three images (launcher
-Rebuild), short Kronos check of what changed (background capture only, no
+Each milestone: host tests for rules, build the Clean image only for Kronos
+tests (Astra 09-25; other images on request), short Kronos check of what changed (background capture only, no
 focus steal), VSLICEPROGRESS + OPUS_HANDOFF updated, left uncommitted for
 Astra review. Check drop code for every new actor in same task (Bible rule).
 
@@ -393,7 +393,7 @@ state machine → drops → host test → Kronos check.
 - Host: `python -m unittest` in `game/tests` (existing harness pattern
   `test_gameplay.py`); add full-story host test Kokiri→Emerald→Field on
   save_state rules.
-- Build: launcher Rebuild (all three images); `build_sgl_area.py --verify --map`;
+- Build: Clean image (`build.bat -Variant clean`), others on request; `build_sgl_area.py --verify --map`;
   `vdp1_budget.py`; `build_dialogue.py --verify`.
 - Runtime: `game/run-kronos.bat` with Cartridge/Type=7; background capture
   `game/tools/capture-kronos.ps1`; state exactly what was seen vs not.

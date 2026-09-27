@@ -82,6 +82,8 @@ int control_cancel(void)   { return mapped.cancel_pending; }
 int control_menu_step(void){ return mapped.menu_step; }
 int control_attack(void) { return mapped.attack_pending; }
 int control_shield(void) { return mapped.shield_held; }
+int control_interact_held(void) { return mapped.interact_held; }
+int control_stick_pushed(void) { return player_input_stick_pushed(&mapped); }
 int control_target_held(void) { return mapped.target_held; }
 
 /* Follow-camera look aim, so the bounds and the clean exit are checked against

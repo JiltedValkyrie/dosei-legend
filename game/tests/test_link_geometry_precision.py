@@ -129,12 +129,20 @@ int32_t link_points[LINK_SKIN_VERTICES][3];
         hierarchy = [dict(pos=(l.pos.x,l.pos.y,l.pos.z),child=l.child,sibling=l.sibling,far=1,near=1) for l in limbs]
         scale = type(self).define('LINK_ANIM_SCALE_Q16')/65536
         shift = [type(self).define('LINK_ANIM_SHIFT_'+a) for a in 'XYZ']
+        pinned_flags = (ctypes.c_uint8*len(clips)).in_dll(self.lib,'link_clip_pinned')
+        # AnimMovement clips draw their root at baseTransl as a child draws it.
+        pinned_root = [type(self).define('LINK_PINNED_ROOT_'+a) for a in 'XYZ']
         for clip_id, clip in enumerate(clips):
             for frame in (0, clip.count//2, clip.count-1):
                 self.lib.link_anim_pose(clip_id,frame,0)
                 absolute = clip.first+frame
                 rot = [rotations[absolute][i:i+3] for i in range(0,63,3)]
-                placed = {i:(m,o) for i,m,o,_ in model.walk_skeleton(hierarchy,rot,roots[absolute])}
+                root = list(roots[absolute])
+                if pinned_flags[clip_id]:
+                    root[0], root[2] = pinned_root[0], pinned_root[2]
+                    if pinned_flags[clip_id] == 1:
+                        root[1] = pinned_root[1]
+                placed = {i:(m,o) for i,m,o,_ in model.walk_skeleton(hierarchy,rot,root)}
                 self.assertTrue(any(p[0] % 65536 for p in points), 'world fractions lost')
                 for i, loc in enumerate(locals_):
                     matrix, origin = placed[owners[i]]

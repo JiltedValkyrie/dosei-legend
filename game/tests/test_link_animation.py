@@ -110,6 +110,27 @@ class AnimationOffsets(unittest.TestCase):
             if name in ('walk', 'run'):
                 self.assertEqual(stride, 1, '%s must not be decimated' % name)
 
+    def test_child_root_adjustment_matches_source(self):
+        """Player_OverrideLimbDrawGameplayCommon: child root x/y/z * 0.64,
+        except clips the source plays with DISABLE_CHILD_ROOT_ADJUSTMENT."""
+        self.assertEqual(blm.CHILD_ROOT_SCALE, 0.64)
+        self.assertEqual(blm.child_root((3377, -638, -2526)), (2161, -408, -1617))
+        self.assertEqual(blm.child_root((5, -5, 0)), (3, -3, 0))
+        names = {clip[0] for clip in blm.CLIPS}
+        self.assertTrue(blm.RAW_ROOT_CLIPS <= names)
+        for scaled in ('idle', 'walk', 'run', 'fall', 'landing', 'roll', 'jump',
+                       'run_jump', 'run_jump_end', 'step100', 'step150',
+                       'jump250', 'turn_look'):
+            self.assertNotIn(scaled, blm.RAW_ROOT_CLIPS)
+        # Child-authored clip ends standing at exactly the adjusted adult
+        # standing pelvis: the two scalings agree, no double adjustment.
+        _, stand, _ = blm.read_animation(
+            self.keep, self.animetion, self.offsets['gPlayerAnim_clink_op3_tatiagari'],
+            109, blm.LIMB_COUNT)
+        _, idle, _ = blm.read_animation(self.keep, self.animetion, 0x3200, 0,
+                                        blm.LIMB_COUNT)
+        self.assertLessEqual(abs(stand[1] - blm.child_root(idle)[1]), 2)
+
 
 @unittest.skipUnless(GENERATED.joinpath('link_clips.c').is_file(),
                      'link_clips.c not generated yet')
@@ -177,6 +198,150 @@ class GeneratedTables(unittest.TestCase):
         for row in re.findall(r'\{([^}]*)\}', rotations):
             self.assertEqual(len(re.findall(r'-?\d+', row)), expected)
 
+    def test_disc_frame_file_matches_the_host_arrays(self):
+        """LINKANIM.BIN is what the Saturn poses from; the arrays are host-only.
+
+        Header fields and the compiled digest are what link_anim_load()
+        validates (see LinkAnimLoader for the rejection cases).
+        """
+        data = GENERATED.joinpath('LINKANIM.BIN').read_bytes()
+        frames, limbs, digest = struct.unpack_from('>III', data, 4)
+        self.assertEqual(data[:4], b'LAN1')
+        self.assertEqual(frames, self.define('LINK_FRAME_COUNT'))
+        self.assertEqual(limbs, self.define('LINK_LIMB_COUNT'))
+        values = struct.unpack_from('>%dh' % ((len(data) - 16) // 2), data, 16)
+        self.assertEqual(len(data), 16 + frames * (3 + limbs * 3) * 2)
+        self.assertEqual(digest, int(re.search(
+            r'#\s*define\s+LINK_FRAMES_DIGEST\s+0x([0-9A-F]+)u', self.header)[1], 16))
+        clips = [tuple(map(int, m)) for m in re.findall(
+            r'\{\s*(\d+),\s*(\d+)\s*\}',
+            re.search(r'link_clips\[LINK_CLIP_COUNT\] = \{(.*?)\};', self.source, re.S)[1])]
+        self.assertEqual(blm.frames_digest(clips, data[16:]), digest)
+        root = re.search(r'link_root\[\]\[3\] = \{(.*?)\};', self.source, re.S)[1]
+        rotations = re.search(
+            r'link_rotations\[\]\[LINK_LIMB_COUNT \* 3\] = \{(.*?)\};',
+            self.source, re.S)[1]
+        expected = ([int(v) for v in re.findall(r'-?\d+', root)] +
+                    [int(v) for v in re.findall(r'-?\d+', rotations)])
+        self.assertEqual(list(values), expected)
+
+    def test_saturn_build_takes_frames_from_the_disc(self):
+        """The tables must not come back as work-RAM .rodata on the target."""
+        makefile = (ROOT / 'makefile').read_text()
+        self.assertIn('-DLINK_FRAMES_FROM_DISC', makefile)
+        self.assertRegex(self.source, r'#ifndef LINK_FRAMES_FROM_DISC\s*\n'
+                                      r'const int16_t link_root')
+        self.assertIn('LINKANIM.BIN', (ROOT / 'build.sh').read_text())
+
+
+GCC = pathlib.Path('C:/msys64/mingw64/bin/gcc.exe')
+
+LOADER_ADAPTER = r'''
+#include <stdint.h>
+#include <stdbool.h>
+#include <stdlib.h>
+#include <string.h>
+#include <math.h>
+#include "link_clips.h"
+typedef int32_t FIXED;
+typedef uint16_t ANGLE;
+#define X 0
+#define Y 1
+#define Z 2
+#define toFIXED(x) ((FIXED)((x)*65536))
+static FIXED slSin(ANGLE a) { return (FIXED)lround(sin(a*6.283185307179586/65536)*65536); }
+static FIXED slCos(ANGLE a) { return (FIXED)lround(cos(a*6.283185307179586/65536)*65536); }
+static FIXED slMulFX(FIXED a, FIXED b) { return (FIXED)(((int64_t)a*b)>>16); }
+int32_t link_points[LINK_SKIN_VERTICES][3];
+static unsigned char *disc; static int disc_length;
+void test_disc(const unsigned char *data, int length)
+{
+    free(disc); disc = 0; disc_length = length;
+    if (data) { disc = malloc(length); memcpy(disc, data, length); }
+}
+static void *jo_fs_read_file(const char *name, int *length)
+{
+    unsigned char *copy;
+    if (!disc || strcmp(name, "LINKANIM.BIN")) return 0;
+    copy = malloc(disc_length); memcpy(copy, disc, disc_length);
+    *length = disc_length;
+    return copy;
+}
+static void jo_free(void *p) { free(p); }
+'''
+LOADER_RESET = r'''
+void test_unload(void) { free((void *)((const char *)link_root - 16)); link_root = 0; link_rotations = 0; }
+'''
+
+
+@unittest.skipUnless(GCC.is_file() and GENERATED.joinpath('LINKANIM.BIN').is_file(),
+                     'host GCC and generated LINKANIM.BIN required')
+class LinkAnimLoader(unittest.TestCase):
+    """The real link_anim_load() (LINK_FRAMES_FROM_DISC) against disc variants."""
+
+    @classmethod
+    def setUpClass(cls):
+        import ctypes, os, subprocess, tempfile
+        cls.ctypes = ctypes
+        cls.temp = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
+        output = pathlib.Path(cls.temp.name) / 'loader.dll'
+        source = re.sub(r'^#include .*$', '', (ROOT / 'src/link_anim.c').read_text(), flags=re.M)
+        env = dict(os.environ)
+        env['PATH'] = str(GCC.parent) + os.pathsep + env.get('PATH', '')
+        subprocess.run([str(GCC), '-shared', '-O2', '-DLINK_FRAMES_FROM_DISC',
+                        '-I' + str(GENERATED), '-x', 'c', '-', str(GENERATED / 'link_clips.c'),
+                        '-lm', '-o', str(output)],
+                       input=LOADER_ADAPTER + source + LOADER_RESET, text=True, env=env,
+                       check=True)
+        cls.lib = ctypes.CDLL(str(output))
+        cls.lib.link_anim_load.restype = ctypes.c_bool
+        cls.lib.test_disc.argtypes = [ctypes.c_char_p, ctypes.c_int]
+        cls.good = GENERATED.joinpath('LINKANIM.BIN').read_bytes()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.temp.cleanup()
+
+    def load(self, data):
+        self.lib.test_disc(data, len(data) if data is not None else 0)
+        ok = self.lib.link_anim_load()
+        if ok:
+            self.lib.test_unload()
+        return ok
+
+    def restamp(self, data):
+        """What a stale-but-valid older build would ship: its own digest."""
+        clips = [tuple(map(int, m)) for m in re.findall(
+            r'\{\s*(\d+),\s*(\d+)\s*\}',
+            re.search(r'link_clips\[LINK_CLIP_COUNT\] = \{(.*?)\};',
+                      GENERATED.joinpath('link_clips.c').read_text(), re.S)[1])]
+        return data[:12] + struct.pack('>I', blm.frames_digest(clips, data[16:])) + data[16:]
+
+    def test_current_file_loads(self):
+        self.assertTrue(self.load(self.good))
+
+    def test_missing_truncated_and_corrupt_files_are_refused(self):
+        self.assertFalse(self.load(None))
+        self.assertFalse(self.load(self.good[:-2]))
+        self.assertFalse(self.load(b'XAN1' + self.good[4:]))
+        corrupt = bytearray(self.good)
+        corrupt[1000] ^= 0x40
+        self.assertFalse(self.load(bytes(corrupt)))
+
+    def test_same_shape_stale_file_is_refused(self):
+        """Edited root value, header digest recomputed: shape and header agree."""
+        stale = bytearray(self.good)
+        stale[16] ^= 0x01
+        self.assertFalse(self.load(self.restamp(bytes(stale))))
+
+    def test_reordered_frames_are_refused(self):
+        """Swapping two root rows keeps any additive sum; the digest catches it."""
+        body = bytearray(self.good)
+        a, b = 16, 16 + 6 * 30
+        body[a:a + 6], body[b:b + 6] = body[b:b + 6], body[a:a + 6]
+        self.assertNotEqual(bytes(body), self.good)
+        self.assertFalse(self.load(self.restamp(bytes(body))))
+
 
 @unittest.skipUnless(rom_available(), 'verified US 1.2 ROM not configured')
 class SkinningReproducesTheBakedPose(unittest.TestCase):
@@ -195,6 +360,7 @@ class SkinningReproducesTheBakedPose(unittest.TestCase):
         limbs = blm.read_limbs(data)
         _frames, root, rotations = blm.read_animation(
             keep, animetion, 0x3200, 0, blm.LIMB_COUNT)
+        root = blm.child_root(root)
         placed = blm.walk_skeleton(limbs, rotations, root)
 
         faces, original = blm.collect_equipment(data, keep, placed, blm.OOT_DEFAULT)

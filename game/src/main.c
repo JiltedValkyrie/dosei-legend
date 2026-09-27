@@ -297,9 +297,12 @@ static void         viewer_draw(void)
                              cutscene_link_z(), cutscene_link_yaw());
             frame_timer_end(FRAME_PHASE_LINK);
         }
-    } else if (demo_link_active && !demo_title_is_visible()) {
+    } else if (demo_link_active && !demo_title_is_visible() && !demo_first_person()) {
         frame_timer_begin(FRAME_PHASE_LINK);
-        kokiri_link_draw(demo_link.x, demo_link.y - DEMO_LINK_EYE_HEIGHT,
+        /* shape.yOffset: a ledge step-up draws him from where he stood
+         * while the actor is already on the ledge. */
+        kokiri_link_draw(demo_link.x, demo_link.y - DEMO_LINK_EYE_HEIGHT +
+                         link_anim_y_offset_q8() / 256,
                          demo_link.z, demo_link_yaw);
         frame_timer_end(FRAME_PHASE_LINK);
         /* Link's own fairy, drawn with him and only with him: the title
@@ -604,13 +607,19 @@ static void         dialogue_box(void)
                 jo_printf(0, DIALOGUE_ROW + i, "%-40s", "");
             was_talking = false;
         }
-        /* A: Talk, only while a speaker is actually in reach and in front. */
-        if (gameplay.prompt != last_prompt) {
-            last_prompt = gameplay.prompt;
-            if (gameplay.prompt >= 0)
-                jo_printf(1, PROMPT_ROW, "%-38s", "A: Talk");
-            else
-                jo_printf(1, PROMPT_ROW, "%-38s", "");
+        /* A: Talk, only while a speaker is actually in reach and in front.
+         * A: Enter at a crawlspace wins: handler 5 comes before TALK. */
+        {
+            int prompt_key = demo_enter_prompt() ? -2 : gameplay.prompt;
+            if (prompt_key != last_prompt) {
+                last_prompt = prompt_key;
+                if (prompt_key == -2)
+                    jo_printf(1, PROMPT_ROW, "%-38s", "A: Enter");
+                else if (prompt_key >= 0)
+                    jo_printf(1, PROMPT_ROW, "%-38s", "A: Talk");
+                else
+                    jo_printf(1, PROMPT_ROW, "%-38s", "");
+            }
         }
         return;
     }
@@ -1065,6 +1074,12 @@ void                jo_main(void)
                                        RAM_CART_ACTOR_POOL_BYTES),
                         RAM_CART_ACTOR_POOL_BYTES)) {
         jo_core_error("Actor pool does not fit its cart carve");
+        return;
+    }
+
+    /* Link's clip frames live in the cart; posing without them is impossible. */
+    if (!link_anim_load()) {
+        jo_core_error("LINKANIM.BIN missing or does not match this build");
         return;
     }
 

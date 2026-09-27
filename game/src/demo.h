@@ -12,6 +12,10 @@ bool demo_file_select_is_visible(void);
 int demo_save_report(void);
 unsigned int demo_clock(void);
 bool demo_skip_prompt(void);
+/* The crawlspace "Enter" A prompt (PLAYER_STATE2_DO_ACTION_ENTER). */
+bool demo_enter_prompt(void);
+/* Camera_Subj4 in a crawlspace: first person, Link not drawn. */
+bool demo_first_person(void);
 extern camera_position_t demo_camera;
 extern uint16_t demo_yaw;
 extern int32_t demo_pitch;

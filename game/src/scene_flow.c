@@ -8,6 +8,8 @@
 #include "action_audio.h"
 #include "kokiri_sgl.h"
 #include "kokiri_collision.h"
+#include "ram_cart.h"
+#include "actor_sys.h"
 
 static unsigned int current_scene;
 static bool         loaded;
@@ -19,15 +21,18 @@ static bool         loaded;
 ** trigger again. */
 static bool         door_armed;
 
-/* Collision for the loaded scene. The buffer is reused across scenes so a
-** transition does not fragment the arena; it is sized for the largest scene in
-** the table, checked at load time rather than assumed. */
-#define SCENE_COLLISION_MAX  2048   /* triangles; spot04 has 1692 */
-static collision_triangle_t *collision_buffer;
-static unsigned int          collision_count;
+/* Collision for the loaded scene: S<n>.COL (KBG2) decoded into one buffer --
+** triangles, per-triangle surface info, raw SurfaceTypes, water boxes and
+** bgCams. Reused across scenes so a transition does not fragment the arena;
+** sized for the largest set the format allows, checked at load time. */
+#define SCENE_COLLISION_MAX   2048  /* triangles; spot04 has 1692 */
+#define SCENE_COLLISION_BYTES \
+    (SCENE_COLLISION_MAX * (36 + 2) + 256 * 8 + 64 * 16 + 64 * 8 + 512 * 6)
+static void                 *collision_buffer;
+static bg_mesh_t             collision_mesh;
 
 /* XZ lookup grid, so a movement query visits only nearby triangles instead of
-** all 1692. It MUST be rebuilt after every kokiri_collision_init(): the index
+** all 1692. It MUST be rebuilt after every bg_scene_set(): the index
 ** describes one particular triangle set, and a scene change replaces that set.
 ** Leaving a stale index behind is both wrong and slow -- it was why movement
 ** crawled after walking in and out of the house. Allocated once and reused,
@@ -35,6 +40,10 @@ static unsigned int          collision_count;
 #define SCENE_COLLISION_INDEX_BYTES (16 * 1024)
 static void                 *collision_index;
 bool                         scene_collision_indexed;
+
+/* World copies of actor-owned (DynaPoly) collision live in the cart's fixed
+** carve (ram_cart.h), never the work-RAM arena jo_malloc would fill first. */
+static bool                  dyna_ready;
 
 /* SAVE_SCENE_* -> index into the scene table. The save records where the
 ** player is by the id the flag store uses, not by table position, so a scene
@@ -82,39 +91,44 @@ static bool     collision_load(unsigned int scene)
     char        name[] = "S0.COL";
     void       *data;
     int         length = 0;
-    unsigned int count;
+    uint32_t    need;
 
     if (scene >= ASSET_ID_LIMIT)
         return (false);
     name[1] = asset_name_digit(scene);
     data = jo_fs_read_file(name, &length);
-    if (!data || length <= 0 ||
-        length % (int)sizeof(collision_triangle_t) != 0) {
+    if (!data || length <= 0) {
         if (data) jo_free(data);
         return (false);
     }
-    count = (unsigned int)length / sizeof(collision_triangle_t);
-    if (count > SCENE_COLLISION_MAX) {
+    need = bg_mesh_bytes((const uint8_t *)data, (uint32_t)length);
+    if (!need || need > SCENE_COLLISION_BYTES) {
         /* Refuse rather than truncate: half a scene's collision would let Link
         ** walk through walls in ways that look like a physics bug. */
         jo_free(data);
         return (false);
     }
     if (!collision_buffer) {
-        collision_buffer = (collision_triangle_t *)
-            jo_malloc(SCENE_COLLISION_MAX * sizeof(collision_triangle_t));
+        collision_buffer = jo_malloc(SCENE_COLLISION_BYTES);
         if (!collision_buffer) { jo_free(data); return (false); }
     }
-    {
-        const uint8_t *from = (const uint8_t *)data;
-        uint8_t       *to = (uint8_t *)collision_buffer;
-        unsigned int   i, bytes = count * sizeof(collision_triangle_t);
-        for (i = 0; i < bytes; ++i)
-            to[i] = from[i];
+    if (!bg_mesh_decode((const uint8_t *)data, (uint32_t)length,
+                        collision_buffer, SCENE_COLLISION_BYTES,
+                        &collision_mesh) ||
+        collision_mesh.triangle_count > SCENE_COLLISION_MAX) {
+        jo_free(data);
+        return (false);
     }
     jo_free(data);
-    collision_count = count;
-    kokiri_collision_init(collision_buffer, collision_count);
+    bg_scene_set(&collision_mesh);
+    /* Actors own their dyna collision and are gone with the old scene. */
+    if (!dyna_ready) {
+        bg_dyna_init(ram_cart_fixed(RAM_CART_DYNA_OFFSET, RAM_CART_DYNA_BYTES),
+                     RAM_CART_DYNA_BYTES);
+        dyna_ready = true;
+    }
+    actor_sys_scene_unload();
+    bg_dyna_clear();
     if (!collision_index)
         collision_index = jo_malloc(SCENE_COLLISION_INDEX_BYTES);
     /* Rebuild for THIS scene's triangles. Failure is survivable: the queries

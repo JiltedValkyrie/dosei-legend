@@ -13,7 +13,35 @@ typedef enum
     LINK_STATE_RUN,
     LINK_STATE_FALL,
     LINK_STATE_LANDING,
-    LINK_STATE_ROLL
+    LINK_STATE_ROLL,
+    /* Automatic jump off a ledge (func_8083A4A8): jump or run_jump clip,
+    ** held on its last frame until he lands or drops below the departure
+    ** height (Player_Action_8084411C then switches to the falling pose). */
+    LINK_STATE_JUMP,
+    /* Landing straight out of a run jump: run_jump_end, never a roll. */
+    LINK_STATE_JUMP_LANDING,
+    /* Player_Action_80845668: 100/150 step up onto a ledge, then the start
+    ** of the 250 jump. Played at the source rate (playSpeed 1.3); Link is
+    ** held still until the clip ends or its last 4 frames are interrupted
+    ** by movement input. */
+    LINK_STATE_STEP_UP,
+    LINK_STATE_JUMP_START,
+    /* Player_Action_8084BBE4: hanging from a ledge (the actor stands on its
+    ** top; the clip's root hangs the body below). Then 8084BDFC's pull-up. */
+    LINK_STATE_HANG,
+    LINK_STATE_PULL_UP,
+    /* An AnimMovement clip (ladder / vine climbing, its starts and ends):
+    ** the clip's root motion moves the actor; see link_anim_move_*. */
+    LINK_STATE_CLIMB,
+    /* Player_Action_8084C760 inside a crawlspace: the pose holds the last
+    ** frame of tunnel_start while he slides. */
+    LINK_STATE_CRAWL,
+    LINK_STATE_TURN,
+    LINK_STATE_BONK,
+    LINK_STATE_PUSH,
+    LINK_STATE_SLIDE,
+    LINK_STATE_SLIDE_END,
+    LINK_STATE_SWIM
 }                   link_state_t;
 
 /* Pose link_points for one frame of a clip. Cheap to call with an unchanged
@@ -21,6 +49,90 @@ typedef enum
 void                link_anim_pose(unsigned int clip, unsigned int frame,
                                    unsigned int fraction);
 void                link_anim_reset(void);
+/* Idle analog turn: advances facing by at most 800 binang per 30 Hz step.
+** Caller supplies only eligible grounded, unlocked light-tilt input. */
+void                link_anim_turn(bool requested, uint16_t target, uint16_t *facing);
+/* Roll wall response. Angle is absolute world-yaw-to-wall, from player_bg. */
+bool                link_anim_bonk(bool wall_interact, uint16_t wall_angle);
+int32_t             link_anim_bonk_speed_q8(void);
+void                link_anim_slide(bool face_up);
+void                link_anim_slide_end(bool face_up);
+void                link_anim_slide_cancel(void);
+/* Start the automatic ledge jump; `run` picks gPlayerAnim_link_normal_run_jump
+** over gPlayerAnim_link_normal_jump (player_air.h decides). Ends a roll. */
+void                link_anim_auto_jump(bool run);
+/* Start a ledge step-up (already placed on the ledge by the caller).
+** `tall` = 150 step, else 100. `y_dist` = yDistToLedge: the drawn model
+** starts that far down, less the clip's own rise (shape.yOffset). */
+void                link_anim_step_up(bool tall, int32_t y_dist);
+/* Start gPlayerAnim_link_normal_250jump_start. */
+void                link_anim_jump_start(void);
+/* True on the step the 250 jump reaches its frame 8: the caller launches
+** (player_ledge_jump250_velocity_q8) and the clip carries on into the air. */
+bool                link_anim_jump250_launch(void);
+/* The step-up's shape.yOffset, Q8 world units, added to the drawn feet. */
+int32_t             link_anim_y_offset_q8(void);
+/* Hop off a low ledge (func_808389E8): the jump clip, like the auto jump. */
+void                link_anim_hop(void);
+/* Start hanging: `walk_off` = func_8083A6AC (normal_fall, then fall_wait),
+** else the mid-air grab (jump_climb_hold, then jump_climb_wait). */
+void                link_anim_hang(bool walk_off);
+/* The hang has reached its grab frame (actionVar1 != 0): input counts. */
+bool                link_anim_hang_ready(void);
+/* func_8083A9B8: pull up (fall_up / jump_climb_up at playSpeed 1.3). */
+void                link_anim_pull_up(void);
+/* The same with a given clip, from any state (a vine top: climb_up_free). */
+void                link_anim_pull_up_clip(unsigned int clip);
+
+/* AnimMovement clips (Player_StartAnimMovement / AnimTask_ActorMovement).
+** Play `clip` forwards, or from its last frame backwards (LinkAnimation_Change
+** with -1). `adjust_start` = ANIM_FLAG_ADJUST_STARTING_POS: the first step
+** moves nothing. The root at the play's start is prevTransl; the source's
+** continuity tables (unk_4A/62/7A/86/44) equal those first/last roots. */
+void                link_anim_move_play(unsigned int clip, bool reverse,
+                                        bool adjust_start);
+/* Stationary push/pull action clips: use the same source-rate phase clock,
+** but roots are visual only and normal floor/gravity checks still apply. */
+void                link_anim_push_play(unsigned int clip);
+/* Water controller owns the clip clock and collision travel. */
+void                link_anim_swim_play(unsigned int clip);
+/* One step at |playSpeed| x 30 (30ths of a frame). LinkAnimation_Once: true,
+** with no motion, when the play already sat at its end as the step began.
+** Else `delta` = this step's root motion, raw model units, model-local (the
+** caller turns it by the facing and applies actor scale 0.01). */
+bool                link_anim_move_step(unsigned int speed_30ths, int32_t delta[3]);
+unsigned int        link_anim_move_clip(void);
+/* The play passed source frame `frame` on the last step (LinkAnimation_OnFrame). */
+bool                link_anim_move_crossed(unsigned int frame);
+/* Player_FinishAnimMovement: back to ordinary locomotion. */
+void                link_anim_move_end(void);
+/* func_80837B9C from a climb: straight into the falling pose. */
+void                link_anim_fall(void);
+/* Hold the finished tunnel_start pose (movementFlags cleared). */
+void                link_anim_crawl_hold(void);
+/* Right after link_anim_move_play: keep the previous play's prevTransl (the
+** source changes clip without resetting it, func_8083F070). */
+void                link_anim_move_keep_prev(void);
+/* Current play position, 30ths of a source frame, and its direction. */
+unsigned int        link_anim_move_phase(void);
+bool                link_anim_move_reversed(void);
+/* One-shot, on the step the pull-up ends: Player_ApplyAnimMovementScaledByAge
+** (UPDATE_XZ) then the root yaw -- the clip's last root x/z in model-local
+** Q8 world units (skeleton base x/z is 0) and its root limb yaw. */
+bool                link_anim_pull_up_done(int32_t *local_x_q8, int32_t *local_z_q8,
+                                           uint16_t *yaw);
+/* func_80837B60 + func_80837B9C: let go. Writes where the hanging pelvis is
+** (model-local Q8 x/z; y relative to the standing pelvis) and starts the
+** fall. */
+void                link_anim_let_go(int32_t *local_x_q8, int32_t *y_q8,
+                                     int32_t *local_z_q8);
+/* Per step while airborne: true once he is descending below the height he
+** left the ground from (velocity < 0 and fallDistance > 0). */
+void                link_anim_set_air(bool falling_below_start);
+/* Saturn build: read LINKANIM.BIN (per-frame roots/rotations) into cart RAM.
+** Must succeed before the first link_anim_pose; false = missing/stale file.
+** Host builds link the arrays from link_clips.c and always return true. */
+bool                link_anim_load(void);
 /* Clears the locomotion state itself; link_anim_reset() only clears the
 ** cached pose. Call both when Link (re-)enters gameplay. */
 void                link_anim_reset_state(void);

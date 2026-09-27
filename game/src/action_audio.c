@@ -294,6 +294,9 @@ void action_audio_events(uint32_t events)
     if (events & GP_EVENT_CUT) play_area(AREA_SFX_CUT, 26);
     if (events & GP_EVENT_SHIELD_UP) play(ACTION_SHIELD, 24);
     if (events & GP_EVENT_JUMP) play(ACTION_JUMP, 25);
+    /* Ledge hop: NA_SE_VO_LI_SWORD_N_KID, the same four takes as a swing. */
+    if (events & GP_EVENT_HOP_VOICE) play(ACTION_VOICE0 + (voice++ & 3), 25);
+    if (events & GP_EVENT_CLIMB_END) play(ACTION_CLIMB0, 25);
     if (events & GP_EVENT_ROLL_VOICE) play(ACTION_VOICE0 + (voice++ & 3), 25);
     if (events & GP_EVENT_ROLL) play(ACTION_ROLL, 28);
     else if (events & GP_EVENT_FOOTSTEP) play(ACTION_FOOTSTEP, 28);

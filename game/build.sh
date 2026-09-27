@@ -86,6 +86,8 @@ if [ -n "${AUTHORED_OBJ:-}" ]; then
     "$python" "$here/tools/build_authored_scene.py" --obj "$AUTHORED_OBJ" ${AUTHORED_UV_FROM:+--uv-from "$AUTHORED_UV_FROM"} ${AUTHORED_ATLAS:+--atlas "$AUTHORED_ATLAS"}          ${AUTHORED_UNITS_PER_TEXEL:+--units-per-texel "$AUTHORED_UNITS_PER_TEXEL"}         ${AUTHORED_MAX_TILE:+--max-tile "$AUTHORED_MAX_TILE"}         ${AUTHORED_SPLIT_SPAN:+--split-span "$AUTHORED_SPLIT_SPAN"}         ${AUTHORED_MAX_DEPTH:+--max-depth "$AUTHORED_MAX_DEPTH"}         ${AUTHORED_POLYGON_CAP:+--polygon-cap "$AUTHORED_POLYGON_CAP"}
 fi
 "$python" "$here/tools/build_scene_table.py" --oot "$oot" --rom-dir "$roms"
+# Surface bits now live inside S<n>.COL (KBG2); drop the retired .SUR files.
+rm -f "$here"/build/cd/S*.SUR
 "$python" "$here/tools/build_scene_backdrops.py" --oot "$oot" --rom-dir "$roms"
 "$python" "$here/tools/build_actors.py" --oot "$oot" --rom-dir "$roms"
 "$python" "$here/tools/build_dialogue.py" --oot "$oot"
@@ -120,6 +122,7 @@ else
     cp "$here/build/generated/kokiri_pixels.bin" "$here/build/cd/KOKIRI.TEX"
 fi
 cp "$here/build/generated/link_pixels.bin" "$here/build/cd/LINK.TEX"
+cp "$here/build/generated/LINKANIM.BIN" "$here/build/cd/LINKANIM.BIN"
 for rider in GANON ZELDA IMPA HZELDA HGANON; do
     cp "$here/build/generated/$rider.ANM" "$here/build/cd/$rider.ANM"
     [ -f "$here/build/generated/$rider.BIN" ] &&         cp "$here/build/generated/$rider.BIN" "$here/build/cd/$rider.BIN"

@@ -100,7 +100,7 @@ bool            oot_follow_legacy(void)
 
 static void     place(const oot_follow_t *camera,
                       const camera_position_t *player,
-                      camera_position_t *eye_out)
+                      camera_position_t *eye_out, int32_t y_offset)
 {
     int32_t sine, cosine, horizontal, height;
 
@@ -130,7 +130,7 @@ static void     place(const oot_follow_t *camera,
     ** atTarget.y = player origin + Player_GetHeight() + yOffset.
     ** Forgetting height put the camera only 9..20 units above the floor. */
     eye_out->y = player->y - OOT_CAM_PLAYER_ORIGIN + OOT_CAM_PLAYER_HEIGHT
-                + OOT_CAM_Y_OFFSET + height;
+                + y_offset + height;
 }
 
 static int32_t  clamp(int32_t value, int32_t limit)
@@ -199,11 +199,12 @@ void            oot_follow_snap(oot_follow_t *camera,
     camera->targeting = false;
 }
 
-void            oot_follow_update(oot_follow_t *camera,
+void            oot_follow_update_profile(oot_follow_t *camera,
                                   const camera_position_t *player,
                                   uint16_t player_facing, bool moving,
                                   camera_position_t *eye_out,
-                                  uint16_t *yaw_out, int32_t *pitch_out)
+                                  uint16_t *yaw_out, int32_t *pitch_out,
+                                  const oot_follow_profile_t *profile)
 {
     if (!camera->initialised)
         oot_follow_snap(camera, player, player_facing);
@@ -211,7 +212,12 @@ void            oot_follow_update(oot_follow_t *camera,
     /* Normal1 only swings back behind the player while he is actually moving
     ** (xzSpeed > 0.001). Standing still holds the current yaw, which is what
     ** keeps the view from drifting on its own. */
-    if (camera->swing_timer > 0)
+    if (profile->yaw_policy) {
+        camera->swing_timer = 0;
+        if (profile->yaw_policy == 1)
+            camera->yaw = angle_approach(camera->yaw, player_facing, 3);
+    }
+    else if (camera->swing_timer > 0)
     {
         /*
         ** Camera_Parallel1's turn, z_camera.c:2277:
@@ -263,9 +269,9 @@ void            oot_follow_update(oot_follow_t *camera,
     camera->distance = approach(camera->distance,
                                 moving ? OOT_CAM_DIST_MAX : OOT_CAM_DIST_MIN,
                                 XZ_RATE);
-    camera->pitch = approach(camera->pitch, OOT_CAM_PITCH_TARGET, PITCH_RATE);
+    camera->pitch = approach(camera->pitch, profile->pitch_target, profile->pitch_rate);
 
-    if (camera->look_active && !camera->targeting)
+    if (camera->look_active && !camera->targeting && !profile->yaw_policy)
     {
         /* Aim from a copy: the stored follow state is untouched, so the view
         ** returns to the ordinary follow camera the moment Z is released. */
@@ -273,12 +279,12 @@ void            oot_follow_update(oot_follow_t *camera,
 
         aimed.yaw = (uint16_t)(camera->yaw + camera->look_yaw);
         aimed.pitch = camera->pitch + camera->look_pitch;
-        place(&aimed, player, eye_out);
+        place(&aimed, player, eye_out, profile->y_offset);
         *yaw_out = aimed.yaw;
         *pitch_out = legacy_camera ? 0 : -aimed.pitch;
         return;
     }
-    place(camera, player, eye_out);
+    place(camera, player, eye_out, profile->y_offset);
     *yaw_out = camera->yaw;
     /* Negated: kokiri_camera_update() adds CAMERA_PITCH_SPEED for Up, so a
     ** positive demo_pitch looks UP. The eye has been raised above the player,
@@ -286,4 +292,13 @@ void            oot_follow_update(oot_follow_t *camera,
     ** on him. Getting this sign wrong puts Link off the bottom of the screen,
     ** which is why the previous camera avoided pitch entirely. */
     *pitch_out = legacy_camera ? 0 : -camera->pitch;
+}
+
+void oot_follow_update(oot_follow_t *camera, const camera_position_t *player,
+                      uint16_t facing, bool moving, camera_position_t *eye,
+                      uint16_t *yaw, int32_t *pitch)
+{
+    const oot_follow_profile_t normal = {OOT_CAM_Y_OFFSET, OOT_CAM_PITCH_TARGET,
+                                         PITCH_RATE, 0};
+    oot_follow_update_profile(camera, player, facing, moving, eye, yaw, pitch, &normal);
 }

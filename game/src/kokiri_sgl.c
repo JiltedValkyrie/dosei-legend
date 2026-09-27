@@ -1242,9 +1242,9 @@ void                kokiri_pickups_draw(unsigned int tick)
         SPR_ATTR attr = SPR_ATTRIBUTE(0, No_Palet, No_Gouraud, ECdis,
                                       sprNoflip | FUNC_Sprite);
         int x = pickup->x;
-        /* Float it clear of the grass and bob, so a pickup lying on a busy
-        ** ground texture still reads as an object rather than a decal. */
-        int y = pickup->y + 46 + fairy_wave(angle, 7);
+        /* A 16px icon at scale two rests on its real collision floor.
+         * Do not lift it above non-solid grass to force visibility. */
+        int y = pickup->y + 16 + fairy_wave(angle, 2);
         int z = pickup->z;
         int32_t sine, cosine;
         if (gameplay_pickup_taken(i))

@@ -147,6 +147,7 @@ void player_input_step(bool in_gameplay, player_input_t *out)
     out->interact_pending = false;
     out->attack_pending = false;
     out->shield_held = false;
+    out->interact_held = false;
     out->diagnostics_toggled = false;
     out->camera_swap_toggled = false;
     out->cancel_pending = false;
@@ -186,6 +187,7 @@ void player_input_step(bool in_gameplay, player_input_t *out)
 #endif
 
     out->shield_held = (held & CAMERA_R) != 0;
+    out->interact_held = (held & CAMERA_A) != 0;
     out->cancel_pending = toggled;
     /* Menu cursor: up/left step back, down/right step forward, one slot per
     ** physical press. Taken from the raw D-pad so the pause menu still works
@@ -215,6 +217,7 @@ void player_input_step(bool in_gameplay, player_input_t *out)
     {
         out->attack_pending = false;
         out->shield_held = false;
+        out->interact_held = false;
         out->look_exited = look_was_active;
         look_was_active = false;
         return;
@@ -303,6 +306,14 @@ player_move_mode_t player_input_move_mode(void)
 }
 
 /* Use the same movement basis and collision/remainder path as digital input. */
+bool player_input_stick_pushed(const player_input_t *input)
+{
+    if (!input->analog)
+        return input->move_buttons != 0;
+    /* stick_x/y are 0..127 after the deadzone; 55 of 60 is 116.4 of 127. */
+    return stick_radius(input->stick_x, input->stick_y) * 60 >= 55 * 127;
+}
+
 bool player_input_motion(const player_input_t *input, uint16_t yaw,
                          uint16_t *heading, int32_t *speed_q8)
 {
@@ -312,8 +323,9 @@ bool player_input_motion(const player_input_t *input, uint16_t yaw,
     *speed_q8 = speed;
     if (!input->analog)
         return kokiri_camera_input_heading(yaw, input->move_buttons, heading);
-    *speed_q8 = speed * stick_radius(input->stick_x, input->stick_y) / 127;
-    if (!*speed_q8) return false;
+    int strength = stick_radius(input->stick_x, input->stick_y);
+    *speed_q8 = strength <= 42 ? 0 : speed * strength / 127;
+    if (!strength) return false;
     kokiri_camera_sincos(yaw, &sine, &cosine);
     *heading = kokiri_camera_facing(
         (-input->stick_x * cosine + input->stick_y * sine) / 256,
