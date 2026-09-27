@@ -14,6 +14,7 @@
 static volatile uint16_t    held_snapshot;
 static volatile bool analog_snapshot;
 static volatile uint8_t axis_x, axis_y;
+static bool trigger_right_held, trigger_left_held;
 static player_move_mode_t   move_mode;
 static bool                 dialogue_open;
 static input_edge_t         edge_walk_toggle;   /* B */
@@ -46,6 +47,7 @@ void player_input_reset(void)
 
     held_snapshot = 0;
     analog_snapshot = false;
+    trigger_right_held = trigger_left_held = false;
     axis_x = axis_y = 128;
     /* Run, not walk: this preserves the speed the slice already shipped. */
     move_mode = PLAYER_MOVE_RUN;
@@ -66,6 +68,22 @@ void player_input_reset(void)
 void player_input_sample(uint16_t held)
 {
     player_input_sample_pad(held, false, 128, 128);
+}
+
+void player_input_sample_3d(uint16_t held, bool analog, uint8_t x, uint8_t y,
+                            uint8_t right_trigger, uint8_t left_trigger)
+{
+    /* Accept zero-rest and centred-rest axes. 128 is neutral on some host
+     * mappings, not a press. Separate press/release thresholds prevent
+     * chatter; returning to the neutral band always releases the latch. */
+    if (analog) {
+        trigger_right_held = right_trigger >= (trigger_right_held ? 145 : 176);
+        trigger_left_held = left_trigger >= (trigger_left_held ? 145 : 176);
+        if (trigger_right_held) held |= CAMERA_R;
+        if (trigger_left_held) held |= CAMERA_L;
+    } else
+        trigger_right_held = trigger_left_held = false;
+    player_input_sample_pad(held, analog, x, y);
 }
 
 void player_input_sample_pad(uint16_t held, bool analog, uint8_t x, uint8_t y)

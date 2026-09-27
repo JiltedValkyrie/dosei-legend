@@ -3,6 +3,7 @@
 ** under test -- inventory, pickups, targeting, the swing window, the shield and
 ** grass cutting -- is the real game code. */
 #include <math.h>
+#include <assert.h>
 #include <stdint.h>
 #include "../../src/gameplay.h"
 #include "kokiri_actors.h"
@@ -11,6 +12,8 @@
 
 uint16_t gameplay_facing(int32_t dx, int32_t dz)
 {
+    /* Match the Saturn adapter's signed Q16 input range. */
+    assert(dx >= -32768 && dx <= 32767 && dz >= -32768 && dz <= 32767);
     double angle = atan2((double)dx, (double)dz);
     double turns = angle / 6.283185307179586;
     return (uint16_t)(int32_t)(turns * 65536.0);

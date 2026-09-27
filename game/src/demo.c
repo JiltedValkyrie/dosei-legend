@@ -645,10 +645,12 @@ static void demo_vblank(void)
     /* One normalized snapshot per VBlank. All button state -- including every
      * chord -- is read from this single sample, so two consumers can never
      * disagree about which buttons were down on a given frame. */
-    player_input_sample_pad(connected ? demo_pad_snapshot() : 0,
+    player_input_sample_3d(connected ? demo_pad_snapshot() : 0,
         connected && jo_is_input_analog(0),
         connected ? jo_get_input_axis(0, JoAxis1) : 128,
-        connected ? jo_get_input_axis(0, JoAxis2) : 128);
+        connected ? jo_get_input_axis(0, JoAxis2) : 128,
+        connected ? jo_get_input_axis(0, JoAxis3) : 0,
+        connected ? jo_get_input_axis(0, JoAxis4) : 0);
     /* BDCLMD=0 keeps the border outside the active picture black. */
     JO_VDP2_TVMD &= (unsigned short)~0x0100;
     phase += 60;

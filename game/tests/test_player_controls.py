@@ -88,6 +88,34 @@ class PlayerControls(unittest.TestCase):
         self.lib.player_input_sample_pad(bits, True, x, y)
         self.lib.control_step(True)
 
+    def test_3d_trigger_axes_act_as_shoulders_and_release(self):
+        sample = self.lib.player_input_sample_3d
+        sample.argtypes = [ctypes.c_uint16, ctypes.c_bool] + [ctypes.c_uint8] * 4
+        for right, left in ((255, 0), (0, 255), (255, 255), (128, 128),
+                            (0, 0), (127, 127), (144, 144)):
+            sample(0, True, 128, 128, right, left)
+            self.lib.control_step(True)
+            self.assertEqual(self.lib.control_shield(), right >= 176 and left < 176)
+            self.assertEqual(self.lib.control_look_mode(), left >= 176)
+        sample(0, False, 128, 128, 255, 255)
+        self.lib.control_step(True)
+        self.assertFalse(self.lib.control_shield())
+        self.assertFalse(self.lib.control_look_mode())
+        sample(L | R, True, 128, 128, 0, 0)
+        self.lib.control_step(True)
+        self.assertFalse(self.lib.control_shield())  # L look retains its priority
+        self.assertTrue(self.lib.control_look_mode())
+
+    def test_trigger_deadzone_and_hysteresis_release_camera(self):
+        sample = self.lib.player_input_sample_3d
+        sample.argtypes = [ctypes.c_uint16, ctypes.c_bool] + [ctypes.c_uint8] * 4
+        for value, pressed in ((128, False), (136, False), (175, False),
+                               (176, True), (160, True), (145, True),
+                               (144, False), (150, False), (128, False)):
+            sample(0, True, 128, 128, 0, value)
+            self.lib.control_step(True)
+            self.assertEqual(self.lib.control_look_mode(), pressed)
+
     def test_light_tilt_turns_without_translation(self):
         self.analog(x=180)  # mapped strength 41: turn only
         self.assertEqual(self.lib.control_motion_speed(), 0)

@@ -93,6 +93,9 @@ void    player_input_reset(void);
 void    player_input_sample(uint16_t held);
 /* 3D Pad axes: unsigned 0..255, centre 128, Y grows downward. */
 void    player_input_sample_pad(uint16_t held, bool analog, uint8_t x, uint8_t y);
+/* 3D Pad triggers: zero/centred rest deadzone, press >=176, release <=144. */
+void    player_input_sample_3d(uint16_t held, bool analog, uint8_t x, uint8_t y,
+                              uint8_t right_trigger, uint8_t left_trigger);
 /* Camera-relative heading and proportional speed, including digital fallback.
 ** A light analog tilt (strength 1..42) returns a heading with zero speed for
 ** turning in place. False means no direction, not merely zero translation. */

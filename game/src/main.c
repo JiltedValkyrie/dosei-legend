@@ -628,13 +628,23 @@ static void         dialogue_box(void)
         jo_printf(1, PROMPT_ROW, "%-38s", "");
     }
     was_talking = true;
+    /* Clear the full previous page, then use the exact cutscene panel behind
+     * the VDP2 text. NPC and shop conversations share this presentation. */
+    for (i = 0; i < DIALOGUE_ROWS; ++i)
+        jo_printf_with_color(0, DIALOGUE_ROW + i, JO_COLOR_INDEX_White, "%-40s", "");
+    kokiri_message_box_draw(160, DIALOGUE_ROW * 8 + DIALOGUE_ROWS * 4,
+                            320, DIALOGUE_ROWS * 8);
     jo_printf(1, DIALOGUE_ROW, "%-38s", gameplay_speaker_name());
     for (i = 0; i < DIALOGUE_MAX_LINES; ++i) {
         const char *line = i < gameplay_page_lines() ? gameplay_page_line(i) : "";
         jo_printf(1, DIALOGUE_ROW + 1 + i, "%-38s", line ? line : "");
     }
-    jo_printf(1, DIALOGUE_ROW + 1 + DIALOGUE_MAX_LINES, "%-38s",
-              "A: next   B: close");
+    {
+        bool last = gameplay.rule < 0 ||
+            gameplay.page + 1u >= dialogue_rules[gameplay.rule].pages;
+        kokiri_message_mark_draw(160,
+            (DIALOGUE_ROW + 1 + DIALOGUE_MAX_LINES) * 8 + 4, last);
+    }
 }
 
 /*
