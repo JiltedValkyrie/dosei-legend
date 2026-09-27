@@ -1,9 +1,10 @@
-"""Drive the real gameplay.c: pickups, equip, targeting, swing window, cutting.
+"""Drive the real gameplay.c: chest, wonder rupees, Mido, equip, targeting, swing window, cutting.
 
 Compiled and called through ctypes rather than reimplemented, so a rule that
 changes in C changes here too.
 """
 import ctypes
+import re
 import os
 import pathlib
 import subprocess
@@ -47,6 +48,10 @@ class Gameplay(unittest.TestCase):
                         '-I' + str(GENERATED), '-I' + str(ROOT / 'src'),
                         str(ROOT / 'tests/fixtures/gameplay_host.c'),
                         str(ROOT / 'src/gameplay.c'),
+                        str(ROOT / 'src/dialogue_text.c'),
+                        str(ROOT / 'src/text_pool.c'),
+                        str(ROOT / 'src/collide.c'),
+                        str(ROOT / 'src/actor_sys.c'),
                         str(ROOT / 'src/save_state.c'),
                         str(ROOT / 'src/save_file.c'),
                         str(GENERATED / 'kokiri_actors.c'),
@@ -54,15 +59,18 @@ class Gameplay(unittest.TestCase):
                        check=True, env=env, cwd=str(ROOT))
         cls.lib = ctypes.CDLL(str(output))
         cls.lib.gp_page_line.restype = ctypes.c_char_p
+        # Line text comes from the disc file, as on target (BUG-033).
+        cls.text = ctypes.create_string_buffer((ROOT / 'build/cd/DIALOG.TXT').read_bytes())
+        assert cls.lib.gp_bind_text(cls.text, len(cls.text.raw) - 1)
         cls.lib.gp_speaker_name.restype = ctypes.c_char_p
         cls.lib.gp_slot_name.restype = ctypes.c_char_p
         cls.lib.gp_slot_use.restype = ctypes.c_char_p
-        for name in ('save_mido_demands_met', 'gameplay_pickup_taken',
+        for name in ('save_mido_demands_met', 'gameplay_chest_opened', 'gameplay_sword_active', 'gameplay_jump_attack_start',
                      'gameplay_grass_cut', 'gameplay_rupee_taken',
-                     'save_get_item_get_inf', 'save_get_collectible'):
+                     'save_get_item_get_inf', 'save_get_collectible',
+                     'save_get_inf_table', 'save_get_event_chk_inf'):
             getattr(cls.lib, name).restype = ctypes.c_bool
-        cls.lib.gp_pickup_at.restype = None
-        for name in ('gp_pickup_at', 'gp_grass_at', 'gp_npc_at'):
+        for name in ('gp_grass_at', 'gp_npc_at', 'gp_chest_at', 'gp_wonder_at'):
             getattr(cls.lib, name).restype = None
 
     def setUp(self):
@@ -70,14 +78,24 @@ class Gameplay(unittest.TestCase):
         # outlive a scene by design. Each test therefore starts a fresh file
         # too, or flags set by one test would leak into the next.
         self.lib.save_new_game()
+        self.lib.gp_scene(0)             # Kokiri Forest
+        self.lib.gp_stick(-1, 0)
+        self.lib.gp_hold_x(0)
+        self.lib.gp_blade_set(0, 0, 0, 0, 0, 0, 0)
+        self.lib.gp_blade_wall(0)
+        self.lib.gp_ball_wall(0)
         self.lib.gameplay_reset()
         self.lib.gp_room(0)
 
     # --- helpers ---------------------------------------------------------
     def pickup(self, index):
-        x, y, z, item = (ctypes.c_int() for _ in range(4))
-        self.lib.gp_pickup_at(index, *(ctypes.byref(v) for v in (x, y, z, item)))
-        return x.value, y.value, z.value, item.value
+        """Test setup: gear owned and equipped (index 0 sword, 1 shield).
+
+        The ground pickups are gone (FEAT-001); the returned spot is a neutral
+        place to keep stepping, far from every rupee."""
+        item = (GP_SWORD, GP_SHIELD)[index]
+        self.lib.gp_grant(item)
+        return 0, 0, 0, item
 
     def grass(self, index):
         x, y, z = (ctypes.c_int() for _ in range(3))
@@ -132,7 +150,9 @@ class Gameplay(unittest.TestCase):
         self.step(sx,sy,sz)
         gx,gy,gz = self.grass(0)
         self.step(gx,gy,gz-40,attack=1)
-        for _ in range(3): self.step(gx,gy,gz-40)
+        # Default attack is RIGHT_SLASH_1H, live from clip frame 1: the cut
+        # lands on the third step after the press.
+        for _ in range(2): self.step(gx,gy,gz-40)
         def rng(x):
             x ^= (x << 13) & 0xffffffff
             x ^= x >> 17
@@ -188,26 +208,6 @@ class Gameplay(unittest.TestCase):
         self.assertFalse(self.lib.gameplay_rupee_taken(0))
 
     # --- inventory -------------------------------------------------------
-    def test_walking_onto_gear_grants_and_equips_it_once(self):
-        x, y, z, item = self.pickup(0)
-        self.step(x, y, z)
-        self.assertEqual(self.lib.gp_owned() & item, item)
-        self.assertEqual(self.lib.gp_equipped() & item, item)
-        self.assertTrue(self.lib.gp_events() & GP_EVENT_PICKUP)
-        # Standing on it a second time must not raise the event again.
-        self.step(x, y, z)
-        self.assertFalse(self.lib.gp_events() & GP_EVENT_PICKUP)
-
-    def test_gear_is_not_granted_from_across_the_meadow(self):
-        x, y, z, _ = self.pickup(0)
-        self.step(x + 400, y, z)
-        self.assertEqual(self.lib.gp_owned(), 0)
-
-    def test_both_pickups_are_reachable_and_distinct(self):
-        self.assertEqual(self.lib.gp_pickup_total(), 2)
-        items = {self.pickup(i)[3] for i in range(2)}
-        self.assertEqual(items, {GP_SWORD, GP_SHIELD})
-
     # --- sword -----------------------------------------------------------
     def test_no_sword_means_no_swing(self):
         self.step(0, 0, 0, attack=1)
@@ -220,10 +220,15 @@ class Gameplay(unittest.TestCase):
         self.step(x, y, z)                      # collect the sword
         self.step(x, y, z, attack=1)
         self.assertTrue(self.lib.gp_events() & GP_EVENT_SWING)
-        first = self.lib.gp_swing()
         self.step(x, y, z, attack=1)
         self.assertFalse(self.lib.gp_events() & GP_EVENT_SWING)
-        self.assertEqual(self.lib.gp_swing(), first - 1)
+        self.assertEqual(self.lib.gp_attack_phase(), 1)
+
+    def test_contact_colliders_fit_their_cart_carve(self):
+        header = (ROOT / 'src/ram_cart.h').read_text()
+        size = int(re.search(r'RAM_CART_CONTACT_BYTES\s+0x([0-9A-Fa-f]+)u', header).group(1), 16)
+        # Host pointers are 8 bytes, wider than SH-2's, so this is an upper bound.
+        self.assertLessEqual(self.lib.gp_contacts_bytes(), size)
 
     def test_sword_cuts_grass_in_front_once(self):
         gx, gy, gz = self.grass(0)
@@ -263,7 +268,7 @@ class Gameplay(unittest.TestCase):
         self.assertFalse(self.lib.gp_shielding())
         self.assertTrue(self.lib.gp_events() & GP_EVENT_DENIED)
 
-    def test_shield_raises_when_owned_and_drops_while_swinging(self):
+    def test_shield_raises_when_owned_and_blocks_attacks(self):
         sx, sy, sz, _ = self.pickup(0)
         hx, hy, hz, _ = self.pickup(1)
         self.step(sx, sy, sz)
@@ -271,8 +276,27 @@ class Gameplay(unittest.TestCase):
         self.step(hx, hy, hz, shield=1)
         self.assertTrue(self.lib.gp_shielding())
         self.assertTrue(self.lib.gp_events() & GP_EVENT_SHIELD_UP)
+        # func_808428D8: X while guarding is the crouch stab, not a slash;
+        # the guard stays up and the stab ends on defense_wait.
         self.step(hx, hy, hz, shield=1, attack=1)
-        self.assertFalse(self.lib.gp_shielding())
+        self.assertTrue(self.lib.gp_shielding())
+        self.assertTrue(self.lib.gp_events() & GP_EVENT_SWING)
+        self.assertEqual(self.lib.gp_attack_phase(), 7)
+
+    def test_crouch_stab_hits_only_while_frame_below_two(self):
+        sx, sy, sz, _ = self.pickup(0)
+        hx, hy, hz, _ = self.pickup(1)
+        self.step(sx, sy, sz)
+        self.step(hx, hy, hz)
+        self.step(hx, hy, hz, shield=1)
+        self.step(hx, hy, hz, shield=1, attack=1)
+        live = []
+        for _ in range(12):
+            self.step(hx, hy, hz, shield=1)
+            live.append(bool(self.lib.gp_sword_live()))
+        # Speed 1.0: frame 1 on the first step after the press, then off.
+        self.assertEqual(live[:3], [True, False, False])
+        self.assertTrue(self.lib.gp_shielding())
 
     # --- targeting (HOLD, not switch) ------------------------------------
     # OoT's own alternative to Switch targeting: the lock lasts exactly as long
@@ -363,9 +387,9 @@ class Gameplay(unittest.TestCase):
         self.assertEqual(-1, self.lib.gp_target())
 
     def test_locked_facing_refreshes_from_post_movement_position(self):
-        nx, ny, nz = self.npc(0)
+        nx, ny, nz = self.npc(2)   # a child: Mido (0) steps toward Link
         self.hold_target(nx, ny, nz - 200)
-        self.assertEqual(0, self.lib.gp_target())
+        self.assertEqual(2, self.lib.gp_target())
         self.lib.gameplay_update_facing(nx - 100, nz)
         self.assertLessEqual(abs(self.lib.gp_face_yaw() - 16384), 1)
 
@@ -700,15 +724,6 @@ class Gameplay(unittest.TestCase):
         self.assertEqual(GP_SWORD | GP_SHIELD, self.lib.gp_equipped())
         self.assertTrue(self.lib.save_mido_demands_met())
 
-    def test_a_taken_pickup_does_not_reappear_after_a_reset(self):
-        x, y, z, _ = self.pickup(0)
-        self.step(x, y, z)
-        self.lib.gameplay_reset()
-        self.assertTrue(self.lib.gameplay_pickup_taken(0))
-        # Standing on it again must not re-raise the pickup event.
-        self.step(x, y, z)
-        self.assertFalse(self.lib.gp_events() & GP_EVENT_PICKUP)
-
     def test_rupees_survive_a_scene_reset(self):
         x, y, z, value, room = self.rupee(0)
         self.lib.gp_room(room)
@@ -731,7 +746,6 @@ class Gameplay(unittest.TestCase):
         self.assertEqual(0, self.lib.gp_owned())
         self.assertEqual(0, self.lib.gp_equipped())
         self.assertEqual(0, self.lib.gp_rupees())
-        self.assertFalse(self.lib.gameplay_pickup_taken(0))
         self.assertFalse(self.lib.save_mido_demands_met())
 
     def test_cut_grass_is_deliberately_not_persisted(self):
@@ -757,9 +771,6 @@ class Gameplay(unittest.TestCase):
         self.lib.gp_room(room)
         self.step(rupee_x, rupee_y, rupee_z)
         self.assertEqual(GP_SWORD | GP_SHIELD, self.lib.gp_owned())
-        # Snapshot rather than assume: the authored gear pickups sit on spots
-        # the original already drops an En_Item00 rupee on, so walking to them
-        # collects those too and the wallet is more than this one rupee.
         purse = self.lib.gp_rupees()
         self.assertGreaterEqual(purse, value)
 
@@ -779,12 +790,753 @@ class Gameplay(unittest.TestCase):
         self.assertEqual(GP_SWORD | GP_SHIELD, self.lib.gp_equipped())
         self.assertEqual(purse, self.lib.gp_rupees())
         self.assertTrue(self.lib.save_mido_demands_met())
-        # Neither the gear nor the rupee is lying on the floor again.
-        self.assertTrue(self.lib.gameplay_pickup_taken(0))
-        self.assertTrue(self.lib.gameplay_pickup_taken(1))
+        # The rupee is not lying on the floor again.
         self.step(rupee_x, rupee_y, rupee_z)
         self.assertEqual(purse, self.lib.gp_rupees())
 
+    # --- M2b.1 starter route (FEAT-001) ------------------------------------
+    SAVE_SCENE_KOKIRI_FOREST = 0
+
+    def forest(self, room=0):
+        self.lib.gp_scene(self.SAVE_SCENE_KOKIRI_FOREST)
+        self.lib.gameplay_reset()
+        self.lib.gp_room(room)
+
+    def chest(self):
+        vals = [ctypes.c_int() for _ in range(5)]
+        self.lib.gp_chest_at(0, *(ctypes.byref(v) for v in vals))
+        return tuple(v.value for v in vals)
+
+    def wonders(self):
+        out = []
+        for i in range(self.lib.gp_wonder_total()):
+            vals = [ctypes.c_int() for _ in range(8)]
+            self.lib.gp_wonder_at(i, *(ctypes.byref(v) for v in vals))
+            x, y, z, mode, value, room, rot_z, param = (v.value for v in vals)
+            out.append(dict(i=i, x=x, y=y, z=z, mode=mode, value=value,
+                            room=room, rot_z=rot_z, param=param))
+        return out
+
+    def test_sword_chest_is_the_source_maze_chest(self):
+        self.assertEqual(self.lib.gp_chest_total(), 1)
+        x, y, z, yaw, room = self.chest()
+        self.assertEqual((x, y, z, yaw, room), (-232, 178, 2245, 0, 2))
+        self.assertEqual(self.lib.gp_chest_param(0), 0x04E0)
+
+    def test_chest_opens_once_grants_sword_owned_not_equipped(self):
+        x, y, z, _, room = self.chest()
+        self.forest(room)
+        self.step(x, y, z - 25, yaw=0)
+        self.assertEqual(self.lib.gp_chest_prompt(), 0)
+        self.step(x, y, z - 25, yaw=0, interact=1)
+        self.assertEqual(self.lib.gp_owned(), GP_SWORD)
+        self.assertEqual(self.lib.gp_equipped(), 0)      # pause screen equips
+        self.assertTrue(self.lib.gameplay_chest_opened(0))
+        self.assertTrue(self.lib.gp_talking())
+        self.assertEqual(self.lib.gp_rule_text_id(), 0x00A4)
+        self.assertEqual(self.lib.gp_get_item(), GP_SWORD)
+        while self.lib.gp_talking():
+            self.step(x, y, z - 25, yaw=0, interact=1)
+        self.assertEqual(self.lib.gp_get_item(), 0)
+        self.step(x, y, z - 25, yaw=0)
+        self.assertEqual(self.lib.gp_chest_prompt(), -1)
+        self.step(x, y, z - 25, yaw=0, interact=1)
+        self.assertFalse(self.lib.gp_events() & GP_EVENT_PICKUP)
+        self.lib.gameplay_reset()                        # reload the scene
+        self.assertTrue(self.lib.gameplay_chest_opened(0))
+        self.assertEqual(self.lib.gp_owned(), GP_SWORD)
+
+    def test_chest_needs_the_source_offer_box_and_facing(self):
+        x, y, z, _, room = self.chest()
+        self.forest(room)
+        for dx, dy, dz, yaw in ((0, 0, 10, 0x8000),     # in front of the lid
+                                (0, 0, -60, 0),          # too far back
+                                (25, 0, -25, 0),         # off to the side
+                                (0, 12, -25, 0),         # height
+                                (0, 0, -25, 0x4000)):    # facing away
+            self.step(x + dx, y + dy, z + dz, yaw=yaw)
+            self.assertEqual(self.lib.gp_chest_prompt(), -1, (dx, dy, dz, yaw))
+        self.lib.gp_scene(5)                             # Link's house
+        self.step(x, y, z - 25, yaw=0)
+        self.assertEqual(self.lib.gp_chest_prompt(), -1)
+
+    def test_proximity_wonder_pays_once_until_its_room_reloads(self):
+        w = next(w for w in self.wonders() if w['mode'] == 2 and w['room'] == 2)
+        self.assertEqual(w['param'] & 0x3F, 0x3F)            # no switch flag
+        self.forest(2)
+        before = self.lib.gp_rupees()
+        self.step(w['x'], w['y'], w['z'])
+        self.assertEqual(self.lib.gp_rupees(), before + w['value'])
+        self.step(w['x'], w['y'], w['z'])
+        self.assertEqual(self.lib.gp_rupees(), before + w['value'])
+        self.lib.gp_room(0); self.step(0, 0, 0)               # leave the maze
+        self.lib.gp_room(2); self.step(w['x'], w['y'], w['z'])
+        self.assertEqual(self.lib.gp_rupees(), before + 2 * w['value'])
+
+    def test_switch_flagged_wonder_stays_paid_after_reload(self):
+        w = next(w for w in self.wonders() if w['param'] == 0x1256)
+        self.forest(0)
+        self.step(w['x'], w['y'], w['z'])
+        paid = self.lib.gp_rupees()
+        self.assertEqual(paid, 5)
+        self.lib.gameplay_reset(); self.lib.gp_room(0)
+        self.step(w['x'], w['y'], w['z'])
+        self.assertEqual(self.lib.gp_rupees(), paid)
+
+    def tags(self, mode, room=0):
+        return sorted((w for w in self.wonders() if w['mode'] == mode and w['room'] == room),
+                      key=lambda w: w['rot_z'] & 0xFF)
+
+    def test_free_multitag_pays_after_every_tag(self):
+        owner = next(w for w in self.wonders() if w['mode'] == 0)
+        self.forest(0)
+        for t in self.tags(1):
+            self.assertEqual(self.lib.gp_rupees(), 0)
+            self.step(t['x'], t['y'], t['z'])
+        self.step(1000, 0, -1000)
+        self.assertEqual(self.lib.gp_rupees(), owner['value'])
+
+    def test_multitag_timer_runs_out(self):
+        self.forest(0)
+        first, second = self.tags(1)
+        self.step(first['x'], first['y'], first['z'])
+        for _ in range(130):                   # 81 frames at 20 Hz = 122 steps
+            self.step(1000, 0, -1000)
+        self.step(second['x'], second['y'], second['z'])
+        self.step(1000, 0, -1000)
+        self.assertEqual(self.lib.gp_rupees(), 0)
+
+    def test_ordered_multitag_fails_out_of_order(self):
+        owner = next(w for w in self.wonders() if w['mode'] == 5)
+        first, second = self.tags(6)
+        self.forest(0)
+        self.step(second['x'], second['y'], second['z'])
+        self.step(first['x'], first['y'], first['z'])
+        self.step(1000, 0, -1000)
+        self.assertEqual(self.lib.gp_rupees(), 0)
+        self.forest(0)
+        self.step(first['x'], first['y'], first['z'])
+        self.step(second['x'], second['y'], second['z'])
+        self.step(1000, 0, -1000)
+        self.assertEqual(self.lib.gp_rupees(), owner['value'])
+
+    def test_interact_wonder_needs_a_sword_hit(self):
+        w = next(w for w in self.wonders() if w['mode'] == 3)
+        i = w['i']
+        self.forest(w['room'])
+        for _ in range(3):
+            self.step(w['x'], w['y'], w['z'] - 40, yaw=0)
+        self.assertEqual(self.lib.gp_wonder_drop(i), 0)
+        self.pickup(0)
+        self.step(w['x'], w['y'], w['z'] - 40, yaw=0, attack=1)
+        for _ in range(14):
+            self.step(w['x'], w['y'], w['z'] - 40, yaw=0)
+        self.assertEqual(self.lib.gp_wonder_drop(i), w['value'])
+        for _ in range(20):
+            self.step(w['x'], w['y'], w['z'])
+        self.assertEqual(self.lib.gp_rupees(), w['value'])
+
+    def test_a_fresh_file_can_afford_the_shield_without_a_sword(self):
+        """FEAT-001: 40 rupees from source placements before any sword."""
+        self.forest(0)
+        spots = []
+        for i in range(8):
+            x, y, z, value, room = self.rupee(i)
+            spots.append((room, x, y, z))
+        for w in self.wonders():
+            if w['mode'] == 2:
+                spots.append((w['room'], w['x'], w['y'], w['z']))
+        for mode in (1, 6):
+            for t in self.tags(mode):
+                spots.append((0, t['x'], t['y'], t['z']))
+                spots.append((0, 1000, 0, -1000))
+        for room, x, y, z in spots:
+            self.lib.gp_room(room)
+            self.step(x, y, z)
+        self.assertEqual(self.lib.gp_owned(), 0)
+        self.assertGreaterEqual(self.lib.gp_rupees(), 40)
+
+    def test_mido_blocks_60_units_from_home_toward_link(self):
+        self.forest(0)
+        self.step(1522, 0, -300)
+        self.assertEqual((self.lib.gp_mido_x(), self.lib.gp_mido_z()), (1522, 45))
+        self.step(1822, 0, 105)
+        self.assertEqual((self.lib.gp_mido_x(), self.lib.gp_mido_z()), (1582, 105))
+        x, z = ctypes.c_int(), ctypes.c_int()
+        self.assertEqual(self.lib.gp_mido_body(0, ctypes.byref(x), ctypes.byref(z)), 1)
+        self.assertEqual(self.lib.gp_mido_body(2, ctypes.byref(x), ctypes.byref(z)), 0)
+
+    def talk_mido(self):
+        """Stand south of Mido's home, facing him, and talk the box through."""
+        x, z = 1522, 105 - 150
+        self.step(x, 0, z)
+        self.step(x, 0, z, interact=1)
+        self.assertTrue(self.lib.gp_talking())
+        text = self.lib.gp_rule_text_id()
+        while self.lib.gp_talking():
+            self.step(x, 0, z, interact=1)
+        return text
+
+    def test_mido_refusal_sets_the_source_flags(self):
+        self.forest(0)
+        self.assertEqual(self.talk_mido(), 0x102F)
+        self.assertTrue(self.lib.save_get_inf_table(self.INFTABLE_MIDO_REFUSED_ONCE))
+        self.assertEqual(self.talk_mido(), 0x1030)
+        self.assertEqual(self.lib.gp_mido_state(), 0)
+
+    def test_mido_needs_both_equipped_then_walks_aside(self):
+        self.forest(0)
+        self.pickup(0)                                  # sword only
+        self.assertIn(self.talk_mido(), (0x102F, 0x1030))
+        self.assertEqual(self.lib.gp_mido_state(), 0)
+        self.pickup(1)
+        self.assertEqual(self.talk_mido(), 0x1033)
+        self.assertEqual(self.lib.gp_mido_state(), 1)
+        self.assertTrue(self.lib.save_get_event_chk_inf(
+            self.EVENTCHKINF_MIDO_STOOD_ASIDE_KOKIRI))
+        for _ in range(400):
+            self.step(1000, 0, -1000)
+        self.assertEqual(self.lib.gp_mido_state(), 2)
+        self.assertEqual((self.lib.gp_mido_x(), self.lib.gp_mido_z()), (1412, 211))
+        self.lib.gameplay_reset()                       # later visit
+        self.assertEqual((self.lib.gp_mido_x(), self.lib.gp_mido_z()), (1412, 211))
+    # --- Kokiri Shop: the 40-rupee Deku Shield ------------------------------
+    SAVE_SCENE_KOKIRI_SHOP = 4
+    COUNTER = (0, 0, 60, 0x8000)                # in front of EnOssan, facing him
+
+    def shop(self, rupees):
+        self.lib.gp_scene(self.SAVE_SCENE_KOKIRI_SHOP)
+        self.lib.gameplay_reset()
+        self.lib.gp_room(0)
+        self.lib.gp_wallet(rupees)
+
+    def shop_step(self, interact=0, cancel=0, menu_step=0):
+        x, y, z, yaw = self.COUNTER
+        self.lib.gp_step_full(x, y, z, yaw, 0, 0, 0, interact, 1, cancel, 0, menu_step)
+        return self.lib.gp_rule_text_id() if self.lib.gp_talking() else None
+
+    def to_choice(self):
+        self.shop_step()
+        self.assertTrue(self.lib.gp_shop_prompt())
+        self.assertEqual(self.shop_step(interact=1), 0x10BA)
+        self.assertEqual(self.shop_step(interact=1), 0x009F)
+        self.assertEqual(self.shop_step(interact=1), 0x0089)
+        self.assertEqual(self.lib.gp_choice_lines(), 2)
+
+    def test_shield_costs_exactly_40_and_is_owned_not_equipped(self):
+        self.shop(40)
+        self.to_choice()
+        self.assertEqual(self.shop_step(interact=1), 0x004C)     # Buy
+        self.assertEqual(self.lib.gp_rupees(), 0)
+        self.assertEqual(self.lib.gp_owned(), GP_SHIELD)
+        self.assertEqual(self.lib.gp_equipped(), 0)
+        self.assertEqual(self.lib.gp_get_item(), GP_SHIELD)
+        while self.lib.gp_talking():
+            self.shop_step(interact=1)
+        # A second purchase is refused and costs nothing.
+        self.lib.gp_wallet(99)
+        self.to_choice()
+        self.assertEqual(self.shop_step(interact=1), 0x0086)
+        self.assertEqual(self.lib.gp_rupees(), 99)
+
+    def test_39_rupees_is_refused_without_a_debit(self):
+        self.shop(39)
+        self.to_choice()
+        self.assertEqual(self.shop_step(interact=1), 0x0085)
+        self.assertEqual(self.lib.gp_rupees(), 39)
+        self.assertEqual(self.lib.gp_owned(), 0)
+
+    def test_dont_buy_returns_to_the_item_text(self):
+        self.shop(50)
+        self.to_choice()
+        self.shop_step(menu_step=1)
+        self.assertEqual(self.lib.gp_choice(), 1)
+        self.assertEqual(self.shop_step(interact=1), 0x009F)
+        self.assertEqual(self.shop_step(cancel=1), None)
+        self.assertEqual(self.lib.gp_rupees(), 50)
+        self.assertEqual(self.lib.gp_owned(), 0)
+        # B on the choice is Don't buy too.
+        self.to_choice()
+        self.assertEqual(self.shop_step(cancel=1), 0x009F)
+        self.assertEqual(self.lib.gp_rupees(), 50)
+
+    def test_shop_purchase_survives_save_and_reload(self):
+        SAVE_FILE_BYTES = 300
+        self.shop(45)
+        self.to_choice()
+        self.shop_step(interact=1)
+        block = ctypes.create_string_buffer(SAVE_FILE_BYTES)
+        self.lib.gp_save_pack(block)
+        self.lib.save_new_game()
+        self.assertEqual(0, self.lib.gp_save_unpack(bytes(block.raw), SAVE_FILE_BYTES))
+        self.lib.gameplay_reset()
+        self.assertEqual(self.lib.gp_owned(), GP_SHIELD)
+        self.assertEqual(self.lib.gp_rupees(), 5)
+
+    def test_shopkeeper_is_only_in_the_shop(self):
+        self.lib.gp_scene(self.SAVE_SCENE_KOKIRI_FOREST)
+        self.lib.gameplay_reset()
+        self.shop_step()
+        self.assertFalse(self.lib.gp_shop_prompt())
+
+    def test_full_starter_route_reaches_mido_passage(self):
+        """Fresh file: rupees, maze chest, shop, equip both, Mido stands aside."""
+        self.test_a_fresh_file_can_afford_the_shield_without_a_sword()
+        purse = self.lib.gp_rupees()
+        x, y, z, _, room = self.chest()
+        self.lib.gp_room(room)
+        self.step(x, y, z - 25, yaw=0, interact=1)
+        while self.lib.gp_talking():
+            self.step(x, y, z - 25, yaw=0, interact=1)
+        self.lib.gp_scene(self.SAVE_SCENE_KOKIRI_SHOP)
+        self.lib.gameplay_reset()
+        self.lib.gp_room(0)
+        self.assertEqual(self.lib.gp_rupees(), purse)
+        self.to_choice()
+        self.shop_step(interact=1)
+        while self.lib.gp_talking():
+            self.shop_step(interact=1)
+        self.assertEqual(self.lib.gp_rupees(), purse - 40)
+        self.assertEqual(self.lib.gp_owned(), GP_SWORD | GP_SHIELD)
+        self.lib.gp_scene(self.SAVE_SCENE_KOKIRI_FOREST)
+        self.lib.gameplay_reset()
+        self.lib.gp_room(0)
+        self.assertNotEqual(self.talk_mido(), 0x1033)      # owned, not equipped
+        for slot in (0, 1):                               # pause screen equip
+            self.menu(pause=1)
+            if slot: self.menu(menu_step=1)
+            self.menu(interact=1)
+            self.menu(pause=1)
+        self.assertEqual(self.lib.gp_equipped(), GP_SWORD | GP_SHIELD)
+        self.assertEqual(self.talk_mido(), 0x1033)
+        self.assertEqual(self.lib.gp_mido_state(), 1)
+    def test_dialogue_text_refuses_a_mismatched_file(self):
+        """BUG-033: line text is a disc file; a stale or cut file is refused."""
+        raw = self.text.raw[:-1]
+        for bad in (b'XDLG' + raw[4:], raw[:4] + bytes([0, 1]) + raw[6:], raw[:-1] + b'x',
+                    raw[:40]):
+            buf = ctypes.create_string_buffer(bad)
+            self.assertFalse(self.lib.gp_bind_text(buf, len(bad)))
+        self.assertTrue(self.lib.gp_bind_text(self.text, len(raw)))
+    # --- En_Goroiwa: maze rolling boulder (BUG-032) -------------------------
+    GP_EVENT_HURT = 1 << 25
+    PATH = [(-247, 120, 1869), (-247, 120, 1538), (-575, 120, 1538),
+            (-575, 120, 1869), (-247, 120, 1869)]
+    FAR = (-411, 120, 1700)                    # maze room, inside the loop
+
+    def boulder(self):
+        v = [ctypes.c_int() for _ in range(3)]
+        state = self.lib.gp_boulder(*(ctypes.byref(x) for x in v))
+        return tuple(x.value for x in v), state
+
+    def maze(self):
+        self.forest(2)
+        self.step(*self.FAR)
+
+    def test_boulder_spawns_on_path_start_and_rolls_the_loop(self):
+        self.maze()
+        self.assertTrue(self.lib.gp_boulder_live())
+        (x, y, z), state = self.boulder()
+        self.assertEqual((x, y), (-247, 120))
+        self.assertLess(z, 1869)
+        seen = set()
+        for _ in range(600):
+            self.step(*self.FAR)
+            seen.add(self.lib.gp_boulder_next())
+            (x, y, z), _ = self.boulder()
+            self.assertEqual(y, 120)
+            self.assertTrue(x in (-247, -575) or z in (1538, 1869), (x, z))
+        self.assertEqual(seen, {1, 2, 3, 4})
+
+    def test_boulder_top_speed_is_source_kokiri_speed(self):
+        self.maze()
+        for _ in range(40):
+            self.step(*self.FAR)
+        (_, _, z0), _ = self.boulder()
+        self.step(*self.FAR)
+        (_, _, z1), _ = self.boulder()
+        self.assertIn(z0 - z1, (6, 7))          # 9.2 a frame at 20 Hz
+
+    def run_into_boulder(self, shield=0):
+        self.maze()
+        spot = (-247, 120, 1650)                # on its first leg
+        for _ in range(200):
+            self.step(*spot, yaw=0, shield=shield)
+            if self.lib.gp_events() & self.GP_EVENT_HURT:
+                return spot
+        self.fail('boulder never hit Link')
+
+    def test_boulder_hit_costs_a_quarter_heart_and_knocks_back(self):
+        start = self.lib.gp_health()
+        self.run_into_boulder()
+        self.assertEqual(self.lib.gp_health(), start - 4)
+        self.assertEqual(self.lib.gp_knock_yaw(), 0x8000)   # away, toward -z
+        (_, _, _), state = self.boulder()
+        self.assertEqual(state, 1)                          # hop after hit
+
+    def test_shield_does_not_block_the_boulder(self):
+        start = self.lib.gp_health()
+        self.run_into_boulder(shield=1)
+        self.assertEqual(self.lib.gp_health(), start - 4)
+
+    def test_boulder_keeps_its_direction_and_skips_hits_for_50_frames(self):
+        spot = self.run_into_boulder()
+        start = self.lib.gp_health()
+        hurt = 0
+        for _ in range(74):
+            self.step(*spot)
+            hurt += bool(self.lib.gp_events() & self.GP_EVENT_HURT)
+        self.assertEqual(hurt, 0)
+        self.assertEqual(self.lib.gp_health(), start)
+        self.assertEqual(self.lib.gp_boulder_next(), 1)     # still toward point 1
+
+    def test_boulder_restarts_when_the_maze_room_reloads(self):
+        self.maze()
+        for _ in range(30):
+            self.step(*self.FAR)
+        self.lib.gp_room(0); self.step(0, 0, 0)
+        self.assertFalse(self.lib.gp_boulder_live())
+        self.lib.gp_room(2); self.step(*self.FAR)
+        (x, _, z), _ = self.boulder()
+        self.assertEqual(x, -247)
+        self.assertGreater(z, 1860)
+
+    def test_boulder_contact_does_not_replay_knockdown_during_cooldown(self):
+        spot = self.run_into_boulder()
+        self.assertTrue(self.lib.gp_events() & (1 << 26))
+        for tick in range(74):
+            self.step(*spot)
+            self.assertFalse(self.lib.gp_events() & (1 << 26),
+                             'old hit restarted knockdown at step %d' % tick)
+
+    # --- M2b: Link body/shield in the shared contact pass --------------------
+    def test_contact_storage_fits_its_cart_carve(self):
+        self.assertLessEqual(self.lib.gp_contacts_bytes(), 0x2000)   # host is larger
+
+    def test_body_hit_costs_health_on_the_next_step(self):
+        """Player_UpdateDamage reads the previous frame's cylinder AC_HIT."""
+        self.maze()
+        spot = (-247, 120, 1650)
+        start = self.lib.gp_health()
+        for _ in range(200):
+            self.step(*spot)
+            if self.lib.gp_boulder_hit():
+                break
+        else:
+            self.fail('no contact')
+        self.assertEqual(self.lib.gp_health(), start)          # same step: none
+        self.step(*spot)
+        self.assertEqual(self.lib.gp_health(), start - 4)
+        self.assertTrue(self.lib.gp_events() & self.GP_EVENT_HURT)
+        self.assertTrue(self.lib.gp_events() & (1 << 26))       # knockdown
+
+    def test_intangible_link_takes_no_second_hit(self):
+        spot = self.run_into_boulder()
+        self.assertEqual(self.lib.gp_intangible(), 30)
+
+    # --- M2c: source sword timeline -----------------------------------------
+    MWA = dict(FORWARD=0, FORWARD_COMBO=2, RIGHT=4, RIGHT_COMBO=6, LEFT=8,
+               STAB=12, STAB_COMBO=14)
+
+    def armed(self):
+        self.forest(0)
+        self.lib.gp_grant(GP_SWORD, GP_SWORD)
+        self.lib.gp_stick(-1, 0)
+
+    def swing(self, stick=-1, target=0):
+        self.lib.gp_stick(stick, 0)
+        self.step(0, 0, 0, attack=1, target=target)
+        return self.lib.gp_attack_id()
+
+    def test_attack_follows_stick_and_targeting(self):
+        """func_80837818 / D_80854480."""
+        cases = [(-1, 0, 'RIGHT'), (-1, 1, 'FORWARD'), (0, 0, 'FORWARD'),
+                 (0, 1, 'STAB'), (1, 0, 'RIGHT'), (2, 0, 'RIGHT'), (3, 0, 'LEFT')]
+        for stick, target, name in cases:
+            self.armed()
+            self.assertEqual(self.swing(stick, target), self.MWA[name], (stick, target))
+
+    def run_attack(self):
+        for _ in range(40):
+            if self.lib.gp_attack_phase() != 1:
+                return
+            self.step(0, 0, 0)
+
+    def test_third_same_attack_in_a_row_is_the_combo(self):
+        self.armed()
+        ids = []
+        for _ in range(4):
+            ids.append(self.swing())
+            self.run_attack()
+        R, RC = self.MWA['RIGHT'], self.MWA['RIGHT_COMBO']
+        self.assertEqual(ids, [R, R, RC, R])     # combo row breaks the chain
+
+    def test_combo_count_expires_after_8_frames(self):
+        self.armed()
+        self.swing(); self.run_attack()
+        self.swing(); self.run_attack()
+        self.lib.gp_stick(-1, 1)                 # walk off: recovery ends
+        for _ in range(12):
+            self.step(0, 0, 0)
+        self.lib.gp_stick(-1, 0)
+        self.assertEqual(self.swing(), self.MWA['RIGHT'])
+
+    def test_blade_window_is_the_source_frames(self):
+        """RIGHT_SLASH_1H is live on clip frames 1..4 at 2/3 frame a step."""
+        self.armed()
+        self.swing()
+        live = []
+        for _ in range(8):
+            self.step(0, 0, 0)
+            live.append(bool(self.lib.gameplay_sword_active()))
+        # checked frames (thirds): 0,2,4,6,8,10,12 -> frame 1 starts at 3
+        self.assertEqual(live[:6], [False, False, True, True, True, True])
+
+    def test_recovery_ends_on_stick_or_chains_on_x(self):
+        self.armed()
+        self.swing(); self.run_attack()
+        self.assertEqual(self.lib.gp_attack_phase(), 2)
+        self.lib.gp_stick(0, 1)
+        self.step(0, 0, 0)
+        self.assertEqual(self.lib.gp_attack_phase(), 0)
+        self.armed()
+        self.swing(); self.run_attack()
+        self.swing()
+        self.assertEqual(self.lib.gp_attack_phase(), 1)
+        self.assertTrue(self.lib.gp_events() & GP_EVENT_SWING)
+
+    def test_forest_npcs_do_not_talk_or_target_inside_other_scenes(self):
+        """Link's house (scene 5) sits over forest coordinates."""
+        x, y, z = self.npc(0)[:3]
+        self.lib.gp_scene(5)
+        self.lib.gameplay_reset()
+        for yaw in range(0, 65536, 8192):
+            self.step(x, y, z - 30, yaw=yaw)
+            self.assertEqual(self.lib.gp_prompt(), -1, yaw)
+
+    def test_forward_stick_attack_lunges_then_slows(self):
+        """PLAYER_STATE2_30: speedXZ 15 on frame 0, -5 a frame."""
+        self.armed()
+        self.swing(stick=0)                      # forward slash, not targeting
+        self.lib.gp_stick(-1, 0)
+        self.step(0, 0, 0)
+        speeds = [self.lib.gp_lunge()]
+        for _ in range(6):
+            self.step(0, 0, 0)
+            speeds.append(self.lib.gp_lunge())
+        self.assertEqual(speeds[0], 655360)
+        self.assertTrue(all(a > b or b == 0 for a, b in zip(speeds, speeds[1:])))
+        self.assertEqual(speeds[-1], 0)
+        self.armed()
+        self.swing(stick=-1)
+        self.step(0, 0, 0)
+        self.assertEqual(self.lib.gp_lunge(), 0)   # no stick: no lunge
+
+    def charge_up(self, steps):
+        self.armed()
+        self.lib.gp_hold_x(1)
+        self.swing()
+        for _ in range(steps):
+            self.step(0, 0, 0)
+
+    def test_holding_x_through_the_swing_charges(self):
+        self.charge_up(14)
+        self.assertIn(self.lib.gp_attack_phase(), (3, 4))
+        self.lib.gp_hold_x(0)
+
+    def test_early_release_cancels_the_charge(self):
+        self.charge_up(14)
+        while self.lib.gp_attack_phase() == 3:
+            self.step(0, 0, 0)
+        self.lib.gp_hold_x(0)
+        self.step(0, 0, 0)                   # charge < 0.1: cancel
+        self.assertEqual(self.lib.gp_attack_phase(), 5)
+
+    def test_release_after_commit_spins_and_long_charge_is_big_spin(self):
+        self.charge_up(30)
+        self.assertEqual(self.lib.gp_attack_phase(), 4)
+        self.lib.gp_hold_x(0)
+        self.step(0, 0, 0)
+        self.assertEqual(self.lib.gp_attack_id(), 24)       # SPIN_ATTACK_1H
+        self.assertEqual(self.lib.gp_attack_phase(), 1)
+        self.assertGreaterEqual(self.lib.gp_intangible(), 11)
+        self.charge_up(90)
+        self.assertGreaterEqual(self.lib.gp_charge(), 55706)
+        self.lib.gp_hold_x(0)
+        self.step(0, 0, 0)
+        self.assertEqual(self.lib.gp_attack_id(), 26)       # BIG_SPIN_1H
+
+    def test_letting_go_during_the_swing_forfeits_the_charge(self):
+        self.armed()
+        self.lib.gp_hold_x(0)
+        self.swing()
+        self.step(0, 0, 0)
+        self.lib.gp_hold_x(1)
+        for _ in range(14):
+            self.step(0, 0, 0)
+        self.assertNotIn(self.lib.gp_attack_phase(), (3, 4))
+        self.lib.gp_hold_x(0)
+
+    def test_jump_slash_air_window_then_finishing_cut_on_landing(self):
+        """func_8083BA90 / Player_Action_80844AF4: blade from frame 7 in the
+        air; landing plays JUMPSLASH_FINISH with the combo count at 3."""
+        self.armed()
+        self.assertTrue(self.lib.gameplay_jump_attack_start())
+        self.assertEqual(self.lib.gp_attack_phase(), 6)
+        live = []
+        for _ in range(12):
+            self.step(0, 0, 0)
+            live.append(bool(self.lib.gameplay_sword_active()))
+        self.assertEqual(live.index(True), 11)         # damage from frame 7 (6 = trail)
+        self.lib.gameplay_jump_attack_land()
+        self.assertEqual(self.lib.gp_attack_id(), 19)
+        self.assertEqual(self.lib.gp_attack_phase(), 1)
+
+    def test_no_jump_slash_without_a_sword(self):
+        self.forest(0)
+        self.assertFalse(self.lib.gameplay_jump_attack_start())
+
+    # --- M2c: blade contact, wall rebound, guard recoil, nutsball ----------
+    def gear(self):
+        self.forest(0)
+        self.lib.gp_grant(GP_SWORD, GP_SWORD)
+        self.lib.gp_grant(GP_SHIELD, GP_SHIELD)
+        self.lib.gp_stick(-1, 0)
+
+    def test_posed_blade_capsules_cut_grass_in_reach_only(self):
+        self.gear()
+        gx, gy, gz = self.grass(0)
+        self.lib.gp_blade_set(1, gx - 40, gy + 20, gz, gx, gy + 20, gz)
+        self.step(gx - 45, gy, gz, yaw=0x4000, attack=1)
+        for _ in range(8):
+            self.step(gx - 45, gy, gz, yaw=0x4000)
+        self.assertTrue(self.lib.gameplay_grass_cut(0))
+
+    def test_posed_blade_out_of_reach_cuts_nothing(self):
+        self.gear()
+        gx, gy, gz = self.grass(0)
+        self.lib.gp_blade_set(1, gx - 200, gy + 20, gz, gx - 150, gy + 20, gz)
+        self.step(gx - 45, gy, gz, yaw=0x4000, attack=1)
+        for _ in range(8):
+            self.step(gx - 45, gy, gz, yaw=0x4000)
+        self.assertFalse(self.lib.gameplay_grass_cut(0))
+
+    def test_wall_hit_pushes_back_once_per_swing(self):
+        self.gear()
+        self.lib.gp_blade_set(1, 0, 20, 10, 0, 20, 40)
+        self.lib.gp_blade_wall(1)
+        self.step(0, 0, 0, attack=1)
+        pushed = False
+        for _ in range(20):
+            self.step(0, 0, 0)
+            if self.lib.gp_events() & (1 << 28):
+                pushed = True
+                break
+        self.assertTrue(pushed)
+        # func_80842DF4: speedXZ -14 = -9.33 a step (Q16), then decays.
+        self.assertLess(self.lib.gp_lunge(), 0)
+        self.assertGreaterEqual(self.lib.gp_lunge(), -611669)
+        self.step(0, 0, 0)
+        self.assertFalse(self.lib.gp_events() & (1 << 28))
+
+    def test_no_wall_push_before_frame_two(self):
+        self.gear()
+        self.lib.gp_blade_set(1, 0, 20, 10, 0, 20, 40)
+        self.lib.gp_blade_wall(1)
+        self.step(0, 0, 0, attack=1)
+        self.step(0, 0, 0)          # thirds 2..4: curFrame < 2
+        self.assertFalse(self.lib.gp_events() & (1 << 28))
+
+    def test_blade_bounce_plays_rebound_then_idles(self):
+        self.gear()
+        self.step(0, 0, 0, attack=1)
+        self.step(0, 0, 0)
+        self.lib.gp_set_bounced()
+        self.step(0, 0, 0)
+        self.assertEqual(self.lib.gp_attack_phase(), 8)
+        self.assertTrue(self.lib.gp_events() & (1 << 29))
+        self.assertLess(self.lib.gp_lunge(), 0)
+        for _ in range(12):
+            self.step(0, 0, 0)
+        self.assertEqual(self.lib.gp_attack_phase(), 0)
+        self.assertEqual(self.lib.gp_lunge(), 0)
+
+    def test_blade_bounce_ends_crouch_stab_but_keeps_guard(self):
+        self.gear()
+        self.step(0, 0, 0, shield=1)
+        self.step(0, 0, 0, shield=1, attack=1)
+        self.assertEqual(self.lib.gp_attack_phase(), 7)
+        self.lib.gp_set_bounced()
+        self.step(0, 0, 0, shield=1)
+        self.assertEqual(self.lib.gp_attack_phase(), 0)
+        self.assertTrue(self.lib.gp_shielding())
+        self.assertLess(self.lib.gp_lunge(), 0)
+
+    def nut_at(self):
+        x, y, z = (ctypes.c_int() for _ in range(3))
+        self.lib.gp_nut_pos(*(ctypes.byref(v) for v in (x, y, z)))
+        return x.value, y.value, z.value
+
+    def test_nutsball_hurts_link_without_guard(self):
+        self.gear()
+        self.lib.gameplay_nut_fire(0, 10, 200, 0x8000)   # toward -z, at Link
+        hurt = False
+        for _ in range(60):
+            self.step(0, 0, 0)
+            hurt |= bool(self.lib.gp_hurt())
+            if not self.lib.gp_nut_state():
+                break
+        self.assertTrue(hurt)
+        self.assertFalse(self.lib.gp_nut_state())
+
+    def test_deku_shield_reflects_nutsball_and_recoils(self):
+        self.gear()
+        self.step(0, 0, 0, yaw=0, shield=1)
+        self.lib.gameplay_nut_fire(0, 10, 200, 0x8000)
+        reflected = recoil = False
+        for _ in range(60):
+            self.step(0, 0, 0, yaw=0, shield=1)
+            reflected |= bool(self.lib.gp_nut_reflected())
+            recoil |= self.lib.gp_attack_phase() == 9
+            self.assertEqual(self.lib.gp_hurt(), 0)
+            if reflected and recoil:
+                break
+        self.assertTrue(reflected)
+        self.assertTrue(recoil)
+        self.assertEqual(self.lib.gp_nut_yaw(), 0)       # out along Link's facing
+        z0 = self.nut_at()[2]
+        self.step(0, 0, 0, yaw=0, shield=1)
+        self.assertGreater(self.nut_at()[2], z0)
+
+    def test_sword_breaks_nutsball(self):
+        self.gear()
+        self.lib.gameplay_nut_fire(0, 10, 60, 0x8000)
+        self.step(0, 0, 0, attack=1)
+        broke = False
+        for _ in range(20):
+            self.step(0, 0, 0)
+            if self.lib.gp_events() & (1 << 30):
+                broke = True
+                break
+        self.assertTrue(broke)
+
+    def test_nutsball_breaks_on_a_wall(self):
+        self.forest(0)
+        self.lib.gameplay_nut_fire(0, 10, 500, 0)
+        self.lib.gp_ball_wall(1)
+        self.step(0, 0, 0)
+        self.step(0, 0, 0)
+        self.assertFalse(self.lib.gp_nut_state())
+
+    def test_nutsball_falls_after_its_timer(self):
+        self.forest(0)
+        self.lib.gameplay_nut_fire(0, 100, 1000, 0)
+        for _ in range(45):
+            self.step(0, 0, 0)
+        y0 = self.nut_at()[1]
+        for _ in range(10):
+            self.step(0, 0, 0)
+        self.assertLess(self.nut_at()[1], y0)
 
 if __name__ == '__main__':
     unittest.main()

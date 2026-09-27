@@ -34,6 +34,8 @@ twice. Profiling text refreshes four times per second.
 
 Double-click `../launch-game.bat` to choose a mode in the GUI, or use
 `run-kronos.bat` / `run-kronos-hires.bat`. Close Kronos before switching modes.
+Xbox-style controller as 3D Control Pad: LT/RT need a Kronos patch, see
+[SETUP](../tools/launcher/SETUP.md#xbox-style-controller-triggers-3d-control-pad-need-a-kronos-patch).
 
 ## Content and code
 

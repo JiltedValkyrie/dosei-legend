@@ -1,11 +1,48 @@
 #include "gameplay.h"
 #include "kokiri_actors.h"
 #include "kokiri_dialogue.h"
+#include "dialogue_text.h"
 #include "save_state.h"
+#include "collide.h"
+#include "player_attack.h"
+#include "link_clips.h"
 
 gameplay_t          gameplay;
+/* Contact colliders (run_contacts: sword, grass, Link, boulder), kept off work RAM. */
+typedef struct {
+    collider_t blade[3], tufts[KOKIRI_GRASS_COUNT], wonders[KOKIRI_WONDER_COUNT];
+    collider_t link_body, link_shield, boulder, nut;
+} gp_contacts_t;
 
-#if KOKIRI_GRASS_COUNT > 16 || KOKIRI_RUPEE_COUNT > 16
+/* Tags of the actorless colliders: tufts 0.., wonders 0x100+i. */
+#define GP_TAG_LINK_BODY    0x200
+#define GP_TAG_LINK_SHIELD  0x201
+#define GP_TAG_BOULDER      0x300
+#define GP_TAG_BLADE        0x400
+#define GP_TAG_NUT          0x500
+static bool         blade_live;         /* sword window open this step */
+/* Last step's blade tip and midpoint for the swept capsules; valid only
+** within one attack instance (swing_count). */
+static int32_t      blade_prev_tip[3], blade_prev_mid[3];
+static uint16_t     blade_prev_swing;
+static bool         blade_prev_valid;
+static gp_contacts_t *contacts;
+
+unsigned int        gameplay_contacts_bytes(void) { return sizeof(gp_contacts_t); }
+bool                gameplay_contacts_init(void *storage, unsigned int bytes)
+{
+    unsigned char *p = (unsigned char *)storage;
+    unsigned int i;
+    contacts = 0;
+    if (!storage || bytes < sizeof(gp_contacts_t))
+        return false;
+    for (i = 0; i < sizeof(gp_contacts_t); ++i)
+        p[i] = 0;
+    contacts = (gp_contacts_t *)storage;
+    return true;
+}
+
+#if KOKIRI_GRASS_COUNT > 16 || KOKIRI_RUPEE_COUNT > 16 || KOKIRI_WONDER_COUNT > 16
 #error Expand collectible storage before adding actors
 #endif
 
@@ -34,6 +71,652 @@ static int32_t      yaw_delta(uint16_t from, uint16_t to)
 
 static void         sync_gear_to_save(void);
 static void         sync_gear_from_save(void);
+static void         grant_rupee(unsigned int value);
+
+/* ---- Mido (EnMd, z_en_md.c) --------------------------------------------- */
+
+/* Path 1 of spot04 (spot04_scenePathList_00030C_020002D4): home, then the
+** point he walks to once he stands aside; EnMd_SetMovedPos puts him on its
+** last point on later visits. */
+#define MIDO_HOME_X     1522
+#define MIDO_HOME_Z     105
+#define MIDO_MOVED_X    1412
+#define MIDO_MOVED_Z    211
+#define MIDO_ROOM       0
+
+/* The chest, wonder and Mido tables are Kokiri Forest (spot04) placements. */
+static bool         in_forest(void)
+{
+    return save_state.scene_id == SAVE_SCENE_KOKIRI_FOREST;
+}
+
+/* Speaker placement with Mido's live position swapped in. */
+static kokiri_npc_t mido_live;
+
+static const kokiri_npc_t *npc_at(int npc)
+{
+    if (kokiri_npcs[npc].kind == KOKIRI_NPC_MIDO) {
+        mido_live = kokiri_npcs[npc];
+        mido_live.x = (int16_t)gameplay.mido_x;
+        mido_live.z = (int16_t)gameplay.mido_z;
+        return &mido_live;
+    }
+    return &kokiri_npcs[npc];
+}
+
+bool                gameplay_npcs_present(void)
+{
+    return in_forest();
+}
+
+int32_t             gameplay_npc_x(unsigned int npc)
+{
+    return npc < KOKIRI_NPC_COUNT ? npc_at((int)npc)->x : 0;
+}
+
+int32_t             gameplay_npc_z(unsigned int npc)
+{
+    return npc < KOKIRI_NPC_COUNT ? npc_at((int)npc)->z : 0;
+}
+
+static void         mido_place(void)
+{
+    if (save_get_event_chk_inf(EVENTCHKINF_MIDO_STOOD_ASIDE_KOKIRI)) {
+        gameplay.mido_state = 2;
+        gameplay.mido_x = MIDO_MOVED_X;
+        gameplay.mido_z = MIDO_MOVED_Z;
+    } else {
+        gameplay.mido_state = 0;
+        gameplay.mido_x = MIDO_HOME_X;
+        gameplay.mido_z = MIDO_HOME_Z;
+    }
+}
+
+/* EnMd_BlockPath while idle: stand 60 units from home toward Link. EnMd_Walk
+** afterwards: along path 1 to its last point, then EnMd_Watch there. Not run
+** while his box is open (talkState != IDLE freezes the block position). */
+static void         update_mido(const gameplay_input_t *in)
+{
+    if (gameplay.mido_state == 0) {
+        int32_t sine, cosine;
+        if (in->room != MIDO_ROOM || gameplay.talking)
+            return;
+        gameplay_sincos(gameplay_facing(in->x - MIDO_HOME_X, in->z - MIDO_HOME_Z),
+                        &sine, &cosine);
+        gameplay.mido_x = MIDO_HOME_X + ((GP_MIDO_BLOCK_OFFSET * sine) >> 16);
+        gameplay.mido_z = MIDO_HOME_Z + ((GP_MIDO_BLOCK_OFFSET * cosine) >> 16);
+    } else if (gameplay.mido_state == 1) {
+        int32_t dx = MIDO_MOVED_X - gameplay.mido_x;
+        int32_t dz = MIDO_MOVED_Z - gameplay.mido_z;
+        int32_t sine, cosine;
+        if (dx * dx + dz * dz <= 1) {
+            gameplay.mido_x = MIDO_MOVED_X;
+            gameplay.mido_z = MIDO_MOVED_Z;
+            gameplay.mido_state = 2;
+            return;
+        }
+        /* Q8 accumulation would be smoother; a unit a step is his speed. */
+        gameplay_sincos(gameplay_facing(dx, dz), &sine, &cosine);
+        gameplay.mido_x += (sine + (sine >= 0 ? 32768 : -32768)) >> 16;
+        gameplay.mido_z += (cosine + (cosine >= 0 ? 32768 : -32768)) >> 16;
+    }
+}
+
+/* ---- En_Goroiwa: maze boulder --------------------------------------------
+** Only the maze shape (build_actors refuses others): one-way loop, the
+** bit-10 MoveAndFall variant on a flat path, so the floor is the path height.
+** A hit found at the end of one step is acted on the next, as the source's
+** AT_HIT is read by the next frame's EnGoroiwa_Roll. */
+
+static int32_t      step_to(int32_t v, int32_t target, int32_t step)
+{
+    if (step < 0) step = -step;
+    if (v < target) return v + step >= target ? target : v + step;
+    return v - step <= target ? target : v - step;
+}
+
+static void         boulder_face(void)
+{
+    const int16_t *p = kokiri_boulder_path[gameplay.boulder_next];
+    /* gameplay_facing takes world integers; Saturn converts them to Q16.
+    ** Q8 deltas overflow that conversion (the first 331-unit leg becomes
+    ** 84736), although the host's double atan2 accepts them unchanged. */
+    gameplay.boulder_rot = gameplay_facing((int32_t)p[0] - (gameplay.boulder_x >> 16),
+                                           (int32_t)p[2] - (gameplay.boulder_z >> 16));
+}
+
+static void         boulder_teleport(int i)
+{
+    gameplay.boulder_x = (int32_t)kokiri_boulder_path[i][0] << 16;
+    gameplay.boulder_y = (int32_t)kokiri_boulder_path[i][1] << 16;
+    gameplay.boulder_z = (int32_t)kokiri_boulder_path[i][2] << 16;
+}
+
+static void         boulder_reset(void)
+{
+    gameplay.boulder_cur = 0;
+    gameplay.boulder_next = 1;
+    gameplay.boulder_dir = 1;
+    gameplay.boulder_state = 0;
+    gameplay.boulder_speed = 0;
+    gameplay.boulder_vy = 0;
+    gameplay.boulder_nohit = 0;
+    gameplay.boulder_hit = false;
+    gameplay.boulder_in_way = false;
+    boulder_teleport(0);
+    boulder_face();
+}
+
+/* EnGoroiwa_ReverseDirection + FaceNextWaypoint. */
+static void         boulder_reverse(void)
+{
+    gameplay.boulder_dir = (int8_t)-gameplay.boulder_dir;
+    gameplay.boulder_cur = gameplay.boulder_next;
+    gameplay.boulder_next = (int8_t)(gameplay.boulder_next + gameplay.boulder_dir);
+    boulder_face();
+}
+
+/* EnGoroiwa_NextWaypoint, loop mode ONEWAY. */
+static void         boulder_next_point(void)
+{
+    int end = KOKIRI_BOULDER_POINTS - 1;
+    gameplay.boulder_cur = gameplay.boulder_next;
+    gameplay.boulder_next = (int8_t)(gameplay.boulder_next + gameplay.boulder_dir);
+    if (gameplay.boulder_next < 0) {
+        gameplay.boulder_cur = (int8_t)end;
+        gameplay.boulder_next = (int8_t)(end - 1);
+        gameplay.boulder_dir = -1;
+    } else if (gameplay.boulder_next > end) {
+        gameplay.boulder_cur = 0;
+        gameplay.boulder_next = 1;
+        gameplay.boulder_dir = 1;
+    }
+    if (gameplay.boulder_cur == 0 || gameplay.boulder_cur == end)
+        boulder_teleport(gameplay.boulder_cur);
+    boulder_face();
+}
+
+/* EnGoroiwa_MoveAndFall; true when x and z reached the next point. */
+static bool         boulder_move(bool accelerate)
+{
+    const int16_t *p = kokiri_boulder_path[gameplay.boulder_next];
+    int32_t sine, cosine, floor = (int32_t)p[1] << 16;
+    bool reached;
+    if (accelerate)
+        gameplay.boulder_speed = step_to(gameplay.boulder_speed, GP_BOULDER_SPEED_Q16,
+                                         GP_BOULDER_ACCEL_Q16);
+    gameplay_sincos(gameplay.boulder_rot, &sine, &cosine);
+    gameplay.boulder_vy += GP_BOULDER_GRAVITY_Q16;
+    if (gameplay.boulder_vy < GP_BOULDER_MIN_VY_Q16)
+        gameplay.boulder_vy = GP_BOULDER_MIN_VY_Q16;
+    gameplay.boulder_x = step_to(gameplay.boulder_x, (int32_t)p[0] << 16,
+                                 (int32_t)(((int64_t)gameplay.boulder_speed * sine) >> 16));
+    gameplay.boulder_z = step_to(gameplay.boulder_z, (int32_t)p[2] << 16,
+                                 (int32_t)(((int64_t)gameplay.boulder_speed * cosine) >> 16));
+    reached = gameplay.boulder_x == (int32_t)p[0] << 16 &&
+              gameplay.boulder_z == (int32_t)p[2] << 16;
+    gameplay.boulder_y += gameplay.boulder_vy;
+    if (gameplay.boulder_y <= floor)
+        gameplay.boulder_y = floor;             /* flat path: bg check floor */
+    return reached;
+}
+
+static void         boulder_wait_start(void)
+{
+    gameplay.boulder_state = 2;
+    gameplay.boulder_speed = 0;
+    gameplay.boulder_wait = (KOKIRI_BOULDER_ROT_Z & 1) ? 9 : 30;   /* 6 / 20 frames */
+}
+
+/* Player_UpdateDamage, AC_HIT branch: the last pass's body hit costs its
+** damage, pushes Link 4.0 away from the attacker, 20 frames intangible. */
+/* En_Nutsball, the Deku Scrub projectile (z_en_nutsball.c), as M2c's
+** labelled reflection test: only a standard-build emitter (demo.c) fires it;
+** no Deku Scrub exists in the slice until M5. Source drop audit: Actor_Kill
+** with no item drop, so none here. Q16 position; y = cylinder base. */
+static bool         nut_bg_hit;
+
+void                gameplay_nut_fire(int32_t x, int32_t y, int32_t z, uint16_t yaw)
+{
+    gameplay.nut_state = 1;
+    gameplay.nut_reflected = 0;
+    gameplay.nut_timer = GP_NUT_TIMER_STEPS;    /* EnNutsball_WaitForObject */
+    gameplay.nut_yaw = yaw;
+    gameplay.nut_x = x * 65536; gameplay.nut_y = y * 65536; gameplay.nut_z = z * 65536;
+    gameplay.nut_vy_q8 = 0;
+    gameplay.nut_fall_q8 = 0;                   /* gravity 0 until the timer ends */
+    nut_bg_hit = false;
+    if (contacts) contacts->nut.result = 0;
+}
+
+bool                gameplay_nut_body(int32_t *x, int32_t *y, int32_t *z)
+{
+    if (!gameplay.nut_state)
+        return false;
+    *x = gameplay.nut_x >> 16; *y = gameplay.nut_y >> 16; *z = gameplay.nut_z >> 16;
+    return true;
+}
+
+/* EnNutsball_Projectile + Actor_MoveXZGravity, reading the previous pass. */
+static void         update_nut(const gameplay_input_t *in)
+{
+    uint8_t r;
+    int32_t sine, cosine, pos[3], dx, dz, dy;
+    if (!gameplay.nut_state)
+        return;
+    if (!in_forest()) {
+        gameplay.nut_state = 0;
+        return;
+    }
+    r = contacts ? contacts->nut.result : 0;
+    if (--gameplay.nut_timer == 0)
+        gameplay.nut_fall_q8 = -171;            /* gravity -1.0 from here on */
+    if (nut_bg_hit || (r & (COL_RES_AT_HIT | COL_RES_AC_HIT))) {
+        /* Deku Shield reflects: AT_HIT + AT_TYPE_ENEMY + AT_BOUNCED. */
+        if ((gameplay.equipped & GP_SHIELD) && !gameplay.nut_reflected &&
+            (r & COL_RES_AT_HIT) && (r & COL_RES_AT_BOUNCED)) {
+            gameplay.nut_reflected = 1;         /* AT_TYPE_PLAYER, DMG_DEKU_STICK */
+            /* shieldRot.y + 0x8000: straight out from the guard's face. */
+            gameplay.nut_yaw = in->yaw;
+            gameplay.nut_timer = GP_NUT_TIMER_STEPS;
+            contacts->nut.result = 0;
+            nut_bg_hit = false;
+            return;
+        }
+        gameplay.nut_state = 0;
+        gameplay.events |= GP_EVENT_NUT_BREAK;
+        return;
+    }
+    if (gameplay.nut_timer <= -GP_NUT_LIFE_STEPS) {
+        gameplay.nut_state = 0;
+        return;
+    }
+    gameplay_sincos(gameplay.nut_yaw, &sine, &cosine);
+    gameplay.nut_vy_q8 += gameplay.nut_fall_q8;
+    if (gameplay.nut_vy_q8 < -20 * 256)
+        gameplay.nut_vy_q8 = -20 * 256;
+    dx = (int32_t)(((int64_t)GP_NUT_SPEED_Q16 * sine) >> 16);
+    dz = (int32_t)(((int64_t)GP_NUT_SPEED_Q16 * cosine) >> 16);
+    dy = gameplay.nut_vy_q8 * 256;
+    pos[0] = gameplay.nut_x >> 16; pos[1] = gameplay.nut_y >> 16; pos[2] = gameplay.nut_z >> 16;
+    {
+        int32_t nx = gameplay.nut_x + dx, ny = gameplay.nut_y + dy, nz = gameplay.nut_z + dz;
+        int32_t moved[3] = { pos[0], pos[1], pos[2] };
+        nut_bg_hit = gameplay_ball_move(moved, (nx >> 16) - pos[0], (ny >> 16) - pos[1],
+                                        (nz >> 16) - pos[2]);
+        gameplay.nut_x = nx + (moved[0] - (nx >> 16)) * 65536;
+        gameplay.nut_y = ny + (moved[1] - (ny >> 16)) * 65536;
+        gameplay.nut_z = nz + (moved[2] - (nz >> 16)) * 65536;
+    }
+}
+
+/* One cylinder, AT and AC together, as sCylinderInit. */
+static void         register_nut(void)
+{
+    collider_t *c = &contacts->nut;
+    if (!gameplay.nut_state)
+        return;
+    c->shape = COLSHAPE_CYLINDER;
+    c->actor = 0;
+    c->x = gameplay.nut_x >> 16; c->y = gameplay.nut_y >> 16; c->z = gameplay.nut_z >> 16;
+    c->y_shift = 0;
+    c->radius = GP_NUT_RADIUS;
+    c->height = GP_NUT_HEIGHT;
+    c->at_type = gameplay.nut_reflected ? AT_TYPE_PLAYER : AT_TYPE_ENEMY;
+    c->at_dmg = gameplay.nut_reflected ? DMG_DEKU_STICK : 0xFFCFFFFFu;
+    c->at_damage = GP_NUT_DAMAGE;
+    c->ac_type = AC_TYPE_PLAYER;
+    c->ac_bumper = 0xFFCFFFFFu;
+    c->damage_table = 0;
+    c->defense = 0;
+    c->ac_flags = COL_OUTSIDE_ACTOR;
+    c->attack_id = 0;
+    c->tag = GP_TAG_NUT;
+    collide_set_at(c);
+    collide_set_ac(c);
+}
+
+static void         consume_link_damage(void)
+{
+    if (!gameplay.hurt_pending)
+        return;
+    gameplay.hurt_pending = 0;
+    save_damage(gameplay.hurt_damage);
+    gameplay.intangible = GP_INTANGIBLE_STEPS;
+    gameplay.knock_yaw = gameplay.hurt_yaw;
+    gameplay.knock_speed = GP_HIT_SPEED_Q16;
+    gameplay.knock_down = false;
+    gameplay.events |= GP_EVENT_HURT;
+}
+
+static void         update_boulder(const gameplay_input_t *in)
+{
+    int32_t bx, bz;
+    if (!in_forest() || in->room != KOKIRI_BOULDER_ROOM) {
+        gameplay.boulder_live = false;          /* room unload kills it */
+        return;
+    }
+    if (!gameplay.boulder_live) {
+        boulder_reset();                        /* Init: waypoint 0 */
+        gameplay.boulder_live = true;
+    }
+    if (gameplay.boulder_nohit)
+        --gameplay.boulder_nohit;
+    bx = gameplay.boulder_x >> 16;
+    bz = gameplay.boulder_z >> 16;
+    if (gameplay.boulder_state == 0) {
+        if (gameplay.boulder_hit) {
+            uint16_t toward = gameplay_facing(in->x - bx, in->z - bz);
+            int16_t diff = (int16_t)(toward - gameplay.boulder_rot);
+            gameplay.boulder_hit = false;
+            gameplay.boulder_in_way = diff > -0x4000 && diff < 0x4000;
+            if (gameplay.boulder_in_way)
+                boulder_reverse();              /* bit 10 set: always */
+            /* Actor_SetPlayerKnockbackLarge(2.0, yawTowardsPlayer, 0, 0):
+            ** no extra damage; the 4 came through Link's cylinder. */
+            gameplay.knock_yaw = toward;
+            gameplay.knock_speed = GP_KNOCKBACK_SPEED_Q16;
+            gameplay.knock_down = true;
+            gameplay.events |= GP_EVENT_KNOCKDOWN;
+            /* EnGoroiwa_SetupMoveAndFallToGround */
+            gameplay.boulder_state = 1;
+            gameplay.boulder_speed = (int32_t)(((int64_t)gameplay.boulder_speed * 9830) >> 16);
+            gameplay.boulder_vy = GP_BOULDER_HOP_Q16;
+            if (KOKIRI_BOULDER_ROT_Z & 1)
+                gameplay.boulder_nohit = 75;    /* 50 frames */
+        } else if (boulder_move(true)) {
+            boulder_next_point();
+        }
+    } else if (gameplay.boulder_state == 1) {
+        boulder_move(false);
+        if (gameplay.boulder_vy < 0 &&
+            gameplay.boulder_y == (int32_t)kokiri_boulder_path[gameplay.boulder_next][1] << 16) {
+            if (gameplay.boulder_in_way && (KOKIRI_BOULDER_ROT_Z & 1))
+                boulder_reverse();
+            boulder_wait_start();
+        }
+    } else if (gameplay.boulder_wait) {
+        --gameplay.boulder_wait;
+    } else {
+        gameplay.boulder_hit = false;
+        gameplay.boulder_state = 0;
+    }
+}
+
+/* Boulder AT for the shared pass (roll only, live within 300 of Link). The
+** r58 sphere is a cylinder r58 spanning the sphere's height. */
+static void         register_boulder(const gameplay_input_t *in)
+{
+    collider_t *c = &contacts->boulder;
+    int32_t dx, dz;
+    if (!gameplay.boulder_live || in->room != KOKIRI_BOULDER_ROOM ||
+        gameplay.boulder_state != 0 || gameplay.boulder_nohit)
+        return;
+    dx = in->x - (gameplay.boulder_x >> 16);
+    dz = in->z - (gameplay.boulder_z >> 16);
+    if (dx * dx + dz * dz >= GP_BOULDER_LIVE_RANGE * GP_BOULDER_LIVE_RANGE)
+        return;
+    c->shape = COLSHAPE_CYLINDER;
+    c->actor = 0;
+    c->x = gameplay.boulder_x >> 16;
+    c->y = (gameplay.boulder_y >> 16) + GP_BOULDER_CENTER_Y - GP_BOULDER_RADIUS;
+    c->z = gameplay.boulder_z >> 16;
+    c->y_shift = 0;
+    c->radius = GP_BOULDER_RADIUS;
+    c->height = 2 * GP_BOULDER_RADIUS;
+    c->at_type = AT_TYPE_ENEMY;
+    c->at_dmg = DMG_UNBLOCKABLE;            /* 0x20000000 */
+    c->at_damage = GP_BOULDER_DAMAGE;
+    c->attack_id = 0;
+    c->ac_flags = COL_OUTSIDE_ACTOR;
+    c->tag = GP_TAG_BOULDER;
+    collide_set_at(c);
+}
+
+bool                gameplay_boulder_body(unsigned int room, int32_t *x, int32_t *y, int32_t *z)
+{
+    if (!in_forest() || room != KOKIRI_BOULDER_ROOM || !gameplay.boulder_live)
+        return false;
+    *x = gameplay.boulder_x >> 16;
+    *y = (gameplay.boulder_y >> 16) + GP_BOULDER_CENTER_Y;
+    *z = gameplay.boulder_z >> 16;
+    return true;
+}
+
+bool                gameplay_mido_body(unsigned int room, int32_t *x, int32_t *z)
+{
+    if (!in_forest() || room != MIDO_ROOM)
+        return false;
+    *x = gameplay.mido_x;
+    *z = gameplay.mido_z;
+    return true;
+}
+
+/* EnMd talk-close effects, keyed by the rule's first text id (actor.textId).
+** 0x102F: EVENTCHKINF_02 + INFTABLE_0C. 0x1033: NPC_TALK_STATE_ACTION ->
+** EnMd_BlockPath sets EVENTCHKINF_04 and starts the walk. */
+static void         mido_talk_closed(uint16_t text_id)
+{
+    if (text_id == 0x102F) {
+        save_set_event_chk_inf(EVENTCHKINF_MIDO_DENIED_DEKU_TREE_ACCESS);
+        save_set_inf_table(INFTABLE_MIDO_REFUSED_ONCE);
+    } else if (text_id == 0x1033 && gameplay.mido_state == 0) {
+        save_set_event_chk_inf(EVENTCHKINF_MIDO_STOOD_ASIDE_KOKIRI);
+        gameplay.mido_state = 1;
+        gameplay.events |= GP_EVENT_MIDO_ASIDE;
+    }
+}
+
+/* ---- speakerless text (get-item, shop) ------------------------------------ */
+
+static bool         open_system_text(uint16_t text_id)
+{
+    unsigned int i;
+    for (i = 0; i < DIALOGUE_SYSTEM_COUNT; ++i) {
+        if (dialogue_system[i].text_id != text_id)
+            continue;
+        gameplay.rule = (int16_t)dialogue_system[i].rule;
+        gameplay.speaker = -1;
+        gameplay.prompt = -1;
+        gameplay.page = 0;
+        gameplay.talking = true;
+        gameplay.events |= GP_EVENT_TALK_OPEN;
+        return true;
+    }
+    return false;
+}
+
+/* ---- En_Box (z_en_box.c) --------------------------------------------------- */
+
+#define CHEST_FLAG(c)   ((c)->param & 0x1F)
+
+bool                gameplay_chest_opened(unsigned int index)
+{
+    return index < KOKIRI_CHEST_COUNT &&
+           save_get_treasure(save_state.scene_id, CHEST_FLAG(&kokiri_chests[index]));
+}
+
+/* EnBox_WaitOpen: Link in the chest's own frame at -50 < z < 0, |x| < 20,
+** |y| < 10, and Player_IsFacingActor(0x3000). A then opens it: the treasure
+** flag is set during the opening and GI_SWORD_KOKIRI is granted OWNED only
+** (Item_Give, z_parameter.c) -- equipping is the pause screen's job. */
+static int16_t      chest_in_reach(const gameplay_input_t *in)
+{
+    unsigned int i;
+    if (!in_forest())
+        return -1;
+    for (i = 0; i < KOKIRI_CHEST_COUNT; ++i) {
+        const kokiri_chest_t *c = &kokiri_chests[i];
+        int32_t dx = in->x - c->x, dy = in->y - c->y, dz = in->z - c->z;
+        int32_t sine, cosine, lx, lz, turn;
+        if (in->room != c->room || gameplay_chest_opened(i))
+            continue;
+        if (dy <= -10 || dy >= 10)
+            continue;
+        gameplay_sincos(c->yaw, &sine, &cosine);
+        lx = (dx * cosine - dz * sine) >> 16;
+        lz = (dx * sine + dz * cosine) >> 16;
+        if (lz <= -50 || lz >= 0 || lx <= -20 || lx >= 20)
+            continue;
+        turn = yaw_delta(in->yaw, gameplay_facing(c->x - in->x, c->z - in->z));
+        if (turn < 0) turn = -turn;
+        if (turn >= 0x3000)
+            continue;
+        return (int16_t)i;
+    }
+    return -1;
+}
+
+static bool         update_chest(const gameplay_input_t *in)
+{
+    const kokiri_chest_t *c;
+    gameplay.chest_prompt = chest_in_reach(in);
+    if (gameplay.chest_prompt < 0 || !in->interact)
+        return false;
+    c = &kokiri_chests[gameplay.chest_prompt];
+    save_set_treasure(save_state.scene_id, CHEST_FLAG(c));
+    gameplay.owned |= GP_SWORD;
+    sync_gear_to_save();
+    gameplay.chest_prompt = -1;
+    gameplay.get_item = GP_SWORD;
+    gameplay.events |= GP_EVENT_PICKUP;
+    open_system_text(0x00A4);
+    return true;
+}
+
+/* ---- En_Wonder_Item (z_en_wonder_item.c) ---------------------------------- */
+
+#define WONDER_SWITCH(w) ((w)->param & 0x3F)       /* 0x3F = none */
+/* Switch flags 0x00-0x1F persist in the save; 0x20-0x3E are the scene's
+** temporary half, cleared on scene load. The temporary ones live in
+** wonder_done, which only a scene reset clears. */
+#define SWITCH_SAVED(f)  ((f) < 0x20)
+
+static bool         wonder_flagged(const kokiri_wonder_t *w)
+{
+    unsigned int flag = WONDER_SWITCH(w);
+    return SWITCH_SAVED(flag) && save_get_switch(save_state.scene_id, flag);
+}
+
+/* EnWonderItem_DropCollectible with autoCollect: the rupee is collected at
+** once. Its switch flag is set, then the actor is killed. */
+static void         wonder_pay(unsigned int i, bool auto_collect)
+{
+    const kokiri_wonder_t *w = &kokiri_wonders[i];
+    unsigned int flag = WONDER_SWITCH(w);
+    if (auto_collect)
+        grant_rupee(w->value);
+    else {
+        gameplay.wonder_drop[i] = w->value;
+        gameplay.wonder_age[i] = 0;
+    }
+    if (SWITCH_SAVED(flag))
+        save_set_switch(save_state.scene_id, flag);
+    gameplay.wonder_done |= (uint16_t)(1u << i);
+}
+
+/* Tag point `index` of class `mode` (1 free, 6 ordered) in `room`. */
+static const kokiri_wonder_t *wonder_tag(unsigned int mode, unsigned int room,
+                                         unsigned int index)
+{
+    unsigned int i;
+    for (i = 0; i < KOKIRI_WONDER_COUNT; ++i) {
+        const kokiri_wonder_t *w = &kokiri_wonders[i];
+        if (w->mode == mode && w->room == room && (unsigned)(w->rot_z & 0xFF) == index)
+            return w;
+    }
+    return 0;
+}
+
+static bool         within(const gameplay_input_t *in, const kokiri_wonder_t *w,
+                           int32_t radius)
+{
+    int32_t dx = in->x - w->x, dy = in->y - w->y, dz = in->z - w->z;
+    return dx * dx + dy * dy + dz * dz < radius * radius;
+}
+
+/* Multitag: rot.z = count + 10 * seconds; the source timer is timerMod + 81
+** frames at 20 Hz, scaled here to 30 Hz steps. */
+static void         wonder_multitag(const gameplay_input_t *in, unsigned int i)
+{
+    const kokiri_wonder_t *w = &kokiri_wonders[i];
+    unsigned int tens = w->rot_z >= 10 ? (unsigned)w->rot_z / 10 : 0;
+    unsigned int count = (unsigned)w->rot_z - tens * 10, t;
+    unsigned int point_mode = w->mode == 0 ? 1 : 6;
+    if (gameplay.wonder_timer[i] && --gameplay.wonder_timer[i] == 1) {
+        gameplay.wonder_done |= (uint16_t)(1u << i);   /* ran out: killed */
+        return;
+    }
+    for (t = 0; t < count && t < 8; ++t) {
+        const kokiri_wonder_t *tag = wonder_tag(point_mode, w->room, t);
+        if (!tag || (gameplay.wonder_tags[i] & (1u << t)) || !within(in, tag, 50))
+            continue;
+        if (w->mode == 5 && t != gameplay.wonder_next[i]) {
+            gameplay.wonder_done |= (uint16_t)(1u << i); /* out of order */
+            return;
+        }
+        gameplay.wonder_tags[i] |= (uint8_t)(1u << t);
+        ++gameplay.wonder_next[i];
+        gameplay.wonder_timer[i] = (uint8_t)(((tens * 20 + 81) * 3) / 2);
+        return;
+    }
+    if (count && gameplay.wonder_next[i] >= count)
+        wonder_pay(i, true);
+}
+
+/* Room reload: a trigger with no switch flag spawns again, fresh. */
+static void         wonder_room_reset(void)
+{
+    unsigned int i;
+    for (i = 0; i < KOKIRI_WONDER_COUNT; ++i) {
+        gameplay.wonder_tags[i] = gameplay.wonder_next[i] = 0;
+        gameplay.wonder_timer[i] = 0;
+        gameplay.wonder_drop[i] = 0;
+        if (WONDER_SWITCH(&kokiri_wonders[i]) == 0x3F)
+            gameplay.wonder_done &= (uint16_t)~(1u << i);
+    }
+}
+
+static bool         rupee_near(const gameplay_input_t *in, int x, int y, int z, int room);
+
+static void         update_wonders(const gameplay_input_t *in)
+{
+    unsigned int i;
+    if (in->room != gameplay.room) {
+        gameplay.room = in->room;
+        wonder_room_reset();
+    }
+    for (i = 0; i < KOKIRI_WONDER_COUNT; ++i) {
+        const kokiri_wonder_t *w = &kokiri_wonders[i];
+        int32_t dy = in->y - w->y;
+        if (w->room != in->room || w->scene != save_state.scene_id)
+            continue;
+        if (gameplay.wonder_drop[i]) {
+            if (gameplay.wonder_age[i] < GP_DROP_DELAY)
+                ++gameplay.wonder_age[i];
+            else if (rupee_near(in, w->x, w->y, w->z, w->room)) {
+                grant_rupee(gameplay.wonder_drop[i]);
+                gameplay.wonder_drop[i] = 0;
+            }
+        }
+        if ((gameplay.wonder_done & (1u << i)) || wonder_flagged(w))
+            continue;
+        if (w->mode == 2) {
+            /* xzDistToPlayer < 50 and |dy| < 30 */
+            if (planar_squared(in->x, in->z, w->x, w->z) < 50 * 50 &&
+                dy > -30 && dy < 30)
+                wonder_pay(i, true);
+        } else if (w->mode == 0 || w->mode == 5) {
+            wonder_multitag(in, i);
+        }
+    }
+}
+
+bool                gameplay_wonder_drop(unsigned int index)
+{
+    return index < KOKIRI_WONDER_COUNT && gameplay.wonder_drop[index] &&
+           gameplay.wonder_age[index] >= GP_DROP_DELAY;
+}
 
 void                gameplay_reset(void)
 {
@@ -45,8 +728,43 @@ void                gameplay_reset(void)
     gameplay.target_hold = 0;
     gameplay.swing = 0;
     gameplay.swing_hit = 0;
+    gameplay.attack_phase = 0;
+    gameplay.attack_thirds = 0;
+    gameplay.attack_id = 0;
+    gameplay.combo_count = 0;
+    gameplay.combo_timer = 0;
+    gameplay.lunge_pending = false;
+    gameplay.lunge_q16 = 0;
+    gameplay.lunge_decel_q16 = 0;
+    gameplay.blade_bounced = false;
+    gameplay.guard_pending = false;
+    gameplay.nut_state = 0;
+    blade_prev_valid = false;
+    nut_bg_hit = false;
     gameplay.grass_cut = 0;
-    gameplay.pickup_taken = 0;
+    /* swing_count restarts below, so old attack ids would read as repeats. */
+    for (i = 0; contacts && i < KOKIRI_GRASS_COUNT; ++i)
+        collide_forget(&contacts->tufts[i]);
+    for (i = 0; contacts && i < KOKIRI_WONDER_COUNT; ++i)
+        collide_forget(&contacts->wonders[i]);
+    if (contacts) {
+        collide_forget(&contacts->link_body);
+        collide_forget(&contacts->link_shield);
+    }
+    gameplay.wonder_done = 0;
+    gameplay.room = 0xFF;          /* first step counts as a room load */
+    wonder_room_reset();
+    gameplay.chest_prompt = -1;
+    gameplay.get_item = 0;
+    gameplay.shop_state = 0;
+    gameplay.choice = 0;
+    boulder_reset();
+    gameplay.boulder_live = false;
+    gameplay.intangible = 0;
+    gameplay.knock_speed = 0;
+    gameplay.knock_down = false;
+    gameplay.hurt_pending = 0;
+    gameplay.shop_prompt = false;
     gameplay.events = 0;
     gameplay.face_yaw = 0;
     gameplay.face_locked = false;
@@ -62,7 +780,7 @@ void                gameplay_reset(void)
     gameplay.rupees = 0;
     gameplay.rupee_taken = 0;
     gameplay.drop_rng = 0x12345678u;
-    /* owned/equipped/rupees/pickup_taken/rupee_taken are restored from the
+    /* owned/equipped/rupees/rupee_taken are restored from the
     ** save by sync_gear_from_save() at the end of this function. */
     for (i = 0; i < 16; ++i) {
         gameplay.grass_rupee[i] = 0;
@@ -73,18 +791,13 @@ void                gameplay_reset(void)
     ** pickups are read FROM the save here. Writing to it instead is what made
     ** loading a file wipe the sword and shield it had just restored. */
     sync_gear_from_save();
+    mido_place();
 }
 
 bool                gameplay_grass_cut(unsigned int index)
 {
     return index < KOKIRI_GRASS_COUNT &&
            (gameplay.grass_cut & (1u << index)) != 0;
-}
-
-bool                gameplay_pickup_taken(unsigned int index)
-{
-    return index < KOKIRI_PICKUP_COUNT &&
-           (gameplay.pickup_taken & (1u << index)) != 0;
 }
 
 /* Session-only wallet and collectible flags. Child wallet: z_inventory.c. */
@@ -178,12 +891,9 @@ static void         sync_gear_from_save(void)
         gameplay.equipped |= GP_SHIELD;
     gameplay.rupees = (uint8_t)(save_state.rupees > GP_WALLET_CAPACITY
                                 ? GP_WALLET_CAPACITY : save_state.rupees);
-    /* A pickup already taken must not reappear on the floor after a reload. */
-    gameplay.pickup_taken = 0;
-    if (save_get_item_get_inf(ITEMGETINF_GROUND_SWORD))
-        gameplay.pickup_taken |= 1u;
-    if (save_get_item_get_inf(ITEMGETINF_GROUND_SHIELD))
-        gameplay.pickup_taken |= 2u;
+    /* The retired ground-pickup ITEMGETINF bits are left as they are and not
+    ** read: gear earned that way stays in the equipment words above, and they
+    ** are never reinterpreted as chest or shop flags. */
     /* Room rupees are per-scene collectible flags, exactly as OoT stores them,
     ** so a collected rupee stays collected across a save. Cut grass is NOT
     ** persisted: OoT keeps grass in the temp half of the scene flags, which it
@@ -194,43 +904,125 @@ static void         sync_gear_from_save(void)
             gameplay.rupee_taken |= (uint16_t)(1u << i);
 }
 
-bool                gameplay_sword_active(void)
-{
-    unsigned int elapsed;
-    if (!gameplay.swing)
-        return false;
-    elapsed = GP_SWING_STEPS - gameplay.swing;
-    return elapsed >= GP_SWING_HIT_FIRST && elapsed <= GP_SWING_HIT_LAST;
-}
+/* One-handed D_80854190 rows: attack clip, recovery clip (unk_04, the
+** non-lock-on end; hostile lock-on unk_08 arrives with enemies). */
+static const struct { uint8_t id, clip, end, frames, end_frames; } attack_rows[] = {
+    { ATTACK_FORWARD, LINK_CLIP_SLASH, LINK_CLIP_RECOVER,
+      LINK_FRAMES_SLASH, LINK_FRAMES_RECOVER },
+    { ATTACK_FORWARD_COMBO, LINK_CLIP_SLASH_COMBO, LINK_CLIP_SLASH_COMBO_END,
+      LINK_FRAMES_SLASH_COMBO, LINK_FRAMES_SLASH_COMBO_END },
+    { ATTACK_RIGHT, LINK_CLIP_RIGHT, LINK_CLIP_RIGHT_END,
+      LINK_FRAMES_RIGHT, LINK_FRAMES_RIGHT_END },
+    { ATTACK_RIGHT_COMBO, LINK_CLIP_RIGHT_COMBO, LINK_CLIP_RIGHT_COMBO_END,
+      LINK_FRAMES_RIGHT_COMBO, LINK_FRAMES_RIGHT_COMBO_END },
+    { ATTACK_LEFT, LINK_CLIP_LEFT, LINK_CLIP_LEFT_END,
+      LINK_FRAMES_LEFT, LINK_FRAMES_LEFT_END },
+    { ATTACK_LEFT_COMBO, LINK_CLIP_LEFT_COMBO, LINK_CLIP_LEFT_COMBO_END,
+      LINK_FRAMES_LEFT_COMBO, LINK_FRAMES_LEFT_COMBO_END },
+    { ATTACK_STAB, LINK_CLIP_STAB, LINK_CLIP_STAB_END,
+      LINK_FRAMES_STAB, LINK_FRAMES_STAB_END },
+    { ATTACK_STAB_COMBO, LINK_CLIP_STAB_COMBO, LINK_CLIP_STAB_COMBO_END,
+      LINK_FRAMES_STAB_COMBO, LINK_FRAMES_STAB_COMBO_END },
+    { ATTACK_JUMP_START, LINK_CLIP_JSLASH, LINK_CLIP_JSLASH,
+      LINK_FRAMES_JSLASH, LINK_FRAMES_JSLASH },
+    { ATTACK_JUMP_FINISH, LINK_CLIP_JSLASH_HIT, LINK_CLIP_JSLASH_END,
+      LINK_FRAMES_JSLASH_HIT, LINK_FRAMES_JSLASH_END },
+    { ATTACK_SPIN, LINK_CLIP_SPIN, LINK_CLIP_SPIN_END,
+      LINK_FRAMES_SPIN, LINK_FRAMES_SPIN_END },
+    { ATTACK_BIG_SPIN, LINK_CLIP_BIG_SPIN, LINK_CLIP_BIG_SPIN_END,
+      LINK_FRAMES_BIG_SPIN, LINK_FRAMES_BIG_SPIN_END },
+};
 
-/* Collect any gear Link is standing on. Each pickup is granted once and
-** equipped immediately, which is what the slice asks for: no menu exists yet,
-** so an unequipped item would be an item the player cannot use. */
-static void         collect_pickups(const gameplay_input_t *in)
+static unsigned int attack_row(unsigned int id)
 {
     unsigned int i;
-    for (i = 0; i < KOKIRI_PICKUP_COUNT; ++i) {
-        const kokiri_pickup_t *pickup = &kokiri_pickups[i];
-        int32_t dy;
-        if (gameplay.pickup_taken & (1u << i))
-            continue;
-        dy = in->y - pickup->y;
-        if (dy < 0) dy = -dy;
-        if (dy > GP_PICKUP_HEIGHT)
-            continue;
-        if (planar_squared(in->x, in->z, pickup->x, pickup->z) >
-            (int32_t)GP_PICKUP_RANGE * GP_PICKUP_RANGE)
-            continue;
-        gameplay.pickup_taken |= (uint8_t)(1u << i);
-        gameplay.owned |= pickup->item;
-        gameplay.equipped |= pickup->item;
-        /* Record the pickup itself, not just the gear: otherwise a reloaded
-        ** file puts the sword back on the floor to be collected again. */
-        save_set_item_get_inf(i == 0 ? ITEMGETINF_GROUND_SWORD
-                                     : ITEMGETINF_GROUND_SHIELD);
-        sync_gear_to_save();
-        gameplay.events |= GP_EVENT_PICKUP;
+    for (i = 0; i < sizeof(attack_rows) / sizeof(attack_rows[0]); ++i)
+        if (attack_rows[i].id == id)
+            return i;
+    return 0;
+}
+
+/* func_8084285C: the quads deal damage between unk_0C and unk_0D, read on
+** the clip frame BEFORE this step advances it (it runs ahead of
+** LinkAnimation_Update). */
+static bool         blade_on_frame(void)
+{
+    if (gameplay.attack_phase == 7)     /* func_80833A20 while curFrame < 2 */
+        return gameplay.attack_thirds > 0 && gameplay.attack_thirds < 6u;
+    if (gameplay.attack_phase == 6)     /* func_8084285C(6, 7, 99) */
+        return player_attack_weapon_state(gameplay.attack_id, gameplay.attack_thirds, 1) > 0;
+    return gameplay.attack_phase == 1 &&
+           player_attack_weapon_state(gameplay.attack_id, gameplay.attack_thirds, 0) > 0;
+}
+
+/* The blade as the last step used it. */
+bool                gameplay_sword_active(void)
+{
+    return blade_live;
+}
+
+bool                gameplay_attack_time(unsigned int *clip, unsigned int *thirds)
+{
+    unsigned int frame;
+    /* The crouch stab, rebound and guard recoil play without AnimMovement:
+    ** no root motion (their speedXZ comes through lunge_q16). */
+    if (gameplay.attack_phase >= 7 || !gameplay_attack_pose(clip, &frame))
+        return false;
+    *thirds = gameplay.attack_thirds;
+    return true;
+}
+
+bool                gameplay_attack_pose(unsigned int *clip, unsigned int *frame)
+{
+    unsigned int r, last;
+    if (!gameplay.attack_phase)
+        return false;
+    r = attack_row(gameplay.attack_id);
+    if (gameplay.attack_phase == 3) {
+        bool right = gameplay.charge_from == ATTACK_RIGHT ||
+                     gameplay.charge_from == ATTACK_RIGHT_COMBO;
+        *clip = right ? LINK_CLIP_CHARGE_STARTL : LINK_CLIP_CHARGE_START;
+        last = LINK_FRAMES_CHARGE_START - 1u;
+    } else if (gameplay.attack_phase == 4) {
+        *clip = LINK_CLIP_CHARGE_WAIT;
+        *frame = (gameplay.attack_thirds / 3u) % LINK_FRAMES_CHARGE_WAIT;
+        return true;
+    } else if (gameplay.attack_phase == 5) {
+        *clip = LINK_CLIP_CHARGE_END;
+        last = LINK_FRAMES_CHARGE_END - 1u;
+    } else if (gameplay.attack_phase == 7) {
+        *clip = LINK_CLIP_CROUCH_STAB;
+        last = LINK_FRAMES_CROUCH_STAB - 1u;
+    } else if (gameplay.attack_phase == 8) {
+        *clip = LINK_CLIP_REBOUND;
+        last = LINK_FRAMES_REBOUND - 1u;
+    } else if (gameplay.attack_phase == 9) {
+        *clip = LINK_CLIP_GUARD_HIT;
+        last = LINK_FRAMES_GUARD_HIT - 1u;
+    } else if (gameplay.attack_phase == 1 || gameplay.attack_phase == 6) {
+        *clip = attack_rows[r].clip;
+        last = attack_rows[r].frames - 1u;
+    } else {
+        *clip = attack_rows[r].end;
+        last = attack_rows[r].end_frames - 1u;
     }
+    *frame = gameplay.attack_thirds / 3u;
+    if (*frame > last)
+        *frame = last;
+    return true;
+}
+
+void                gameplay_attack_cancel(void)
+{
+    gameplay.attack_phase = 0;
+    gameplay.attack_thirds = 0;
+    gameplay.swing = 0;
+    gameplay.lunge_pending = false;
+    gameplay.lunge_q16 = 0;
+    gameplay.charge_q16 = 0;
+    gameplay.charge_committed = false;
+    gameplay.blade_bounced = false;
+    blade_prev_valid = false;
 }
 
 /* Nearest NPC inside acquisition range and roughly in front of Link.
@@ -244,8 +1036,11 @@ static int16_t      find_target(const gameplay_input_t *in)
     int32_t best = (int32_t)GP_TARGET_RANGE * GP_TARGET_RANGE + 1;
     int16_t found = -1;
     unsigned int i;
+    /* kokiri_npcs are Kokiri Forest actors: none exist in other scenes. */
+    if (!in_forest())
+        return -1;
     for (i = 0; i < KOKIRI_NPC_COUNT; ++i) {
-        const kokiri_npc_t *npc = &kokiri_npcs[i];
+        const kokiri_npc_t *npc = npc_at(i);
         int32_t distance = planar_squared(in->x, in->z, npc->x, npc->z);
         int32_t turn;
         if (distance >= best)
@@ -264,7 +1059,7 @@ static int16_t      find_target(const gameplay_input_t *in)
 void gameplay_update_facing(int32_t x, int32_t z)
 {
     if (gameplay.face_locked && gameplay.target >= 0 && gameplay.target < KOKIRI_NPC_COUNT) {
-        const kokiri_npc_t *npc = &kokiri_npcs[gameplay.target];
+        const kokiri_npc_t *npc = npc_at(gameplay.target);
         gameplay.face_yaw = gameplay_facing(npc->x - x, npc->z - z);
     }
 }
@@ -315,7 +1110,7 @@ static void         update_target(const gameplay_input_t *in)
     }
 
     if (gameplay.target >= 0) {
-        const kokiri_npc_t *npc = &kokiri_npcs[gameplay.target];
+        const kokiri_npc_t *npc = npc_at(gameplay.target);
         if (planar_squared(in->x, in->z, npc->x, npc->z) >
             (int32_t)GP_TARGET_DROP * GP_TARGET_DROP) {
             drop_target();
@@ -331,7 +1126,7 @@ static void         update_target(const gameplay_input_t *in)
     ** rather than requiring a fresh press. */
     gameplay.target = find_target(in);
     if (gameplay.target >= 0) {
-        const kokiri_npc_t *npc = &kokiri_npcs[gameplay.target];
+        const kokiri_npc_t *npc = npc_at(gameplay.target);
         /* Turn on the acquiring step, not the one after it: a frame of Link
          * still facing his travel heading reads as the lock being ignored. */
         gameplay.face_yaw = gameplay_facing(npc->x - in->x, npc->z - in->z);
@@ -345,56 +1140,533 @@ static void         update_target(const gameplay_input_t *in)
 /* Cut every uncut tuft inside the live blade's arc. One swing can clear a
 ** cluster, which is what the original does, but a tuft is only ever cut once
 ** and a held X cannot re-cut the same one without a new swing. */
-static void         cut_grass(const gameplay_input_t *in)
+/* Sword AT plus the tuft/wonder ACs it can reach, for run_contacts. EnKusa's
+** AC cylinder takes the sword's slash bit. Colliders are rebuilt every step,
+** so nothing survives to dangle. */
+/* The meleeWeaponQuads from the posed blade: capsules along this step's
+** blade and along the sweep of its tip and midpoint since the last step.
+** All three share the attack id and tag, so a victim still takes one hit. */
+static bool         register_blade_quads(void)
+{
+    int32_t base[3], tip[3], mid[3];
+    unsigned int k, n = 1;
+    if (!gameplay_blade_points(base, tip))
+        return false;
+    for (k = 0; k < 3; ++k) mid[k] = (base[k] + tip[k]) / 2;
+    if (blade_prev_valid && blade_prev_swing == gameplay.swing_count)
+        n = 3;
+    for (k = 0; k < n; ++k) {
+        collider_t *c = &contacts->blade[k];
+        const int32_t *a = k == 0 ? base : k == 1 ? blade_prev_tip : blade_prev_mid;
+        const int32_t *b = k == 0 ? tip : k == 1 ? tip : mid;
+        c->shape = COLSHAPE_CAPSULE;
+        c->actor = 0;
+        c->ax = a[0]; c->ay = a[1]; c->az = a[2];
+        c->bx = b[0]; c->by = b[1]; c->bz = b[2];
+        c->radius = GP_BLADE_RADIUS;
+        c->at_type = AT_TYPE_PLAYER;
+        c->at_dmg = player_attack_damage_flags(gameplay.attack_id);
+        if (!c->at_dmg) c->at_dmg = DMG_SLASH_KOKIRI;
+        c->ac_flags = COL_OUTSIDE_ACTOR;        /* Link owns it: AC_HARD bounces */
+        c->attack_id = gameplay.swing_count ? gameplay.swing_count : 1;
+        c->tag = GP_TAG_BLADE;
+        collide_set_at(c);
+    }
+    for (k = 0; k < 3; ++k) { blade_prev_tip[k] = tip[k]; blade_prev_mid[k] = mid[k]; }
+    blade_prev_swing = gameplay.swing_count;
+    blade_prev_valid = true;
+    return true;
+}
+
+static void         register_blade(const gameplay_input_t *in)
 {
     unsigned int i;
+    collider_t *blade = &contacts->blade[0];
+    if (register_blade_quads())
+        goto targets;
+    blade->shape = COLSHAPE_SECTOR;
+    blade->actor = 0;
+    blade->x = in->x; blade->y = in->y; blade->z = in->z;
+    blade->y_shift = 0;
+    blade->radius = GP_SWORD_REACH;
+    blade->height = GP_SWORD_HEIGHT;
+    blade->yaw = in->yaw;
+    /* Spin quads sweep a full turn around Link over the clip; the sector
+    ** stand-in for the swept quads covers all 360 degrees. BUG-036. */
+    blade->arc = (gameplay.attack_id == ATTACK_SPIN ||
+                  gameplay.attack_id == ATTACK_BIG_SPIN) ? 32768 : 16384;
+    blade->at_type = AT_TYPE_PLAYER;
+    blade->at_dmg = player_attack_damage_flags(gameplay.attack_id);
+    if (!blade->at_dmg) blade->at_dmg = DMG_SLASH_KOKIRI;
+    blade->attack_id = gameplay.swing_count ? gameplay.swing_count : 1;
+    blade->tag = GP_TAG_BLADE;
+    blade->ac_flags = COL_OUTSIDE_ACTOR;
+    collide_set_at(blade);
+targets:
     for (i = 0; i < KOKIRI_GRASS_COUNT; ++i) {
         const kokiri_prop_t *tuft = &kokiri_grass[i];
-        int32_t dy, turn;
+        collider_t *c = &contacts->tufts[i];
         if (in->room != tuft->room || (gameplay.grass_cut & (1u << i)))
             continue;
-        dy = in->y - tuft->y;
-        if (dy < 0) dy = -dy;
-        if (dy > GP_SWORD_HEIGHT)
+        c->shape = COLSHAPE_CYLINDER;
+        c->actor = 0;
+        c->x = tuft->x; c->y = tuft->y; c->z = tuft->z;
+        c->radius = 12; c->height = 44;         /* EnKusa sCylinderInit */
+        c->ac_type = AC_TYPE_PLAYER;
+        c->ac_bumper = DMG_DEFAULT;
+        c->tag = (uint16_t)i;
+        collide_set_ac(c);
+    }
+    /* EnWonderItem_InteractSwitch: radius 20, height 30, rot.z 0 selects
+    ** DMG_SLASH | DMG_DEKU_STICK. Tags above the grass range mark them. */
+    for (i = 0; i < KOKIRI_WONDER_COUNT; ++i) {
+        const kokiri_wonder_t *w = &kokiri_wonders[i];
+        collider_t *c = &contacts->wonders[i];
+        if (w->mode != 3 || w->room != in->room || w->scene != save_state.scene_id ||
+            (gameplay.wonder_done & (1u << i)) || wonder_flagged(w))
             continue;
-        if (planar_squared(in->x, in->z, tuft->x, tuft->z) >
-            (int32_t)GP_SWORD_REACH * GP_SWORD_REACH)
+        c->shape = COLSHAPE_CYLINDER;
+        c->actor = 0;
+        c->x = w->x; c->y = w->y; c->z = w->z;
+        c->radius = 20; c->height = 30;
+        c->ac_type = AC_TYPE_PLAYER;
+        c->ac_bumper = DMG_SLASH_KOKIRI | DMG_SLASH_MASTER | DMG_SLASH_GIANT |
+                       DMG_DEKU_STICK;
+        c->tag = (uint16_t)(0x100 + i);
+        collide_set_ac(c);
+    }
+}
+
+/* Link's cylinder (r12, AC 0xFFCFFFFF, AC_TYPE_ENEMY via the player's
+** ac type) and, while guarding, the AC_HARD shield (0xDFCFFFFF). The body
+** skips hits while intangible, as Player_SetIntangibility does. */
+static void         register_link(const gameplay_input_t *in)
+{
+    collider_t *body = &contacts->link_body, *shield = &contacts->link_shield;
+    body->shape = COLSHAPE_CYLINDER;
+    body->actor = 0;
+    body->x = in->x; body->y = in->y; body->z = in->z;
+    body->y_shift = 0;
+    body->radius = GP_LINK_BODY_RADIUS;
+    body->height = GP_LINK_BODY_HEIGHT;
+    body->ac_type = AC_TYPE_ENEMY;
+    body->ac_bumper = 0xFFCFFFFFu;
+    body->damage_table = 0;
+    body->defense = 0;
+    body->ac_flags = COL_OUTSIDE_ACTOR;
+    body->invincible = gameplay.intangible;
+    body->tag = GP_TAG_LINK_BODY;
+    collide_set_ac(body);
+    if (!gameplay.shielding)
+        return;
+    {
+        int32_t sine, cosine;
+        gameplay_sincos(in->yaw, &sine, &cosine);
+        shield->shape = COLSHAPE_CYLINDER;
+        shield->actor = 0;
+        shield->x = in->x + ((GP_SHIELD_FORWARD * sine) >> 16);
+        shield->y = in->y;
+        shield->z = in->z + ((GP_SHIELD_FORWARD * cosine) >> 16);
+        shield->y_shift = 0;
+        shield->radius = GP_SHIELD_RADIUS;
+        shield->height = GP_SHIELD_HEIGHT;
+        shield->ac_type = AC_TYPE_ENEMY;
+        shield->ac_bumper = 0xDFCFFFFFu;
+        shield->damage_table = 0;
+        shield->ac_flags = COL_AC_HARD | COL_OUTSIDE_ACTOR;
+        shield->tag = GP_TAG_LINK_SHIELD;
+        collide_set_ac(shield);
+    }
+}
+
+/* The one contact pass per step: begin, register everything, run, consume.
+** Runs at the end of gameplay_step, after the boulder moved and before
+** demo.c moves Link (pre-movement Link pose, the same step's sword window).
+** Consumption: sword results now (grass/wonders are cut on this step, as
+** before); Link's body hit and the boulder's AT_HIT next step. */
+static void         run_contacts(const gameplay_input_t *in)
+{
+    unsigned int i;
+    collider_t *body, *shield;
+    if (!contacts)
+        return;
+    body = &contacts->link_body;
+    shield = &contacts->link_shield;
+    /* collide_set_at clears results only when registered. A hopping or
+    ** cooling-down boulder skips registration, so its previous AT_HIT must
+    ** not be consumed again and restart Link's knockdown indefinitely. The
+    ** previous step's hit has already been consumed by update_boulder. */
+    contacts->boulder.result = 0;
+    collide_begin();
+    register_link(in);
+    if (blade_live)
+        register_blade(in);
+    else
+        blade_prev_valid = false;
+    if (in_forest())
+        register_boulder(in);
+    register_nut();
+    collide_run();
+    if (contacts->boulder.result & COL_RES_AT_HIT)
+        gameplay.boulder_hit = true;
+    if (blade_live)
+        for (i = 0; i < 3; ++i)
+            if (contacts->blade[i].result & COL_RES_AT_BOUNCED)
+                gameplay.blade_bounced = true;
+    if (gameplay.shielding && collide_guard_blocked(shield)) {
+        gameplay.events |= GP_EVENT_GUARD;      /* the bounce wins */
+        gameplay.guard_pending = true;          /* Player_UpdateDamage, next step */
+    } else if ((body->result & COL_RES_AC_HIT) && body->ac_hit) {
+        int32_t ax = body->ac_hit->x, az = body->ac_hit->z;
+        gameplay.hurt_pending = 1;
+        gameplay.hurt_damage = body->ac_damage;
+        gameplay.hurt_yaw = gameplay_facing(in->x - ax, in->z - az);
+    }
+    if (!blade_live)
+        return;
+    for (i = 0; i < collide_event_count(); ++i) {
+        unsigned int tuft;
+        if (collide_event(i)->at_tag != GP_TAG_BLADE)
             continue;
-        turn = yaw_delta(in->yaw, gameplay_facing(tuft->x - in->x,
-                                                  tuft->z - in->z));
-        if (turn < 0) turn = -turn;
-        if (turn > 16384)
+        tuft = collide_event(i)->ac_tag;
+        if (tuft >= 0x100 && tuft - 0x100 < KOKIRI_WONDER_COUNT) {
+            if (!(gameplay.wonder_done & (1u << (tuft - 0x100))))
+                wonder_pay(tuft - 0x100, false);
             continue;
-        gameplay.grass_cut |= (uint16_t)(1u << i);
+        }
+        if (tuft >= KOKIRI_GRASS_COUNT || (gameplay.grass_cut & (1u << tuft)))
+            continue;
+        gameplay.grass_cut |= (uint16_t)(1u << tuft);
         /* One source-table roll per tuft, never rerolled by standing/swinging.
          * Tiny slice RNG; source odds, not the original global random stream. */
-        gameplay.grass_rupee[i] = kokiri_grass_rupees[i][drop_random() & 15];
-        gameplay.grass_age[i] = 0;
+        gameplay.grass_rupee[tuft] =
+            kokiri_grass_rupees[tuft][drop_random() & 15];
+        gameplay.grass_age[tuft] = 0;
         gameplay.swing_hit = 1;
         ++gameplay.cut_count;
         gameplay.events |= GP_EVENT_CUT;
     }
 }
 
+/* func_80837818 + func_80837948: pick the attack from the stick and
+** targeting, count repeats of the same one, promote the third to its combo. */
+static void         attack_start_id(unsigned int id);
+static void         attack_start(const gameplay_input_t *in)
+{
+    bool targeting = gameplay.face_locked || in->target_held;
+    attack_start_id(player_attack_select(in->stick_dir, targeting, 0));
+    /* D_80854480 forward row is STAB: PLAYER_STATE2_30 even when not
+    ** targeting turns it into the forward slash. */
+    gameplay.lunge_pending = in->stick_dir == 0;
+}
+
+/* func_80837948. */
+static void         attack_start_id(unsigned int id)
+{
+    gameplay.lunge_pending = false;
+    if (id != gameplay.attack_id || gameplay.combo_count >= 3)
+        gameplay.combo_count = 0;
+    ++gameplay.combo_count;
+    if (gameplay.combo_count >= 3)
+        id += 2;
+    gameplay.combo_timer = GP_COMBO_WINDOW_STEPS;
+    gameplay.attack_id = (uint8_t)id;
+    gameplay.attack_phase = 1;
+    gameplay.attack_thirds = 0;
+    gameplay.swing = 1;
+    gameplay.swing_hit = 0;
+    gameplay.charge_ok = true;          /* unk_844 = 8, X held so far */
+    ++gameplay.swing_count;
+    gameplay.events |= GP_EVENT_SWING;
+}
+
+bool                gameplay_jump_attack_start(void)
+{
+    if (!(gameplay.equipped & GP_SWORD) || gameplay.shielding)
+        return false;
+    attack_start_id(ATTACK_JUMP_START);
+    gameplay.attack_phase = 6;
+    return true;
+}
+
+void                gameplay_jump_attack_land(void)
+{
+    if (gameplay.attack_phase != 6)
+        return;
+    gameplay.attack_id = ATTACK_JUMP_START;
+    gameplay.combo_count = 0;
+    attack_start_id(ATTACK_JUMP_FINISH);
+    gameplay.combo_count = 3;
+}
+
+/* func_808377DC: start charging off the attack that is ending. */
+static void         charge_start(void)
+{
+    gameplay.charge_from = gameplay.attack_id;
+    gameplay.attack_phase = 3;
+    gameplay.attack_thirds = GP_CHARGE_START_FRAME * 3u;
+    gameplay.charge_q16 = 0;
+    gameplay.charge_committed = false;
+    gameplay.swing = 1;                 /* holds walk; slow charge walk is TODO */
+    gameplay.lunge_q16 = 0;
+}
+
+/* Player_Action_80844E68 / func_80844BE4. True when the step is used. */
+static bool         update_charge(const gameplay_input_t *in)
+{
+    if (gameplay.attack_phase == 3) {
+        if (gameplay.attack_thirds < (LINK_FRAMES_CHARGE_START - 1u) * 3u)
+            gameplay.attack_thirds = (uint16_t)(gameplay.attack_thirds + GP_RECOVER_THIRDS_STEP);
+        else {
+            gameplay.attack_phase = 4;  /* loop the wait, actionVar2 = -1 */
+            gameplay.attack_thirds = 0;
+        }
+        return true;
+    }
+    if (gameplay.attack_phase == 4) {
+        gameplay.attack_thirds = (uint16_t)(gameplay.attack_thirds + GP_RECOVER_THIRDS_STEP);
+        if (!gameplay.charge_committed) {
+            gameplay.charge_q16 = (uint16_t)(gameplay.charge_q16 + GP_CHARGE_STEP_Q16);
+            if (gameplay.charge_q16 >= GP_CHARGE_COMMIT_Q16) {
+                gameplay.charge_committed = true;
+                gameplay.combo_count = 0;               /* unk_845 = 0 */
+            } else if (!in->attack_held) {
+                gameplay.attack_phase = 5;              /* func_80844D68 */
+                gameplay.attack_thirds = 0;
+                gameplay.swing = 0;
+            }
+            return true;
+        }
+        if (!in->attack_held) {
+            unsigned int id = gameplay.charge_q16 >= GP_CHARGE_BIG_Q16
+                            ? ATTACK_BIG_SPIN : ATTACK_SPIN;
+            attack_start_id(id);
+            gameplay.lunge_pending = in->stick_dir == 0;
+            gameplay.charge_ok = false;
+            if (gameplay.intangible < GP_SPIN_INVULN_STEPS)
+                gameplay.intangible = GP_SPIN_INVULN_STEPS;
+            return true;
+        }
+        if ((uint32_t)gameplay.charge_q16 + GP_CHARGE_STEP_Q16 < 65536u)
+            gameplay.charge_q16 = (uint16_t)(gameplay.charge_q16 + GP_CHARGE_STEP_Q16);
+        else
+            gameplay.charge_q16 = 65535u;               /* Math_StepToF to 1.0 */
+        return true;
+    }
+    if (gameplay.attack_phase == 5) {
+        if (in->moving || in->attack) {
+            gameplay_attack_cancel();
+            return false;
+        }
+        if (gameplay.attack_thirds < (LINK_FRAMES_CHARGE_END - 1u) * 3u)
+            gameplay.attack_thirds = (uint16_t)(gameplay.attack_thirds + GP_RECOVER_THIRDS_STEP);
+        else
+            gameplay_attack_cancel();
+        return true;
+    }
+    return false;
+}
+
+/* Math_StepToF(&speedXZ, 0, decel): the lunge, wall push and rebounds. */
+static void         step_push(void)
+{
+    int32_t v = gameplay.lunge_q16, d = gameplay.lunge_decel_q16;
+    if (!v)
+        return;
+    if (!d) d = GP_LUNGE_DECEL_Q16;
+    if (v > 0) v = v > d ? v - d : 0;
+    else       v = -v > d ? v + d : 0;
+    gameplay.lunge_q16 = v;
+}
+
+/* func_80842DF4, wall half: the blade line from GP_BLADE_BACK behind the
+** hilt to the tip, curFrame >= 2, non-spin attacks, speedXZ >= 0. */
+static void         blade_wall_check(int32_t decel)
+{
+    int32_t base[3], tip[3], from[3], len2, len, k;
+    unsigned int material;
+    if (!blade_live || gameplay.attack_id >= ATTACK_SPIN ||
+        gameplay.attack_thirds < 6u || gameplay.lunge_q16 < 0)
+        return;
+    if (!gameplay_blade_points(base, tip))
+        return;
+    len2 = 0;
+    for (k = 0; k < 3; ++k) len2 += (base[k] - tip[k]) * (base[k] - tip[k]);
+    len = (int32_t)collide_isqrt((uint32_t)len2);
+    for (k = 0; k < 3; ++k)
+        from[k] = len ? tip[k] + (base[k] - tip[k]) * (len + GP_BLADE_BACK) / len : base[k];
+    if (!gameplay_blade_wall(from, tip, &material))
+        return;
+    gameplay.lunge_q16 = GP_WALL_PUSH_Q16;
+    gameplay.lunge_decel_q16 = decel;
+    gameplay.wall_material = (uint8_t)material;
+    gameplay.events |= GP_EVENT_WALL_HIT;
+}
+
+/* func_80842D20 (blade AT_BOUNCED) and Player_UpdateDamage's shield bounce
+** (Player_Action_808435C4). True while one of them owns the step. */
+static bool         update_recoil(const gameplay_input_t *in)
+{
+    if (gameplay.blade_bounced) {
+        gameplay.blade_bounced = false;
+        if (gameplay.attack_phase == 7) {
+            /* In the guard action: speed only; the stab ends (returns 1). */
+            gameplay_attack_cancel();
+            gameplay.lunge_q16 = GP_REBOUND_PUSH_Q16;
+            gameplay.lunge_decel_q16 = GP_REBOUND_DECEL_Q16;
+            gameplay.events |= GP_EVENT_REBOUND;
+            return true;
+        }
+        if ((gameplay.attack_phase == 1 || gameplay.attack_phase == 6) &&
+            gameplay.attack_id < ATTACK_SPIN) {
+            gameplay.attack_phase = 8;
+            gameplay.attack_thirds = 0;
+            gameplay.swing = 1;
+            gameplay.lunge_pending = false;
+            gameplay.lunge_q16 = GP_REBOUND_PUSH_Q16;
+            gameplay.lunge_decel_q16 = GP_REBOUND_DECEL_Q16;
+            gameplay.events |= GP_EVENT_REBOUND;
+            return true;
+        }
+    }
+    if (gameplay.guard_pending) {
+        gameplay.guard_pending = false;
+        if (gameplay.shielding && gameplay.attack_phase != 8) {
+            /* In the guard action: the full-body defense_hit, speedXZ -18. */
+            gameplay.attack_phase = 9;
+            gameplay.attack_thirds = 0;
+            gameplay.swing = 0;                 /* the guard stays up */
+            gameplay.lunge_q16 = GP_REBOUND_PUSH_Q16;
+            gameplay.lunge_decel_q16 = GP_REBOUND_DECEL_Q16;
+            return true;
+        }
+    }
+    if (gameplay.attack_phase == 8) {
+        /* Player_Action_808505DC: adjusted speed; idle from curFrame 6. */
+        gameplay.attack_thirds = (uint16_t)(gameplay.attack_thirds + GP_ATTACK_THIRDS_STEP);
+        if (gameplay.attack_thirds >= GP_REBOUND_END_FRAME * 3u) {
+            int32_t keep = gameplay.lunge_q16;
+            gameplay_attack_cancel();
+            gameplay.lunge_q16 = keep;
+        }
+        return true;
+    }
+    if (gameplay.attack_phase == 9) {
+        /* Player_Action_808435C4, actionVar1 = 1: speed 1.0; moving after
+        ** frame 4 or the clip's end returns to the guard. */
+        gameplay.attack_thirds = (uint16_t)(gameplay.attack_thirds + 3u);
+        if (!in->shield || (in->moving && gameplay.attack_thirds >= 12u) ||
+            gameplay.attack_thirds >= (LINK_FRAMES_GUARD_HIT - 1u) * 3u) {
+            int32_t keep = gameplay.lunge_q16;
+            gameplay_attack_cancel();
+            gameplay.lunge_q16 = keep;
+        }
+        return true;
+    }
+    return false;
+}
+
 static void         update_sword(const gameplay_input_t *in)
 {
-    if (gameplay.swing) {
-        --gameplay.swing;
-        if (gameplay_sword_active())
-            cut_grass(in);
+    unsigned int r = attack_row(gameplay.attack_id);
+    bool can_start = in->attack && !gameplay.shielding;
+    /* func_8083C50C: letting go of X while unk_844 > 0 forfeits the charge. */
+    if (gameplay.combo_timer && !in->attack_held)
+        gameplay.charge_ok = false;
+    /* Player_UpdateCommon: unk_844 counts down; at 0 the repeat count clears. */
+    if (gameplay.combo_timer && !--gameplay.combo_timer)
+        gameplay.combo_count = 0;
+    step_push();
+    if (update_recoil(in))
+        return;
+    if (update_charge(in))
+        return;
+    if (gameplay.attack_phase == 7) {
+        /* Player_Action_80843188, actionVar1 = 1: LinkAnimation_Update at
+        ** speed 1.0 (one frame a step), the quads on while curFrame < 2; the
+        ** clip's end returns to the guard wait. */
+        if (gameplay.attack_thirds < (LINK_FRAMES_CROUCH_STAB - 1u) * 3u) {
+            gameplay.attack_thirds = (uint16_t)(gameplay.attack_thirds + 3u);
+            blade_live = blade_on_frame();
+            blade_wall_check(GP_REBOUND_DECEL_Q16);
+        } else
+            gameplay_attack_cancel();
         return;
     }
-    if (!in->attack)
+    /* func_808428D8: B (X here) while guarding with a sword stabs. */
+    if (in->attack && gameplay.shielding && !gameplay.attack_phase &&
+        (gameplay.equipped & GP_SWORD)) {
+        gameplay.attack_id = ATTACK_STAB;
+        gameplay.attack_phase = 7;
+        gameplay.attack_thirds = 0;
+        gameplay.swing_hit = 0;
+        ++gameplay.swing_count;
+        gameplay.events |= GP_EVENT_SWING;
         return;
+    }
+    if (gameplay.attack_phase == 6) {
+        /* Player_Action_80844AF4: the clip holds its last frame in the air. */
+        blade_live = blade_on_frame();
+        blade_wall_check(GP_LUNGE_DECEL_Q16);
+        gameplay.attack_thirds = (uint16_t)(gameplay.attack_thirds + GP_ATTACK_THIRDS_STEP);
+        return;
+    }
+    /* The forward lunge belongs to the attack clip only. */
+    if (gameplay.lunge_q16 > 0 && gameplay.attack_phase != 1)
+        gameplay.lunge_q16 = 0;
+    if (gameplay.attack_phase == 1) {
+        if (gameplay.lunge_pending && gameplay.attack_thirds == 0) {
+            gameplay.lunge_q16 = GP_LUNGE_SPEED_Q16;    /* OnFrame(0) */
+            gameplay.lunge_decel_q16 = GP_LUNGE_DECEL_Q16;
+            gameplay.lunge_pending = false;
+        }
+        blade_live = blade_on_frame();
+        blade_wall_check(GP_LUNGE_DECEL_Q16);
+        /* LinkAnimation_Update reports the end on the clip's last frame. */
+        if (gameplay.attack_thirds < (attack_rows[r].frames - 1u) * 3u) {
+            gameplay.attack_thirds = (uint16_t)(gameplay.attack_thirds + GP_ATTACK_THIRDS_STEP);
+        } else {
+            /* Clip done: Player_ActionHandler_7 chains on X, else recovery. */
+            if (can_start) {
+                attack_start(in);
+            } else {
+                gameplay.attack_phase = 2;
+                gameplay.attack_thirds = 0;
+                gameplay.swing = 0;
+            }
+        }
+        return;
+    }
+    if (gameplay.attack_phase == 2) {
+        /* Recovery runs under the idle action: X attacks again, the stick
+        ** walks away (both end the recovery clip). */
+        /* Player_ActionHandler_8: X still held at unk_844 == 1 charges. */
+        if (in->attack_held && gameplay.charge_ok && gameplay.combo_timer == 1 &&
+            !gameplay.shielding) {
+            charge_start();
+            return;
+        }
+        if (!can_start) {
+            if (in->moving) {
+                gameplay_attack_cancel();
+                return;
+            }
+            if (gameplay.attack_thirds < (attack_rows[r].end_frames - 1u) * 3u)
+                gameplay.attack_thirds = (uint16_t)(gameplay.attack_thirds + GP_RECOVER_THIRDS_STEP);
+            else
+                gameplay_attack_cancel();
+            return;
+        }
+    } else if (!in->attack) {
+        return;
+    }
     if (!(gameplay.equipped & GP_SWORD)) {
         /* No sword means no attack, not a substitute action. */
         gameplay.events |= GP_EVENT_DENIED;
         return;
     }
-    gameplay.swing = GP_SWING_STEPS;
-    gameplay.swing_hit = 0;
-    ++gameplay.swing_count;
-    gameplay.events |= GP_EVENT_SWING;
+    if (can_start)
+        attack_start(in);
 }
 
 static void         update_shield(const gameplay_input_t *in)
@@ -593,13 +1865,13 @@ const char         *gameplay_page_line(unsigned int line)
         return 0;
     rule = &dialogue_rules[gameplay.rule];
     page = &dialogue_pages[rule->first_page + gameplay.page];
-    return dialogue_lines[page->first_line + line];
+    return dialogue_line(page->first_line + line);
 }
 
 const char         *gameplay_speaker_name(void)
 {
     if (!gameplay.talking || gameplay.speaker < 0)
-        return 0;
+        return gameplay.talking ? "" : 0;       /* speakerless text */
     return dialogue_speaker_names[kokiri_npcs[gameplay.speaker].kind];
 }
 
@@ -611,8 +1883,12 @@ static int16_t      find_speaker(const gameplay_input_t *in)
     int32_t best = (int32_t)GP_TALK_RANGE * GP_TALK_RANGE + 1;
     int16_t found = -1;
     unsigned int i;
+    /* Forest actors only: inside Link's house a Kokiri standing outside the
+    ** wall must not take A away from the door. */
+    if (!in_forest())
+        return -1;
     if (gameplay.target >= 0) {
-        const kokiri_npc_t *npc = &kokiri_npcs[gameplay.target];
+        const kokiri_npc_t *npc = npc_at(gameplay.target);
         int32_t dy = in->y - npc->y;
         if (dy < 0) dy = -dy;
         if (dy <= GP_TALK_HEIGHT &&
@@ -621,7 +1897,7 @@ static int16_t      find_speaker(const gameplay_input_t *in)
             return gameplay.target;
     }
     for (i = 0; i < KOKIRI_NPC_COUNT; ++i) {
-        const kokiri_npc_t *npc = &kokiri_npcs[i];
+        const kokiri_npc_t *npc = npc_at(i);
         int32_t distance = planar_squared(in->x, in->z, npc->x, npc->z);
         int32_t dy = in->y - npc->y, turn;
         if (dy < 0) dy = -dy;
@@ -638,6 +1914,108 @@ static int16_t      find_speaker(const gameplay_input_t *in)
     return found;
 }
 
+/* ---- Kokiri Shop (EnOssan / EnGirlA) ---------------------------------------
+** Talk: 0x10BA greeting, then the Deku Shield's text 0x009F (the one shelf
+** item so far; full eight-item browsing is M3). A there asks 0x0089 with
+** TWO_CHOICE. Buy runs EnGirlA_CanBuy_DekuShield in source order: owned ->
+** 0x0086; under 40 -> 0x0085; else SUCCESS_FANFARE (not owned, so
+** Item_CheckObtainability is ITEM_NONE): debit and grant together, then the
+** get-item text 0x004C. Don't buy returns to the item text. */
+
+static bool         shop_open(uint16_t text_id, uint8_t state)
+{
+    if (!open_system_text(text_id))
+        return false;
+    gameplay.shop_state = state;
+    gameplay.choice = 0;
+    return true;
+}
+
+static void         shop_buy(void)
+{
+    if (gameplay.owned & GP_SHIELD) {
+        shop_open(0x0086, 4);
+        gameplay.events |= GP_EVENT_DENIED;
+        return;
+    }
+    if (gameplay.rupees < GP_SHIELD_PRICE) {
+        shop_open(0x0085, 4);
+        gameplay.events |= GP_EVENT_DENIED;
+        return;
+    }
+    gameplay.rupees = (uint8_t)(gameplay.rupees - GP_SHIELD_PRICE);
+    gameplay.owned |= GP_SHIELD;
+    sync_gear_to_save();                /* wallet and shield in one write */
+    shop_open(0x004C, 4);
+    gameplay.get_item = GP_SHIELD;
+    gameplay.events |= GP_EVENT_PICKUP;
+}
+
+static bool         shop_in_reach(const gameplay_input_t *in)
+{
+    int32_t dy = in->y - KOKIRI_SHOPKEEPER_Y, turn;
+    if (save_state.scene_id != SAVE_SCENE_KOKIRI_SHOP)
+        return false;
+    if (dy < -GP_TALK_HEIGHT || dy > GP_TALK_HEIGHT)
+        return false;
+    if (planar_squared(in->x, in->z, KOKIRI_SHOPKEEPER_X, KOKIRI_SHOPKEEPER_Z) >
+        (int32_t)GP_SHOP_TALK_RANGE * GP_SHOP_TALK_RANGE)
+        return false;
+    turn = yaw_delta(in->yaw, gameplay_facing(KOKIRI_SHOPKEEPER_X - in->x,
+                                              KOKIRI_SHOPKEEPER_Z - in->z));
+    if (turn < 0) turn = -turn;
+    return turn <= 16384;
+}
+
+unsigned int        gameplay_choice_lines(void)
+{
+    unsigned int i;
+    const dialogue_rule_t *rule;
+    if (!gameplay.talking || gameplay.rule < 0)
+        return 0;
+    rule = &dialogue_rules[gameplay.rule];
+    if (gameplay.page + 1u != rule->pages)
+        return 0;
+    for (i = 0; i < DIALOGUE_SYSTEM_COUNT; ++i)
+        if (dialogue_system[i].rule == (uint16_t)gameplay.rule)
+            return dialogue_system[i].choices;
+    return 0;
+}
+
+/* After a shop box closes: what the exchange opens next. */
+static void         shop_next(bool accepted)
+{
+    uint8_t state = gameplay.shop_state;
+    gameplay.shop_state = 0;
+    if (state == 1 && accepted)
+        shop_open(0x009F, 2);
+    else if (state == 2 && accepted)
+        shop_open(0x0089, 3);
+}
+
+/* End the box. Speaker side effects fire on close, as in the source. */
+static void         close_talk_as(bool accepted);
+static void         close_talk(void)
+{
+    close_talk_as(true);
+}
+
+static void         close_talk_as(bool accepted)
+{
+    uint16_t text_id = gameplay.rule >= 0 ? dialogue_rules[gameplay.rule].text_id : 0;
+    bool mido = gameplay.speaker >= 0 &&
+                kokiri_npcs[gameplay.speaker].kind == KOKIRI_NPC_MIDO;
+    gameplay.talking = false;
+    gameplay.speaker = -1;
+    gameplay.rule = -1;
+    gameplay.get_item = 0;
+    gameplay.events |= GP_EVENT_TALK_CLOSE;
+    if (mido)
+        mido_talk_closed(text_id);
+    if (gameplay.shop_state)
+        shop_next(accepted);
+}
+
 /* One press does one thing. A opens, then advances, then closes on the last
 ** page; B closes early. The opening press is consumed by the open, so it
 ** cannot also skip page one, and every transition needs a fresh press edge. */
@@ -646,11 +2024,25 @@ static void         update_talk(const gameplay_input_t *in)
     if (gameplay.talking) {
         const dialogue_rule_t *rule = &dialogue_rules[gameplay.rule];
         gameplay.prompt = -1;
+        if (gameplay_choice_lines()) {
+            /* TWO_CHOICE: D-pad moves, A picks, B is the second option. */
+            if (in->menu_step) {
+                gameplay.choice ^= 1;
+                gameplay.events |= GP_EVENT_MENU_MOVE;
+            }
+            if (in->interact || in->cancel) {
+                bool buy = in->interact && gameplay.choice == 0;
+                gameplay.shop_state = 0;
+                close_talk();
+                if (buy)
+                    shop_buy();
+                else
+                    shop_open(0x009F, 2);   /* back to the item text */
+            }
+            return;
+        }
         if (in->cancel) {
-            gameplay.talking = false;
-            gameplay.speaker = -1;
-            gameplay.rule = -1;
-            gameplay.events |= GP_EVENT_TALK_CLOSE;
+            close_talk_as(false);
             return;
         }
         if (!in->interact)
@@ -660,10 +2052,14 @@ static void         update_talk(const gameplay_input_t *in)
             gameplay.events |= GP_EVENT_TALK_PAGE;
             return;
         }
-        gameplay.talking = false;
-        gameplay.speaker = -1;
-        gameplay.rule = -1;
-        gameplay.events |= GP_EVENT_TALK_CLOSE;
+        close_talk();
+        return;
+    }
+    gameplay.shop_prompt = shop_in_reach(in);
+    if (gameplay.shop_prompt) {
+        gameplay.prompt = -1;
+        if (in->interact)
+            shop_open(0x10BA, 1);
         return;
     }
     gameplay.prompt = find_speaker(in);
@@ -702,9 +2098,20 @@ void                gameplay_step(const gameplay_input_t *in)
         gameplay.shielding = false;
         return;
     }
-    collect_pickups(in);
     collect_rupees(in);
+    update_wonders(in);
+    if (gameplay.intangible)
+        --gameplay.intangible;
+    consume_link_damage();
+    update_boulder(in);
+    update_nut(in);
+    if (in_forest())
+        update_mido(in);
     update_target(in);
+    if (update_chest(in)) {
+        gameplay.shielding = false;
+        return;
+    }
     update_talk(in);
     if (gameplay.talking) {
         /* Opened this step: drop anything the same frame would have started. */
@@ -712,6 +2119,8 @@ void                gameplay_step(const gameplay_input_t *in)
         return;
     }
     (void)drop_random(); /* vary outcomes with play timing, even before a cut */
+    blade_live = false;
     update_sword(in);
     update_shield(in);
+    run_contacts(in);
 }

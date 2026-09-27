@@ -143,6 +143,15 @@ int32_t link_points[LINK_SKIN_VERTICES][3];
                     if pinned_flags[clip_id] == 1:
                         root[1] = pinned_root[1]
                 placed = {i:(m,o) for i,m,o,_ in model.walk_skeleton(hierarchy,rot,root)}
+                blade = ((ctypes.c_int32 * 3) * 2)()
+                self.lib.link_anim_blade(blade)
+                matrix, origin = placed[15]  # PLAYER_LIMB_L_HAND minus one
+                for end, local in enumerate(((0,400,0), (3000,400,0))):
+                    expected = model.transform(matrix, origin, local)
+                    for axis in range(3):
+                        self.assertAlmostEqual(blade[end][axis] / 65536,
+                            expected[axis] * scale + shift[axis], delta=.2,
+                            msg=f'blade clip {clip_id} frame {frame} end {end}')
                 self.assertTrue(any(p[0] % 65536 for p in points), 'world fractions lost')
                 for i, loc in enumerate(locals_):
                     matrix, origin = placed[owners[i]]

@@ -3,6 +3,16 @@
 */
 
 #include "message.h"
+#include "text_pool.h"
+
+/* Run text: CUTTEXT.TXT, line = run index (BUG-037). */
+static text_pool_t      cutscene_pool;
+
+bool                cutscene_text_bind(const uint8_t *blob, uint32_t bytes)
+{
+    return (text_pool_bind(&cutscene_pool, "KCST", blob, bytes,
+                           CUTSCENE_RUN_COUNT, CUTSCENE_TEXT_BYTES));
+}
 
 message_state_t     message_state;
 
@@ -191,7 +201,8 @@ const char         *message_run_text(unsigned int line, unsigned int run)
 {
     const cutscene_run_t *entry = run_at(line, run);
 
-    return (entry ? entry->text : "");
+    return (entry ? text_pool_line(&cutscene_pool,
+                                   (unsigned int)(entry - cutscene_runs)) : "");
 }
 
 unsigned int        message_run_colour(unsigned int line, unsigned int run)
@@ -215,7 +226,7 @@ static unsigned int page_length(void)
             &cutscene_text_lines[page->first_line + line];
 
         for (run = 0; run < entry->runs; ++run) {
-            const char *text = cutscene_runs[entry->first_run + run].text;
+            const char *text = text_pool_line(&cutscene_pool, entry->first_run + run);
 
             while (*text++)
                 ++total;
@@ -242,7 +253,7 @@ unsigned int        message_run_visible(unsigned int line, unsigned int run)
         if (i == line && run >= entry->runs)
             return (0);
         for (j = 0; j < last; ++j) {
-            const char *text = cutscene_runs[entry->first_run + j].text;
+            const char *text = text_pool_line(&cutscene_pool, entry->first_run + j);
 
             while (*text++)
                 ++before;

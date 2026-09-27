@@ -69,6 +69,10 @@ static bool             roll_forward_held;
 /* Automatic jump: which clip, and whether the descent has started. */
 static bool             jump_run;
 static unsigned int     jump_clip = LINK_CLIP_JUMP;
+/* Evasion (PLAYER_STATE2_19): its clip holds through the flight and lands
+** on its own _end clip. */
+static bool             jump_evade;
+static unsigned int     landing_clip = LINK_CLIP_RUN_JUMP_END;
 static bool             air_falling;
 /* Ledge climbs (Player_Action_80845668). LinkAnimation_PlayOnceSetSpeed
 ** 1.3: curFrame += 1.3 * R_UPDATE_RATE * 0.5 per 20 Hz update, i.e. 1.3
@@ -103,23 +107,16 @@ static bool             jump250_launch;
 
 uint32_t link_anim_motion_events(void) { return motion_events; }
 
-void link_anim_combat(unsigned int swing_remaining, bool shielding)
+void link_anim_combat(bool attacking, unsigned int clip, unsigned int frame,
+                      bool shielding)
 {
-    combat_active = swing_remaining != 0 || shielding;
-    if (swing_remaining) {
-        unsigned int elapsed = GP_SWING_STEPS - swing_remaining;
-        /* Slice timing, not frame-exact OoT: slash reaches its last frame at
-         * the first live step; recovery starts after the live window. */
-        if (elapsed <= GP_SWING_HIT_LAST) {
-            combat_clip = LINK_CLIP_SLASH;
-            combat_frame = elapsed < GP_SWING_HIT_FIRST ? elapsed : 4;
-        } else {
-            combat_clip = LINK_CLIP_RECOVER;
-            combat_frame = (elapsed - GP_SWING_HIT_LAST - 1) *
-                (link_clips[LINK_CLIP_RECOVER].count - 1) /
-                (GP_SWING_STEPS - GP_SWING_HIT_LAST - 2);
-        }
-        guard_steps = 0;
+    combat_active = attacking || shielding;
+    if (attacking) {
+        /* gameplay.c owns the attack timeline; the pose is its clip/frame. */
+        combat_clip = clip;
+        combat_frame = frame;
+        /* Crouch stab ends back on defense_wait, not the raise. */
+        guard_steps = shielding ? 2 : 0;
     } else if (shielding) {
         combat_clip = guard_steps < 2 ? LINK_CLIP_GUARD : LINK_CLIP_GUARD_WAIT;
         combat_frame = guard_steps < 2 ? guard_steps :
@@ -146,7 +143,7 @@ static unsigned int     clip_for_state(link_state_t s)
         case LINK_STATE_LANDING: return LINK_CLIP_LANDING;
         case LINK_STATE_ROLL:    return LINK_CLIP_ROLL;
         case LINK_STATE_JUMP:    return jump_clip;
-        case LINK_STATE_JUMP_LANDING: return LINK_CLIP_RUN_JUMP_END;
+        case LINK_STATE_JUMP_LANDING: return landing_clip;
         case LINK_STATE_STEP_UP: return climb_clip;
         case LINK_STATE_JUMP_START: return LINK_CLIP_JUMP250;
         case LINK_STATE_HANG:    return hang_clip;
@@ -305,6 +302,8 @@ static bool             climb_step(void)
             state = LINK_STATE_JUMP;
             jump_clip = LINK_CLIP_JUMP250;
             jump_run = false;
+    jump_evade = false;
+    landing_clip = LINK_CLIP_RUN_JUMP_END;
             air_falling = false;
             phase_ninths = climb_phase * 9 / 30;
             frame = phase_ninths / 9;
@@ -469,14 +468,15 @@ void                    link_anim_update(int32_t speed, bool grounded,
         /* The jump clip plays until the descent passes the departure height;
         ** then the ordinary falling pose takes over, as the source swaps to
         ** its landing-ready animation there. */
-        if (state != LINK_STATE_JUMP || air_falling)
+        if (state != LINK_STATE_JUMP || (air_falling && !jump_evade))
             enter(LINK_STATE_FALL);
         advance();
         return;
     }
 
-    if (landed && state == LINK_STATE_JUMP && jump_run)
+    if (landed && state == LINK_STATE_JUMP && (jump_run || jump_evade))
     {
+        jump_evade = false;
         /* Player_Action_8084411C: a run jump lands with run_jump_end ahead
         ** of the short-landing and roll choices. */
         enter(LINK_STATE_JUMP_LANDING);
@@ -580,6 +580,8 @@ void                    link_anim_auto_jump(bool run)
 {
     link_anim_cancel_roll();
     jump_run = run;
+    jump_evade = false;
+    landing_clip = LINK_CLIP_RUN_JUMP_END;
     jump_clip = run ? LINK_CLIP_RUN_JUMP : LINK_CLIP_JUMP;
     air_falling = false;
     state = LINK_STATE_JUMP;
@@ -591,6 +593,14 @@ void                    link_anim_auto_jump(bool run)
 void                    link_anim_hop(void)
 {
     link_anim_auto_jump(false);
+}
+
+void                    link_anim_evade(unsigned int clip, unsigned int end_clip)
+{
+    link_anim_auto_jump(false);
+    jump_evade = true;
+    jump_clip = clip;
+    landing_clip = end_clip;
 }
 
 void                    link_anim_step_up(bool tall, int32_t y_dist)
@@ -653,6 +663,22 @@ void                    link_anim_pull_up_clip(unsigned int clip)
     climb_phase = 0;
     climb_offset_q8 = 0;
     pull_up_done = false;
+}
+
+/* Root of any clip at a time in thirds of a frame (attack root motion). */
+void                    link_anim_clip_root(unsigned int clip, unsigned int thirds,
+                                            int32_t out[3])
+{
+    unsigned int base = link_clips[clip].first;
+    unsigned int last = link_clips[clip].count - 1;
+    unsigned int index = thirds / 3, fraction = thirds % 3, next, k;
+
+    if (index >= last) { index = last; fraction = 0; }
+    next = index < last ? index + 1 : index;
+    for (k = 0; k < 3; ++k)
+        out[k] = link_root[base + index][k] +
+            (link_root[base + next][k] - link_root[base + index][k]) *
+            (int32_t)fraction / 3;
 }
 
 /* Root at a phase of the current play, interpolated like the pose. */

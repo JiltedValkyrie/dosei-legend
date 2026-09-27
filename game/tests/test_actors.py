@@ -52,7 +52,7 @@ class ActorTable(unittest.TestCase):
             (-1009,1556,0x0f01,2,5),(-712,1857,0x0e01,2,5)])
 
     def test_grass_drop_slots_keep_source_odds_and_type_one_has_no_rupees(self):
-        block = table().split('const uint8_t kokiri_grass_rupees',1)[1]
+        block = table().split('const uint8_t kokiri_grass_rupees',1)[1].split('};',1)[0]
         rows = [list(map(int,re.findall(r'\d+',row)))
                 for row in re.findall(r'\{([^{}]+)\}',block)]
         self.assertEqual(len(rows),16)

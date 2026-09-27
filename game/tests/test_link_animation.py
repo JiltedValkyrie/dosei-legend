@@ -75,6 +75,24 @@ class AnimationOffsets(unittest.TestCase):
         """The anchor is the recipe's own animation, so it must map to itself."""
         self.assertEqual(self.offsets[blm.IDLE_SYMBOL], 0x3200)
 
+    def test_idle_is_complete_standing_cycle_with_small_loop_seam(self):
+        # Player_GetIdleAnim: PLAYER_ANIMGROUP_wait, free hands. The old
+        # 20-frame prefix of the 184-frame look-around fidget cannot loop.
+        _, symbol, first, count, stride = next(
+            clip for clip in blm.CLIPS if clip[0] == 'idle')
+        self.assertEqual(symbol, 'gPlayerAnim_link_normal_wait_free')
+        total, frames = blm.read_animation_frames(
+            self.keep, self.animetion, self.offsets[symbol],
+            first, count, stride, blm.LIMB_COUNT)
+        self.assertEqual(first, 0)
+        self.assertEqual(len(frames), total)
+        for a, b in zip(frames[0][0], frames[-1][0]):
+            self.assertLessEqual(abs(a - b), 2)
+        for start, end in zip(frames[0][1], frames[-1][1]):
+            for a, b in zip(start, end):
+                delta = (b - a + 32768) % 65536 - 32768
+                self.assertLessEqual(abs(delta), 32)
+
     def test_every_clip_resolves_and_decodes(self):
         for name, symbol, first, count, stride in blm.CLIPS:
             with self.subTest(clip=name):

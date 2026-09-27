@@ -52,6 +52,44 @@ class ActorSys(unittest.TestCase):
     def test_storage_too_small_is_refused(self):
         self.assertEqual(self.lib.as_init_small(), 0)
 
+    def test_handle_does_not_follow_reused_slot(self):
+        slot = self.spawn(NPC)
+        old = self.lib.as_handle(slot)
+        self.assertNotEqual(old, 0)
+        self.lib.as_kill(slot)
+        self.assertEqual(self.spawn(ENEMY), slot)
+        self.assertEqual(self.lib.as_resolve(old), -1)
+        fresh = self.lib.as_handle(slot)
+        self.assertNotEqual(fresh, old)
+        self.assertEqual(self.lib.as_resolve(fresh), slot)
+
+    def test_handle_invalidated_before_deferred_reap(self):
+        slot = self.spawn(NPC, params=1)
+        old = self.lib.as_handle(slot)
+        self.lib.actor_sys_update()
+        self.assertEqual(self.lib.as_dead_handle_resolved(), 0)
+        self.assertEqual(self.lib.as_resolve(old), -1)
+
+    def test_handle_survives_persistent_scene_actor_only(self):
+        ordinary = self.lib.as_handle(self.spawn(NPC))
+        keep = self.lib.as_handle(self.spawn(KEEP))
+        self.lib.actor_sys_scene_unload()
+        self.assertEqual(self.lib.as_resolve(ordinary), -1)
+        self.assertNotEqual(self.lib.as_resolve(keep), -1)
+        self.lib.actor_sys_clear()
+        self.assertEqual(self.lib.as_resolve(keep), -1)
+
+    def test_pool_reinit_does_not_revive_handles(self):
+        slot = self.spawn(NPC)
+        old = self.lib.as_handle(slot)
+        self.lib.as_reset()
+        self.assertEqual(self.spawn(NPC), slot)
+        self.assertEqual(self.lib.as_resolve(old), -1)
+        self.assertEqual(self.lib.as_resolve(0), -1)
+
+    def test_pool_still_fits_fixed_cart_carve(self):
+        self.assertLessEqual(self.lib.actor_sys_bytes(), 8192)
+
     def test_spawn_runs_init_and_fills_to_capacity(self):
         slots = [self.spawn(NPC) for _ in range(64)]
         self.assertEqual(sorted(slots), list(range(64)))
@@ -239,6 +277,58 @@ class ActorSys(unittest.TestCase):
         self.lib.co_apply(1)
         self.assertEqual(self.lib.co_x(1), 30)
 
+    def test_oc_push_goes_through_world_checks(self):
+        """A pool actor pushed toward a wall stops at it (collide_world_push)."""
+        self.assertEqual(self.lib.as_reset(), 1)
+        a, b = self.spawn(NPC), self.spawn(NPC, x=30)
+        self.lib.co_clear()
+        self.lib.co_cyl(0, 0, 0, 0, 20, 40, 50)
+        self.lib.co_bind(0, a)
+        self.lib.co_cyl(1, 0, 0, 0, 20, 40, 50)
+        self.lib.co_bind(1, b)
+        self.lib.co_oc(0, OC_ON | OC_T1, OC_T1)
+        self.lib.co_oc(1, OC_ON | OC_T1, OC_T1)
+        self.lib.co_wall(33)
+        self.lib.co_run()
+        self.lib.co_apply(1)
+        self.lib.co_wall(0x7FFFFFFF)
+        self.assertEqual(self.lib.as_x(b), 33)
+
+    def elements_case(self, grouped):
+        self.assertEqual(self.lib.as_reset(), 1)
+        enemy, victim = self.spawn(ENEMY), self.spawn(NPC, x=10)
+        self.lib.co_clear()
+        self.lib.co_cyl(0, 0, 0, 0, 30, 40, 50)
+        self.lib.co_bind(0, enemy)
+        self.lib.co_at(0, DMG_SLASH, 2, AT_ENEMY)
+        for i in (1, 2):
+            self.lib.co_cyl(i, 5 * i, 0, 0, 10, 40, 50)
+            self.lib.co_bind(i, victim)
+            if grouped:
+                self.lib.co_element(i)
+            self.lib.co_ac(i, 0xFFFFFFFF, 0, 0, AT_ENEMY, 0)
+        self.lib.co_run()
+        return self.lib.co_events()
+
+    def test_one_at_takes_one_element_of_a_multi_element_actor(self):
+        """BUG-030: JntSph elements of one actor take one hit per AT per pass."""
+        self.assertEqual(self.elements_case(True), 1)
+        self.assertEqual(self.elements_case(False), 2)   # separate colliders
+
+    def test_fifth_live_attack_evicts_and_invincibility_holds(self):
+        """History is bounded (4); actor-level i-frames are the real guard."""
+        self.lib.co_clear()
+        self.lib.co_cyl(1, 0, 0, 0, 20, 40, 50)
+        hits = [self.step(attack_id=a) for a in (1, 2, 3, 4, 1)]
+        self.assertEqual(hits, [1, 1, 1, 1, 0])           # remembered
+        hits = [self.step(attack_id=a) for a in (5, 1)]
+        self.assertEqual(hits, [1, 1])                    # 1 evicted by 5
+        self.lib.co_begin()
+        self.swing(attack_id=6)
+        self.lib.co_ac(1, 0xFFFFFFFF, 0, 0, AT_PLAYER, 30)
+        self.lib.co_run()
+        self.assertEqual(self.lib.co_events(), 0)         # victim intangible
+
     def test_oc_type_mismatch_skips(self):
         self.lib.co_clear()
         self.lib.co_cyl(0, 0, 0, 0, 20, 40, 50)
@@ -248,6 +338,225 @@ class ActorSys(unittest.TestCase):
         self.lib.co_run()
         self.assertEqual(self.lib.co_oc_hit(0), -1)
 
+    # ---- M2b contact loop -------------------------------------------------
+    def swing(self, attack_id=7, tag=0):
+        """Attacker 0 at the origin; victims overlap it."""
+        self.lib.co_cyl(0, 0, 0, 0, 20, 40, 50)
+        self.lib.co_attack(0, attack_id, tag)
+        self.lib.co_at(0, DMG_SLASH, 2, AT_PLAYER)
+
+    def victims(self, *indices):
+        for i in indices:
+            self.lib.co_ac(i, 0xFFFFFFFF, 0, 0, AT_PLAYER, 0)
+
+    def step(self, attack_id=7, tag=0, victims=(1,)):
+        self.lib.co_begin()
+        self.swing(attack_id, tag)
+        self.victims(*victims)
+        self.lib.co_run()
+        return self.lib.co_events()
+
+    def test_one_attack_hits_every_victim_once(self):
+        self.lib.co_clear()
+        self.lib.co_cyl(1, 10, 0, 0, 20, 40, 50)
+        self.lib.co_cyl(2, -10, 0, 0, 20, 40, 50)
+        self.assertEqual(self.step(victims=(1, 2)), 2)
+        self.assertEqual(self.lib.co_at_hits(0), 2)
+        self.assertEqual({self.lib.co_event(0, 3), self.lib.co_event(1, 3)}, {7})
+        # Next step, overlap lingers: the same attack instance cannot re-hit.
+        self.assertEqual(self.step(victims=(1, 2)), 0)
+        self.assertEqual(self.lib.co_ac_hit(1), -1)
+        # A new attack instance does hit again.
+        self.assertEqual(self.step(attack_id=8, victims=(1, 2)), 2)
+
+    def test_separate_attackers_with_same_counter_both_hit(self):
+        self.lib.co_clear()
+        self.lib.co_cyl(1, 10, 0, 0, 20, 40, 50)
+        self.assertEqual(self.step(tag=1), 1)
+        self.assertEqual(self.step(tag=2), 1)
+
+    def test_untracked_attack_rehits_and_forget_rearms(self):
+        self.lib.co_clear()
+        self.lib.co_cyl(1, 10, 0, 0, 20, 40, 50)
+        self.assertEqual(self.step(attack_id=0), 1)
+        self.assertEqual(self.step(attack_id=0), 1)
+        self.assertEqual(self.step(), 1)
+        self.assertEqual(self.step(), 0)
+        self.lib.co_forget(1)
+        self.assertEqual(self.step(), 1)
+
+    def guard_case(self, shield_first, shield_dx=2):
+        """Enemy attacker 0; Link's body 1 and hard shield 2 (both Link's)."""
+        self.assertEqual(self.lib.as_reset(), 1)
+        enemy, link = self.spawn(ENEMY), self.spawn(NPC, x=10)
+        self.lib.co_clear()
+        self.lib.co_cyl(0, 0, 0, 0, 20, 40, 50)
+        self.lib.co_bind(0, enemy)
+        self.lib.co_at(0, DMG_SLASH, 2, AT_ENEMY)
+        self.lib.co_cyl(1, 0, 0, 0, 10, 40, 50)
+        self.lib.co_bind(1, link)
+        self.lib.co_cyl(2, shield_dx, 0, 0, 6, 40, 50)
+        self.lib.co_bind(2, link)
+        self.lib.co_hard(2)
+        for i in ((2, 1) if shield_first else (1, 2)):
+            self.lib.co_ac(i, 0xFFFFFFFF, 0, 0, AT_ENEMY, 0)
+        self.lib.co_run()
+        return enemy, link
+
+    def test_shield_bounce_wins_regardless_of_registration_order(self):
+        for first in (True, False):
+            enemy, link = self.guard_case(first)
+            self.assertEqual(self.lib.co_guard(2), 1, first)
+            self.assertTrue(self.lib.co_result(0) & 2)          # AT_BOUNCED
+            self.assertEqual(self.lib.co_ac_actor(1), self.lib.as_handle(enemy))
+            self.assertEqual(self.lib.co_ac_actor(2), self.lib.as_handle(enemy))
+            self.assertEqual(self.lib.co_at_actor(0) in
+                             (self.lib.as_handle(link),), True)
+
+    def test_guard_misses_when_shield_is_not_struck(self):
+        self.guard_case(True, shield_dx=200)
+        self.assertEqual(self.lib.co_guard(2), 0)
+        self.assertEqual(self.lib.co_damage(1), 2)
+        self.assertEqual(self.lib.co_result(0) & 2, 0)
+
+    def test_hard_bounce_needs_actors_on_both_sides(self):
+        self.lib.co_clear()
+        self.lib.co_cyl(1, 10, 0, 0, 20, 40, 50)
+        self.lib.co_hard(1)
+        self.assertEqual(self.step(), 1)
+        self.assertEqual(self.lib.co_guard(1), 0)
+        self.assertEqual(self.lib.co_event(0, 5), 0)
+
+    def test_outside_pool_owners_count_as_actors_for_hard_bounce(self):
+        """Link and the boulder live outside actor_sys but are source actors."""
+        self.lib.co_clear()
+        self.lib.co_cyl(0, 0, 0, 0, 20, 40, 50)
+        self.lib.co_outside(0)
+        self.lib.co_at(0, DMG_SLASH, 2, AT_ENEMY)
+        self.lib.co_cyl(1, 10, 0, 0, 10, 40, 50)
+        self.lib.co_hard(1)
+        self.lib.co_outside(1)
+        self.lib.co_ac(1, 0xFFFFFFFF, 0, 0, AT_ENEMY, 0)
+        self.lib.co_run()
+        self.assertEqual(self.lib.co_guard(1), 1)
+
+    def test_teardown_invalidates_contacts_before_slot_reuse(self):
+        victim = self.spawn(ENEMY, x=10)
+        self.lib.co_clear()
+        self.lib.co_cyl(1, -10, 0, 0, 20, 40, 50)
+        self.lib.co_bind(1, victim)
+        self.assertEqual(self.step(), 1)
+        held = self.lib.co_event(0, 1)
+        self.assertEqual(self.lib.as_resolve(held), victim)
+        self.lib.as_kill(victim)
+        self.assertEqual(self.lib.as_resolve(held), -1)      # before reap
+        self.lib.actor_sys_update()
+        self.assertEqual(self.spawn(NPC, x=10), victim)      # slot reused
+        self.assertEqual(self.lib.as_resolve(held), -1)
+        # Killed before the run: no contact at all.
+        self.lib.as_kill(victim)
+        self.lib.co_forget(1)
+        self.assertEqual(self.step(attack_id=9), 0)
+
+    def test_bug028_registered_colliders_do_not_follow_reused_slots(self):
+        # Victim replaced between registration and run.
+        victim = self.spawn(ENEMY, x=10)
+        self.lib.co_clear()
+        self.lib.co_cyl(1, -10, 0, 0, 20, 40, 50)
+        self.lib.co_bind(1, victim)
+        self.swing()
+        self.victims(1)
+        self.lib.as_kill(victim)
+        self.lib.actor_sys_update()
+        self.assertEqual(self.spawn(NPC, x=10), victim)
+        self.lib.co_run()
+        self.assertEqual(self.lib.co_events(), 0)
+        # Attacker replaced between registration and run.
+        self.assertEqual(self.lib.as_reset(), 1)
+        attacker = self.spawn(ENEMY)
+        self.lib.co_clear()
+        self.lib.co_cyl(0, 0, 0, 0, 20, 40, 50)
+        self.lib.co_bind(0, attacker)
+        self.lib.co_at(0, DMG_SLASH, 2, AT_PLAYER)
+        self.lib.co_cyl(1, 10, 0, 0, 20, 40, 50)
+        self.victims(1)
+        self.lib.as_kill(attacker)
+        self.lib.actor_sys_update()
+        self.assertEqual(self.spawn(NPC), attacker)
+        self.lib.co_run()
+        self.assertEqual(self.lib.co_events(), 0)
+        # OC partner replaced: no hit, no push onto the replacement.
+        self.assertEqual(self.lib.as_reset(), 1)
+        a, b = self.spawn(ENEMY), self.spawn(ENEMY, x=30)
+        self.lib.co_clear()
+        self.lib.co_cyl(0, 0, 0, 0, 20, 40, 50)
+        self.lib.co_bind(0, a)
+        self.lib.co_cyl(1, 0, 0, 0, 20, 40, 50)
+        self.lib.co_bind(1, b)
+        self.lib.co_oc(0, OC_ON | OC_T1 | OC_PLAYER, OC_PLAYER)
+        self.lib.co_oc(1, OC_ON | OC_PLAYER, OC_T1)
+        self.lib.as_kill(b)
+        self.lib.actor_sys_update()
+        self.assertEqual(self.spawn(NPC, x=30), b)
+        self.lib.co_run()
+        self.assertEqual(self.lib.co_oc_hit(0), -1)
+        self.assertEqual(self.lib.co_disp_x(0), 0)
+
+    def test_bug029_alternating_attacks_hit_once_each(self):
+        self.lib.co_clear()
+        self.lib.co_cyl(1, 10, 0, 0, 20, 40, 50)
+        self.assertEqual([self.step(tag=t) for t in (1, 2, 1, 2)], [1, 1, 0, 0])
+        # Same with distinct attacker actors.
+        self.assertEqual(self.lib.as_reset(), 1)
+        actors = (self.spawn(ENEMY), self.spawn(ENEMY))
+        self.lib.co_clear()
+        self.lib.co_cyl(1, 10, 0, 0, 20, 40, 50)
+        counts = []
+        for who in (0, 1, 0):
+            self.lib.co_begin()
+            self.lib.co_cyl(0, 0, 0, 0, 20, 40, 50)
+            self.lib.co_bind(0, actors[who])
+            self.lib.co_attack(0, 7, 0)
+            self.lib.co_at(0, DMG_SLASH, 2, AT_PLAYER)
+            self.victims(1)
+            self.lib.co_run()
+            counts.append(self.lib.co_events())
+        self.assertEqual(counts, [1, 1, 0])
+
+    def test_victim_memory_bound_is_explicit(self):
+        # COLLIDE_SEEN_MAX = 4: a fifth distinct attack evicts the oldest.
+        self.lib.co_clear()
+        self.lib.co_cyl(1, 10, 0, 0, 20, 40, 50)
+        self.assertEqual([self.step(tag=t) for t in (1, 2, 3, 4)], [1] * 4)
+        self.assertEqual([self.step(tag=t) for t in (2, 3, 4)], [0] * 3)
+        self.assertEqual(self.step(tag=5), 1)
+        self.assertEqual(self.step(tag=1), 1)       # evicted: documented limit
+
+    def test_list_overflow_is_counted(self):
+        self.lib.co_clear()
+        self.lib.co_overflow_reset()
+        self.assertEqual(self.lib.co_flood(33), 32)
+        self.assertEqual(self.lib.co_overflow(), 1)
+        self.lib.co_overflow_reset()
+        self.assertEqual(self.lib.co_overflow(), 0)
+
+    def test_event_log_is_bounded(self):
+        self.lib.co_clear()
+        self.lib.co_overflow_reset()
+        self.lib.co_cyl(0, 0, 0, 0, 20, 40, 50)
+        self.lib.co_at(0, DMG_SLASH, 1, AT_PLAYER)
+        self.assertEqual(self.lib.co_flood_hits(32), 32)
+        self.lib.co_run()
+        self.assertEqual(self.lib.co_events(), 32)
+        self.assertEqual(self.lib.co_overflow(), 0)
+
+    def test_sector_matches_slice_swing_reach(self):
+        self.lib.co_clear()
+        self.lib.co_sector(0, 0, 0, 0, 66, 60, 0, 16384)
+        for x, y, z, hit in ((0, 0, 60, 1), (0, 0, 67, 0), (0, 61, 30, 0),
+                             (30, 0, 1, 1), (30, 0, -5, 0), (-40, 40, 40, 1)):
+            self.lib.co_cyl(1, x, y, z, 0, 0, 50)
+            self.assertEqual(self.lib.co_overlap(0, 1) > 0, bool(hit), (x, y, z))
 
 if __name__ == '__main__':
     unittest.main()

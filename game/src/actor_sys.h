@@ -53,6 +53,8 @@ typedef enum
 #define ACTOR_FLAG_TARGETABLE   (1u << 1)   /* OoT ACTOR_FLAG_ATTENTION_ENABLED */
 
 typedef struct actor actor_t;
+typedef uint32_t actor_handle_t;
+#define ACTOR_HANDLE_NONE 0u
 
 typedef struct
 {
@@ -78,6 +80,7 @@ struct actor
     uint8_t     attention;                  /* actor_attention_t */
     uint8_t     kill;                       /* marked; freed after update */
     uint8_t     pad;
+    actor_handle_t identity;               /* never reused during this boot */
     int32_t     data[ACTOR_DATA_WORDS];     /* per-type state */
 };
 
@@ -99,6 +102,10 @@ void            actor_sys_scene_unload(void);
 unsigned int    actor_sys_live(void);
 actor_t        *actor_sys_slot(unsigned int index);  /* 0 when free */
 actor_t        *actor_sys_find(uint16_t id, const actor_t *after);
+/* Contacts/targets retain handles, not pool pointers. A kill invalidates a
+ * handle immediately, including before deferred destruction runs. */
+actor_handle_t  actor_handle(const actor_t *actor);
+actor_t        *actor_resolve(actor_handle_t handle);
 
 /* Nearest live targetable actor of an attention mask (1 << ATTN_*) within
 ** `range` on the XZ plane. */

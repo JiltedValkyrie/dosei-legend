@@ -30,17 +30,27 @@ EFFECTS = (
     ('roll', 'CHAN_0731', 27, 'D2', .18),
     ('rupee', 'LAYER_587A', 91, 'C5', .30),  # NA_SE_SY_GET_RUPY sample layer
     ('navi_dash', 'CHAN_1B01', 69, 'B5', .65),  # NA_SE_EV_FAIRY_DASH
+    # M2c combat (forest area bank). NA_SE_IT_WALL_HIT_HARD (SOFT reuses it
+    # at its own pitch in action_audio.c), NA_SE_IT_SHIELD_REFLECT_SW first
+    # layer, NA_SE_EN_OCTAROCK_ROCK (Soundfont 1 INST_40, sample bank 0).
+    ('wall_hit', 'CHAN_1187', 26, 'E2', .25),
+    ('reflect', 'CHAN_0FE9', 32, 'C4', .25),
+    ('nut_break', 'CHAN_43F8', 40, 'A2', .25, 1),
 )
+# Stored at half rate to leave sound RAM for the combat bank (BUG-036).
+HALF_RATE = ('voice', 'climb', 'navi_dash', 'shield', 'equip',
+             'wall_hit', 'reflect', 'nut_break')
 
 # Per-area SFX banks (demo plan M0). Core = ACTIONS.PCM, resident in every
 # gameplay scene (Link, UI, Navi, rupee). Area sounds live in one swappable
 # bank loaded right after the core on scene load; bank 0 is "no area sounds".
 # A sound may appear in several banks. Scenes pick a bank by `sfx` in
 # build_scene_table.SCENES. OPENING.PCM still replaces the whole region.
-AREA_SOUNDS = ('cut',)
+AREA_SOUNDS = ('cut', 'wall_hit', 'reflect', 'nut_break')
 AREA_BANKS = (
     (None, ()),                     # 0: interiors, nothing area-specific
-    ('SFXFRST.PCM', ('cut',)),      # 1: outdoor forest (grass cutting)
+    # 1: outdoor forest: grass cutting and the M2c combat sounds.
+    ('SFXFRST.PCM', ('cut', 'wall_hit', 'reflect', 'nut_break')),
 )
 
 
@@ -154,14 +164,16 @@ def rupee_melody(oot):
 def build(oot, source, out):
     seq = (oot / 'assets/audio/sequences/seq_0.prg.seq').read_text()
     font = ET.parse(source / 'soundfonts/Soundfont_0.xml')
+    fonts = {0: font, 1: ET.parse(source / 'soundfonts/Soundfont_1.xml')}
     entries = []
-    for name, layer, inst, pitch, duration in EFFECTS:
+    for name, layer, inst, pitch, duration, *which in EFFECTS:
+        which = which[0] if which else 0
         prefix = '.channel ' if layer.startswith('CHAN_') else '.layer '
         block = seq.split(prefix+layer+'\n', 1)[1].split('\n.channel', 1)[0]
         if prefix == '.layer ': block = block.split('\n.layer', 1)[0]
-        if 'SF0_INST_%d' % inst not in block or 'PITCH_'+pitch not in block:
+        if 'SF%d_INST_%d' % (which, inst) not in block or 'PITCH_'+pitch not in block:
             raise ValueError('OoT SFX layer changed: '+layer)
-        sample = font.find('.//Instrument[@ProgramNumber="%d"]' % inst).attrib['Sample']
+        sample = fonts[which].find('.//Instrument[@ProgramNumber="%d"]' % inst).attrib['Sample']
         entries.append((name, sample, note(pitch), duration, layer))
     array = seq.split('.array ARRAY_6347', 1)[1].split('.array', 1)[0]
     for i in range(4):
@@ -189,8 +201,7 @@ def build(oot, source, out):
         path = source / ('samples/SampleBank_0/Sample%03d.wav' % int(sample.rsplit('_',1)[1]))
         # Keep all four voices and their duration/pitch. Lower their stored
         # rate to make space for resident Navi without overlapping music RAM.
-        sample_rate = (RATE / 2 if name.startswith(('voice', 'climb')) or name == 'navi_dash'
-                       else RATE)
+        sample_rate = RATE / 2 if name.startswith(HALF_RATE) else RATE
         pcm = (fairy_audio.dash_sample(source, sys.modules[__name__]) if name == 'navi_dash'
                else render(*decode(path), key, duration, output_rate=sample_rate))
         untrimmed_length = len(pcm)
@@ -242,6 +253,10 @@ def build(oot, source, out):
     lines += ['    {%d, %d},' % (r['offset'],r['length']) for r in records]
     lines += ['};']
     lines += ['#define ACTION_%s %d' % (r['name'].upper(), i) for i,r in enumerate(records)]
+    # SCSP OCT for each sample's stored rate (44100 >> 2 = 11025 is 14).
+    octave = lambda rate: 14 if rate == RATE else 13
+    lines += ['static const unsigned char action_pcm_octave[ACTION_PCM_COUNT] = {%s};'
+              % ','.join(str(octave(r.get('rate') or RATE)) for r in records)]
     lines += ['#define RUPEE_NOTE_COUNT 3', '#define RUPEE_TICKS_PER_SECOND 96',
               '#define RUPEE_BED_LEVEL %d' % melody['bed_level'],
               'static const unsigned short rupee_pitches[3] = {%s};' % ','.join(map(str,melody['pitches'])),
@@ -253,6 +268,8 @@ def build(oot, source, out):
               '#define SFX_BANK_COUNT %d' % len(area_banks),
               '#define AREA_SFX_COUNT %d' % len(AREA_SOUNDS)]
     lines += ['#define AREA_SFX_%s %d' % (n.upper(), i) for i, n in enumerate(AREA_SOUNDS)]
+    lines += ['static const unsigned char area_sfx_octave[AREA_SFX_COUNT] = {%s};'
+              % ','.join(str(14 if area_pcm[n][1]['rate'] == RATE else 13) for n in AREA_SOUNDS)]
     lines += ['static const char *const sfx_bank_file[SFX_BANK_COUNT] = {%s};'
               % ', '.join('"%s"' % f if f else '0' for f, _, _ in area_banks),
               'static const unsigned int sfx_bank_bytes[SFX_BANK_COUNT] = {%s};'

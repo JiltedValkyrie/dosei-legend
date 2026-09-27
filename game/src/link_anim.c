@@ -383,3 +383,22 @@ void            link_anim_reset(void)
 {
     posed_frame = -1;
 }
+
+/* OoT PLAYER_LIMB_L_HAND is 0x10; imported limb indices start at zero.
+ * z_player_lib.c Kokiri sword: base (0,400,0), tip (3000,400,0). */
+void link_anim_blade(int32_t out[2][3])
+{
+    const limb_matrix_t *hand = &limb_matrices[15];
+    unsigned int end, axis;
+    for (end = 0; end < 2; ++end) {
+        for (axis = 0; axis < 3; ++axis) {
+            int32_t model = hand->origin[axis] +
+                (FIXED_MUL(hand->m[axis][0], INTEGER_FIXED(end ? 3000 : 0)) +
+                 FIXED_MUL(hand->m[axis][1], INTEGER_FIXED(400))) / 65536;
+            out[end][axis] = model * LINK_ANIM_SCALE_Q16;
+        }
+        out[end][0] += INTEGER_FIXED(LINK_ANIM_SHIFT_X);
+        out[end][1] += INTEGER_FIXED(LINK_ANIM_SHIFT_Y);
+        out[end][2] += INTEGER_FIXED(LINK_ANIM_SHIFT_Z);
+    }
+}

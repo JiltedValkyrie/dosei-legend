@@ -21,7 +21,9 @@ class GrassFloor(unittest.TestCase):
                                   (-570, 1720, 144, 120)]:
             self.assertAlmostEqual(actors.floor_under(raw, x, z, 200), old, delta=1)
             self.assertAlmostEqual(actors.floor_under(solid, x, z, 200), ground, delta=1)
-        for _, x, y, z in actors.PICKUPS:
+        # The retired ground-pickup spots are En_Item00 rupee spots; they
+        # still sit on real floor, not on the grass tops.
+        for x, y, z in ((-537, 1, 194), (35, 1, -418)):
             self.assertEqual(actors.floor_under(solid, x, z, y), 1)
 
 

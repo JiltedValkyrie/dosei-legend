@@ -53,6 +53,10 @@ SCENES = (
     dict(prefix='spot04', rooms=3, shape='mesh',
          scene='SCENE_KOKIRI_FOREST', sfx=1,
          save='SAVE_SCENE_KOKIRI_FOREST', name='Kokiri Forest'),
+    # M2b.1: the Deku Shield is bought here. Prerendered like Link's house.
+    dict(prefix='kokiri_shop', rooms=1, shape='image',
+         scene='SCENE_KOKIRI_SHOP', sfx=0,
+         save='SAVE_SCENE_KOKIRI_SHOP', name='Kokiri Shop'),
 )
 
 # A new file begins here: Link's house, spawn 0 (the bed).

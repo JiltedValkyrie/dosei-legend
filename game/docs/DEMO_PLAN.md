@@ -240,6 +240,13 @@ Accept: every traversal case in Kokiri + ydan geometry works forward/back;
 no stuck states; standing can't bypass crawl hole.
 
 ### M2 — combat core
+Human update 2026-09-26: add **M2b.1 starter-equipment route** after contact/body
+work, before M2c human combat testing (FEAT-001). Maze sword chest, shop shield
+for 40 rupees, reachable pre-sword rupee income and Mido equipped-both gate move
+forward from M3. Remove ground equipment once this works; verify fresh file and
+save/reload. Maze boulder path/collision moves forward; damage complete by final
+M2 acceptance. M3 extends the shared systems. See M2_COMBAT_PLAN.md M2b.1.
+
 Sword: slash variants + combo table, thrust, jump slash (Z+A), spin (hold X
 charge + release, no magic spin), crouch stab, wall rebound. Shield: guard,
 deflect (Deku nut/seed reflect), recoil. Z-targeting: shared attention registry

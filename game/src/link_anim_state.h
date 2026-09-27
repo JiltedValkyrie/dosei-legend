@@ -49,6 +49,11 @@ typedef enum
 void                link_anim_pose(unsigned int clip, unsigned int frame,
                                    unsigned int fraction);
 void                link_anim_reset(void);
+/* Sample the posed blade once per displayed gameplay step; world-space trail. */
+void                link_anim_trail_update(int x, int y, int z, int yaw, bool active);
+void                link_anim_trail_draw(void);
+void                link_anim_trail_reset(void);
+void                link_anim_blade(int32_t out[2][3]);
 /* Idle analog turn: advances facing by at most 800 binang per 30 Hz step.
 ** Caller supplies only eligible grounded, unlocked light-tilt input. */
 void                link_anim_turn(bool requested, uint16_t target, uint16_t *facing);
@@ -146,8 +151,12 @@ void                link_anim_reset_state(void);
 void                link_anim_update(int32_t speed, bool grounded,
                                      int32_t fall_units, bool roll_pressed);
 /* Combat presentation follows the gameplay clock, never render cadence. */
-void                link_anim_combat(unsigned int swing_remaining,
-                                     bool shielding);
+/* A clip's root (model units) at a time in thirds of a frame. */
+void link_anim_clip_root(unsigned int clip, unsigned int thirds, int32_t out[3]);
+/* Sidehop/backflip flight clip, then its landing clip (func_8083BCD0). */
+void link_anim_evade(unsigned int clip, unsigned int end_clip);
+void link_anim_combat(bool attacking, unsigned int clip, unsigned int frame,
+                      bool shielding);
 /* One-step sound events from actual locomotion clip frame crossings. */
 uint32_t            link_anim_motion_events(void);
 

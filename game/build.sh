@@ -91,6 +91,8 @@ rm -f "$here"/build/cd/S*.SUR
 "$python" "$here/tools/build_scene_backdrops.py" --oot "$oot" --rom-dir "$roms"
 "$python" "$here/tools/build_actors.py" --oot "$oot" --rom-dir "$roms"
 "$python" "$here/tools/build_dialogue.py" --oot "$oot"
+"$python" "$here/tools/build_minimap.py" --oot "$oot"
+"$python" "$here/tools/build_cdda.py"
 "$python" "$here/tools/build_action_audio.py" --oot "$oot"
 "$python" "$here/tools/build_opening_audio.py" --oot "$oot"
 "$python" "$here/tools/build_demo_assets.py" --oot "$oot"

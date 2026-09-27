@@ -4,6 +4,9 @@
 
 static actor_t     *pool;
 static bool         updating;
+/* Never reset by scene clear or pool re-init. Exhaustion refuses a spawn
+ * rather than allowing an ancient contact to resolve to a new actor. */
+static actor_handle_t next_identity;
 
 unsigned int    actor_sys_bytes(void)
 {
@@ -33,6 +36,7 @@ bool            actor_sys_init(void *storage, unsigned int bytes)
 
 static void     destroy(actor_t *a)
 {
+    a->kill = 1;
     if (a->profile && a->profile->destroy)
         a->profile->destroy(a);
     wipe(a);
@@ -56,7 +60,8 @@ actor_t        *actor_spawn(const actor_profile_t *profile, unsigned int scene,
     unsigned int    i;
     actor_t        *a;
 
-    if (!pool || !profile || profile->category >= ACTORCAT_MAX)
+    if (!pool || !profile || profile->category >= ACTORCAT_MAX ||
+        next_identity == UINT32_MAX)
         return ((actor_t *)0);
     for (i = 0; i < ACTOR_POOL_MAX; ++i)
         if (!pool[i].profile)
@@ -65,6 +70,7 @@ actor_t        *actor_spawn(const actor_profile_t *profile, unsigned int scene,
         return ((actor_t *)0);      /* pool full: caller records the miss */
     a = &pool[i];
     wipe(a);
+    a->identity = ++next_identity;
     a->profile = profile;
     a->x = x; a->y = y; a->z = z;
     a->yaw = yaw;
@@ -85,6 +91,29 @@ void            actor_kill(actor_t *a)
         a->kill = 1;
     else
         destroy(a);
+}
+
+actor_handle_t actor_handle(const actor_t *actor)
+{
+    /* O(1): the contact loop asks this per collider pair. */
+    uintptr_t offset;
+    if (!pool || !actor) return ACTOR_HANDLE_NONE;
+    offset = (uintptr_t)actor - (uintptr_t)pool;
+    if ((uintptr_t)actor < (uintptr_t)pool ||
+        offset >= ACTOR_POOL_MAX * sizeof(actor_t) || offset % sizeof(actor_t))
+        return ACTOR_HANDLE_NONE;
+    actor = &pool[offset / sizeof(actor_t)];
+    return actor->profile && !actor->kill ? actor->identity : ACTOR_HANDLE_NONE;
+}
+
+actor_t *actor_resolve(actor_handle_t handle)
+{
+    unsigned int i;
+    if (!pool || !handle) return (actor_t *)0;
+    for (i = 0; i < ACTOR_POOL_MAX; ++i)
+        if (pool[i].identity == handle && pool[i].profile && !pool[i].kill)
+            return &pool[i];
+    return (actor_t *)0;
 }
 
 static void     reap(void)

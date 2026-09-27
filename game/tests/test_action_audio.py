@@ -71,6 +71,7 @@ typedef struct { unsigned int size; } jo_file;
 static unsigned short regs[32][16];
 #define SLOT(s,o) regs[s][(o)/2]
 static bool busy;
+gameplay_t gameplay;   /* wall_material for the wall-hit pitch */
 #define JO_VDP2_TVSTAT 0
 static bool jo_core_add_vblank_callback(void (*cb)(void)) { return true; }
 static bool music_busy(void) { return busy; }
@@ -115,6 +116,23 @@ void refresh(unsigned int hz) { sound_refresh = hz; }
             self.lib.reset()
             self.lib.action_audio_events(event)
             self.assertTrue(self.lib.reg(slot,0) & 0x800)
+
+    def test_climb_end_voice_plays_at_its_stored_half_rate(self):
+        # Roll bonk / climb end: EFFECT_35 is stored at 5512.5 Hz (octave 13).
+        self.lib.action_audio_events(1 << 22)
+        self.assertEqual(self.lib.reg(25,16), 13 << 11)
+
+    def test_combat_sounds_use_the_forest_bank(self):
+        for event, pitch in ((1 << 28, 13 << 11), (1 << 27, 13 << 11),
+                             (1 << 29, 13 << 11), (1 << 30, 13 << 11)):
+            self.lib.reset()
+            self.lib.action_audio_events(event)
+            self.assertTrue(self.lib.reg(28,0) & 0x800, hex(event))
+            self.assertEqual(self.lib.reg(28,16), pitch)
+            self.lib.reset()
+            self.lib.set_area(0, True)
+            self.lib.action_audio_events(event)
+            self.assertEqual(self.lib.reg(28,0), 0)
 
     def test_cut_uses_area_bank_address_and_is_silent_without_it(self):
         self.lib.action_audio_events(4)

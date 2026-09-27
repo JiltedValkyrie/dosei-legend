@@ -152,12 +152,21 @@ void action_audio_opening_stop(unsigned int channel)
 
 static void play(unsigned int id, unsigned int slot)
 {
-    unsigned int octave = (id >= ACTION_VOICE0 && id <= ACTION_VOICE3) ? 13 : 14;
-    play_sample(id, slot, octave << 11, 12, false);
+    /* OCT from the stored rate: half-rate samples (voices, climb, shield,
+    ** equip) play one octave down so they keep their pitch. */
+    play_sample(id, slot, (unsigned int)action_pcm_octave[id < ACTION_PCM_COUNT ? id : 0] << 11,
+                12, false);
 }
 
-/* Area one-shot: silent when the current area bank lacks the sound. */
+/* Area one-shot: silent when the current area bank lacks the sound.
+** `shift` is added to the sample's pitch register (OCT/FNS). */
+static void play_area_pitch(unsigned int id, unsigned int slot, unsigned int shift);
 static void play_area(unsigned int id, unsigned int slot)
+{
+    play_area_pitch(id, slot, 0);
+}
+
+static void play_area_pitch(unsigned int id, unsigned int slot, unsigned int shift)
 {
     const action_pcm_t *sample;
     unsigned int address, key;
@@ -175,7 +184,7 @@ static void play_area(unsigned int id, unsigned int slot)
     SLOT(slot,8) = 31;
     SLOT(slot,10) = 31;
     SLOT(slot,14) = 0;
-    SLOT(slot,16) = 14 << 11;
+    SLOT(slot,16) = (unsigned short)(((unsigned int)area_sfx_octave[id] << 11) + shift);
     SLOT(slot,18) = 0;
     SLOT(slot,20) = 0;
     SLOT(slot,22) = 7 << 13;
@@ -292,6 +301,17 @@ void action_audio_events(uint32_t events)
     }
     if (events & GP_EVENT_RUPEE) rupee_start();
     if (events & GP_EVENT_CUT) play_area(AREA_SFX_CUT, 26);
+    /* M2c combat, forest bank, slot 28 (footsteps: Link is not walking while
+    ** swinging or guarding; 29/30 are the rupee). func_80842DF4: DIRT_SOFT (11) walls
+    ** play NA_SE_IT_WALL_HIT_SOFT (same instrument, A3 against E2: one
+    ** octave plus FNS for five semitones), others HARD. The shield bounce and
+    ** a sword bounce play NA_SE_IT_SHIELD_REFLECT_SW's first layer. */
+    if (events & GP_EVENT_WALL_HIT)
+        play_area_pitch(AREA_SFX_WALL_HIT, 28,
+                        gameplay.wall_material == 11 ? (1u << 11) + 343u : 0u);
+    else if (events & (GP_EVENT_GUARD | GP_EVENT_REBOUND))
+        play_area(AREA_SFX_REFLECT, 28);
+    if (events & GP_EVENT_NUT_BREAK) play_area(AREA_SFX_NUT_BREAK, 28);
     if (events & GP_EVENT_SHIELD_UP) play(ACTION_SHIELD, 24);
     if (events & GP_EVENT_JUMP) play(ACTION_JUMP, 25);
     /* Ledge hop: NA_SE_VO_LI_SWORD_N_KID, the same four takes as a swing. */

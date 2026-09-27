@@ -4,6 +4,7 @@
 
 #include <jo/jo.h>
 #include "scene_flow.h"
+#include "minimap.h"
 #include "asset_names.h"
 #include "action_audio.h"
 #include "kokiri_sgl.h"
@@ -158,6 +159,7 @@ bool            scene_flow_load(unsigned int scene, unsigned int spawn)
     /* Area SFX follow the scene. A failed bank load leaves those sounds
     ** silent rather than blocking the scene. */
     action_audio_set_area(entry->sfx_bank);
+    minimap_scene(entry->save_scene);
     current_scene = scene;
     loaded = true;
     door_armed = false;

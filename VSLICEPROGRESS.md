@@ -1,5 +1,16 @@
 # Vertical slice progress
 
+## M2b.1 starter route (2026-09-26, uncommitted)
+
+- Ground sword/shield gone. Sword from maze chest (En_Box 0x04E0), shield
+  bought in new Kokiri Shop scene for 40 rupees (VDP2 Buy/Don't buy choice).
+- Rupees before sword: source En_Item00 + En_Wonder_Item triggers, 43 total.
+- Mido blocks the Deku Tree path until sword AND shield equipped, then walks
+  aside; flags persist. Gear is owned on grant, equipped on the pause screen.
+- 75 gameplay tests pass. Clean built; work-RAM gap 5,488 B (BUG-033).
+  Human route check passed (2026-09-26). Stand-ins BUG-031 and boulder
+  BUG-032 remain pending; BUG-033 memory work is next priority.
+
 ## M1l traversal camera core (2026-09-26, uncommitted)
 
 - Hang/climb framing, eased return and traversal camera collision added;

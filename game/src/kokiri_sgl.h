@@ -62,7 +62,14 @@ int             kokiri_warp_probe(unsigned int field);
 /** @brief Draw ambient fairies at the original Kokiri NPC homes. */
 void            kokiri_fairies_draw(unsigned int tick);
 /* Gear pickup billboards, drawn only while the item is still uncollected. */
-void            kokiri_pickups_draw(unsigned int tick);
+void            kokiri_items_draw(unsigned int tick);
+void            kokiri_boulder_draw(void);
+void            kokiri_nut_draw(void);
+/* Resident 8-bit colour-bank texture from memory (minimap markers). */
+bool            kokiri_resident_sprite_8bit(const unsigned char *pixels,
+                                            unsigned int width, unsigned int height,
+                                            unsigned int *slot);
+extern unsigned int kokiri_sprite_peak;  /* peak sprite slots used */
 /* Link's companion fairy, at the position src/navi.c keeps for her. */
 void            kokiri_navi_draw(int x, int y, int z);
 void            kokiri_grass_draw(void);

@@ -8,6 +8,11 @@
 
 #define REG(o) (*(volatile unsigned short *)(0x25b00000UL + (o)))
 #define SLOT(s,o) REG((s)*32+(o))
+/* Red Book input: the CD's left/right (EXTS0/1) reach the mix through
+** slots 16/17's EFSDL/EFPAN (low byte of register 0x16). Every write of
+** that register keeps them at full level, hard left/right, or a CD track
+** would be muted whenever those two music voices play. */
+#define CD_SEND(s) ((s) == 16 ? (7<<5) | 0x1F : (s) == 17 ? (7<<5) | 0x0F : 0)
 #define MUSIC_MAX_VOICES 24
 #define VOLUME_MAX       15
 /* Default half-fade length; music_fade_to() takes an explicit one. */
@@ -97,7 +102,7 @@ static void start_note(const music_trigger_t *event)
     SLOT(s,16) = event->pitch;
     SLOT(s,18) = 0;
     SLOT(s,20) = 0;
-    SLOT(s,22) = (7<<13) | (event->pan<<8);
+    SLOT(s,22) = (7<<13) | (event->pan<<8) | CD_SEND(s);
     keys[s] |= 0x0800;
     SLOT(s,0) = keys[s] | 0x1000;
     active[s] = true;
@@ -402,6 +407,8 @@ bool music_init(const music_bank_t *first)
     REG(0x42a) = 0;
     for (i = 0; i < 0x400; i += 2) REG(i) = 0;
     for (i = 0; i < 32; ++i) { SLOT(i,12) = 255; SLOT(i,10) = 31; }
+    SLOT(16,22) = CD_SEND(16);
+    SLOT(17,22) = CD_SEND(17);
     SLOT(0,0) = 0x1000;
     for (i = 0; i < 0x200; i += 2) { ram[i] = 0; ram[i+1] = 0x0400; }
     ram[1] = 0x0ff0;

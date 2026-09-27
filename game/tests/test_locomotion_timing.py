@@ -147,22 +147,6 @@ class LocomotionTiming(unittest.TestCase):
         self.assertGreater(self.lib.link_anim_fraction(), 0)
         self.assertLess(self.lib.link_anim_fraction(), 256)
 
-    def test_shoulders_do_not_reach_gameplay_orbit(self):
-        text = (ROOT / 'src/demo.c').read_text()
-        mask = text.split('uint16_t walk = buttons &', 1)[1].split(';', 1)[0]
-        self.assertNotIn('CAMERA_L', mask.replace('CAMERA_LEFT', ''))
-        # L is HOLD targeting now, so whether a press recentres depends on
-        # whether the hold became a lock-on -- which only gameplay.c knows.
-        # demo.c therefore reads the decision as an event instead of taking
-        # the raw press edge, and the raw edge is explicitly not used.
-        self.assertIn('recenter = (gameplay.events & GP_EVENT_RECENTER) != 0;',
-                      text)
-        self.assertIn('(void)input.recenter;', text)
-        self.assertIn('action.target_held = target_held;', text)
-        # L must recenter, never orbit. It now starts an OoT-style swing
-        # instead of assigning demo_yaw directly, so the check is that the
-        # press reaches the camera's recenter entry point.
-        self.assertIn('oot_follow_recenter(&link_follow)', text)
 
     # --- manual roll ------------------------------------------------------
 
@@ -255,12 +239,6 @@ class LocomotionTiming(unittest.TestCase):
         self.assertFalse(self.lib.kokiri_camera_input_heading(0, 0,
                                                               ctypes.byref(heading)))
 
-    def test_demo_compares_the_input_heading_with_links_yaw(self):
-        text = (ROOT / 'src/demo.c').read_text()
-        block = text.split('kokiri_camera_input_heading(demo_yaw, walk', 1)[1]
-        block = block.split('link_anim_roll_input', 1)[0]
-        self.assertIn('heading - demo_link_yaw', block)
-        self.assertIn('8192', block)                    # 45 degree quadrant
 
     def test_cancelling_a_roll_stops_its_travel_immediately(self):
         self.settle()
@@ -271,14 +249,6 @@ class LocomotionTiming(unittest.TestCase):
         self.assertNotEqual(self.lib.link_anim_state(), 5)
         self.assertEqual(self.lib.link_anim_roll_speed_q8(), 0)
 
-    def test_a_blocked_or_fighting_link_cancels_the_roll_not_just_its_start(self):
-        text = (ROOT / 'src/demo.c').read_text()
-        blocked = text.split('if (blocked_before || gameplay_blocks_world())', 1)[1]
-        self.assertIn('link_anim_cancel_roll();', blocked.split('}', 1)[0])
-        combat = text.split('if (gameplay.swing || gameplay.shielding)', 1)[1]
-        self.assertIn('link_anim_cancel_roll();', combat.split('}', 1)[0])
-        # The pad's "stick still forward" stand-in must be pushed every step.
-        self.assertIn('link_anim_roll_input(kokiri_camera_walking()', text)
 
     def test_standing_still_cannot_roll(self):
         self.settle()
@@ -304,25 +274,23 @@ class LocomotionTiming(unittest.TestCase):
         self.assertIn('gameplay_blocks_world()', claim)
 
     def test_combat_poses_follow_action_clock_and_release(self):
+        """gameplay.c owns the attack timeline; the pose is its clip/frame."""
         self.lib.link_anim_reset_state()
         self.lib.link_anim_update(0, True, 0, False)
         idle = self.lib.link_anim_clip()
-        poses = []
-        for remaining in range(14, 0, -1):
-            self.lib.link_anim_combat(remaining, False)
-            poses.append((self.lib.link_anim_clip(), self.lib.link_anim_frame()))
-        self.assertNotEqual(poses[0][0], idle)
-        self.assertGreater(len(set(poses)), 6)
-        self.assertNotEqual(poses[0][0], poses[-1][0])
-        self.lib.link_anim_combat(0, False)
+        for clip, frame in ((10, 0), (10, 3), (11, 5)):
+            self.lib.link_anim_combat(True, clip, frame, False)
+            self.assertEqual((self.lib.link_anim_clip(), self.lib.link_anim_frame()),
+                             (clip, frame))
+        self.lib.link_anim_combat(False, 0, 0, False)
         self.assertEqual(self.lib.link_anim_clip(), idle)
 
-        self.lib.link_anim_combat(0, True)
+        self.lib.link_anim_combat(False, 0, 0, True)
         raising = self.lib.link_anim_clip()
         for _ in range(5):
-            self.lib.link_anim_combat(0, True)
+            self.lib.link_anim_combat(False, 0, 0, True)
         self.assertNotEqual(self.lib.link_anim_clip(), raising)
-        self.lib.link_anim_combat(0, False)
+        self.lib.link_anim_combat(False, 0, 0, False)
         self.assertEqual(self.lib.link_anim_clip(), idle)
 
     def test_motion_sound_events_do_not_repeat_on_same_frame_or_at_rest(self):

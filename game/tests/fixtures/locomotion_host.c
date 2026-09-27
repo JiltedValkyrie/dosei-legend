@@ -81,6 +81,8 @@ int control_interact(void) { return mapped.interact_pending; }
 int control_cancel(void)   { return mapped.cancel_pending; }
 int control_menu_step(void){ return mapped.menu_step; }
 int control_attack(void) { return mapped.attack_pending; }
+int control_attack_held(void) { return mapped.attack_held; }
+int control_attack_released(void) { return mapped.attack_released; }
 int control_shield(void) { return mapped.shield_held; }
 int control_interact_held(void) { return mapped.interact_held; }
 int control_stick_pushed(void) { return player_input_stick_pushed(&mapped); }

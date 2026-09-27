@@ -89,6 +89,17 @@ whether work stops. Optional features stay in backlog until assigned.
 | BUG-025 | Water traversal source subset and runtime acceptance | `bug`, `priority: P2` | Astra | M1k human check; M2/M5 integration | Open |
 | BUG-026 | Dialogue special characters and missing dither backdrop | `bug`, `priority: P2` | Unassigned | Next dialogue/UI pass | Open |
 | BUG-027 | Traversal camera source subset and runtime acceptance | `bug`, `priority: P2` | Astra | M1l human check / M8 | Open |
+| BUG-028 | Registered colliders follow reused actor slots | `bug`, `priority: P2` | Claude | Before live actor contact integration, M2b | Closed |
+| BUG-029 | Alternating attackers defeat once-per-attack memory | `bug`, `priority: P2` | Claude | Before multi-attacker damage integration, M2b | Closed |
+| BUG-030 | Hit-history eviction and multiple hurtbox policy | `bug`, `priority: P2` | Claude | Live actor damage integration | Fixed |
+| FEAT-001 | Real sword chest, shop shield and Mido equipment gate | `enhancement`, `priority: P1`, `required` | Claude | M2b.1, before M2c human testing | Human route passed; boulder pending |
+| BUG-031 | M2b.1 presentation stand-ins: chest, shopkeeper, get-item | `bug`, `priority: P2` | Claude | M3 actor models / M8 | Open |
+| BUG-032 | Maze rolling boulder (En_Goroiwa) not implemented | `bug`, `priority: P1`, `required` | Claude | Final M2 acceptance | Implemented, Kronos check pending |
+| BUG-033 | Work-RAM gap down to 5,488 B | `bug`, `priority: P1` | Claude | Before next large code/text addition | Fixed, Kronos text check pending |
+| BUG-034 | kokiri_camera_facing uses toFIXED(variable) soft-float | `bug`, `priority: P2`, `performance` | Unassigned | Next SH-2 hot-path pass | Open |
+| BUG-035 | Work-RAM heap arena at 99% peak (50,692 / 51,200 B) | `bug`, `priority: P2` | Claude | Before any new work-RAM allocation | Open |
+| BUG-036 | M2c combat gaps: SFX, charge glow, hostile-lock clips, blade pose lag | `bug`, `priority: P2` | Claude | M2d enemy / M2e audio bank | Open |
+| BUG-037 | Standard work-RAM gap 5,504 B after M2c (Clean 8,896 B) | `bug`, `priority: P1` | Claude | Before next large code addition | Fixed: 7,168 / 10,368 B |
 
 Original M1a blocking findings are resolved by the 2026-09-26 re-review in
 [M1A_REVIEW.md](M1A_REVIEW.md). The following are nonblocking follow-ups.
@@ -96,6 +107,220 @@ Use local IDs `BUG-001`, `FEAT-001`, etc.; never reuse an ID. Add one index row 
 one issue body per finding. Templates below are examples, not open issues.
 
 ## Open issues
+
+### BUG-031: M2b.1 presentation stand-ins
+
+**Labels:** `bug`, `priority: P2`. **Assignee:** Claude. **State:** Open.
+
+Chest is a floating Kokiri Sword icon, no En_Box model, lid animation,
+Demo_Tre_Lgt light or fanfare; opening is instant. Get-item holds the 16px icon
+over Link, not link_demo_get_itemA. Kokiri shopkeeper has no model or fairy in
+the prerendered shop; A: Talk prompt only. Shop talk reach is the slice's
+(150). Only the Deku Shield is offered; eight-item browse is M3. Mido's
+0x102F/0x1033 are UNSKIPPABLE in source; B still closes here. Mido walks a
+straight line at one unit a step, no walk animation (NPC bodies absent).
+
+### BUG-032: Maze rolling boulder
+
+2026-09-26 repeated knockdown blocker: an unregistered boulder retained
+COL_RES_AT_HIT while hopping/cooling down. The shared pass consumed that old
+result again, restarting Link's 45-step control lock after 28 steps. Clear
+the boulder's result before registration each pass; the prior hit is already
+consumed by update_boulder. Regression failed at cooldown step 27 before the
+fix; all 86 gameplay tests pass after it. No game build or Kronos run; escape
+after a real hit still needs visual confirmation.
+
+2026-09-26 user regression: stationary cube blocks the sword route. Heading
+used Q8 deltas where the Saturn adapter expects world integers; the first
+331-unit leg became 84736 and overflowed the adapter's signed Q16 conversion.
+Corrected boulder_face to pass world deltas. Host heading adapter now asserts
+the target input range; 85 gameplay tests pass. No game build requested/run.
+Movement and sword access still need Kronos confirmation; cube remains the
+documented visual placeholder. Do not mark this blocker visually resolved.
+
+**Labels:** `bug`, `priority: P1`, `required`. **Assignee:** Claude. **State:** Implemented, Kronos check pending.
+
+Done: build_actors extracts En_Goroiwa 0x0C02 (room 2, rot_z 1) and scene
+path 2 (header 0x0D), refusing any other shape or a path off the flat floor.
+gameplay.c: EnGoroiwa_Roll/MoveAndFall (Kokiri speed 9.2, step 0.3, gravity),
+one-way loop with teleport at the ends, AT sphere r58 vs Link cylinder r12
+(next-step AT_HIT), in-the-way reverse, hop x0.15, 6-frame wait, 50-frame no
+collision, room reload restarts at point 0, frozen while talking/paused.
+Damage 4 (quarter heart); shield cannot block (shield AC 0xDFCFFFFF lacks the
+boulder's 0x20000000). demo.c: knockback 2.0 away, OC push (MASS_HEAVY).
+Stand-ins (BUG-031): grey cube, no gRollingRockDL, no roll spin, dust, SFX;
+no knock-down animation (input held 45 steps, speed eases out); Link cylinder
+height 50 fixed; no death/game over at 0 health. Code cost ~3.9 KB: clean gap
+now 9,184 B.
+
+En_Goroiwa room 2 (-245,120,1870), params 0x0C02, path 2 loop
+(spot04_scenePathList_00030C_020002EC). Not implemented: path, collision,
+damage/knockback. Required before final M2 acceptance (M2b.1 item 6); early
+chest/shop human test runs without it.
+
+### BUG-033: Work-RAM gap 5,488 B
+
+**Labels:** `bug`, `priority: P1`. **Assignee:** Claude. **State:** Fixed, Kronos text check pending.
+
+Fix: line strings (8,466 B) and pointer table left the program.
+build_dialogue.py writes build/cd/DIALOG.TXT (KDLG, u16 BE count/offsets,
+NUL strings); main.c loads it at boot into cart carve 0x8000/0x3000
+(RAM_CART_FIXED_BYTES 0xB000) and refuses to start on a missing/mismatched
+file; src/dialogue_text.c validates and serves lines. Host tests bind the same
+file. Clean gap now 13,120 B (build/bug033-clean.log). Next candidate if
+needed: cutscene text pools (build_cutscenes.py), same pattern.
+
+Clean .bss ends 5,488 B below the work area (13,344 before M2b.1). About 4 KB
+is source-correct dialogue: TEXTID chains now followed (Mido refusal/allow,
+NPC lines, 191 -> 310 lines). Move dialogue strings/pages to a cart file (or
+disc) before the next large addition.
+
+### BUG-035: Work-RAM heap arena nearly full
+
+**Labels:** `bug`, `priority: P2`. **Assignee:** Claude. **State:** Open.
+
+M2a live reading (human, standard build, maze room 2 near the chest, after
+forest): zone 0 live 50,380 / peak 50,692 B of the 51,200 B arena
+(JO_GLOBAL_MEMORY_SIZE_FOR_MALLOC), cart zones peak 719 KB, 0 failed
+allocations. Only 508 B headroom: larger jo_malloc blocks already spill to the
+cart, so no failure, but never shrink this arena, and route new big buffers
+to the cart explicitly. Readings from the shop and forest return still wanted.
+
+### BUG-036: M2c combat gaps
+
+**Labels:** `bug`, `priority: P2`. **Assignee:** Claude. **State:** Open.
+
+M2c is in (see [M2C_REVIEW.md](M2C_REVIEW.md)); these parts are not:
+- SFX in (forest area bank, 5512.5 Hz, slot 28): wall hit hard/soft
+  (soft = same sample +17 semitones, no portamento), shield/sword bounce
+  (NA_SE_IT_SHIELD_REFLECT_SW first layer only), nutsball break. To make
+  room, core `shield` and `equip` are now stored at half rate (lower
+  bandwidth). Still missing: NA_SE_IT_SWORD_CHARGE (FONTANY 8PULSE synth
+  sweep), NA_SE_IT_ROLLING_CUT spin release (INST_39), wood-wall
+  NA_SE_IT_REFLECTION_WOOD, voices on bounce. Sound RAM spare: 1,420 B.
+- Fixed with it: climb-end/roll-bonk voice (half-rate sample) played an
+  octave high; OCT now comes from each sample's stored rate.
+- No charge glow or magic spin wave; no wall sparks (CollisionCheck_Spawn-
+  ShieldParticles). Sword trail is Codex's ribbon.
+- Hostile lock-on variants (_endR landings, rebound R clips, gravity -1.2 in
+  Player_Action_8084411C) wait for an M2d hostile target: none exists yet.
+- Blade capsules use the last drawn pose (up to one frame old), sampled at
+  base/tip/mid edges with radius 4, not the exact swept quads.
+- Nutsball: no OC push, grey sphere visual, reflection yaw = Link's facing
+  (source: shield matrix yaw + 0x8000). Dyna-attached wall polys
+  (func_8002F9EC) are not excluded from the wall check.
+- Charge walk plays the walk clip forward for backward travel too.
+
+### BUG-037: Standard work-RAM gap 5,504 B
+
+**Labels:** `bug`, `priority: P1`. **Assignee:** Claude. **State:** Fixed.
+
+Fix: cutscene run strings moved to build/cd/CUTTEXT.TXT ("KCST", same
+layout as DIALOG.TXT) in cart carve 0x6800/0x1800; shared loader in
+src/text_pool.c. Standard now 7,168 B free, Clean 10,368 B (after the M2c
+sounds too).
+
+After M2c (and Codex's trail) standard .bss ends 5,504 B below the work
+area, Clean 8,896 B. Growth is code: gameplay.o +2 KB, demo.o +1.6 KB, four
+clips. Next candidate to move out: cutscene text pools (build_cutscenes.py)
+as BUG-033 did for dialogue. Contacts moved to cart carve 0xB000/0x2000
+(RAM_CART_FIXED_BYTES 0xD000); 0x6800..0x8000 is free.
+
+### BUG-034: kokiri_camera_facing soft-float
+
+**Labels:** `bug`, `priority: P2`, `performance`. **State:** Open.
+
+demo_camera.c kokiri_camera_facing calls slAtan(toFIXED(dz), toFIXED(dx)) on
+variables: SDK toFIXED multiplies by a double. gameplay_facing/collide_heading
+route here; M2b.1 adds per-step calls (Mido block, chest/shop facing). Use a
+range-checked integer scale (ratio only matters to slAtan).
+
+### BUG-030: Bounded hit history needs actor-level damage policy
+
+**Labels:** `bug`, `priority: P2`
+
+**Assignee:** Claude. **Milestone:** live enemy/player damage and multiple hurtboxes.
+**State:** Fixed.
+
+Policy (source): multi-element hurtboxes of one actor set COL_AC_ELEMENT and
+take one hit per AT per pass (CollisionCheck_AC_*VsJntSph returns after
+SetATvsAC); separate source colliders (Link cylinder + shield) do not group.
+History stays bounded at 4 and documented as such; actor-level protection is
+the victim's own intangibility (Link: gameplay.intangible -> body invincible).
+Tests: grouped vs separate elements; five interleaved attacks evict, and
+invincibility still blocks.
+
+Four-entry history fixes BUG-029's A/B/A case. A fifth distinct attack evicts the
+oldest; that still-active attack may hit again. History is per collider, so two
+hurtboxes on one actor also need shared reaction/damage handling. Neither is a
+blocker for actorless grass or M2b.1 chest/shop work.
+
+- [x] Integrate source damage timers or bounded attack-owned victim history for
+  live combat; do not advertise unlimited once-per-actor suppression.
+- [x] Test five interleaved attacks and multiple hurtboxes without duplicate
+  actor-level damage/rewards, preserving source hard-body/shield behavior.
+
+
+### FEAT-001: Real starter equipment route for M2 human testing
+
+**Labels:** `enhancement`, `priority: P1`, `required`
+
+**Assignee:** Claude (current M2 owner). **Milestone:** M2b.1, after contact/body
+work and before M2c human combat testing. **State:** Starter route implemented
+and human-tested 2026-09-26; remains open for required boulder (BUG-032).
+
+Current ground sword/shield are slice shortcuts. Bring source maze sword chest,
+40-rupee shop shield, fresh-file rupee route and Mido equipment gate forward.
+Full scope/dependencies: M2_COMBAT_PLAN.md, M2b.1.
+
+- [x] Crawl maze, open source chest, receive sword once; chest flag persists.
+  (Host-tested; offer box/facing from EnBox_WaitOpen; owned, not equipped.)
+- [x] Reachable source rupees permit first shield purchase without a sword.
+  (24 En_Item00 + 19 En_Wonder_Item modes 2/0/5 = 43; host-tested.)
+- [x] Shop costs 40, handles refusal/cancel, grants once; UI uses VDP2.
+- [x] Mido allows Deku Tree passage only with sword and shield equipped.
+  (EnMd_BlockPath offset 60, OC push through actor wall checks, path 1 walk.)
+- [x] Remove shortcut spawns; preserve equipment in existing saves.
+- [x] Fresh-file route and save/reload pass human testing before M2c acceptance.
+  Human reports "Human test good" after the requested route check (2026-09-26).
+- [ ] Maze boulder path/collision and damage work by final M2 acceptance.
+
+Full shop stock, other chests and wider NPC work remain M3. No child Lost Woods
+Mido gate. Audit source placements, flags and full actor drops during implementation.
+
+### BUG-028: Registered colliders follow reused actor slots
+
+**Labels:** `bug`, `priority: P2`
+
+**Assignee:** Claude. **Milestone:** M2b, before live actor contacts. **State:** Closed after Astra re-review (2026-09-26).
+
+Register a collider, kill its owner, reuse the pool slot, then resolve contacts.
+Expected: old registration ignored. Actual: contact identifies the replacement
+actor. Reproduced against the compiled fixture; see M2B_REVIEW.md.
+Current actorless grass path is unaffected.
+
+- [x] Snapshot and validate registered ownership for AT/AC/OC.
+- [x] Regress attacker/victim replacement before resolution and OC reuse.
+
+### BUG-029: Alternating attackers defeat once-per-attack memory
+
+**Labels:** `bug`, `priority: P2`
+
+**Assignee:** Claude. **Milestone:** M2b, before multiple live damage sources.
+**State:** Closed after Astra re-review (2026-09-26).
+
+Keep attack identities unchanged; overlap one victim with A, then B, then A.
+Expected hit counts 1,1,0 under the stated once-per-attack rule; actual 1,1,1.
+Only the last attack is remembered. Reproduced with existing fixture tags;
+same storage issue applies to distinct actor handles. Grass cut bits prevent
+duplicate grass rewards, so current grass acceptance need not wait.
+
+- [x] Bound victim history per attack or implement/document source timer policy.
+- [x] Cover interleaved actor attackers and actorless tags.
+- Multiple hurtboxes and history eviction remain tracked separately as BUG-030.
+
+Re-review: actor_sys 38/38 and gameplay 60/60 pass. BUG-029 accepted as a
+bounded four-entry per-collider history, not an unlimited per-actor guarantee.
 
 ### BUG-001: Wall sphere pass drops line-hit precedence
 

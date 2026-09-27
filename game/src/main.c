@@ -19,12 +19,16 @@
 #include "demo.h"
 #include "navi.h"
 #include "gameplay.h"
+#include "dialogue_text.h"
+#include "minimap.h"
+#include "minimap_data.h"
 #include "kokiri_dialogue.h"
 #include "link_anim_state.h"
 #include "link_clips.h"
 #include "frame_timer.h"
 #include "oot_follow.h"
 #include "ram_cart.h"
+#include "heap_profile.h"
 #include "actor_sys.h"
 #include "save_device.h"
 #include "file_select.h"
@@ -59,6 +63,44 @@ static void         action_hint(void);
 static void         file_select_screen(void);
 static void         cutscene_text(void);
 static void         cutscene_fade(void);
+
+/* Read DIALOG.TXT into its cart carve and bind it. jo_fs_read_file holds a
+** transient work-RAM copy; only the cart copy stays. */
+typedef char dialogue_text_fits[DIALOGUE_TEXT_BYTES <= RAM_CART_DIALOGUE_BYTES ? 1 : -1];
+typedef char cutscene_text_fits[CUTSCENE_TEXT_BYTES <= RAM_CART_CUTTEXT_BYTES ? 1 : -1];
+static bool     text_file_load(const char *name, unsigned int offset, unsigned int bytes,
+                               bool (*bind)(const uint8_t *, uint32_t))
+{
+    uint8_t    *carve = (uint8_t *)ram_cart_fixed(offset, bytes);
+    void       *data;
+    int         length = 0;
+    bool        ok;
+
+    if (!carve)
+        return (false);
+    data = jo_fs_read_file(name, &length);
+    if (!data)
+        return (false);
+    ok = length > 0 && length <= (int)bytes;
+    if (ok) {
+        memcpy(carve, data, (unsigned int)length);
+        ok = bind(carve, (uint32_t)length);
+    }
+    jo_free(data);
+    return (ok);
+}
+
+typedef char minimap_file_fits[MINIMAP_FILE_BYTES <= RAM_CART_MINIMAP_BYTES ? 1 : -1];
+static bool     dialogue_text_load(void)
+{
+    return (text_file_load("DIALOG.TXT", RAM_CART_DIALOGUE_OFFSET,
+                           RAM_CART_DIALOGUE_BYTES, dialogue_text_bind) &&
+            text_file_load("CUTTEXT.TXT", RAM_CART_CUTTEXT_OFFSET,
+                           RAM_CART_CUTTEXT_BYTES, cutscene_text_bind) &&
+            text_file_load("MINIMAP.BIN", RAM_CART_MINIMAP_OFFSET,
+                           RAM_CART_MINIMAP_BYTES, minimap_bind));
+}
+
 #ifdef DOSEI_TEXTURE_PROBE
 #include "texture_probe.h"
 static unsigned int probe_frame;
@@ -242,7 +284,9 @@ static void         viewer_draw(void)
             kokiri_grass_draw();
             kokiri_rupees_draw(demo_clock());
             kokiri_fairies_draw(demo_clock());
-            kokiri_pickups_draw(demo_clock());
+            kokiri_items_draw(demo_clock());
+            kokiri_boulder_draw();
+            kokiri_nut_draw();
         }
     }
     kokiri_menu_draw();
@@ -304,6 +348,7 @@ static void         viewer_draw(void)
         kokiri_link_draw(demo_link.x, demo_link.y - DEMO_LINK_EYE_HEIGHT +
                          link_anim_y_offset_q8() / 256,
                          demo_link.z, demo_link_yaw);
+        link_anim_trail_draw();
         frame_timer_end(FRAME_PHASE_LINK);
         /* Link's own fairy, drawn with him and only with him: the title
          * shot and the file select are not gameplay. */
@@ -359,7 +404,10 @@ static void         viewer_draw(void)
     }
     if (!demo_title_is_visible() && !demo_file_select_is_visible() &&
         !cutscene_is_playing())
+    {
         kokiri_rupee_hud_draw();
+        minimap_draw(demo_link.x, demo_link.z, demo_link_yaw);
+    }
     {
         /* Callback share of frame time: an estimate of master-CPU work,
          * not total utilization across both SH-2s. Sync includes GPU/VBlank
@@ -610,11 +658,17 @@ static void         dialogue_box(void)
         /* A: Talk, only while a speaker is actually in reach and in front.
          * A: Enter at a crawlspace wins: handler 5 comes before TALK. */
         {
-            int prompt_key = demo_enter_prompt() ? -2 : gameplay.prompt;
+            int prompt_key = demo_enter_prompt() ? -2 :
+                             gameplay.chest_prompt >= 0 ? -3 :
+                             gameplay.shop_prompt ? -4 : gameplay.prompt;
             if (prompt_key != last_prompt) {
                 last_prompt = prompt_key;
                 if (prompt_key == -2)
                     jo_printf(1, PROMPT_ROW, "%-38s", "A: Enter");
+                else if (prompt_key == -3)
+                    jo_printf(1, PROMPT_ROW, "%-38s", "A: Open");
+                else if (prompt_key == -4)
+                    jo_printf(1, PROMPT_ROW, "%-38s", "A: Talk");
                 else if (prompt_key >= 0)
                     jo_printf(1, PROMPT_ROW, "%-38s", "A: Talk");
                 else
@@ -635,15 +689,25 @@ static void         dialogue_box(void)
     kokiri_message_box_draw(160, DIALOGUE_ROW * 8 + DIALOGUE_ROWS * 4,
                             320, DIALOGUE_ROWS * 8);
     jo_printf(1, DIALOGUE_ROW, "%-38s", gameplay_speaker_name());
-    for (i = 0; i < DIALOGUE_MAX_LINES; ++i) {
-        const char *line = i < gameplay_page_lines() ? gameplay_page_line(i) : "";
-        jo_printf(1, DIALOGUE_ROW + 1 + i, "%-38s", line ? line : "");
-    }
     {
-        bool last = gameplay.rule < 0 ||
-            gameplay.page + 1u >= dialogue_rules[gameplay.rule].pages;
-        kokiri_message_mark_draw(160,
-            (DIALOGUE_ROW + 1 + DIALOGUE_MAX_LINES) * 8 + 4, last);
+        /* TWO_CHOICE rows (the shop's Buy / Don't buy) carry a cursor. */
+        unsigned int lines = gameplay_page_lines();
+        unsigned int choices = gameplay_choice_lines();
+        for (i = 0; i < DIALOGUE_MAX_LINES; ++i) {
+            const char *line = i < lines ? gameplay_page_line(i) : "";
+            if (choices && i < lines && i >= lines - choices)
+                jo_printf(1, DIALOGUE_ROW + 1 + i, "%c %-36s",
+                          i - (lines - choices) == gameplay.choice ? '>' : ' ',
+                          line ? line : "");
+            else
+                jo_printf(1, DIALOGUE_ROW + 1 + i, "%-38s", line ? line : "");
+        }
+        if (!choices) {
+            bool last = gameplay.rule < 0 ||
+                gameplay.page + 1u >= dialogue_rules[gameplay.rule].pages;
+            kokiri_message_mark_draw(160,
+                (DIALOGUE_ROW + 1 + DIALOGUE_MAX_LINES) * 8 + 4, last);
+        }
     }
 }
 
@@ -688,37 +752,16 @@ static void         inventory_menu(void)
                   : report < 0 ? ""
                   : report ? "SAVED" : "SAVE FAILED";
         } else {
-            state = !(gameplay.owned & item) ? "Find in forest"
+            state = !(gameplay.owned & item) ? (item == GP_SWORD ? "Maze chest" : "Kokiri Shop")
                   : (gameplay.equipped & item) ? "EQUIPPED" : "Owned";
         }
         jo_printf(2, row++, "%c %-14s %-18s",
                   slot == gameplay.cursor ? '>' : ' ',
                   gameplay_slot_name(slot), state);
-        /* Only an owned item gets its use button: printing "X: swing" next to
-         * a sword the player has never found would be a lie. The save row
-         * always shows its own, because it is always usable. */
-        jo_printf(4, row++, "%-34s",
-                  (slot == GP_SLOT_SAVE || (gameplay.owned & item))
-                      ? gameplay_slot_use(slot) : "");
+        /* Human: no control help in the menu. Only the save row keeps its
+         * button, since nothing else says how to save. */
+        jo_printf(4, row++, "%-34s", slot == GP_SLOT_SAVE ? gameplay_slot_use(slot) : "");
     }
-    row++;
-    jo_printf(2, row++, "%-36s", "CONTROLS");
-    jo_printf(2, row++, "%-36s", jo_is_input_analog(0) ? "Stick move   B walk/run" : "D-pad move   B walk/run");
-    jo_printf(2, row++, "%-36s", "X swing/cut  Hold R shield");
-    jo_printf(2, row++, "%-36s", "Y jump       A talk/next page");
-    jo_printf(2, row++, "%-36s", "B closes dialogue");
-    jo_printf(2, row++, "%-36s", "Hold Z: lock on + strafe");
-    jo_printf(2, row++, "%-36s", "Release Z: release lock");
-    jo_printf(2, row++, "%-36s", "Tap Z: re-centre camera");
-    jo_printf(2, row++, "%-36s", jo_is_input_analog(0) ? "Hold Z: stick strafe/back up" : "Hold Z: D-pad strafe/back up");
-    jo_printf(2, row++, "%-36s", jo_is_input_analog(0) ? "Hold L + stick: look around" : "Hold L + D-pad: look around");
-    jo_printf(2, row++, "%-36s", jo_is_input_analog(0) ? "D-pad: C items (pending)" : "Hold C + D-pad: C items (pending)");
-    jo_printf(2, row++, "%-36s", "A: roll; also rolls on landing");
-    jo_printf(2, row++, "%-36s", "Start opens/closes items");
-    jo_printf(2, row++, "%-36s", "MENU: D-pad pick A equip B back");
-#ifndef DOSEI_CLEAN_TEST
-    jo_printf(2, row++, "%-36s", "L+R+Down debug; +Up camera compare");
-#endif
 }
 
 /* Persistent state survives fixed-step catch-up; one-step events may not. */
@@ -786,6 +829,20 @@ static void         viewer_hud(void)
      * Input/chord handling above still runs every frame. */
     if (now - last_refresh < 15) return;
     last_refresh = now;
+    /* M2a heap reading, always on in the standard build (bottom row 27):
+    ** work-RAM zone 0 live/peak bytes, cart zones' summed peak KB, failed
+    ** allocations. Exact dosei_heap_profile, not the SDK's mixed percent. */
+    {
+        unsigned int z, cart = 0;
+        for (z = 1; z < dosei_heap_profile.zones && z < HEAP_PROFILE_ZONES; ++z)
+            cart += dosei_heap_profile.zone[z].peak_live;
+        jo_printf(0, 27, "heap w%u/%u c%uK f%u sp%u  ",
+                  (unsigned int)dosei_heap_profile.zone[0].live,
+                  (unsigned int)dosei_heap_profile.zone[0].peak_live,
+                  (cart + 1023) / 1024,
+                  (unsigned int)dosei_heap_profile.failed_allocations,
+                  kokiri_sprite_peak);
+    }
     if (!debug_visible) {
         if (rejected_total || !music_ready)
             jo_printf(0, 0, "music %s refusals %d", music_ready ? "ON" : "FAIL", (int)rejected_total);
@@ -806,17 +863,23 @@ static void         viewer_hud(void)
             jo_printf(0, 1, "L %d,%d,%d yaw %d   ",
                       (int)demo_link.x, (int)demo_link.y, (int)demo_link.z,
                       (int)demo_link_yaw);
-        /* Heap headroom and the current locomotion state. The heap figure is
-        ** what justifies JO_GLOBAL_MEMORY_SIZE_FOR_MALLOC: the clip tables and
-        ** the skinned POINT table compete with it for the RAM below SGL's work
-        ** area, so it was trimmed to measured demand rather than guessed. */
+        /* Exact heap (dosei_heap_profile, M2a): work-RAM zone 0 live/peak
+        ** bytes incl. headers, cart zones' summed peak KB, failed allocations.
+        ** The SDK's jo_memory_usage_percent mixes zones and is not used. */
         {
             /* Assigned first: casting an enum-returning call directly trips
             ** -Wbad-function-cast, and this build treats warnings as noise to
             ** stay out of. */
             link_state_t pose = link_anim_state();
-            jo_printf(0, 2, "heap %d%%  anim %d f%d %s    ",
-                      jo_memory_usage_percent(), (int)pose,
+            unsigned int z, cart = 0;
+            for (z = 1; z < dosei_heap_profile.zones && z < HEAP_PROFILE_ZONES; ++z)
+                cart += dosei_heap_profile.zone[z].peak_live;
+            jo_printf(0, 2, "w%u/%u c%uK f%u a%d f%d %s  ",
+                      (unsigned int)dosei_heap_profile.zone[0].live,
+                      (unsigned int)dosei_heap_profile.zone[0].peak_live,
+                      (cart + 1023) / 1024,
+                      (unsigned int)dosei_heap_profile.failed_allocations,
+                      (int)pose,
                       (int)link_anim_frame(),
                       player_input_move_mode() == PLAYER_MOVE_WALK ? "walk"
                                                                    : "run");
@@ -1060,8 +1123,10 @@ void                jo_main(void)
     jo_vdp2_zoom_nbg0f(1.0f, 0.5f);
     jo_vdp2_zoom_nbg1f(1.0f, 0.5f);
 #endif
-    jo_core_set_screens_order(JO_NBG0_SCREEN, JO_NBG1_SCREEN, JO_SPRITE_SCREEN,
-                             JO_RBG0_SCREEN, JO_NBG2_SCREEN, JO_NBG3_SCREEN);
+    /* NBG2 (minimap) second: above the world, below the text. */
+    jo_core_set_screens_order(JO_NBG0_SCREEN, JO_NBG2_SCREEN, JO_NBG1_SCREEN,
+                             JO_SPRITE_SCREEN, JO_RBG0_SCREEN, JO_NBG3_SCREEN);
+    minimap_priorities();
     slSetScreenDist(toFIXED(SCREEN_DISTANCE));
 
     /* The 4 MB cart is required. Stop here rather than loading and failing an
@@ -1084,6 +1149,20 @@ void                jo_main(void)
                                        RAM_CART_ACTOR_POOL_BYTES),
                         RAM_CART_ACTOR_POOL_BYTES)) {
         jo_core_error("Actor pool does not fit its cart carve");
+        return;
+    }
+
+    /* Sword/grass contact colliders: fixed cart carve too. */
+    if (!gameplay_contacts_init(ram_cart_fixed(RAM_CART_CONTACT_OFFSET,
+                                               RAM_CART_CONTACT_BYTES),
+                                RAM_CART_CONTACT_BYTES)) {
+        jo_core_error("Contact colliders do not fit their cart carve");
+        return;
+    }
+
+    /* Dialogue line text: disc file into a fixed cart carve (BUG-033). */
+    if (!dialogue_text_load()) {
+        jo_core_error("DIALOG.TXT/CUTTEXT.TXT/MINIMAP.BIN missing or stale");
         return;
     }
 

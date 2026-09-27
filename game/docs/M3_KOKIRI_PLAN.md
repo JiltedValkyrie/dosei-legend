@@ -5,6 +5,13 @@ Astra side draft, 2026-09-25. Expands DEMO_PLAN M3 after M2; see
 
 ## Playable result and scope
 
+Human update (2026-09-26): M2b.1 now owns the first sword-maze chest, 40-rupee
+shop shield purchase, pre-sword rupee route, Mido equipped-both gate and removal
+of ground-equipment shortcuts (FEAT-001). Maze boulder moves forward too, with
+damage complete by M2 acceptance. M3c/M3d below extend these shared systems;
+do not defer this starter route to M3 or implement it twice. Full stock,
+remaining chests/props/NPCs and shop presentation remain M3.
+
 A fresh file earns rupees, crawls the maze, obtains the Kokiri Sword from its
 chest, buys/equips a Deku Shield, and earns passage past Mido. All five additional
 Kokiri interiors, NPC conversations, shop shelves, source props and local rewards

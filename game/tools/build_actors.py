@@ -30,21 +30,28 @@ ACTOR_EN_MD = 0x016D       # Mido
 ACTOR_EN_SA = 0x0146       # Saria
 ACTOR_EN_KUSA = 0x0125     # cuttable grass tuft
 ACTOR_EN_KANBAN = 0x0141   # signpost
+ACTOR_EN_BOX = 0x000A      # treasure chest
+ACTOR_EN_WONDER_ITEM = 0x0112  # invisible reward trigger
+ACTOR_EN_OSSAN = 0x003D    # shopkeeper
+ACTOR_EN_GOROIWA = 0x0130  # maze rolling boulder
+
+# SAVE_SCENE_* ids (src/save_state.h) for the scenes read here.
+SAVE_SCENE_KOKIRI_FOREST = 0
+SAVE_SCENE_KOKIRI_SHOP = 4
 
 # Kind ids shared with the runtime. Order is the emit order, not an actor id.
 KINDS = (('CHILD', ACTOR_EN_KO), ('MIDO', ACTOR_EN_MD), ('SARIA', ACTOR_EN_SA))
 
-# Gear pickups. Kokiri Forest has neither sword nor shield lying on the ground
-# in the original -- the sword is in the training ground chest and the shield is
-# bought -- so WHICH item sits here is the slice's choice. Where it sits is not:
-# both reuse spots the original already drops a ground collectible on
-# (En_Item00, actor 0x0015, in spot04_room_0), so they are reachable, on real
-# floor, and either side of the spawn. The height is re-snapped to our own
-# collision mesh and the build fails if there is no floor under one.
-PICKUPS = (
-    ('SWORD',  -537, 1, 194),      # En_Item00 west of spawn
-    ('SHIELD',   35, 1, -418),     # En_Item00 north of spawn
-)
+# The slice's old ground sword/shield pickups are gone (FEAT-001): the sword
+# is the maze chest (En_Box 0x04E0) and the shield is bought in the shop.
+
+# En_Wonder_Item modes that the slice runs (z_en_wonder_item.c Init switch).
+# Mode 3 (interact switch) needs a sword/stick hit; modes 1 and 6 are the tag
+# points of modes 0 and 5. Other modes are reported and skipped.
+WONDER_MODES = (0, 1, 2, 3, 5, 6)
+# EnWonderItem_DropCollectible dropTable index -> rupee value. Non-rupee
+# drops are refused: the slice has no hearts/ammo yet.
+WONDER_RUPEES = {8: 1, 9: 5, 10: 20}
 
 
 def read_actors(data):
@@ -59,10 +66,10 @@ def read_actors(data):
         count = data[pos + 1]
         base = struct.unpack_from('>I', data, pos + 4)[0] & 0xFFFFFF
         for i in range(count):
-            aid, x, y, z, _rx, ry, _rz, var = struct.unpack_from(
+            aid, x, y, z, _rx, ry, rz, var = struct.unpack_from(
                 '>Hhhhhhh H', data, base + i * 16)
             out.append(dict(id=aid & 0xFFF, x=x, y=y, z=z,
-                            yaw=ry & 0xFFFF, var=var))
+                            yaw=ry & 0xFFFF, rot_z=rz, var=var))
     return out
 
 
@@ -105,6 +112,23 @@ def floor_under(triangles, x, z, y):
     return best
 
 
+def scene_paths(scene):
+    """Header command 0x0D: Path entries (u8 count, pad, u32 points), Vec3s."""
+    header = source.scene_header(scene)
+    if 0x0D not in header:
+        return []
+    base = source._segment_offset(header[0x0D][0])
+    out = []
+    for i in range(32):
+        count = scene[base + 8 * i]
+        points = struct.unpack_from('>I', scene, base + 8 * i + 4)[0]
+        if count == 0 or points >> 24 != 0x02:
+            break
+        points &= 0xFFFFFF
+        out.append([struct.unpack_from('>3h', scene, points + 6 * k) for k in range(count)])
+    return out
+
+
 def grass_rupee_slots(oot, param):
     """Rupee-only subset of EnKusa_DropCollectible / Item_DropCollectibleRandom.
 
@@ -142,13 +166,28 @@ def main():
     segments = source.extract(args.oot, args.rom_dir)
     triangles = entity_floor_triangles(segments['spot04_scene'])
 
-    people, grass, signs, rupees = [], [], [], []
+    people, grass, signs, rupees, chests, wonders = [], [], [], [], [], []
+    boulders = []
+    shop = source.extract(args.oot, args.rom_dir, prefix='kokiri_shop')
+    keepers = []
+    for actor in read_actors(shop['kokiri_shop_room_0']):
+        actor.update(room=0, scene=SAVE_SCENE_KOKIRI_SHOP)
+        if actor['id'] == ACTOR_EN_OSSAN:
+            keepers.append(actor)
+        elif actor['id'] == ACTOR_EN_WONDER_ITEM:
+            mode, drop = actor['var'] >> 11, (actor['var'] >> 6) & 31
+            if mode != 2 or drop not in WONDER_RUPEES:
+                sys.exit('shop wonder item 0x%04X unsupported' % actor['var'])
+            wonders.append(dict(actor, mode=mode, value=WONDER_RUPEES[drop]))
+    if len(keepers) != 1:
+        sys.exit('expected one Kokiri shopkeeper, found %d' % len(keepers))
     for name in sorted(segments):
         if 'room' not in name:
             continue
         room = int(name.rsplit('_', 1)[1])
         for actor in read_actors(segments[name]):
             actor['room'] = room
+            actor['scene'] = SAVE_SCENE_KOKIRI_FOREST
             if actor['id'] == 0x0015 and actor['var'] & 255 in (0, 1):
                 height = floor_under(triangles, actor['x'], actor['z'], actor['y'])
                 if height is None:
@@ -164,20 +203,50 @@ def main():
                 grass.append(actor)
             elif actor['id'] == ACTOR_EN_KANBAN:
                 signs.append(actor)
+            elif actor['id'] == ACTOR_EN_BOX:
+                chests.append(actor)
+            elif actor['id'] == ACTOR_EN_GOROIWA:
+                boulders.append(actor)
+            elif actor['id'] == ACTOR_EN_WONDER_ITEM:
+                mode, drop = actor['var'] >> 11, (actor['var'] >> 6) & 31
+                if mode not in WONDER_MODES:
+                    print('  wonder item mode %d at (%d,%d,%d) skipped'
+                          % (mode, actor['x'], actor['y'], actor['z']))
+                    continue
+                if mode not in (1, 6) and drop not in WONDER_RUPEES:
+                    sys.exit('wonder item drop %d is not a rupee' % drop)
+                wonders.append(dict(actor, mode=mode,
+                                    value=WONDER_RUPEES.get(drop, 0)))
 
     # Mido and Saria before the children so a fixed-size near list that runs
     # out still keeps the two named characters the slice needs for dialogue.
     people.sort(key=lambda a: ({'MIDO': 0, 'SARIA': 1, 'CHILD': 2}[a['kind']],
                                a['x'], a['z']))
 
-    pickups = []
-    for item, x, y, z in PICKUPS:
-        height = floor_under(triangles, x, z, y)
-        if height is None:
-            sys.exit('pickup %s at (%d,%d) has no collision floor below it'
-                     % (item, x, z))
-        pickups.append(dict(item=item, x=x, y=int(round(height)), z=z))
-
+    for chest in chests:
+        # En_Box: type bits 12-15, get item bits 5-11, treasure flag bits 0-4.
+        # Only the maze's Kokiri Sword chest is supported so far.
+        if (chest['var'] >> 5) & 0x7F != 0x27:
+            sys.exit('chest 0x%04X is not GI_SWORD_KOKIRI' % chest['var'])
+    # En_Goroiwa: path bits 0-7, loop mode 8-9, ground-follow bit 10.
+    # Only the maze boulder's shape is modelled: one-way loop, bit 10 (the
+    # MoveAndFall/bg-check variant), a flat path on a flat floor, so the
+    # runtime floor is the path height. Anything else is refused.
+    if len(boulders) != 1:
+        sys.exit('expected one En_Goroiwa, found %d' % len(boulders))
+    boulder = boulders[0]
+    paths = scene_paths(segments['spot04_scene'])
+    path = paths[boulder['var'] & 0xFF]
+    if (boulder['var'] >> 8) & 3 != 0 or not (boulder['var'] >> 10) & 1 or len(path) < 2:
+        sys.exit('En_Goroiwa 0x%04X shape unsupported' % boulder['var'])
+    for (ax, ay, az), (bx, by, bz) in zip(path, path[1:]):
+        if ay != path[0][1] or by != path[0][1] or (ax != bx and az != bz):
+            sys.exit('En_Goroiwa path is not flat and axis-aligned')
+        for t in range(0, 17):
+            x, z = ax + (bx - ax) * t / 16, az + (bz - az) * t / 16
+            floor = floor_under(triangles, x, z, ay + 20)
+            if floor is None or abs(floor - ay) > 2:
+                sys.exit('En_Goroiwa path leaves the flat floor at (%d,%d)' % (x, z))
     off_floor = []
     for actor in people + grass:
         height = floor_under(triangles, actor['x'], actor['z'], actor['y'])
@@ -193,7 +262,8 @@ def main():
               '# define KOKIRI_NPC_COUNT   %d' % len(people),
               '# define KOKIRI_GRASS_COUNT %d' % len(grass),
               '# define KOKIRI_SIGN_COUNT  %d' % len(signs),
-              '# define KOKIRI_PICKUP_COUNT %d' % len(pickups),
+              '# define KOKIRI_CHEST_COUNT %d' % len(chests),
+              '# define KOKIRI_WONDER_COUNT %d' % len(wonders),
               '# define KOKIRI_RUPEE_COUNT %d' % len(rupees), '']
     for i, (name, aid) in enumerate(KINDS):
         header.append('# define KOKIRI_NPC_%-6s %d  /* actor 0x%04X */'
@@ -212,12 +282,27 @@ def main():
                'extern const kokiri_prop_t kokiri_grass[KOKIRI_GRASS_COUNT];',
                'extern const kokiri_prop_t kokiri_signs[KOKIRI_SIGN_COUNT];',
                '',
-               '/* item is a GP_* bit from src/gameplay.h; y is the verified floor. */',
-               'typedef struct { int16_t x, y, z; uint8_t item; } kokiri_pickup_t;',
-               'extern const kokiri_pickup_t kokiri_pickups[KOKIRI_PICKUP_COUNT];',
+               '/* En_Box: param = the spawn word (treasure flag bits 0-4). */',
+               'typedef struct { int16_t x, y, z; uint16_t yaw, param; uint8_t room; } kokiri_chest_t;',
+               'extern const kokiri_chest_t kokiri_chests[KOKIRI_CHEST_COUNT];',
+               '/* En_Wonder_Item: mode = params >> 11, value = rupees dropped,',
+               '   rot_z = source count/timer/tag index word. */',
+               'typedef struct { int16_t x, y, z, rot_z; uint16_t param; uint8_t mode, value, room, scene; } kokiri_wonder_t;',
+               '/* EnOssan in the Kokiri Shop (SAVE_SCENE_KOKIRI_SHOP). */',
+               '# define KOKIRI_SHOPKEEPER_X %d' % keepers[0]['x'],
+               '# define KOKIRI_SHOPKEEPER_Y %d' % keepers[0]['y'],
+               '# define KOKIRI_SHOPKEEPER_Z %d' % keepers[0]['z'],
+               'extern const kokiri_wonder_t kokiri_wonders[KOKIRI_WONDER_COUNT];',
                'typedef struct { int16_t x, y, z; uint16_t param; uint8_t room, value; } kokiri_rupee_t;',
                'extern const kokiri_rupee_t kokiri_rupees[KOKIRI_RUPEE_COUNT];',
                'extern const uint8_t kokiri_grass_rupees[KOKIRI_GRASS_COUNT][16];',
+               '/* En_Goroiwa (maze boulder): spawn word, home rot_z, room, and',
+               '   its path (scene path list entry params & 0xFF). */',
+               '# define KOKIRI_BOULDER_PARAM 0x%04X' % boulder['var'],
+               '# define KOKIRI_BOULDER_ROT_Z %d' % boulder['rot_z'],
+               '# define KOKIRI_BOULDER_ROOM  %d' % boulder['room'],
+               '# define KOKIRI_BOULDER_POINTS %d' % len(path),
+               'extern const int16_t kokiri_boulder_path[KOKIRI_BOULDER_POINTS][3];',
                '#endif', '']
     (args.out / 'kokiri_actors.h').write_text('\n'.join(header))
 
@@ -233,10 +318,15 @@ def main():
     body += ['};', '', 'const kokiri_prop_t kokiri_signs[KOKIRI_SIGN_COUNT] = {']
     for a in signs:
         body.append('    { %d, %d, %d, %d },' % (a['x'], a['y'], a['z'], a['room']))
-    body += ['};', '',
-             'const kokiri_pickup_t kokiri_pickups[KOKIRI_PICKUP_COUNT] = {']
-    for a in pickups:
-        body.append('    { %d, %d, %d, GP_%s },' % (a['x'], a['y'], a['z'], a['item']))
+    body += ['};', '', 'const kokiri_chest_t kokiri_chests[KOKIRI_CHEST_COUNT] = {']
+    for a in chests:
+        body.append('    { %d, %d, %d, %u, 0x%04X, %d },' %
+                    (a['x'], a['y'], a['z'], a['yaw'], a['var'], a['room']))
+    body += ['};', '', 'const kokiri_wonder_t kokiri_wonders[KOKIRI_WONDER_COUNT] = {']
+    for a in wonders:
+        body.append('    { %d, %d, %d, %d, 0x%04X, %d, %d, %d, %d },' %
+                    (a['x'], a['y'], a['z'], a['rot_z'], a['var'], a['mode'],
+                     a['value'], a['room'], a['scene']))
     body += ['};', '']
     body += ['const kokiri_rupee_t kokiri_rupees[KOKIRI_RUPEE_COUNT] = {']
     for a in rupees:
@@ -246,13 +336,18 @@ def main():
     for a in grass:
         body.append('    { %s }, /* EnKusa params 0x%04X */' %
                     (', '.join(map(str, grass_rupee_slots(args.oot, a['var']))), a['var']))
+    body += ['};', '', 'const int16_t kokiri_boulder_path[KOKIRI_BOULDER_POINTS][3] = {']
+    body += ['    { %d, %d, %d },' % p for p in path]
     body += ['};', '']
+    print('boulder : 0x%04X room %d rot_z %d, path %s'
+          % (boulder['var'], boulder['room'], boulder['rot_z'], path))
     print('rupees  : %d original room placements; source grass drop slots' % len(rupees))
     (args.out / 'kokiri_actors.c').write_text('\n'.join(body))
 
-    print('pickups : %s'
-          % ', '.join('%s at (%d,%d,%d)' % (a['item'], a['x'], a['y'], a['z'])
-                      for a in pickups))
+    print('chests  : %s' % ', '.join('0x%04X at (%d,%d,%d) room %d'
+          % (a['var'], a['x'], a['y'], a['z'], a['room']) for a in chests))
+    print('wonders : %d (%d rupees if every one pays once)'
+          % (len(wonders), sum(a['value'] for a in wonders)))
     print('actors  : %d people (%d Kokiri, Mido %d, Saria %d), %d grass, %d signs'
           % (len(people),
              sum(1 for a in people if a['kind'] == 'CHILD'),

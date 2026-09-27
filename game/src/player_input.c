@@ -21,6 +21,8 @@ static input_edge_t         edge_walk_toggle;   /* B */
 static input_edge_t         edge_jump;          /* Y */
 static input_edge_t         edge_interact;      /* A */
 static input_edge_t         edge_attack;        /* X */
+static volatile unsigned int attack_release_produced;
+static unsigned int attack_release_consumed;
 static input_edge_t         edge_recenter;      /* Z: tap recentres */
 /* One edge per C direction, so holding C+Up does not repeat and a future held
 ** item (aiming) needs no further input rewrite. */
@@ -52,6 +54,7 @@ void player_input_reset(void)
     /* Run, not walk: this preserves the speed the slice already shipped. */
     move_mode = PLAYER_MOVE_RUN;
     dialogue_open = false;
+    attack_release_produced = attack_release_consumed = 0;
     edge_walk_toggle = edge_jump = edge_interact = edge_attack =
         edge_recenter = (input_edge_t){0};
     for (i = 0; i < 4; ++i)
@@ -98,6 +101,7 @@ void player_input_sample_pad(uint16_t held, bool analog, uint8_t x, uint8_t y)
     input_edge_sample(&edge_walk_toggle, (held & CAMERA_B) != 0);
     input_edge_sample(&edge_jump, (held & CAMERA_Y) != 0);
     input_edge_sample(&edge_interact, (held & CAMERA_A) != 0);
+    if (!(held & CAMERA_X) && edge_attack.held) ++attack_release_produced;
     input_edge_sample(&edge_attack, (held & CAMERA_X) != 0);
     input_edge_sample(&edge_recenter, (held & CAMERA_Z) != 0);
     for (i = 0; i < 4; ++i)
@@ -135,10 +139,13 @@ void player_input_step(bool in_gameplay, player_input_t *out)
     bool jumped = input_edge_consume(&edge_jump);
     bool interacted = input_edge_consume(&edge_interact);
     bool attacked = input_edge_consume(&edge_attack);
+    unsigned int attack_releases = attack_release_produced;
+    bool attack_released = attack_releases != attack_release_consumed;
     bool recentered = input_edge_consume(&edge_recenter);
     bool c_pressed[4], c_released[4];
     unsigned int i;
     int horizontal, vertical;
+    attack_release_consumed = attack_releases;
 
     for (i = 0; i < 4; ++i)
     {
@@ -164,6 +171,8 @@ void player_input_step(bool in_gameplay, player_input_t *out)
     out->target_held = false;
     out->interact_pending = false;
     out->attack_pending = false;
+    out->attack_held = (held & CAMERA_X) != 0;
+    out->attack_released = false;
     out->shield_held = false;
     out->interact_held = false;
     out->diagnostics_toggled = false;
@@ -230,10 +239,12 @@ void player_input_step(bool in_gameplay, player_input_t *out)
     out->move_mode = move_mode;
     out->interact_pending = interacted;
     out->attack_pending = attacked;
+    out->attack_released = attack_released;
 
     if (dialogue_open)
     {
         out->attack_pending = false;
+        out->attack_released = false;
         out->shield_held = false;
         out->interact_held = false;
         out->look_exited = look_was_active;

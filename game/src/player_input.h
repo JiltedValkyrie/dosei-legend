@@ -71,6 +71,8 @@ typedef struct
     int8_t              menu_step;          /* D-pad while a menu/box owns it */
     bool                interact_pending;   /* A */
     bool                attack_pending;     /* X */
+    bool                attack_held;        /* raw physical X, even while UI owns pad */
+    bool                attack_released;    /* consumed release edge, gameplay only */
     bool                shield_held;        /* R */
     /* A HELD: letting go of a ledge (Player_Action_8084BBE4 reads the button
     ** state, not a press). */

@@ -1,9 +1,12 @@
 # M2 draft: combat, hearts, death and continue
 
 Draft by Astra, 2026-09-25. Requested as side planning while Claude owns M1.
-This expands DEMO_PLAN.md M2; it does not start implementation, assign its owner,
-approve M1, or advance any milestone. M2 code starts after M1 review and owner
-assignment. Existing M1/asset work in the working tree is outside this draft.
+This expands DEMO_PLAN.md M2. On 2026-09-26 the human confirmed water and
+requested continuation, with Astra already owning ongoing implementation.
+M2a input/source/storage work is started; see M2_INPUT_CONTRACT.md and
+M2_SOURCE_CONTRACT.md. Boot-unique actor handles are the first M2b prerequisite.
+Live heap peak capture and full contact integration remain pending. This does not close
+remaining M1 issues or claim full M1 camera acceptance.
 
 ## Playable result
 
@@ -17,7 +20,11 @@ A context action. Digital D-pad moves; 3D stick moves with proportional speed.
 3D D-pad is C directions outside menus, menu navigation inside them. Preserve
 commits 256e315 (3D Pad) and 5065e4c (stable slow-walk facing).
 
-Out of scope: full dungeon enemies/Gohma, shop/NPC conversion, complete C-item
+Human scope update, 2026-09-26: real starter equipment moves from M3 to
+**M2b.1**, after current M2b contact/body work and before M2c human combat
+testing. Required scope, priority P1, tracked as FEAT-001.
+
+Out of scope: full dungeon enemies/Gohma, full shop/NPC conversion, complete C-item
 use and pause subscreens, magic spin, bottles/fairy revival, adult weapons.
 Bring forward only dependencies needed to make M2 acceptance real.
 
@@ -135,6 +142,41 @@ contacts before slot reuse; use validated identity, not a dangling slot pointer.
 Review artifact: deterministic multi-hit/guard/teardown host tests and one live
 contact path, with grass cutting still working and no duplicate reward events.
 
+### M2b.1: real starter equipment for early human testing
+
+Owner: current M2 implementer (Claude). Approved required scope, not a backlog
+suggestion. Reuse M1 crawlspace and source maze geometry.
+
+1. Place the source sword chest (`En_Box` params 0x04E0; verify scene entry),
+   with opening/get-item presentation, text, sword grant and persistent chest
+   flag. One opening grants once.
+2. Wire Kokiri Shop entrance/exit and its Deku Shield offer for **40 rupees**.
+   Use source shop/grant rules, confirmation, cancellation and insufficient-funds
+   paths. Grant/debit together, once. Ownership and equipment stay distinct.
+   All shop/choice UI uses VDP2. Full eight-item browsing remains M3.
+3. Prove a fresh file can earn 40 rupees from reachable, source-audited rewards
+   before owning a sword. Bring forward needed placed rupees/props; audit full
+   drops for every added actor. No debug money or sword-required economy loop.
+4. Implement Mido's source equipment/dialogue/flag gate on the **Kokiri Forest
+   path to the Deku Tree**: sword AND shield equipped, not merely owned. No child
+   Lost Woods gate. Broader NPC conversion stays M3.
+5. Remove temporary ground sword/shield spawns when the route works. Preserve
+   previously earned equipment on load; do not reinterpret shortcut pickup flags
+   as real chest flags or silently reset inventory.
+6. Bring forward the maze rolling boulder's source path/collision. Connect its
+   damage/knockback to shared M2 health when available. If damage awaits M2e,
+   disclose that in the early gear check and finish before final M2 acceptance;
+   do not postpone the first chest/shop human test until M3.
+
+Human acceptance: fresh file -> crawl maze -> sword chest -> earn 40 rupees ->
+shop shield -> equip both -> Mido passage. Check neither/one equipped refusal,
+39-rupee refusal, purchase cancel, exact debit, repeated chest interaction,
+room transitions and save/reload. No debug equipment grants. Final M2 also
+requires boulder damage and no duplicate grants/payments.
+
+M3 extends these implementations to other chests, props, shop stock and NPCs;
+do not create a second item-grant/shop system.
+
 ### M2c: sword, guard and evasion
 
 Implement slash variants/combo, thrust, jump slash, nonmagic charge/release spin,
@@ -186,6 +228,9 @@ Review artifact: forest/interior continue live, dungeon/boss remap fixtures,
 save yes/no/failure/cancel tests, file reload, and explicit deferred M5 runtime case.
 
 ## Acceptance matrix
+
+- Progression: M2b.1 real sword chest, 40-rupee shield and equipped-both Mido
+  gate; fresh-file economy, refusal/cancel/repeat and save/reload checks.
 
 - Combat: first/last active frame, combo bounds, charge interruption, one hit per
   permitted attack, two victims, simultaneous hurt/shield, back-side guard miss,

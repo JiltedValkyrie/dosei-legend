@@ -4,6 +4,8 @@
 static collider_t  *at_list[COLLIDE_LIST_MAX], *ac_list[COLLIDE_LIST_MAX],
                    *oc_list[COLLIDE_LIST_MAX];
 static unsigned int at_count, ac_count, oc_count;
+static collide_event_t events[COLLIDE_EVENT_MAX];
+static unsigned int event_count, overflow;
 
 uint32_t    collide_isqrt(uint32_t v)
 {
@@ -26,43 +28,85 @@ uint32_t    collide_isqrt(uint32_t v)
 void        collide_begin(void)
 {
     at_count = ac_count = oc_count = 0;
+    event_count = 0;
 }
 
 static bool push(collider_t **list, unsigned int *count, collider_t *c)
 {
-    if (!c || *count >= COLLIDE_LIST_MAX)
+    if (!c)
         return (false);
+    c->owner = actor_handle(c->actor);      /* BUG-028: identity at registration */
+    if (*count >= COLLIDE_LIST_MAX) {
+        ++overflow;
+        return (false);
+    }
     list[(*count)++] = c;
     return (true);
 }
 
 bool        collide_set_at(collider_t *c)
 {
-    if (c) c->at_hit = 0;
+    if (c) {
+        c->at_hit = 0;
+        c->at_hit_actor = ACTOR_HANDLE_NONE;
+        c->at_hits = 0;
+        c->result &= (uint8_t)~(COL_RES_AT_HIT | COL_RES_AT_BOUNCED);
+    }
     return (push(at_list, &at_count, c));
 }
 
 bool        collide_set_ac(collider_t *c)
 {
-    if (c) { c->ac_hit = 0; c->ac_damage = c->ac_effect = 0; }
+    if (c) {
+        c->ac_hit = 0;
+        c->ac_hit_actor = ACTOR_HANDLE_NONE;
+        c->ac_damage = c->ac_effect = 0;
+        c->result &= (uint8_t)~(COL_RES_AC_HIT | COL_RES_AC_BOUNCED);
+    }
     return (push(ac_list, &ac_count, c));
 }
 
 bool        collide_set_oc(collider_t *c)
 {
-    if (c) c->oc_hit = 0;
+    if (c) {
+        c->oc_hit = 0;
+        c->oc_hit_actor = ACTOR_HANDLE_NONE;
+    }
     return (push(oc_list, &oc_count, c));
+}
+
+unsigned int            collide_event_count(void) { return (event_count); }
+const collide_event_t  *collide_event(unsigned int index)
+{
+    return (index < event_count ? &events[index] : (const collide_event_t *)0);
+}
+unsigned int            collide_overflow(void) { return (overflow); }
+void                    collide_overflow_reset(void) { overflow = 0; }
+
+void        collide_forget(collider_t *c)
+{
+    if (c) {
+        unsigned int i;
+        for (i = 0; i < COLLIDE_SEEN_MAX; ++i) {
+            c->seen[i].attacker = ACTOR_HANDLE_NONE;
+            c->seen[i].attack = c->seen[i].tag = 0;
+        }
+        c->seen_next = 0;
+    }
+}
+
+bool        collide_guard_blocked(const collider_t *shield)
+{
+    return (shield && (shield->result & COL_RES_AC_BOUNCED) != 0);
 }
 
 /* World-space cylinder centre (feet) of a cylinder collider. */
 static void base(const collider_t *c, int32_t *x, int32_t *y, int32_t *z)
 {
+    *x = c->x; *y = c->y + c->y_shift; *z = c->z;
     if (c->actor) {
-        *x = c->actor->x; *y = c->actor->y; *z = c->actor->z;
-    } else {
-        *x = c->x; *y = c->y; *z = c->z;
+        *x += c->actor->x; *y += c->actor->y; *z += c->actor->z;
     }
-    *y += c->y_shift;
 }
 
 static int32_t clamp32(int32_t v, int32_t lo, int32_t hi)
@@ -142,6 +186,33 @@ static bool cap_cyl(const collider_t *cap, const collider_t *cyl,
     return (true);
 }
 
+/* Sword wedge vs a cylinder's base point: the slice swing's reach test. */
+static bool sector_cyl(const collider_t *sec, const collider_t *cyl,
+                       int32_t *overlap)
+{
+    int32_t sx, sy, sz, cx, cy, cz, dx, dy, dz, turn;
+
+    base(sec, &sx, &sy, &sz);
+    base(cyl, &cx, &cy, &cz);
+    dy = sy - cy;
+    if (dy < 0) dy = -dy;
+    if (dy > sec->height)
+        return (false);
+    dx = cx - sx;
+    dz = cz - sz;
+    if (dx > sec->radius || dx < -sec->radius ||
+        dz > sec->radius || dz < -sec->radius)
+        return (false);
+    if (dx * dx + dz * dz > (int32_t)sec->radius * sec->radius)
+        return (false);
+    turn = (int32_t)(int16_t)(uint16_t)(collide_heading(dx, dz) - sec->yaw);
+    if (turn < 0) turn = -turn;
+    if (turn > sec->arc)
+        return (false);
+    *overlap = 1;
+    return (true);
+}
+
 bool        collide_overlap(const collider_t *a, const collider_t *b,
                             int32_t *overlap)
 {
@@ -155,7 +226,11 @@ bool        collide_overlap(const collider_t *a, const collider_t *b,
         return (cap_cyl(a, b, overlap));
     if (a->shape == COLSHAPE_CYLINDER && b->shape == COLSHAPE_CAPSULE)
         return (cap_cyl(b, a, overlap));
-    return (false);                     /* capsule vs capsule: not needed */
+    if (a->shape == COLSHAPE_SECTOR && b->shape == COLSHAPE_CYLINDER)
+        return (sector_cyl(a, b, overlap));
+    if (a->shape == COLSHAPE_CYLINDER && b->shape == COLSHAPE_SECTOR)
+        return (sector_cyl(b, a, overlap));
+    return (false);                    /* capsule vs capsule: not needed */
 }
 
 /* CollisionCheck_ApplyDamage: table index is the highest set DMG bit. */
@@ -179,25 +254,111 @@ static void apply_damage(collider_t *ac, const collider_t *at)
     }
 }
 
+/* Colliders of an actor killed before the run take no part (the source skips
+** actors whose update is gone). Actorless colliders always take part. */
+static bool live(const collider_t *c)
+{
+    return (!c->actor ||
+            (c->owner != ACTOR_HANDLE_NONE && actor_handle(c->actor) == c->owner));
+}
+
+/* The victim already took this attack instance: the overlap lingers. */
+static bool already_hit(const collider_t *ac, const collider_t *at,
+                        actor_handle_t attacker)
+{
+    unsigned int i;
+    if (!at->attack_id)
+        return (false);
+    for (i = 0; i < COLLIDE_SEEN_MAX; ++i)
+        if (ac->seen[i].attack == at->attack_id &&
+            ac->seen[i].attacker == attacker && ac->seen[i].tag == at->tag)
+            return (true);
+    return (false);
+}
+
+static void record(const collider_t *at, const collider_t *ac,
+                   actor_handle_t attacker, actor_handle_t victim, bool bounced)
+{
+    collide_event_t *e;
+
+    if (event_count >= COLLIDE_EVENT_MAX) {
+        ++overflow;
+        return;
+    }
+    e = &events[event_count++];
+    e->at_actor = attacker;
+    e->ac_actor = victim;
+    e->at_tag = at->tag;
+    e->ac_tag = ac->tag;
+    e->attack_id = at->attack_id;
+    e->damage = ac->ac_damage;
+    e->effect = ac->ac_effect;
+    e->bounced = bounced;
+    e->pad = 0;
+}
+
+/* True when `at` already hit another element of ac's actor this pass. */
+static bool took_element(const collider_t *at, const collider_t *ac, unsigned int upto)
+{
+    unsigned int k;
+    if (!ac->actor)
+        return (false);
+    for (k = 0; k < upto; ++k)
+        if (ac_list[k] != ac && ac_list[k]->actor == ac->actor &&
+            (ac_list[k]->ac_flags & COL_AC_ELEMENT) && ac_list[k]->ac_hit == at)
+            return (true);
+    return (false);
+}
+
+/* CollisionCheck_AT / CollisionCheck_SetATvsAC. The first AT to reach an AC
+** in a pass owns its damage; an AT keeps going to further victims. */
 static void at_vs_ac(void)
 {
     unsigned int i, j;
 
     for (i = 0; i < at_count; ++i) {
         collider_t *at = at_list[i];
+        actor_handle_t attacker;
+        if (!live(at))
+            continue;
+        attacker = at->owner;
         for (j = 0; j < ac_count; ++j) {
             collider_t *ac = ac_list[j];
-            if (ac->ac_hit || ac->invincible)
+            actor_handle_t victim;
+            bool bounced;
+            if (ac->ac_hit || ac->invincible || !live(ac))
                 continue;
-            if (at->actor && at->actor == ac->actor)
-                continue;
+            if (at == ac || (at->actor && at->actor == ac->actor))
+                continue;               /* one collider as both AT and AC */
             if (!(at->at_type & ac->ac_type) || !(at->at_dmg & ac->ac_bumper))
+                continue;
+            if (already_hit(ac, at, attacker))
+                continue;
+            if ((ac->ac_flags & COL_AC_ELEMENT) && took_element(at, ac, j))
                 continue;
             if (!collide_overlap(at, ac, (int32_t *)0))
                 continue;
+            victim = ac->owner;
+            bounced = (ac->ac_flags & COL_AC_HARD) &&
+                      (at->actor || (at->ac_flags & COL_OUTSIDE_ACTOR)) &&
+                      (ac->actor || (ac->ac_flags & COL_OUTSIDE_ACTOR));
             at->at_hit = ac;
+            at->at_hit_actor = victim;
+            if (at->at_hits < 0xFF)
+                ++at->at_hits;
+            at->result |= COL_RES_AT_HIT | (bounced ? COL_RES_AT_BOUNCED : 0);
             ac->ac_hit = at;
+            ac->ac_hit_actor = attacker;
+            ac->result |= COL_RES_AC_HIT | (bounced ? COL_RES_AC_BOUNCED : 0);
+            if (at->attack_id) {
+                unsigned int k = ac->seen_next % COLLIDE_SEEN_MAX;
+                ac->seen[k].attacker = attacker;
+                ac->seen[k].attack = at->attack_id;
+                ac->seen[k].tag = at->tag;
+                ac->seen_next = (uint8_t)(k + 1);
+            }
             apply_damage(ac, at);
+            record(at, ac, attacker, victim, bounced);
         }
     }
 }
@@ -216,6 +377,8 @@ static void oc_push(collider_t *l, collider_t *r, int32_t overlap)
 
     l->oc_hit = r;
     r->oc_hit = l;
+    l->oc_hit_actor = r->owner;
+    r->oc_hit_actor = l->owner;
     if ((l->oc_flags1 & OC1_NO_PUSH) || (r->oc_flags1 & OC1_NO_PUSH))
         return;
     if (lt == 0) {
@@ -271,7 +434,7 @@ static void oc_vs_oc(void)
             collider_t *l = oc_list[i], *r = oc_list[j];
             if (l->shape != COLSHAPE_CYLINDER || r->shape != COLSHAPE_CYLINDER)
                 continue;
-            if (!oc_pair_ok(l, r))
+            if (!oc_pair_ok(l, r) || !live(l) || !live(r))
                 continue;
             if (collide_overlap(l, r, &overlap))
                 oc_push(l, r, overlap);
@@ -288,9 +451,11 @@ void        collide_apply_displacement(collider_t *c)
 {
     if (!c)
         return;
-    if (c->actor) {
-        c->actor->x += c->disp_x;
-        c->actor->z += c->disp_z;
+    if (c->actor && !live(c)) {
+        /* owner gone or slot reused: never shove the replacement */
+    } else if (c->actor) {
+        if (c->disp_x || c->disp_z)
+            collide_world_push(c->actor, c->disp_x, c->disp_z);
     } else {
         c->x += c->disp_x;
         c->z += c->disp_z;

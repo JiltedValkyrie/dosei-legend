@@ -73,6 +73,26 @@ class PlayerControls(unittest.TestCase):
     def setUp(self):
         self.lib.control_reset()
 
+    def test_attack_tap_retains_release_edge(self):
+        self.lib.control_sample(X)
+        self.lib.control_sample(0)
+        self.lib.control_step(True)
+        self.assertEqual(self.lib.control_attack(), 1)
+        self.assertEqual(self.lib.control_attack_held(), 0)
+        self.assertEqual(self.lib.control_attack_released(), 1)
+        self.lib.control_step(True)
+        self.assertEqual(self.lib.control_attack_released(), 0)
+
+    def test_title_consumes_attack_edges_but_exposes_physical_hold(self):
+        self.hold(X, in_gameplay=False)
+        self.assertEqual(self.lib.control_attack(), 0)
+        self.assertEqual(self.lib.control_attack_held(), 1)
+        self.hold(0, in_gameplay=False)
+        self.assertEqual(self.lib.control_attack_released(), 0)
+        self.lib.control_step(True)
+        self.assertEqual(self.lib.control_attack(), 0)
+        self.assertEqual(self.lib.control_attack_released(), 0)
+
     def hold(self, bits, steps=1, in_gameplay=True):
         """Hold `bits` across `steps` fixed steps, sampling once per step."""
         for _ in range(steps):

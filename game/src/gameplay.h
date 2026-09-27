@@ -12,10 +12,9 @@
 ** the host tests drive the same code the Saturn runs.
 **
 ** Placement comes from build/generated/kokiri_actors.h. Grass and NPCs are the
-** original US 1.2 actor lists (En_Kusa, En_Ko/En_Md/En_Sa). The two gear
-** pickups are authored -- Kokiri Forest has no sword or shield on the ground in
-** the original -- but their floor height is verified at build time, not
-** guessed here.
+** original US 1.2 actor lists (En_Kusa, En_Ko/En_Md/En_Sa). The Kokiri Sword
+** comes from the maze chest (En_Box 0x04E0) and rupees from En_Item00 and
+** En_Wonder_Item placements; nothing is authored on the ground.
 */
 
 /* Bit positions in `owned` and `equipped`. */
@@ -24,7 +23,7 @@
 
 /* Feedback raised during one step. demo.c turns these into sound; nothing in
 ** here plays audio, so a test can assert the event without a sound driver. */
-#define GP_EVENT_PICKUP     (1u << 0)
+#define GP_EVENT_PICKUP     (1u << 0)   /* got an item: chest or purchase */
 #define GP_EVENT_SWING      (1u << 1)
 #define GP_EVENT_CUT        (1u << 2)
 #define GP_EVENT_TARGET_ON  (1u << 3)
@@ -57,6 +56,14 @@
 ** hop's NA_SE_VO_LI_SWORD_N. */
 #define GP_EVENT_CLIMB_END  (1u << 22)
 #define GP_EVENT_HOP_VOICE  (1u << 23)
+/* Mido stood aside (0x1033 closed): demo.c may play his walk-away. */
+#define GP_EVENT_MIDO_ASIDE (1u << 24)
+#define GP_EVENT_HURT       (1u << 25)   /* Link took damage */
+#define GP_EVENT_KNOCKDOWN  (1u << 26)   /* knockback large: Link falls */
+#define GP_EVENT_GUARD      (1u << 27)   /* shield bounced an attack */
+#define GP_EVENT_WALL_HIT   (1u << 28)   /* blade struck a wall (NA_SE_IT_WALL_HIT_*) */
+#define GP_EVENT_REBOUND    (1u << 29)   /* blade bounced off a hard collider */
+#define GP_EVENT_NUT_BREAK  (1u << 30)   /* nutsball broke (NA_SE_EN_OCTAROCK_ROCK) */
 #define GP_WALLET_CAPACITY  99
 #define GP_DROP_DELAY      15
 
@@ -80,9 +87,58 @@
 ** two thirds of a second with the blade live in the middle of it; the window
 ** here is the same shape, sampled at our step rate. It is NOT a frame-exact
 ** port of Player_MeleeAttack, and the comment stays until it is. */
-#define GP_SWING_STEPS      14
-#define GP_SWING_HIT_FIRST  4
-#define GP_SWING_HIT_LAST   8
+/* Sword timeline (z_player.c func_80837948 / Player_Action_808502D0).
+** Attack clips play at PLAYER_ANIM_ADJUSTED_SPEED: 2/3 frame a step, kept
+** in thirds (+2). Recovery (D_80854190 unk_04) plays at 1.0: +3. unk_844 = 8
+** frames (12 steps) keeps the same-attack count alive; the third in a row
+** plays the combo row (+2). Attack phases: 0 none, 1 attack, 2 recovery. */
+#define GP_ATTACK_THIRDS_STEP   2
+#define GP_RECOVER_THIRDS_STEP  3
+#define GP_COMBO_WINDOW_STEPS   12
+/* Player_Action_808502D0: a forward-stick attack (PLAYER_STATE2_30) lunges
+** at speedXZ 15 on clip frame 0, stepping down 5 a frame: 10 a step, -20/9. */
+#define GP_LUNGE_SPEED_Q16      655360
+#define GP_LUNGE_DECEL_Q16      145636
+/* Charged spin (func_808377DC, Player_Action_80844E68, func_80844BE4):
+** unk_858 +0.02 a frame (Q16 874 a step); 0.1 commits, 0.85 is the big
+** spin. The charge-start clip plays from frame 8. Release: Player_Set-
+** Invulnerability(-8), 8 frames. Phases 3 start, 4 wait, 5 cancel end. */
+#define GP_CHARGE_STEP_Q16      874
+#define GP_CHARGE_COMMIT_Q16    6554
+#define GP_CHARGE_BIG_Q16       55706
+#define GP_CHARGE_START_FRAME   8
+#define GP_SPIN_INVULN_STEPS    12
+/* func_80842DF4 wall hit: speedXZ -14, the attack's Math_StepToF(0, 5):
+** -9.33 a step, 20/9. func_80842D20 rebound and the guard recoil: -18 with
+** Player_DecelerateToZero (R_DECELERATE_RATE 800: 8 a frame): -12, 32/9.
+** Phases: 7 crouch stab, 8 sword rebound, 9 guard recoil. */
+#define GP_WALL_PUSH_Q16        (-611669)
+#define GP_REBOUND_PUSH_Q16     (-786432)
+#define GP_REBOUND_DECEL_Q16    233017
+#define GP_REBOUND_END_FRAME    6       /* Player_Action_808505DC curFrame >= 6 */
+/* Blade line reaches 10 units behind the hilt (func_80842DF4 sp68). */
+#define GP_BLADE_BACK           10
+/* Swept blade capsules' radius: the source quads are flat; this stands in
+** for their width after sampling the sweep at three edges. */
+#define GP_BLADE_RADIUS         4
+/* En_Nutsball: cylinder 13/13, AT 0xFFCFFFFF damage 8 (half a heart), AC
+** 0xFFCFFFFF. speed 10 (6.67 a step, Q16 436907); timer 30 frames (45
+** steps) then gravity -1 (-171 Q8); dies at -300 frames (-450 steps). */
+#define GP_NUT_RADIUS           13
+#define GP_NUT_HEIGHT           13
+#define GP_NUT_DAMAGE           8
+#define GP_NUT_SPEED_Q16        436907
+#define GP_NUT_TIMER_STEPS      45
+#define GP_NUT_LIFE_STEPS       450
+/* Player_ActionHandler_10 (Z-targeted, outdoors): jump slash launches at
+** speedXZ 5 / velocity.y 5; sidehop 8.5 / 3.5; backflip 6 / 5.8. Q8 source
+** units, as demo.c's air code expects. Phase 6 = jump slash in the air. */
+#define GP_JUMP_SLASH_SPEED_Q8  1280
+#define GP_JUMP_SLASH_VY_Q8     1280
+#define GP_SIDEHOP_SPEED_Q8     2176
+#define GP_SIDEHOP_VY_Q8        896
+#define GP_BACKFLIP_SPEED_Q8    1536
+#define GP_BACKFLIP_VY_Q8       1485
 
 /* Reach, in world units. Child Link's sword sweeps a little under a body
 ** width; grass is cut when its base falls inside that arc. */
@@ -103,14 +159,52 @@
 ** in Hold mode a press with no target starts Parallel immediately -- so this
 ** number is tuned for feel, not ported. Roughly 0.17 s. */
 #define GP_TARGET_HOLD_STEPS 5
-#define GP_PICKUP_RANGE     44
-#define GP_PICKUP_HEIGHT    70
+
+/* EnMd_BlockPath (z_en_md.c): Mido keeps 60 units from home on Link's side.
+** His OC cylinder is radius 36 (sCylinderInit), Link's 12 (z_player.c). He
+** walks path 1 at speed 1.5 per 20 Hz frame, one unit per 30 Hz step. */
+/* Kokiri Shop. EnOssan's talk reach is the slice's (counter between them);
+** the Deku Shield's price is EnGirlA's basePrice (z_en_girla.c). */
+#define GP_SHOP_TALK_RANGE   150
+#define GP_SHIELD_PRICE      40
+/* En_Goroiwa, maze boulder (z_en_goroiwa.c), converted from 20 Hz frames to
+** 30 Hz steps: speeds x2/3, accelerations x4/9, timers x3/2. Q16 where noted.
+** Kokiri speed 9.2, step 0.3; gravity -0.86, floor velocity -15; hop 5 and
+** speed x0.15 when it hits Link; waits 20/6 frames by rot_z & 1; 50 frames
+** with no collision after a hit when rot_z & 1. Sphere r58 at y+59.5, live
+** within 300 of Link. AT damage 4 (a quarter heart); Link's shield quad
+** (AC 0xDFCFFFFF) cannot take the boulder's 0x20000000, so guarding never
+** blocks it. Knockback large: 2.0 away from the boulder, 20 frames intangible. */
+#define GP_BOULDER_SPEED_Q16    401954
+#define GP_BOULDER_ACCEL_Q16    8738
+#define GP_BOULDER_GRAVITY_Q16  (-25049)
+#define GP_BOULDER_MIN_VY_Q16   (-655360)
+#define GP_BOULDER_HOP_Q16      218453
+#define GP_BOULDER_RADIUS       58
+#define GP_BOULDER_CENTER_Y     60      /* 59.5 */
+#define GP_BOULDER_LIVE_RANGE   300
+#define GP_BOULDER_DAMAGE       4
+#define GP_LINK_BODY_RADIUS     12      /* player cylinder */
+#define GP_LINK_BODY_HEIGHT     50      /* feet to head + 10: child stand-in */
+#define GP_KNOCKBACK_SPEED_Q16  87381   /* 2.0 a frame */
+#define GP_INTANGIBLE_STEPS     30
+/* Player damage response NONE (func_80837C0C from the AC_HIT branch):
+** pushed 4.0 a frame away from the attacker. */
+#define GP_HIT_SPEED_Q16        174763
+/* Link's shield stand-in (the source is a quad on the left forearm): a
+** cylinder this far in front of him while guarding. */
+#define GP_SHIELD_FORWARD       16
+#define GP_SHIELD_RADIUS        14
+#define GP_SHIELD_HEIGHT        40
+#define GP_MIDO_BLOCK_OFFSET 60
+#define GP_MIDO_PUSH_RADIUS  (36 + 12)
 
 typedef struct
 {
     int32_t     x, y, z;        /* Link's feet */
     uint16_t    yaw;            /* facing, binang */
     bool        attack;         /* X pressed this step */
+    bool        attack_held;    /* X held this step (charge) */
     bool        shield;         /* R held */
     /* L HELD this step, not a press edge: hold targeting needs the button's
     ** state every step to know when to release. */
@@ -119,6 +213,10 @@ typedef struct
     bool        cancel;         /* B pressed this step: closes a text box */
     bool        pause;          /* Start pressed this step */
     int8_t      menu_step;      /* D-pad: -1 up/left, +1 down/right, 0 none */
+    /* controlStickDirections relative to Link's facing: -1 none, 0 forward,
+    ** 1 left, 2 back, 3 right. `moving` = stick outside its dead zone. */
+    int8_t      stick_dir;
+    bool        moving;
     bool        grounded;
     uint8_t     room;
 }               gameplay_input_t;
@@ -136,10 +234,62 @@ typedef struct
     /* Consecutive steps L has been held, capped. Distinguishes a tap (which
     ** recentres) from a hold (which locks on). */
     uint8_t     target_hold;
-    uint8_t     swing;          /* steps remaining, 0 when idle */
+    uint8_t     swing;          /* 1 while the attack clip plays (locks walk) */
+    uint8_t     attack_id;      /* PLAYER_MWA_* (player_attack.h) */
+    uint8_t     attack_phase;   /* 0 none, 1 attack, 2 recovery */
+    uint16_t    attack_thirds;  /* clip time in thirds of a frame */
+    uint8_t     combo_count, combo_timer;   /* unk_845, unk_844 in steps */
+    bool        lunge_pending;  /* PLAYER_STATE2_30 until clip frame 0 runs */
+    bool        charge_ok;      /* X held since the attack began (unk_844>0) */
+    bool        charge_committed;   /* actionVar2 = 1: release spins */
+    uint8_t     charge_from;    /* attack that led into the charge */
+    uint16_t    charge_q16;     /* unk_858 */
+    int32_t     lunge_q16;      /* forward speed a step, for demo.c */
+    int32_t     lunge_decel_q16;    /* its step toward zero */
+    bool        blade_bounced;  /* AT_BOUNCED on the blade this pass */
+    bool        guard_pending;  /* shield AC_BOUNCED, read next step */
+    uint8_t     wall_material;  /* SurfaceType material of the last wall hit */
+    /* En_Nutsball (standard-build test emitter only; see gameplay.c).
+    ** nut_state 0 none, 1 flying; nut_reflected: AT_TYPE_PLAYER now. */
+    uint8_t     nut_state, nut_reflected;
+    int16_t     nut_timer;
+    uint16_t    nut_yaw, nut_cooldown;
+    int32_t     nut_x, nut_y, nut_z, nut_vy_q8, nut_fall_q8;
     uint8_t     swing_hit;      /* this swing already cut something */
     uint16_t    grass_cut;      /* one bit per kokiri_grass entry */
-    uint8_t     pickup_taken;   /* one bit per kokiri_pickups entry */
+    /* En_Wonder_Item session state, one entry per kokiri_wonders[] row. A
+    ** paid-out or failed trigger stays done until its room reloads, unless
+    ** its switch flag keeps it done (z_en_wonder_item.c Init). */
+    uint16_t    wonder_done;
+    uint8_t     wonder_tags[16], wonder_next[16], wonder_timer[16];
+    uint8_t     wonder_drop[16], wonder_age[16];   /* mode 3 ground rupee */
+    uint8_t     room;           /* last room stepped, for room reloads */
+    int16_t     chest_prompt;   /* kokiri_chests index A would open, -1 */
+    uint8_t     get_item;       /* GP_* held up while its text shows, 0 none */
+    /* Mido (EnMd). state: 0 blocking, 1 walking path 1, 2 moved. */
+    uint8_t     mido_state;
+    int32_t     mido_x, mido_z;
+    /* Shop exchange: 0 none, 1 greeting, 2 item text, 3 buy choice,
+    ** 4 result. `choice` is the TWO_CHOICE cursor, 0 = Buy. */
+    /* En_Goroiwa. state 0 roll, 1 hop after a hit, 2 wait. Q16 position. */
+    uint8_t     boulder_state, boulder_wait, boulder_nohit;
+    bool        boulder_hit, boulder_in_way, boulder_live;
+    int8_t      boulder_cur, boulder_next, boulder_dir;
+    uint16_t    boulder_rot;
+    int32_t     boulder_x, boulder_y, boulder_z, boulder_speed, boulder_vy;
+    /* Link hurt: steps of intangibility left; knockback heading/speed Q16
+    ** for demo.c to apply (speed decays there). */
+    uint8_t     intangible;
+    uint16_t    knock_yaw;
+    int32_t     knock_speed;
+    bool        knock_down;
+    /* Link's body AC hit from the last contact pass, read by the next step
+    ** (Player_UpdateDamage reads the previous frame's cylinder AC_HIT). */
+    uint8_t     hurt_pending, hurt_damage;
+    uint16_t    hurt_yaw;
+    uint8_t     shop_state;
+    uint8_t     choice;
+    bool        shop_prompt;    /* A would talk to the shopkeeper */
     uint32_t    events;         /* raised this step only */
     uint16_t    face_yaw;       /* heading to hold while locked on */
     bool        face_locked;
@@ -188,11 +338,56 @@ const char         *gameplay_slot_use(unsigned int slot);
 
 bool                gameplay_rupee_taken(unsigned int index);
 void                gameplay_reset(void);
+/* Contact collider storage (fixed cart carve on Saturn). Unbound: no cuts. */
+unsigned int        gameplay_contacts_bytes(void);
+bool                gameplay_contacts_init(void *storage, unsigned int bytes);
 void                gameplay_update_facing(int32_t x, int32_t z);
 void                gameplay_step(const gameplay_input_t *in);
 bool                gameplay_grass_cut(unsigned int index);
-bool                gameplay_pickup_taken(unsigned int index);
+/* Platform hooks for the sword (demo.c on Saturn; stubs in host tests).
+** Blade base/tip in world units, y = Link's feet frame, from the last posed
+** left hand (link_anim_blade). False: no pose; the sector stand-in is used.
+** Wall: nearest wall crossing on the line from `from` to `to` (BgCheck_
+** EntityLineTest1 walls, entity-ignored polys skipped, floor type 6 not
+** counted), *material = SurfaceType material. */
+bool                gameplay_blade_points(int32_t base[3], int32_t tip[3]);
+bool                gameplay_blade_wall(const int32_t from[3], const int32_t to[3],
+                                        unsigned int *material);
+/* Nutsball move (Actor_MoveXZGravity + UpdateBgCheckInfo 10/13/13): moves
+** pos by d, true when it touched a wall or the ground. */
+bool                gameplay_ball_move(int32_t pos[3], int32_t dx, int32_t dy, int32_t dz);
+/* Standard-build test encounter: spawn a nutsball at pos aimed at yaw. */
+void                gameplay_nut_fire(int32_t x, int32_t y, int32_t z, uint16_t yaw);
+/* The live nutsball's world position (draw). False when none. */
+bool                gameplay_nut_body(int32_t *x, int32_t *y, int32_t *z);
+/* Heading helper's partner: Q16 sine and cosine of a binang (platform). */
+void                gameplay_sincos(uint16_t yaw, int32_t *sine, int32_t *cosine);
+/* Runtime position of a speaker: Mido moves, everyone else is placement. */
+/* Kokiri Forest NPCs exist only in that scene. */
+bool                gameplay_npcs_present(void);
+int32_t             gameplay_npc_x(unsigned int npc);
+int32_t             gameplay_npc_z(unsigned int npc);
+/* Mido's OC cylinder centre while he stands in `room`; false when gone. */
+bool                gameplay_mido_body(unsigned int room, int32_t *x, int32_t *z);
+/* Boulder sphere centre (whole units) while in `room`; false elsewhere. */
+bool                gameplay_boulder_body(unsigned int room, int32_t *x, int32_t *y, int32_t *z);
+bool                gameplay_chest_opened(unsigned int index);
+/* Choice lines at the end of the current page (0 = none); the cursor is
+** gameplay.choice. For the VDP2 box renderer. */
+unsigned int        gameplay_choice_lines(void);
+/* A mode-3 wonder rupee lying on the ground, ready to collect (for drawing). */
+bool                gameplay_wonder_drop(unsigned int index);
 /* True while the sword is live this step, for tests and diagnostics. */
 bool                gameplay_sword_active(void);
+/* Link's attack pose this step: LINK_CLIP_* and frame; false when none. */
+bool                gameplay_attack_pose(unsigned int *clip, unsigned int *frame);
+/* Same, with the clip time in thirds of a frame (root motion sampling). */
+bool                gameplay_attack_time(unsigned int *clip, unsigned int *thirds);
+/* Jump slash: start it in the air (func_8083BA90) / land it (func_80844AF4:
+** JUMPSLASH_FINISH with unk_845 = 3). Start is false without a sword. */
+bool                gameplay_jump_attack_start(void);
+void                gameplay_jump_attack_land(void);
+/* End any attack at once (scene change, water entry). */
+void                gameplay_attack_cancel(void);
 
 #endif

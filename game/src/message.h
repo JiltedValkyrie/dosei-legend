@@ -4,6 +4,10 @@
 #include <stdint.h>
 #include "cutscenes.h"
 
+/* Bind CUTTEXT.TXT (run strings, loaded to the cart; BUG-037). Unbound,
+** every run reads "". */
+bool                cutscene_text_bind(const uint8_t *blob, uint32_t bytes);
+
 /*
 ** The cutscene message player: OoT's text boxes, driven by frames rather than
 ** by a talk state.

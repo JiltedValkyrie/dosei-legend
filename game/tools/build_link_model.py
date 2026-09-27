@@ -515,13 +515,15 @@ def write_model(faces, out_path, skinned=False, character=True):
 # idle offset (recipe 'animation') anchors every other symbol by index. The
 # whole 573-entry table is validated before use -- see resolve_animations().
 #
-# `stride` decimates long clips. Idle is a 184-frame fidget loop whose first
-# 20 frames are the standing breath cycle we want; sampling the rest would cost
-# ROM for motion nothing in the slice triggers. Fall is a 37-frame descent that
+# `stride` decimates long clips. Idle uses Player_GetIdleAnim's free-hands
+# standing cycle in full. The first 20 frames of waitF_typeA are only the
+# start of a 184-frame fidget, not a loop: repeating them snaps the legs.
+# Keep IDLE_SYMBOL below as the ROM address anchor, not the playback clip.
+# Fall is a 37-frame descent that
 # reads fine at a third of the rate because the pose barely changes.
 CLIPS = (
     # name       symbol                                    first  count stride
-    ('idle',    'gPlayerAnim_link_normal_waitF_typeA_20f',      0,   20, 1),
+    ('idle',    'gPlayerAnim_link_normal_wait_free',           0,    0, 1),
     ('walk',    'gPlayerAnim_link_normal_walk',                 0,   29, 1),
     ('run',     'gPlayerAnim_link_normal_run',                  0,   20, 1),
     ('fall',    'gPlayerAnim_link_normal_fall',                 0,   12, 3),
@@ -530,9 +532,57 @@ CLIPS = (
     # z_player.c D_80854190[PLAYER_MWA_FORWARD_SLASH_1H], then recovery.
     ('slash',   'gPlayerAnim_link_fighter_normal_kiru',         0,    5, 1),
     ('recover', 'gPlayerAnim_link_fighter_normal_kiru_end',     0,    8, 1),
+    # M2c: the rest of the one-handed D_80854190 rows (attack, then the
+    # non-lock-on recovery unk_04). Whole clips: windows index their frames.
+    ('slash_combo',   'gPlayerAnim_link_fighter_normal_kiru_finsh',     0, 0, 1),
+    ('slash_combo_end', 'gPlayerAnim_link_fighter_normal_kiru_finsh_end', 0, 0, 1),
+    ('right',         'gPlayerAnim_link_fighter_Lside_kiru',            0, 0, 1),
+    ('right_end',     'gPlayerAnim_link_fighter_Lside_kiru_end',        0, 0, 1),
+    ('right_combo',   'gPlayerAnim_link_fighter_Lside_kiru_finsh',      0, 0, 1),
+    ('right_combo_end', 'gPlayerAnim_link_fighter_Lside_kiru_finsh_end', 0, 0, 1),
+    ('left',          'gPlayerAnim_link_fighter_Rside_kiru',            0, 0, 1),
+    ('left_end',      'gPlayerAnim_link_fighter_Rside_kiru_end',        0, 0, 1),
+    ('left_combo',    'gPlayerAnim_link_fighter_Rside_kiru_finsh',      0, 0, 1),
+    ('left_combo_end', 'gPlayerAnim_link_fighter_Rside_kiru_finsh_end', 0, 0, 1),
+    ('stab',          'gPlayerAnim_link_fighter_pierce_kiru',           0, 0, 1),
+    ('stab_end',      'gPlayerAnim_link_fighter_pierce_kiru_end',       0, 0, 1),
+    ('stab_combo',    'gPlayerAnim_link_fighter_pierce_kiru_finsh',     0, 0, 1),
+    ('stab_combo_end', 'gPlayerAnim_link_fighter_pierce_kiru_finsh_end', 0, 0, 1),
+    # Charged spin (func_808377DC / Player_Action_80844E68 / func_80844BE4):
+    # charge start (startL after a right slash), wait loop, cancel, then
+    # PLAYER_MWA_SPIN_ATTACK_1H / BIG_SPIN_1H and their recoveries.
+    ('charge_start',  'gPlayerAnim_link_fighter_power_kiru_start',      0, 0, 1),
+    ('charge_startl', 'gPlayerAnim_link_fighter_power_kiru_startL',     0, 0, 1),
+    ('charge_wait',   'gPlayerAnim_link_fighter_power_kiru_wait',       0, 0, 1),
+    ('charge_end',    'gPlayerAnim_link_fighter_power_kiru_wait_end',   0, 0, 1),
+    ('spin',          'gPlayerAnim_link_fighter_rolling_kiru',          0, 0, 1),
+    ('spin_end',      'gPlayerAnim_link_fighter_rolling_kiru_end',      0, 0, 1),
+    ('big_spin',      'gPlayerAnim_link_fighter_Wrolling_kiru',         0, 0, 1),
+    ('big_spin_end',  'gPlayerAnim_link_fighter_Wrolling_kiru_end',     0, 0, 1),
+    # Z-targeted A (Player_ActionHandler_10): jump slash (func_8083BA90,
+    # MWA_JUMPSLASH_START/FINISH; child ends on power_jump_kiru_end) and the
+    # D_80853D4C evasions with their landings (func_8083BCD0).
+    ('jslash',        'gPlayerAnim_link_fighter_Lpower_jump_kiru',      0, 0, 1),
+    ('jslash_hit',    'gPlayerAnim_link_fighter_Lpower_jump_kiru_hit',  0, 0, 1),
+    ('jslash_end',    'gPlayerAnim_link_fighter_power_jump_kiru_end',   0, 0, 1),
+    ('hop_left',      'gPlayerAnim_link_fighter_Lside_jump',            0, 0, 1),
+    ('hop_left_end',  'gPlayerAnim_link_fighter_Lside_jump_end',        0, 0, 1),
+    ('backflip',      'gPlayerAnim_link_fighter_backturn_jump',         0, 0, 1),
+    ('backflip_end',  'gPlayerAnim_link_fighter_backturn_jump_end',     0, 0, 1),
+    ('hop_right',     'gPlayerAnim_link_fighter_Rside_jump',            0, 0, 1),
+    ('hop_right_end', 'gPlayerAnim_link_fighter_Rside_jump_end',        0, 0, 1),
     # PLAYER_ANIMGROUP_defense / defense_wait, one-handed equipment group.
     ('guard',   'gPlayerAnim_link_normal_defense',              0,    2, 1),
     ('guard_wait', 'gPlayerAnim_link_normal_defense_wait',      0,   20, 1),
+    # func_808428D8: crouch stab from the guard (MWA_STAB_1H), whole clip.
+    ('crouch_stab', 'gPlayerAnim_link_normal_defense_kiru',     0,    0, 1),
+    # func_80842D20 sword rebound (D_808545CC, one-handed, not hostile-locked)
+    # and the guard recoil (D_808543C4, in the guard action).
+    ('rebound',     'gPlayerAnim_link_fighter_rebound',         0,    0, 1),
+    ('guard_hit',   'gPlayerAnim_link_normal_defense_hit',      0,    0, 1),
+    # Player_Action_80845000 / 80845308: charge walk (D_80854370/78 [0]).
+    ('charge_walk', 'gPlayerAnim_link_fighter_power_kiru_walk', 0,    0, 1),
+    ('charge_side', 'gPlayerAnim_link_fighter_power_kiru_side_walk', 0, 0, 1),
     # z_player.c func_8083A4A8 (automatic jump off a ledge) and the landing
     # Player_Action_8084411C picks after a run jump. Whole clips.
     ('jump',      'gPlayerAnim_link_normal_jump',               0,    0, 1),
@@ -737,6 +787,10 @@ def emit_animation(out_dir, clips, limbs, skin_limbs, skin_locals, shift, scale)
          '# define LINK_ANIM_SCALE_Q16  %d' % int(round(scale * 65536)), '']
     for index, (name, *_rest) in enumerate(clips):
         h.append('# define LINK_CLIP_%-10s %d' % (name.upper(), index))
+    # Frame counts as constants, for platform-free code (gameplay.c sword
+    # timeline) that must not link the frame tables.
+    for name, _symbol, _start, _count, _stride, frames in clips:
+        h.append('# define LINK_FRAMES_%-10s %d' % (name.upper(), len(frames)))
     # How far each step-up's pelvis rises over the clip, drawn, in Q8 world
     # units. The source offsets shape.yOffset by yDistToLedge minus 41 or 59
     # x 11/17 -- that rise at its own scale; this mesh draws at `scale`.
