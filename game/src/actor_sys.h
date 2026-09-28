@@ -49,8 +49,20 @@ typedef enum
     ATTN_POI
 }   actor_attention_t;
 
+/* sAttentionRanges (z_actor.c): acquisition range and lock-on leash.
+** ATTN_RANGE_SLICE_NPC keeps the slice's Kokiri 320/420 until each NPC's
+** source attentionRangeType is ported (logged gap). */
+typedef enum
+{
+    ATTN_RANGE_0, ATTN_RANGE_1, ATTN_RANGE_2, ATTN_RANGE_3, ATTN_RANGE_4,
+    ATTN_RANGE_5, ATTN_RANGE_6, ATTN_RANGE_7, ATTN_RANGE_8, ATTN_RANGE_9,
+    ATTN_RANGE_SLICE_NPC,
+    ATTN_RANGE_COUNT
+}   actor_attention_range_t;
+
 #define ACTOR_FLAG_PERSISTENT   (1u << 0)   /* survives scene unload */
 #define ACTOR_FLAG_TARGETABLE   (1u << 1)   /* OoT ACTOR_FLAG_ATTENTION_ENABLED */
+#define ACTOR_FLAG_HOSTILE      (1u << 2)   /* OoT ACTOR_FLAG_HOSTILE (lock-on sound, Battle1) */
 
 typedef struct actor actor_t;
 typedef uint32_t actor_handle_t;
@@ -71,7 +83,9 @@ struct actor
 {
     const actor_profile_t  *profile;        /* 0 = free slot */
     int32_t     x, y, z;                    /* world units */
-    int16_t     focus_y;                    /* focus point above origin */
+    int16_t     focus[3];                   /* focus.pos - world.pos */
+    int16_t     arrow_y;                    /* lockOnArrowOffset * scale.y */
+    uint16_t    navi_text;                  /* C-Up text while locked (naviEnemyId), 0 none */
     uint16_t    yaw;
     uint16_t    params;
     int8_t      room;                       /* ACTOR_ROOM_NONE = scene wide */
@@ -79,7 +93,7 @@ struct actor
     uint8_t     flags;
     uint8_t     attention;                  /* actor_attention_t */
     uint8_t     kill;                       /* marked; freed after update */
-    uint8_t     pad;
+    uint8_t     range;                      /* actor_attention_range_t */
     actor_handle_t identity;               /* never reused during this boot */
     int32_t     data[ACTOR_DATA_WORDS];     /* per-type state */
 };
@@ -111,6 +125,11 @@ actor_t        *actor_resolve(actor_handle_t handle);
 ** `range` on the XZ plane. */
 actor_t        *actor_sys_nearest_attention(int32_t x, int32_t y, int32_t z,
                                             int32_t range, unsigned int mask);
+
+/* Attention_ActorIsInRange: distSq < range^2. Leash (ShouldReleaseLockOn):
+** distSq * range / leash < range^2, i.e. distSq < range * leash. */
+uint32_t        actor_attention_range_sq(const actor_t *actor);
+uint32_t        actor_attention_leash_sq(const actor_t *actor);
 
 /* Per-scene flag hooks: Flags_Get/SetTreasure, Switch, Clear, Collectible on
 ** the actor's own scene. */

@@ -4,6 +4,8 @@
 #include <stdint.h>
 bool action_audio_init(void);
 void action_audio_events(uint32_t events);
+/* game_over_events() bits (game_over.h). */
+void action_audio_game_over(uint32_t events);
 /* Resident fairy one-shot, available in both opening and gameplay banks. */
 void action_audio_navi_dash(void);
 /* Opening-only NAVY_FLY; camera travel per source update (clamped to 30). */

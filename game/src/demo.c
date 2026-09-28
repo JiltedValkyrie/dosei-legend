@@ -17,6 +17,7 @@
 #include "scene_flow.h"
 #include "save_state.h"
 #include "save_device.h"
+#include "ui_preferences.h"
 #include "game_mode.h"
 #include "cutscene.h"
 #include "kokiri_sgl.h"
@@ -27,6 +28,10 @@
 #include "player_crawl.h"
 #include "player_push.h"
 #include "actor_sys.h"
+#include "attention.h"
+#include "karebaba.h"
+#include "game_over.h"
+#include "cdda.h"
 #include "player_lift.h"
 #include "player_slope.h"
 #include "player_water.h"
@@ -35,6 +40,8 @@
 #include "kokiri_actors.h"
 #include "minimap.h"
 #include "cdda.h"
+
+static void link_focus(int32_t out[3]);
 
 camera_position_t demo_camera;
 uint16_t demo_yaw;
@@ -222,7 +229,7 @@ static combat_input_t combat_input;
 static bool interact_pending;
 static bool cancel_pending;
 static bool pause_pending;
-static int8_t menu_step;
+static int8_t menu_step, menu_dx, menu_dy, menu_page;
 static bool shield_held;
 /* L held. Not an edge: hold targeting needs the button state every step. */
 static bool target_held;
@@ -390,6 +397,81 @@ static void link_leave_ground(int32_t from_x, int32_t from_z,
     }
 }
 
+/* M2e: Link's damage reactions (func_80837C0C), the death clip
+ * (func_80836448) and the Game Over flow (game_over.c). Called once per
+ * gameplay step after gameplay_step(). */
+static bool death_reported;
+static void enter_world(void);
+static void m2e_reactions(void)
+{
+    uint32_t e = gameplay.events, e2 = gameplay.events2;
+    if (e2 & GP2_EVENT_DEATH) {
+        /* NA_BGM_GAME_OVER: Red Book is allowed here -- the world is frozen
+         * and nothing streams until Continue reloads the scene. */
+        music_silence(DEMO_MUSIC_FADE_FRAMES);
+        cdda_play(CDDA_TRACK_GAME_OVER);
+        link_anim_react(LINK_CLIP_DEATH, LINK_REACT_NONE, true);
+        death_reported = false;
+        game_mode_set(GAME_MODE_GAME_OVER);
+        player_input_set_dialogue(true);    /* D-pad drives the Yes/No cursor */
+    } else if (e & GP_EVENT_KNOCKDOWN) {
+        /* Knockback LARGE: front_downA when |yRot| > 0x4000, else back. */
+        int16_t d = (int16_t)(gameplay.knock_yaw - demo_link_yaw);
+        bool front = d > 0x4000 || d < -0x4000;
+        link_anim_react(front ? LINK_CLIP_DOWN_FRONT : LINK_CLIP_DOWN_BACK,
+                        front ? LINK_CLIP_WAKE_FRONT : LINK_CLIP_WAKE_BACK, false);
+    } else if ((e & GP_EVENT_HURT) && (e2 & GP2_EVENT_HIT_ANIM)) {
+        bool back = (e2 & GP2_EVENT_HIT_BACK) != 0;
+        unsigned int clip = (e2 & GP2_EVENT_HIT_HEAVY) ?
+            (back ? LINK_CLIP_HIT_BACK : LINK_CLIP_HIT_FRONT) :
+            (back ? LINK_CLIP_SHIT_BACK : LINK_CLIP_SHIT_FRONT);
+        link_anim_react(clip, LINK_REACT_NONE, false);
+    }
+    /* First Deku Stick: NA_BGM_SMALL_ITEM_GET while its text box freezes the
+     * world (Red Book rule). */
+    if (karebaba_events() & KAREBABA_EV_STICK_FIRST)
+        cdda_play(CDDA_TRACK_SMALL_ITEM);
+    if (!gameplay.dead)
+        return;
+    if (!death_reported && link_anim_react_done()) {
+        death_reported = true;
+        gameplay_death_anim_done();
+    }
+    switch (game_over_step(menu_step, interact_pending || pause_pending)) {
+    case GAME_OVER_RESULT_CONTINUE:
+        /* Kaleido FINISH Yes: Play_TriggerRespawn at the last entrance,
+         * health 3 hearts (game_over.c); scene state resets, the quest and
+         * the save keep. */
+        link_anim_react_cancel();
+        player_input_set_dialogue(false);
+        game_mode_set(GAME_MODE_LOADING);
+        enter_world();
+        break;
+    case GAME_OVER_RESULT_TITLE:
+        minimap_session_reset();
+        link_anim_react_cancel();
+        gameplay_reset();
+        demo_link_active = false;
+        game_mode_set(GAME_MODE_TITLE);
+        player_input_set_dialogue(false);
+        break;
+    default:
+        break;
+    }
+    {
+        uint32_t go = game_over_events();
+        action_audio_game_over(go);
+        if (!(go & GAME_OVER_EV_SAVE))
+            return;
+    }
+    {
+        /* Kaleido SAVE_PROMPT Yes: savedSceneId = this scene, Sram_WriteSave. */
+        save_succeeded = save_device_write(active_slot);
+        save_reported = true;
+        game_over_save_done(save_succeeded);
+    }
+}
+
 static bool recover_link_from_void(void)
 {
     int32_t floor;
@@ -463,7 +545,7 @@ static void         place_at_spawn(unsigned int scene, unsigned int spawn)
     /* Navi belongs to Link, not to a room: every spawn -- a new file, a loaded
      * save, or the far side of a door -- puts her beside him at once, so she
      * is there on the first controllable frame instead of flying in. */
-    navi_reset(demo_link.x, demo_link.y - DEMO_LINK_EYE_HEIGHT, demo_link.z);
+    { int32_t focus[3]; link_focus(focus); navi_reset(focus[0], focus[1], focus[2]); attention_navi_reset(focus); }
     snap_camera_to_link();
 }
 
@@ -566,7 +648,7 @@ static void         enter_world(void)
         link_anim_trail_reset();
         link_anim_reset_state();
         kokiri_camera_reset_actor_motion();
-        navi_reset(demo_link.x, demo_link.y - DEMO_LINK_EYE_HEIGHT, demo_link.z);
+        { int32_t focus[3]; link_focus(focus); navi_reset(focus[0], focus[1], focus[2]); attention_navi_reset(focus); }
         /* gameplay_reset() clears per-scene state only. The quest state was
          * set by the file select -- save_new_game() for a new file, or the
          * loaded save for a continue -- so it must NOT be touched here. */
@@ -596,7 +678,7 @@ static void         file_select_tick(void)
     pick.down = menu_step > 0;
     pick.confirm = interact_pending;
     pick.cancel = cancel_pending;
-    menu_step = 0;
+    menu_step = menu_dx = menu_dy = menu_page = 0;
     interact_pending = false;
     cancel_pending = false;
     pause_pending = false;
@@ -610,6 +692,7 @@ static void         file_select_tick(void)
         return;
     }
     if (chosen == FILE_SELECT_START_NEW || chosen == FILE_SELECT_START_LOAD) {
+        minimap_session_reset();
         game_mode_set(GAME_MODE_LOADING);
         active_slot = file_select.slot;
         save_reported = false;
@@ -620,6 +703,9 @@ static void         file_select_tick(void)
                 enter_world();
             cutscene_tick = ticks;
         } else {
+            /* Sram_OpenSave: an overworld/house save resumes in Link's
+             * house; the Deku Tree at its entrance. */
+            save_resume_remap();
             enter_world();
         }
     }
@@ -645,8 +731,12 @@ static void demo_vblank(void)
 {
     /* Jo refreshes held inputs before this callback. Preserve press edges
      * across slow draws instead of relying on its one-VBlank on_keydown. */
+    static bool cheat_start_held;
     bool connected = jo_is_pad1_available();
-    input_edge_sample(&start_edge, connected && jo_is_pad1_key_pressed(JO_KEY_START));
+    uint16_t snapshot = connected ? demo_pad_snapshot() : 0;
+    if (!(snapshot & CAMERA_START)) cheat_start_held = false;
+    if (minimap_cheat_sample(snapshot)) cheat_start_held = true;
+    input_edge_sample(&start_edge, (snapshot & CAMERA_START) && !cheat_start_held);
     skip_input_sample(&skip_input, game_mode() == GAME_MODE_CUTSCENE &&
                       cutscene_is_playing(),
                       connected && jo_is_pad1_key_pressed(JO_KEY_START),
@@ -654,8 +744,7 @@ static void demo_vblank(void)
     /* One normalized snapshot per VBlank. All button state -- including every
      * chord -- is read from this single sample, so two consumers can never
      * disagree about which buttons were down on a given frame. */
-    minimap_cheat_sample(connected ? demo_pad_snapshot() : 0);
-    player_input_sample_3d(connected ? demo_pad_snapshot() : 0,
+    player_input_sample_3d(snapshot,
         connected && jo_is_input_analog(0),
         connected ? jo_get_input_axis(0, JoAxis1) : 128,
         connected ? jo_get_input_axis(0, JoAxis2) : 128,
@@ -881,6 +970,18 @@ static void charge_walk(const player_input_t *pad, bool allowed)
     charge_walk_thirds = (uint16_t)(charge_walk_thirds + step);
 }
 
+/* Player focus.pos in world units: the posed head point (link_anim_focus),
+ * placed like the blade. Navi's anchor. */
+static void link_focus(int32_t out[3])
+{
+    int32_t local[3], sine, cosine;
+    link_anim_focus(local);
+    kokiri_camera_sincos(demo_link_yaw, &sine, &cosine);
+    out[0] = demo_link.x + (int32_t)((((int64_t)cosine * local[0]) + ((int64_t)sine * local[2])) >> 32);
+    out[1] = demo_link.y - DEMO_LINK_EYE_HEIGHT + link_anim_y_offset_q8() / 256 + local[1] / 65536;
+    out[2] = demo_link.z + (int32_t)((((int64_t)cosine * local[2]) - ((int64_t)sine * local[0])) >> 32);
+}
+
 /* gameplay.c's sword hooks. The blade comes from the last posed left hand
  * (link_anim_blade, Link-local Q16, y up from the drawn feet), placed like
  * link_anim_trail_update; gameplay's y is the feet frame. */
@@ -915,6 +1016,60 @@ bool gameplay_blade_wall(const int32_t from[3], const int32_t to[3], unsigned in
         return false;
     *material = bg_material(&hit);
     return true;
+}
+
+/* BgCheck_CameraLineTest1 (walls, floors, ceilings, one face; camera-
+ * ignored polys skipped) from Link's focus to the actor's; a nearest hit
+ * that SurfaceType_IsIgnoredByProjectiles does not block. */
+bool attention_sight_blocked(const int32_t from[3], const int32_t to[3])
+{
+    bg_vec_t a = { from[0], from[1], from[2] }, b = { to[0], to[1], to[2] }, at;
+    bg_hit_t hit;
+    if (!bg_line(&a, &b, &at, BG_CHECK_ALL | BG_CHECK_ONE_FACE, BG_IGNORE_CAMERA, &hit))
+        return false;
+    return !(hit.ignore & BG_IGNORE_PROJECTILES);
+}
+
+/* Attention_ActorOnScreen: Actor_GetScreenPos of the focus through the live
+ * camera (demo_camera, demo_yaw/pitch, screen distance). x in (-20, 340),
+ * y in (-160, 400) of a 320x240 frame, i.e. |right| * dist < 180 * depth and
+ * |up| * dist < 280 * depth. Actor_ProjectPos caps 1/w at 1, so a point at
+ * or behind the eye is divided by 1: depth is clamped to 1 the same way. */
+bool attention_on_screen(const int32_t p[3])
+{
+    int32_t x = p[0] - demo_camera.x, y = demo_camera.y - p[1], z = p[2] - demo_camera.z;
+    int32_t sy, cy, sp, cp, horizontal, depth, right, up;
+    int64_t dist = demo_screen_distance();
+    kokiri_camera_sincos(demo_yaw, &sy, &cy);
+    kokiri_camera_sincos((uint16_t)demo_pitch, &sp, &cp);
+    horizontal = (int32_t)(((int64_t)x * sy + (int64_t)z * cy) / 65536);
+    right = (int32_t)((-(int64_t)x * cy + (int64_t)z * sy) / 65536);
+    depth = (int32_t)(((int64_t)horizontal * cp + (int64_t)y * sp) / 65536);
+    up = (int32_t)(((int64_t)y * cp - (int64_t)horizontal * sp) / 65536);
+    if (depth < 1) depth = 1;
+    if (right < 0) right = -right;
+    if (up < 0) up = -up;
+    return (int64_t)right * dist < (int64_t)180 * depth &&
+           (int64_t)up * dist < (int64_t)280 * depth;
+}
+
+/* En_Karebaba dying fall: Actor_MoveXZGravity + UpdateBgCheckInfo(10, 15,
+ * 10). pos/d Q8 world. Wall: the move line 10 up hits a wall (x/z stop).
+ * Ground: a floor between 10 above and the new feet (feet snap to it). */
+bool karebaba_bg_move(int32_t pos[3], const int32_t d[3], bool *ground, bool *wall)
+{
+    bg_vec_t a = { pos[0] >> 8, (pos[1] >> 8) + 10, pos[2] >> 8 }, b, at;
+    bg_hit_t hit;
+    int32_t n[3] = { pos[0] + d[0], pos[1] + d[1], pos[2] + d[2] };
+    b.x = n[0] >> 8; b.y = (n[1] >> 8) + 10; b.z = n[2] >> 8;
+    *wall = bg_line(&a, &b, &at, BG_CHECK_WALL, BG_IGNORE_ENTITY, &hit);
+    if (*wall) { n[0] = pos[0]; n[2] = pos[2]; }
+    a.x = n[0] >> 8; a.y = (pos[1] >> 8) + 10; a.z = n[2] >> 8;
+    b.x = a.x; b.y = n[1] >> 8; b.z = a.z;
+    *ground = d[1] <= 0 && bg_line(&a, &b, &at, BG_CHECK_FLOOR, BG_IGNORE_ENTITY, &hit);
+    if (*ground) n[1] = at.y * 256;
+    pos[0] = n[0]; pos[1] = n[1]; pos[2] = n[2];
+    return *ground || *wall;
 }
 
 /* Actor_UpdateBgCheckInfo(10, 13, 13) stand-in for the nutsball: a wall or
@@ -1041,6 +1196,7 @@ void demo_update(void)
     if (file_select_visible || game_mode() == GAME_MODE_CUTSCENE)
         player_input_set_dialogue(true);
 
+    player_input_set_jump_button(ui_jump_mask());
     player_input_step(in_gameplay, &input);
     /* Preserve a tap until a fixed step runs, but never carry title input
      * into gameplay or queue an airborne press for a later landing. Jump is Y
@@ -1065,6 +1221,9 @@ void demo_update(void)
     interact_pending = interact_pending || input.interact_pending;
     cancel_pending = cancel_pending || input.cancel_pending;
     if (input.menu_step) menu_step = input.menu_step;
+    if (input.menu_dx) menu_dx = input.menu_dx;
+    if (input.menu_dy) menu_dy = input.menu_dy;
+    if (input.menu_page) menu_page = input.menu_page;
     shield_held = input.shield_held;
     target_held = input.target_held;
     /* PENDING SYSTEM. There is no item/inventory interface for the C buttons to
@@ -1145,7 +1304,7 @@ void demo_update(void)
         combat_input_cancel(&combat_input);
         cancel_pending = false;
         pause_pending = false;
-        menu_step = 0;
+        menu_step = menu_dx = menu_dy = menu_page = 0;
         player_input_set_dialogue(true);
         if (input_edge_consume(&skip_input.request) &&
             skip_input.request_shot == cutscene_shot_key()) {
@@ -1222,6 +1381,8 @@ void demo_update(void)
                 action.y = demo_link.y - DEMO_LINK_EYE_HEIGHT;
                 action.z = demo_link.z;
                 action.yaw = demo_link_yaw;
+                link_focus(action.focus);
+                action.c_up = input.c_pressed == PLAYER_C_UP;
                 action.attack = combat_buttons.pressed && land_combat && !link_water.phase;
                 action.attack_held = combat_buttons.held && land_combat && !link_water.phase;
                 action.shield = shield_held && land_combat && !link_water.phase;
@@ -1233,6 +1394,9 @@ void demo_update(void)
                 /* One slot per press: the menu cursor steps on the D-pad's own
                  * press edges, so holding a direction cannot run down the list. */
                 action.menu_step = menu_step;
+                action.menu_dx = menu_dx;
+                action.menu_dy = menu_dy;
+                action.menu_page = menu_page;
                 action.grounded = !link_water.phase && link_velocity_y_q8 == 0;
                 {
                     /* controlStickDirections: the stick's heading against
@@ -1253,6 +1417,31 @@ void demo_update(void)
                     step_stick_dir = action.stick_dir;
                 }
                 gameplay_step(&action);
+                if (gameplay.events2 & (GP2_EVENT_LABELS | GP2_EVENT_JUMP_BINDING | GP2_EVENT_RESET_PREFS)) {
+                    if (gameplay.events2 & GP2_EVENT_RESET_PREFS) ui_preferences_reset();
+                    else ui_preferences_cycle((gameplay.events2 & GP2_EVENT_JUMP_BINDING) != 0);
+                    save_device_write_preferences();
+                    player_input_set_jump_button(ui_jump_mask());
+                }
+                if (gameplay.events2 & (GP2_EVENT_LOAD_MENU | GP2_EVENT_RETURN_TITLE)) {
+                    bool load = (gameplay.events2 & GP2_EVENT_LOAD_MENU) != 0;
+                    /* The pause confirmation is the only emitter. Never write
+                     * or load a save until the player chooses a file. */
+                    if (game_mode() == GAME_MODE_PLAY) game_mode_set(GAME_MODE_PAUSE);
+                    if (game_mode_set(load ? GAME_MODE_FILE_SELECT : GAME_MODE_TITLE)) {
+                        minimap_session_reset();
+                        gameplay_reset();
+                        demo_link_active = false;
+                        link_anim_react_cancel();
+                        combat_input_cancel(&combat_input);
+                        player_input_reset();
+                        player_input_set_dialogue(load);
+                        interact_pending = cancel_pending = pause_pending = jump_pending = false;
+                        menu_step = menu_dx = menu_dy = menu_page = 0;
+                        if (load) file_select_open();
+                        break; /* no catch-up world step after leaving play */
+                    }
+                }
                 if (gameplay.events & GP_EVENT_SAVE) {
                     /* Record the outcome. A save that quietly failed is the
                      * worst result for the player, so the panel says which
@@ -1262,6 +1451,7 @@ void demo_update(void)
                     if (!save_succeeded)
                         gameplay.events |= GP_EVENT_SAVE_FAILED;
                 }
+                m2e_reactions();
                 /* A is the context button: talk, prompt, pickup and the menu
                  * get it first. Only a press nothing else claimed becomes a
                  * roll, so pressing A at a Kokiri never rolls away from them. */
@@ -1273,10 +1463,26 @@ void demo_update(void)
                                          GP_EVENT_EQUIP | GP_EVENT_SAVE));
                 action_audio_events(gameplay.events);
                 oot_follow_target(&link_follow, gameplay.face_locked);
+                {
+                    /* CAM_MODE_Z_TARGET_UNFRIENDLY (Battle1) for a hostile
+                     * lock, FRIENDLY (KeepOn1) otherwise: aim at its focus. */
+                    const actor_t *lock = actor_resolve(gameplay.target);
+                    int32_t focus[3];
+                    if (lock && gameplay.face_locked) {
+                        attention_focus(lock, focus);
+                        oot_follow_aim(&link_follow, focus,
+                                       lock->profile->category == ACTORCAT_ENEMY ||
+                                       lock->profile->category == ACTORCAT_BOSS ?
+                                       OOT_CAM_LOCK_DIST_UNFRIENDLY : OOT_CAM_LOCK_DIST_FRIENDLY,
+                                       !link_on_ground);
+                    } else {
+                        oot_follow_aim(&link_follow, (const int32_t *)0, 0, false);
+                    }
+                }
                 interact_pending = false;
                 cancel_pending = false;
                 pause_pending = false;
-                menu_step = 0;
+                menu_step = menu_dx = menu_dy = menu_page = 0;
                 /* Tell the mapper who owns B before the next sample. */
                 player_input_set_dialogue(gameplay_blocks_world());
                 /* gameplay.c decides whether a Z press was a tap or a
@@ -1313,6 +1519,12 @@ void demo_update(void)
                     link_anim_cancel_roll();
                     player_push_cancel(&link_push);
                     player_lift_cancel(&link_lift);
+                }
+                if (gameplay.dead) {
+                    /* Dead: the Game Over flow owns the pad. */
+                    walk = 0;
+                    jump_pending = false;
+                    roll_pending = false;
                 }
                 if (knock_steps) {
                     /* Knocked down: no control until he is back up. */
@@ -1403,7 +1615,7 @@ void demo_update(void)
                         gameplay_attack_cancel();
                         gameplay.shielding = false;
                         link_anim_combat(false, 0, 0, false);
-                        navi_step(feet.x, feet.y, feet.z);
+                        { int32_t focus[3]; link_focus(focus); navi_step(focus[0], focus[1], focus[2]); }
                         if (navi_dash_started()) action_audio_navi_dash();
                         action_audio_navi_flight(0, false);
                         if (scene_flow_is_interior()) interior_camera();
@@ -1869,15 +2081,27 @@ void demo_update(void)
                     link_safe_position_valid = true;
                 } else {
                     fell = 0;
-                    if (recover_link_from_void())
+                    if (recover_link_from_void()) {
                         recovered = true;
+                        gameplay_void_out();
+                        gameplay_void_respawned();
+                    }
                 }
                 link_anim_set_air(link_velocity_y_q8 < 0 &&
                                   demo_link.y < link_fall_peak_y);
                 /* En_Elf updates with the world, so she is stepped here and
                  * not per draw: her approach rates are per update. */
-                navi_step(demo_link.x, demo_link.y - DEMO_LINK_EYE_HEIGHT,
-                          demo_link.z);
+                {
+                    /* Navi hovers attention's naviHoverPos (the lock, else
+                     * the arrow actor, else Link), set by gameplay_step. */
+                    int32_t focus[3], hover[3];
+                    attention_colour_t colour = attention_navi_colour();
+                    link_focus(focus);
+                    attention_navi_hover(hover);
+                    navi_step_hover(hover, focus, attention_navi_has_actor(),
+                                    attention_navi_moving(),
+                                    (unsigned int)colour);
+                }
                 if (navi_dash_started()) action_audio_navi_dash();
                 /* NAVY_FLY belongs only to Object_Kankyo's opening layer 7.
                  * En_Elf gameplay uses occasional dash cues, no flying loop. */
@@ -1888,6 +2112,9 @@ void demo_update(void)
                     gameplay_jump_attack_land();
                 link_anim_update(moved, grounded, fell, roll_pending);
                 roll_pending = false;
+                /* func_80843E64: the landing's fall damage (not on a roll). */
+                if (grounded && fell > 0)
+                    gameplay_land(fell, link_anim_roll_speed_q8() > 0);
                 {
                     int32_t lx, lz;
                     uint16_t turn;
@@ -2091,7 +2318,7 @@ void demo_update(void)
         link_anim_pose(link_anim_clip(), link_anim_frame(), link_anim_fraction());
         {
             static unsigned int trail_tick;
-            if (trail_tick != now / 2) {
+            if (!gameplay_is_paused() && trail_tick != now / 2) {
                 trail_tick = now / 2;
                 link_anim_trail_update(demo_link.x,
                     demo_link.y - DEMO_LINK_EYE_HEIGHT + link_anim_y_offset_q8() / 256,
@@ -2128,8 +2355,10 @@ void demo_update(void)
     cutscene_sky_update();
     /* Cheat entered: the treasure-chest fanfare (NA_BGM_OPEN_TRE_BOX) as a
      * Red Book track; the sequence itself does not fit sound RAM. */
-    if (minimap_cheat_chime())
-        cdda_play(CDDA_TRACK_CHEST);
+    if (minimap_cheat_chime()) {
+        if (gameplay_blocks_world() || !demo_link_active) cdda_play(CDDA_TRACK_CHEST);
+        else action_audio_events(GP_EVENT_MENU_OPEN); /* live play: SCSP, no CD seek */
+    }
     slScrAutoDisp(NBG0ON | minimap_layer_flags() |
                   ((title_visible ||
                     (kokiri_scene_backdrop_active() &&
@@ -2156,6 +2385,19 @@ bool demo_skip_prompt(void)
 {
     return game_mode() == GAME_MODE_CUTSCENE && cutscene_is_playing() &&
            skip_input.armed;
+}
+
+/* Render-only animation clock: wall/UI/audio clocks must keep running. */
+unsigned int demo_world_clock(void)
+{
+    static unsigned int previous, animation;
+    static bool was_paused;
+    unsigned int now = demo_clock();
+    bool paused = gameplay_is_paused();
+    if (!paused && !was_paused) animation += now - previous;
+    previous = now;
+    was_paused = paused;
+    return animation;
 }
 
 unsigned int demo_clock(void)

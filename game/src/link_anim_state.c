@@ -104,6 +104,8 @@ extern const int16_t    (*link_rotations)[LINK_LIMB_COUNT * 3];
 #endif
 static int32_t          climb_offset_q8;
 static bool             jump250_launch;
+static unsigned int     react_clip = LINK_CLIP_IDLE, react_next = LINK_REACT_NONE;
+static bool             react_hold, react_done;
 
 uint32_t link_anim_motion_events(void) { return motion_events; }
 
@@ -154,6 +156,7 @@ static unsigned int     clip_for_state(link_state_t s)
         case LINK_STATE_BONK:    return LINK_CLIP_HIP_DOWN;
         case LINK_STATE_PUSH:
         case LINK_STATE_SWIM:    return climb_clip;
+        case LINK_STATE_REACT:   return react_clip;
         case LINK_STATE_SLIDE:
         case LINK_STATE_SLIDE_END: return climb_clip;
         case LINK_STATE_IDLE:
@@ -167,7 +170,8 @@ static unsigned int     clip_for_state(link_state_t s)
 static bool             is_one_shot(link_state_t s)
 {
     return s == LINK_STATE_LANDING || s == LINK_STATE_ROLL ||
-           s == LINK_STATE_JUMP_LANDING || s == LINK_STATE_BONK || s == LINK_STATE_SLIDE_END;
+           s == LINK_STATE_JUMP_LANDING || s == LINK_STATE_BONK || s == LINK_STATE_SLIDE_END ||
+           s == LINK_STATE_REACT;
 }
 
 /* Deliberately slower slice cadence: 20 source frames/s at 30 Hz.
@@ -451,9 +455,26 @@ void                    link_anim_update(int32_t speed, bool grounded,
                 frame >= clip_length(LINK_CLIP_HIP_DOWN) - 1 - 5)
                 phase_ninths = clip_length(LINK_CLIP_HIP_DOWN) * 9;
         }
+        if (state == LINK_STATE_REACT && react_done)
+            return;                         /* held on the last frame */
         advance();
         if (frame < clip_length(clip_for_state(state)))
             return;
+        if (state == LINK_STATE_REACT) {
+            if (react_next != LINK_REACT_NONE) {
+                react_clip = react_next;
+                react_next = LINK_REACT_NONE;
+                frame = 0;
+                phase_ninths = 0;
+                return;
+            }
+            if (react_hold) {
+                frame = clip_length(react_clip) - 1;
+                phase_ninths = frame * 9;
+                react_done = true;
+                return;
+            }
+        }
         /* Finished: fall through and pick a locomotion state this step. */
         state = LINK_STATE_IDLE;
         frame = 0;
@@ -536,6 +557,31 @@ void link_anim_turn(bool requested, uint16_t target, uint16_t *facing)
         *facing = (uint16_t)(*facing + (delta > 0 ? 800 : -800));
     } else {
         if (state == LINK_STATE_TURN) *facing = target;
+        enter(LINK_STATE_IDLE);
+    }
+}
+
+void link_anim_react(unsigned int clip, unsigned int next, bool hold)
+{
+    react_clip = clip < LINK_CLIP_COUNT ? clip : LINK_CLIP_IDLE;
+    react_next = next < LINK_CLIP_COUNT ? next : LINK_REACT_NONE;
+    react_hold = hold;
+    react_done = false;
+    if (state == LINK_STATE_REACT) {
+        frame = 0;                  /* a new hit restarts the reaction */
+        phase_ninths = 0;
+    } else {
+        enter(LINK_STATE_REACT);
+    }
+}
+
+bool link_anim_react_active(void) { return state == LINK_STATE_REACT; }
+bool link_anim_react_done(void)   { return state == LINK_STATE_REACT && react_done; }
+
+void link_anim_react_cancel(void)
+{
+    if (state == LINK_STATE_REACT) {
+        react_done = false;
         enter(LINK_STATE_IDLE);
     }
 }

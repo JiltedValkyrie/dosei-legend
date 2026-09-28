@@ -52,12 +52,28 @@ MAX_VERTICES = 2500
 CLUT_BYTES = 32
 ALIGN = 8
 
-# Runtime RGB555 sprites loaded from the CD by kokiri_sgl.c: the fairy, the two
-# world gear pickups, and the pause grid's two 32x32 icons plus the equipped
-# outline. They are not tiles, so nothing else in this file counts them -- and
-# they cost the same VDP1 bytes. Without this the build passes and the LOAD
-# fails on hardware, which is a much worse place to find out.
-RUNTIME_SPRITE_BYTES = (16 * 16 * 2) * 5 + (32 * 32 * 2) * 4 + 10 * 8 * 16 * 2  # grass, rupees, HUD digits
+# Resident non-mesh sprites: fairy_load() and minimap_init(). Reserve optional
+# effects too: successful uploads remain resident when the room bank loads.
+# (label, count, width, height, bytes per pixel)
+RUNTIME_SPRITES = (
+    ('fairy glows', 9, 16, 16, 2),  # player, NPC, enemy: three steps each
+    ('sparkle', 1, 8, 8, 2),
+    ('grass', 1, 32, 32, 2),
+    ('rupees', 2, 16, 16, 2),
+    ('HUD digits', 10, 8, 16, 2),
+    ('gear pickups', 2, 16, 16, 2),
+    ('pause icons', 3, 32, 32, 2),
+    ('message panel', 1, 32, 16, 2),
+    ('message marks', 2, 16, 16, 2),
+    ('minimap markers', 9, 8, 8, 1),
+)
+RUNTIME_SPRITE_BYTES = sum(n * ((w * h * bpp + 7) // 8 * 8)
+                           for _, n, w, h, bpp in RUNTIME_SPRITES)
+RUNTIME_SPRITE_SLOTS = sum(n for _, n, _, _, _ in RUNTIME_SPRITES)
+
+# Prefer lower forest bake density to filling VRAM to 99%. This is spare
+# capacity after all current residents, not a substitute for counting them.
+FOREST_VRAM_MARGIN = 32 * 1024
 
 
 def tile_bytes(width, height):
@@ -100,6 +116,10 @@ class Budget(object):
         return sum(p['tiles'] for p in self.parts)
 
     @property
+    def sprite_slots(self):
+        return 1 + self.tiles + RUNTIME_SPRITE_SLOTS
+
+    @property
     def polygons(self):
         return sum(p['polygons'] for p in self.parts)
 
@@ -118,9 +138,9 @@ class Budget(object):
                        '(commands reserved below texture base %#x) by %d'
                        % (self.vram_bytes, self.vram_limit, TEXTURE_BASE,
                           self.vram_bytes - self.vram_limit))
-        if self.tiles + 1 > MAX_SPRITE_SLOTS:
-            out.append('%d tiles need %d sprite slots, JO_MAX_SPRITE is %d'
-                       % (self.tiles, self.tiles + 1, MAX_SPRITE_SLOTS))
+        if self.sprite_slots > MAX_SPRITE_SLOTS:
+            out.append('%d tiles plus resident sprites need %d sprite slots, JO_MAX_SPRITE is %d'
+                       % (self.tiles, self.sprite_slots, MAX_SPRITE_SLOTS))
         # Two separate limits, because they fail for different reasons.
         #
         # MaxPolygons is PER FRAME: culling is what keeps a frame inside it, so
@@ -154,5 +174,5 @@ class Budget(object):
                         self.vram_limit - self.vram_bytes))
         lines.append('  polys  %7d of %7d   sprites %d of %d'
                      % (self.polygons, MAX_POLYGONS,
-                        self.tiles + 1, MAX_SPRITE_SLOTS))
+                        self.sprite_slots, MAX_SPRITE_SLOTS))
         return '\n'.join(lines)

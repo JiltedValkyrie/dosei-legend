@@ -164,6 +164,7 @@ Do not invent new acceptance gates. Coordinate ownership and leave another
 agent's in-progress edits alone.
 
 Current build/run instructions: [game/README.md](game/README.md).
+Build rule: Clean only. Standard only when test needs developer-only features.
 Launch with `game/run-kronos.bat`, not the historical libyaul launcher below.
 
 ## Read first

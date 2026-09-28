@@ -17,10 +17,14 @@
 #include "music_banks.h"
 #include "action_audio.h"
 #include "demo.h"
+#include "karebaba.h"
+#include "game_over.h"
 #include "navi.h"
 #include "gameplay.h"
 #include "dialogue_text.h"
 #include "minimap.h"
+#include "pause_windows.h"
+#include "ui_preferences.h"
 #include "minimap_data.h"
 #include "kokiri_dialogue.h"
 #include "link_anim_state.h"
@@ -59,7 +63,7 @@ static unsigned int rejected_total;
 static void         viewer_hud(void);
 static void         dialogue_box(void);
 static void         inventory_menu(void);
-static void         action_hint(void);
+static void         game_over_screen(void);
 static void         file_select_screen(void);
 static void         cutscene_text(void);
 static void         cutscene_fade(void);
@@ -130,6 +134,17 @@ static void texture_probe(void)
     debug_visible = true;
 }
 #endif
+
+/* The live projection's screen distance (pixels), one choice for the
+** renderer and attention's on-screen test. */
+int32_t             demo_screen_distance(void)
+{
+    if (cutscene_screen_distance() > 0)
+        return (int32_t)cutscene_screen_distance();
+    if (kokiri_scene_backdrop_active() && scene_flow_entry()->cam_dist > 0)
+        return (int32_t)scene_flow_entry()->cam_dist;
+    return demo_title_is_visible() ? 180 : SCREEN_DISTANCE;
+}
 
 static void         viewer_draw(void)
 {
@@ -220,12 +235,8 @@ static void         viewer_draw(void)
     /* A cutscene shot has its own field of view, baked to a screen distance
      * because the SH-2 has no tangent. Holding the gameplay 240 for every shot
      * framed the whole dream far too wide. */
-    if (cutscene_screen_distance() > 0)
-        slSetScreenDist((FIXED)((int32_t)cutscene_screen_distance() << 16));
-    else if (kokiri_scene_backdrop_active() && scene_flow_entry()->cam_dist > 0)
-        slSetScreenDist((FIXED)((int32_t)scene_flow_entry()->cam_dist << 16));
-    else
-        slSetScreenDist(toFIXED(demo_title_is_visible() ? 180 : SCREEN_DISTANCE));
+    slSetScreenDist((FIXED)(demo_screen_distance() << 16));
+    music_menu_duck(gameplay_is_paused());
     music_service();
 #ifdef DOSEI_TEXTURE_PROBE
     texture_probe();
@@ -282,14 +293,15 @@ static void         viewer_draw(void)
          * fairies bobbing along beside it. */
         if (!cutscene_is_playing()) {
             kokiri_grass_draw();
-            kokiri_rupees_draw(demo_clock());
-            kokiri_fairies_draw(demo_clock());
-            kokiri_items_draw(demo_clock());
+            kokiri_rupees_draw(demo_world_clock());
+            kokiri_fairies_draw(demo_world_clock());
+            kokiri_items_draw(demo_world_clock());
             kokiri_boulder_draw();
             kokiri_nut_draw();
+            kokiri_babas_draw();
         }
     }
-    kokiri_menu_draw();
+    /* Equipment now belongs to the VDP2 pause window. */
 #endif
     frame_timer_end(FRAME_PHASE_SCENE);
     /* Link is submitted after the forest so the per-frame counters, which
@@ -390,14 +402,14 @@ static void         viewer_draw(void)
     }
     dialogue_box();
     inventory_menu();
+    game_over_screen();
     file_select_screen();
     if (!gameplay_blocks_world() && !cutscene_is_playing()) viewer_hud();
-    action_hint();
     {
         static bool skip_was_visible;
         bool visible = demo_skip_prompt();
         if (visible)
-            jo_printf(6, 3, "Skip? Press Start Again");
+            jo_printf(6, 3, "Skip? Press %s Again", ui_button_label(UI_KEY_START, false));
         else if (skip_was_visible)
             jo_printf(6, 3, "                       ");
         skip_was_visible = visible;
@@ -617,7 +629,7 @@ static void         cutscene_text(void)
 }
 
 /*
-** Text box and the A: Talk prompt.
+** Dialogue text box. Context action graphics live on the NBG2 button HUD.
 **
 ** Drawn on the clean player disc as well as the diagnostic one -- this is
 ** gameplay, not debug text -- so it sits outside viewer_hud()'s early returns.
@@ -626,26 +638,21 @@ static void         cutscene_text(void)
 */
 #define DIALOGUE_ROW    20
 #define DIALOGUE_ROWS   (DIALOGUE_MAX_LINES + 2)
-#define PROMPT_ROW      18
 
 static void         dialogue_box(void)
 {
     static bool was_talking;
-    static int  last_prompt = -1;
     unsigned int i;
 
     /* Title flythrough and the file select have no interaction. Clear retained
      * VDP2 text too, so returning here cannot leave an old prompt or page on
      * screen -- and so a stale prompt cannot print over the file list. */
-    if (demo_title_is_visible() || demo_file_select_is_visible() ||
+    if (gameplay_is_paused() || demo_title_is_visible() || demo_file_select_is_visible() ||
         cutscene_is_playing()) {
-        if (last_prompt != -1)
-            jo_printf(1, PROMPT_ROW, "%-38s", "");
         if (was_talking) {
             for (i = 0; i < DIALOGUE_ROWS; ++i)
                 jo_printf(0, DIALOGUE_ROW + i, "%-40s", "");
         }
-        last_prompt = -1;
         was_talking = false;
         return;
     }
@@ -655,31 +662,8 @@ static void         dialogue_box(void)
                 jo_printf(0, DIALOGUE_ROW + i, "%-40s", "");
             was_talking = false;
         }
-        /* A: Talk, only while a speaker is actually in reach and in front.
-         * A: Enter at a crawlspace wins: handler 5 comes before TALK. */
-        {
-            int prompt_key = demo_enter_prompt() ? -2 :
-                             gameplay.chest_prompt >= 0 ? -3 :
-                             gameplay.shop_prompt ? -4 : gameplay.prompt;
-            if (prompt_key != last_prompt) {
-                last_prompt = prompt_key;
-                if (prompt_key == -2)
-                    jo_printf(1, PROMPT_ROW, "%-38s", "A: Enter");
-                else if (prompt_key == -3)
-                    jo_printf(1, PROMPT_ROW, "%-38s", "A: Open");
-                else if (prompt_key == -4)
-                    jo_printf(1, PROMPT_ROW, "%-38s", "A: Talk");
-                else if (prompt_key >= 0)
-                    jo_printf(1, PROMPT_ROW, "%-38s", "A: Talk");
-                else
-                    jo_printf(1, PROMPT_ROW, "%-38s", "");
-            }
-        }
+        /* Context actions now live in the VDP2 gameplay button HUD. */
         return;
-    }
-    if (last_prompt != -1) {
-        last_prompt = -1;
-        jo_printf(1, PROMPT_ROW, "%-38s", "");
     }
     was_talking = true;
     /* Clear the full previous page, then use the exact cutscene panel behind
@@ -724,81 +708,129 @@ static void         dialogue_box(void)
 ** now, each with its own use line, so this grew by two with the save row. */
 #define MENU_ROWS   23
 
-static void         inventory_menu(void)
+/* Kaleido's Game Over prompts, as VDP2 text (menus are VDP2, never VDP1
+** sprites). The source's rotating prompt windows and fades are not drawn. */
+static void         game_over_screen(void)
 {
-    static bool was_paused;
-    unsigned int slot;
-    int row = MENU_ROW;
-
-    if (!gameplay_is_paused()) {
-        if (was_paused) {
-            for (slot = 0; slot < MENU_ROWS; ++slot)
-                jo_printf(0, MENU_ROW + slot, "%-40s", "");
-            was_paused = false;
-        }
-        return;
+    static game_over_state_t shown = GAME_OVER_OFF;
+    game_over_state_t st = game_over_state();
+    bool yes = game_over_cursor() == 0;
+    if (st != shown) {
+        jo_clear_screen();
+        shown = st;
     }
-    was_paused = true;
-    jo_printf(2, row++, "%-36s", "-- ITEMS --");
-    row++;
-    for (slot = 0; slot < GP_SLOT_COUNT; ++slot) {
-        uint8_t item = gameplay_slot_item(slot);
-        const char *state;
-        if (slot == GP_SLOT_SAVE) {
-            /* Not an item row: it reports the last save attempt instead of an
-             * owned/equipped state, and says plainly when one failed. */
-            int report = demo_save_report();
-            state = !save_device_ready() ? "NO BACKUP RAM"
-                  : report < 0 ? ""
-                  : report ? "SAVED" : "SAVE FAILED";
-        } else {
-            state = !(gameplay.owned & item) ? (item == GP_SWORD ? "Maze chest" : "Kokiri Shop")
-                  : (gameplay.equipped & item) ? "EQUIPPED" : "Owned";
-        }
-        jo_printf(2, row++, "%c %-14s %-18s",
-                  slot == gameplay.cursor ? '>' : ' ',
-                  gameplay_slot_name(slot), state);
-        /* Human: no control help in the menu. Only the save row keeps its
-         * button, since nothing else says how to save. */
-        jo_printf(4, row++, "%-34s", slot == GP_SLOT_SAVE ? gameplay_slot_use(slot) : "");
+    switch (st) {
+    case GAME_OVER_MESSAGE:
+        jo_printf(15, 13, "GAME OVER");
+        break;
+    case GAME_OVER_SAVE:
+    case GAME_OVER_SAVING:
+        jo_printf(15, 10, "GAME OVER");
+        jo_printf(10, 13, "Save game?");
+        jo_printf(12, 15, "%c Yes    %c No", yes ? '>' : ' ', yes ? ' ' : '>');
+        if (game_over_save_failed())
+            jo_printf(10, 18, "SAVE FAILED - TRY AGAIN");
+        break;
+    case GAME_OVER_SAVED:
+        jo_printf(15, 10, "GAME OVER");
+        jo_printf(10, 13, "Game saved.");
+        break;
+    case GAME_OVER_CONTINUE:
+        jo_printf(15, 10, "GAME OVER");
+        jo_printf(10, 13, "Continue playing?");
+        jo_printf(12, 15, "%c Yes    %c No", yes ? '>' : ' ', yes ? ' ' : '>');
+        break;
+    default:
+        break;
     }
 }
 
-/* Persistent state survives fixed-step catch-up; one-step events may not. */
-static void action_hint(void)
+static void         inventory_menu(void)
 {
-    static unsigned int changed_at;
-    static unsigned int last_owned, last_cuts;
-    static const char *notice = "";
-    unsigned int now = demo_clock();
-    if (demo_title_is_visible() || demo_file_select_is_visible() ||
-        cutscene_is_playing()) {
-        jo_printf(1, 28, "%-38s", "");
+    static bool was_paused;
+    static int last_window = -1;
+    const pause_window_state_t *state = &gameplay.pause_window;
+    bool paused = gameplay_is_paused();
+    if (paused != was_paused) {
+        jo_clear_screen();
+        was_paused = paused;
+    }
+    if (!paused) { last_window = -1; return; }
+    {
+        int window = state->system_confirm ? 10 + state->system_confirm :
+            state->save_prompt ? PAUSE_SAVE : state->page;
+        if (window != last_window) { jo_clear_screen(); last_window = window; }
+    }
+    if (!state->save_prompt) {
+        bool analog = jo_is_pad1_available() && jo_is_input_analog(0);
+        jo_printf(2, 14, "%-2s", ui_button_label(UI_KEY_L, analog));
+        jo_printf(35, 14, "%-2s", ui_button_label(UI_KEY_R, analog));
+    }
+    if (state->system_confirm || (state->page == PAUSE_EXTRA && !state->save_prompt)) {
+        const char *pad;
+        switch (jo_get_input_type(0)) {
+        case JoNotConnectedGamepad: pad = "Not connected"; break;
+        case JoRegularGamepad: pad = "Digital pad"; break;
+        case JoNightsPad: pad = "3D pad (analog)"; break;
+        default: pad = "Unsupported device"; break;
+        }
+        bool analog = jo_is_pad1_available() && jo_is_input_analog(0);
+        jo_printf(16, 6, "SYSTEM");
+        if (state->system_confirm) {
+            jo_printf(8, 10, "%-25s", state->system_confirm == 1 ? "Open load menu?" : "Return to title?");
+            jo_printf(6, 13, "Unsaved progress will be lost.");
+            jo_printf(12, 16, "%c YES     %c NO", state->save_choice == 0 ? '>' : ' ',
+                      state->save_choice == 1 ? '>' : ' ');
+        } else {
+            static const char *const options[3] = {"Save game", "Load game", "Return to title"};
+            unsigned i, selected = state->cursor[PAUSE_EXTRA];
+            const char *jump = ui_button_label(ui_jump_key(), analog);
+            int report = save_device_preferences_report();
+            for (i = 0; i < 3; ++i)
+                jo_printf(8, 8 + 2 * i, "%c %-25s", selected == i ? '>' : ' ', options[i]);
+            jo_printf(8, 14, "%c Labels: %-17s", selected == 3 ? '>' : ' ', ui_label_name());
+            jo_printf(8, 16, "%c Jump: %-10s (%c)  ", selected == 4 ? '>' : ' ',
+                      *jump ? jump : "Unmapped", "YABXCZLR"[ui_jump_binding()]);
+            jo_printf(8, 18, "%c Reset defaults          ", selected == 5 ? '>' : ' ');
+            jo_printf(7, 21, "Pad 1: %-23s", pad);
+            jo_printf(7, 23, "%s: Choose  %s: Close     ",
+                      ui_button_label(UI_KEY_A, analog), ui_button_label(UI_KEY_START, analog));
+            jo_printf(8, 25, "%-24s", minimap_enemy_dots() ? "Enemy map: ON" : "");
+            jo_printf(7, 27, "%-27s", report == 0 ? "Settings NOT saved" :
+                      selected == 4 ? "Replaces old button action" : report == 1 ? "Settings saved" : "");
+        }
         return;
     }
-    if (gameplay.owned != last_owned) {
-        notice = (gameplay.owned & GP_SWORD) && !(last_owned & GP_SWORD)
-            ? "Sword equipped! X: swing" : "Shield equipped! Hold R: guard";
-        last_owned = gameplay.owned;
-        changed_at = now;
-    }
-    if (gameplay.cut_count != last_cuts) {
-        last_cuts = gameplay.cut_count;
-        notice = "Grass cut!";
-        changed_at = now;
-    }
-    if (gameplay_blocks_world()) {
-        jo_printf(1, 28, "%-38s", "");
+    if (pause_windows_failed()) {
+        jo_printf(5, 12, "PAUSE ART LOAD FAILED");
+        jo_printf(5, 14, "%s: RETURN TO GAME", ui_button_label(UI_KEY_START, false));
         return;
     }
-    /* Only things that just happened. The standing control reminders that used
-    ** to sit here ("Find sword west. Start: items/help") were on screen for the
-    ** whole game, which the original never does -- and reading one the instant
-    ** the opening cutscene handed over to play was the first thing anyone saw.
-    ** Transient notices stay: they are feedback, not instructions. */
-    jo_printf(1, 28, "%-38s",
-        gameplay.swing ? "Sword swing" : gameplay.shielding ? "Shield raised" :
-        (*notice && now - changed_at < 180) ? notice : "");
+    {
+        const pause_window_state_t *p = &gameplay.pause_window;
+        const char *name = "";
+        unsigned cursor = p->cursor[p->page];
+        if (!p->save_prompt) {
+            if (p->page == PAUSE_EQUIPMENT) {
+                if (cursor == 1 && (gameplay.owned & GP_SWORD)) name = "Kokiri Sword";
+                if (cursor == 5 && (gameplay.owned & GP_SHIELD)) name = "Deku Shield";
+                if (cursor == 9) name = "Kokiri Tunic";
+                if (cursor == 13) name = "Kokiri Boots";
+            } else if (p->page == PAUSE_ITEMS) {
+                if (cursor == 0 && save_state.stick_owned) name = "Deku Stick";
+                if (cursor == 6 && save_state.slingshot) name = "Fairy Slingshot";
+            } else if (p->page == PAUSE_MAP) name = "Kokiri Forest";
+            else if (save_check_quest_item(QUEST_KOKIRI_EMERALD)) name = "Kokiri Emerald";
+        }
+        jo_printf(11, 25, "%-18s", name);
+    }
+    /* Backup writes remain the real demo/save-device path. */
+    if (gameplay.pause_window.save_prompt) {
+        int report = demo_save_report();
+        jo_printf(10, 22, "%-24s", !save_device_ready() ? "NO BACKUP RAM" :
+            report < 0 ? "" : report ? "SAVED" : "SAVE FAILED");
+    } else jo_printf(10, 22, "%-24s", "");
+
 }
 
 static void         viewer_hud(void)
@@ -1068,7 +1100,8 @@ static void         file_select_screen(void)
                       file_select.open_row == line ? ">" : " ",
                       file_select_open_label(line));
         jo_printf(2, FS_ROW + 5 + FILE_SELECT_OPEN_ROWS + 1,
-                  "A: DECIDE   B: CANCEL            ");
+                  "%s: DECIDE  %s%s              ", ui_button_label(UI_KEY_A, false),
+                  ui_button_label(UI_KEY_B, false), *ui_button_label(UI_KEY_B, false) ? ": CANCEL" : "");
         return;
     }
     /* Back from the panel: wipe it before the list is drawn over it, or its
@@ -1094,17 +1127,24 @@ static void         file_select_screen(void)
     }
 
     row = FS_ROW + 2 + FILE_SELECT_ROWS * 2;
-    switch (file_select.mode) {
+    {
+        const char *a = ui_button_label(UI_KEY_A, false);
+        const char *b = ui_button_label(UI_KEY_B, false);
+        jo_printf(2, (int)row + 1, "%-36s", "");
+        switch (file_select.mode) {
         case FILE_SELECT_ERASE_CONFIRM:
-            jo_printf(2, (int)row, "ERASE %s? A: YES   B: NO          ",
+            jo_printf(2, (int)row, "ERASE %-12s?                 ",
                       file_select_row_label(file_select.erase_slot));
+            jo_printf(2, (int)row+1, "%s: YES  %s%s              ", a, b, *b ? ": NO" : "");
             break;
         case FILE_SELECT_ERASE_PICK:
-            jo_printf(2, (int)row, "PICK A FILE TO ERASE. B: BACK    ");
+            jo_printf(2, (int)row, "PICK A FILE TO ERASE.            ");
+            jo_printf(2, (int)row+1, "%s%s                         ", b, *b ? ": BACK" : "");
             break;
         default:
-            jo_printf(2, (int)row, "A: PLAY   B: TITLE               ");
+            jo_printf(2, (int)row, "%s: PLAY  %s%s             ", a, b, *b ? ": TITLE" : "");
             break;
+        }
     }
     /* Only ever shown when a device call actually refused. */
     jo_printf(2, (int)row + 2, "%s",
@@ -1151,6 +1191,11 @@ void                jo_main(void)
         jo_core_error("Actor pool does not fit its cart carve");
         return;
     }
+    if (!karebaba_init(ram_cart_fixed(RAM_CART_KAREBABA_OFFSET, RAM_CART_KAREBABA_BYTES),
+                       RAM_CART_KAREBABA_BYTES)) {
+        jo_core_error("Karebaba state does not fit its cart carve");
+        return;
+    }
 
     /* Sword/grass contact colliders: fixed cart carve too. */
     if (!gameplay_contacts_init(ram_cart_fixed(RAM_CART_CONTACT_OFFSET,
@@ -1181,6 +1226,8 @@ void                jo_main(void)
     scene_ready = kokiri_scene_load();
     scene_ready = scene_ready && demo_init();
     music_ready = scene_ready && music_init(&music_bank_title);
+    if (scene_ready && !music_ready)
+        jo_printf(2, 3, "music load FAILED");
     if (music_ready && !action_audio_init()) {
         scene_ready = false;
         jo_printf(2, 3, "action audio load FAILED");

@@ -68,6 +68,7 @@ typedef struct
     bool                target_held;
     /* Pending: no system implemented yet. */
     bool                cancel_pending;     /* B press, before walk/run uses it */
+    int8_t              menu_dx, menu_dy, menu_page;
     int8_t              menu_step;          /* D-pad while a menu/box owns it */
     bool                interact_pending;   /* A */
     bool                attack_pending;     /* X */
@@ -90,6 +91,8 @@ typedef struct
 #define PLAYER_LOOK_PITCH_SPEED 280
 
 void    player_input_reset(void);
+/* Binding steals its original action only in gameplay; menu controls stay fixed. */
+void player_input_set_jump_button(uint16_t mask);
 /* Sample from VBlank: `held` is the normalized CAMERA_* snapshot. Maintains the
 ** press edges for B, Y, A, X and the four C directions. */
 void    player_input_sample(uint16_t held);

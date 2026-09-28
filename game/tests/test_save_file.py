@@ -19,9 +19,10 @@ import unittest
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 GCC = pathlib.Path('C:/msys64/mingw64/bin/gcc.exe')
 
-SAVE_FILE_PAYLOAD_BYTES = 290
+SAVE_FILE_PAYLOAD_BYTES = 295
+SAVE_FILE_V2_PAYLOAD_BYTES = 290
 SAVE_FILE_BYTES = 8 + SAVE_FILE_PAYLOAD_BYTES + 2
-SAVE_FILE_VERSION = 2
+SAVE_FILE_VERSION = 3
 
 SAVE_FILE_OK = 0
 SAVE_FILE_EMPTY = 1
@@ -183,8 +184,33 @@ class SaveFile(unittest.TestCase):
     def test_an_older_layout_is_refused_not_guessed_at(self):
         block = self.pack()
         block[4] = 0
-        block[5] = SAVE_FILE_VERSION - 1 if SAVE_FILE_VERSION else 0
+        block[5] = 1
         self.assertEqual(SAVE_FILE_BAD_VERSION, self.unpack(block))
+
+    def test_a_version_2_save_migrates_with_new_fields_cleared(self):
+        """M2d: v3 appends sticks and naviTimer; a v2 file still loads."""
+        self.furnish()
+        v3 = self.pack()
+        before = self.lib.sf_fingerprint()
+        payload = v3[8:8 + SAVE_FILE_V2_PAYLOAD_BYTES]
+        block = bytearray(v3[:8]) + payload
+        block[5] = 2
+        total = self.lib.sf_checksum(bytes(payload), len(payload))
+        block += bytes(((total >> 8) & 255, total & 255))
+        self.lib.save_new_game()
+        self.lib.sf_set_sticks(1, 7, 1, 900)
+        self.assertEqual(SAVE_FILE_OK, self.unpack(block))
+        self.assertEqual(before, self.lib.sf_fingerprint())
+        self.assertEqual((0, 0, 0), (self.lib.sf_stick_ammo(), self.lib.sf_stick_upgrade(),
+                                     self.lib.sf_navi_timer()))
+
+    def test_sticks_and_navi_timer_round_trip(self):
+        self.lib.sf_set_sticks(1, 10, 1, 3001)
+        block = self.pack()
+        self.lib.save_new_game()
+        self.assertEqual(SAVE_FILE_OK, self.unpack(block))
+        self.assertEqual((10, 1, 3001), (self.lib.sf_stick_ammo(), self.lib.sf_stick_upgrade(),
+                                         self.lib.sf_navi_timer()))
 
     def test_highest_new_scene_flags_round_trip(self):
         hyrule_field = 10  # SAVE_SCENE_HYRULE_FIELD, last of SAVE_SCENE_COUNT 11

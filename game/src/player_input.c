@@ -18,6 +18,7 @@ static bool trigger_right_held, trigger_left_held;
 static player_move_mode_t   move_mode;
 static bool                 dialogue_open;
 static input_edge_t         edge_walk_toggle;   /* B */
+static volatile uint16_t jump_button = CAMERA_Y;
 static input_edge_t         edge_jump;          /* Y */
 static input_edge_t         edge_interact;      /* A */
 static input_edge_t         edge_attack;        /* X */
@@ -30,6 +31,7 @@ static input_edge_t         edge_c[4];
 /* Menu cursor edges: the raw D-pad, taken before the modifier routing, so a
 ** paused game can step the list without C or L having any say. */
 static input_edge_t         edge_menu[4];
+static input_edge_t         edge_page[2];
 /* Release counters for the C directions. A rising-edge latch counts presses, so
 ** releases are counted with their own pair of counters rather than by inverting
 ** the input (which would report a phantom release before the first press). */
@@ -43,10 +45,13 @@ static const uint16_t       c_direction_bit[4] = {
     CAMERA_UP, CAMERA_DOWN, CAMERA_LEFT, CAMERA_RIGHT
 };
 
+void player_input_set_jump_button(uint16_t mask) { jump_button = mask; }
+
 void player_input_reset(void)
 {
     unsigned int i;
 
+    edge_page[0] = edge_page[1] = (input_edge_t){0};
     held_snapshot = 0;
     analog_snapshot = false;
     trigger_right_held = trigger_left_held = false;
@@ -92,14 +97,17 @@ void player_input_sample_3d(uint16_t held, bool analog, uint8_t x, uint8_t y,
 void player_input_sample_pad(uint16_t held, bool analog, uint8_t x, uint8_t y)
 {
     unsigned int i;
+    input_edge_sample(&edge_jump, (held & jump_button) != 0);
+    if (!dialogue_open) held &= (uint16_t)~jump_button;
     bool look = (held & CAMERA_L) != 0;
     bool c_mode = !look && (analog || (held & CAMERA_C) != 0);
 
+    input_edge_sample(&edge_page[0], (held & CAMERA_L) != 0);
+    input_edge_sample(&edge_page[1], (held & CAMERA_R) != 0);
     held_snapshot = held;
     analog_snapshot = analog;
     axis_x = x; axis_y = y;
     input_edge_sample(&edge_walk_toggle, (held & CAMERA_B) != 0);
-    input_edge_sample(&edge_jump, (held & CAMERA_Y) != 0);
     input_edge_sample(&edge_interact, (held & CAMERA_A) != 0);
     if (!(held & CAMERA_X) && edge_attack.held) ++attack_release_produced;
     input_edge_sample(&edge_attack, (held & CAMERA_X) != 0);
@@ -142,6 +150,8 @@ void player_input_step(bool in_gameplay, player_input_t *out)
     unsigned int attack_releases = attack_release_produced;
     bool attack_released = attack_releases != attack_release_consumed;
     bool recentered = input_edge_consume(&edge_recenter);
+    bool page_left = input_edge_consume(&edge_page[0]);
+    bool page_right = input_edge_consume(&edge_page[1]);
     bool c_pressed[4], c_released[4];
     unsigned int i;
     int horizontal, vertical;
@@ -178,6 +188,7 @@ void player_input_step(bool in_gameplay, player_input_t *out)
     out->diagnostics_toggled = false;
     out->camera_swap_toggled = false;
     out->cancel_pending = false;
+    out->menu_dx = out->menu_dy = out->menu_page = 0;
     out->menu_step = 0;
     out->move_mode = move_mode;
 
@@ -227,9 +238,12 @@ void player_input_step(bool in_gameplay, player_input_t *out)
             continue;
         if (!dialogue_open)
             continue;
+        if (i < 2) out->menu_dy = i == 0 ? -1 : 1;
+        else out->menu_dx = i == 2 ? -1 : 1;
         out->menu_step = (c_direction_bit[i] == CAMERA_UP ||
                           c_direction_bit[i] == CAMERA_LEFT) ? -1 : 1;
     }
+    if (dialogue_open) out->menu_page = page_right - page_left;
     /* B toggles the persistent mode once per physical press -- unless a text
     ** box has the pad, where the same press closes the box instead. One press
     ** never does both. */
@@ -304,7 +318,13 @@ void player_input_step(bool in_gameplay, player_input_t *out)
             if (c_released[i])
                 out->c_released = (player_c_button_t)(PLAYER_C_UP + i);
         }
-        if (!analog) return;
+        if (!analog) {
+            /* Z is its own button: holding C for a C direction must not read
+            ** as releasing the lock (human report: C+Up dropped the lock-on,
+            ** so C-Up on a locked enemy never reached Navi). */
+            out->target_held = (held & CAMERA_Z) != 0;
+            return;
+        }
     }
     /* Report C releases that happened as C itself was let go, so a held item
     ** cannot be left stuck on. */

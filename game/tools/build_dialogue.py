@@ -38,7 +38,11 @@ MAX_PAGES = 16
 # Messages that belong to no speaker's text-id ladder: get-item text and the
 # Kokiri Shop's Deku Shield exchange (z_player.c sGetItemTable, z_en_girla.c,
 # z_en_ossan.c). The runtime opens them by id; see dialogue_system[].
-SYSTEM_TEXTS = (0x00A4, 0x004C, 0x10BA, 0x009F, 0x0089, 0x0084, 0x0085, 0x0086)
+SYSTEM_TEXTS = (0x00A4, 0x004C, 0x10BA, 0x009F, 0x0089, 0x0084, 0x0085, 0x0086,
+                # Navi's C-Up quest hints (elf_message_field.c): Deku Tree.
+                0x0140, 0x0141,
+                # GI_DEKU_STICKS_1 get-item text; Navi on a Deku Baba (0x600 + 9).
+                0x0037, 0x0609)
 # A trailing TEXTID(n) chains straight into message n (z_message.c
 # Message_Decode): the box keeps going, so the pages belong to one talk.
 CHAIN = re.compile(r'TEXTID\((0x[0-9A-Fa-f]+)\)\s*$')

@@ -671,6 +671,18 @@ CLIPS = (
     ('turn_look', 'gPlayerAnim_link_demo_furimuki',             0,    0, 3),
     ('sleep_wait2', 'gPlayerAnim_clink_op3_wait2',              0,    0, 2),
     ('sit_wait3', 'gPlayerAnim_clink_op3_wait3',                0,    0, 2),
+    # M2e (z_player.c func_80837C0C, func_80836448): hit reactions (D_808544B0
+    # front/back, shit < 5 damage, hit >= 5), knockdown (downA + down_wake)
+    # and the death, derth_rebirth to its endFrame 84.
+    ('shit_front','gPlayerAnim_link_normal_front_shit',         0,    0, 1),
+    ('shit_back', 'gPlayerAnim_link_normal_back_shit',          0,    0, 1),
+    ('hit_front', 'gPlayerAnim_link_normal_front_hit',          0,    0, 1),
+    ('hit_back',  'gPlayerAnim_link_normal_back_hit',           0,    0, 1),
+    ('down_front','gPlayerAnim_link_normal_front_downA',        0,    0, 1),
+    ('down_back', 'gPlayerAnim_link_normal_back_downA',         0,    0, 1),
+    ('wake_front','gPlayerAnim_link_normal_front_down_wake',    0,    0, 1),
+    ('wake_back', 'gPlayerAnim_link_normal_back_down_wake',     0,    0, 1),
+    ('death',     'gPlayerAnim_link_derth_rebirth',             0,   85, 1),
 )
 
 # Child root adjustment: z_player_lib.c Player_OverrideLimbDrawGameplayCommon

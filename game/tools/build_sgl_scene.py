@@ -172,13 +172,26 @@ def emit(head, verts, faces, tiles, out_dir, name='kokiri'):
             lines.append('    { toFIXED(%d), toFIXED(%d), toFIXED(%d) },' % (x, y, z))
         lines += ['};', '']
 
-    # --- POLYGON table: real unit normals, required by Single_Plane -----
-    lines.append('static POLYGON @n@_polygons[@N@_POLYGON_COUNT] = {')
+    # --- POLYGON + ATTR tables -----------------------------------------
+    # Link's two tables are read only when his equipment changes (kokiri_sgl.c
+    # copies them into the hot equipped_* lists), so they live on the cart:
+    # @n@_mesh.c holds them in one const struct, the makefile objcopies its
+    # .rodata to LINKMESH.BIN, and kokiri_scene_load() points link_pdata at
+    # the cart copy. 18 KB of work RAM back (BUG-039).
+    cart = name == 'link'
+    scene_lines = lines
+    if cart:
+        lines = [banner, '', '#include <jo/jo.h>', '#include "@n@_scene.h"', '',
+                 '/* Never linked: objcopied to LINKMESH.BIN (see makefile). */',
+                 'const struct { POLYGON p[@N@_POLYGON_COUNT]; ATTR a[@N@_POLYGON_COUNT]; }',
+                 '    @n@_mesh_tables = {', '{']
+    else:
+        lines.append('static POLYGON @n@_polygons[@N@_POLYGON_COUNT] = {')
     for face in faces:
         nx, ny, nz = face_normal(baked, face['idx'])
         lines.append('    { { %d, %d, %d }, { %d, %d, %d, %d } },'
                      % ((nx, ny, nz) + face['idx']))
-    lines += ['};', '']
+    lines += ['},' if cart else '};', '']
 
     # --- ATTR table -----------------------------------------------------
     # Field layout mirrors jo_3d_set_mesh_polygon_texture() in
@@ -215,7 +228,7 @@ def emit(head, verts, faces, tiles, out_dir, name='kokiri'):
     # pairs this rule can reorder against each other.
     FLOOR_SORT_SPAN = 64
     floor_sorted = 0
-    lines.append('static ATTR @n@_attributes[@N@_POLYGON_COUNT] = {')
+    lines.append('{' if cart else 'static ATTR @n@_attributes[@N@_POLYGON_COUNT] = {')
     for face in faces:
         # Animated Link's POINTs rotate with each limb but these normals are
         # still the bind-pose normals. Single_Plane would cull live faces from
@@ -238,15 +251,19 @@ def emit(head, verts, faces, tiles, out_dir, name='kokiri'):
         lines.append('    ATTRIBUTE(%s, %s | UsePalette | UseNearClip, %d, '
                      'No_Palet, No_Gouraud, %s, sprNoflip, No_Option),'
                      % (plane, sort, tiles[face['tex_off']]['index'], atrb))
-    lines += ['};', '']
+    lines += ['}};' if cart else '};', '']
+    if cart:
+        (out_dir / fix('@n@_mesh.c')).write_text(fix('\n'.join(lines)))
+        lines = scene_lines
     if name != 'link':
         print('  floors  : %d of %d faces keyed SORT_MAX (span > %d)'
               % (floor_sorted, len(faces), FLOOR_SORT_SPAN))
 
+    tables = ('0', '0') if cart else ('@n@_polygons', '@n@_attributes')
     lines += ['PDATA @n@_pdata = {',
               '    @n@_points, @N@_VERTEX_COUNT,',
-              '    @n@_polygons, @N@_POLYGON_COUNT,',
-              '    @n@_attributes',
+              '    %s, @N@_POLYGON_COUNT,' % tables[0],
+              '    %s' % tables[1],
               '};', '']
     (out_dir / fix('@n@_scene.c')).write_text(fix('\n'.join(lines)))
 
@@ -272,6 +289,17 @@ def emit(head, verts, faces, tiles, out_dir, name='kokiri'):
     for tile in tiles.values():
         tex.append('    { ' + ' '.join('0x%04X,' % c for c in tile['clut']) + ' },')
     tex += ['};', '']
+    if cart:
+        # Link's tile descriptors and CLUTs are read only by mesh_load() at
+        # scene load: one const struct, objcopied to LINKTEX.BIN (makefile)
+        # and loaded into the cart, like LINKMESH (BUG-043).
+        cluts = tex[tex.index('const unsigned short @n@_cluts[@N@_TILE_COUNT][16] = {') + 1:-2]
+        tables = [banner, '', '#include "@n@_scene.h"', '',
+                  '/* Never linked: objcopied to LINKTEX.BIN (see makefile). */',
+                  'const struct { @n@_tile t[@N@_TILE_COUNT]; unsigned short c[@N@_TILE_COUNT][16]; }',
+                  '    @n@_tex_tables = {', '{'] + descs + ['},', '{'] + cluts + ['}};', '']
+        (out_dir / fix('@n@_tex.c')).write_text(fix('\n'.join(tables)))
+        tex = [banner, '', "/* Link's tables moved to @n@_tex.c (cart, LINKTEX.BIN). */", '']
     (out_dir / fix('@n@_textures.c')).write_text(fix('\n'.join(tex)))
     (out_dir / fix('@n@_pixels.bin')).write_bytes(bytes(blob))
 
@@ -302,11 +330,17 @@ def emit(head, verts, faces, tiles, out_dir, name='kokiri'):
               '',
               'extern PDATA                 @n@_pdata;']
     if name == 'link':
-        header += ['/* Rewritten in place by the runtime skinner; see link_anim.h. */',
+        header += ['/* pltbl/attbl start 0: kokiri_scene_load() loads them to the cart. */',
+                   '# define @N@_MESH_FILE        "LINKMESH.BIN"',
+                   '# define @N@_MESH_BYTES       (@N@_POLYGON_COUNT * (sizeof(POLYGON) + sizeof(ATTR)))',
+                   '# define @N@_TEX_FILE         "LINKTEX.BIN"',
+                   '# define @N@_TEX_BYTES        (@N@_TILE_COUNT * (sizeof(@n@_tile) + 32))',
+                   '/* Rewritten in place by the runtime skinner; see link_anim.h. */',
                    'extern POINT                 @n@_points[@N@_VERTEX_COUNT];']
+    if name != 'link':
+        header += ['extern const @n@_tile     @n@_tiles[@N@_TILE_COUNT];',
+                   'extern const unsigned short  @n@_cluts[@N@_TILE_COUNT][16];']
     header += [
-              'extern const @n@_tile     @n@_tiles[@N@_TILE_COUNT];',
-              'extern const unsigned short  @n@_cluts[@N@_TILE_COUNT][16];',
               '',
               '#endif /* !__@N@_SCENE_H__ */',
               '']

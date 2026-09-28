@@ -17,7 +17,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[2] / 'shared/too
 import build_kokiri_scene as source
 import build_quads as quads
 from vdp1_budget import (Budget, tile_bytes, MAX_POLYGONS, MAX_VERTICES,
-                         RUNTIME_SPRITE_BYTES)
+                         RUNTIME_SPRITE_BYTES, FOREST_VRAM_MARGIN)
 
 OOT_DEFAULT = pathlib.Path('D:/Workspace-Claude/game-decomps/n64/oot')
 
@@ -314,8 +314,8 @@ def convert(oot, head, actor, out_dir, patches_only=False, rom_dir=None,
     if room is not None:
         bakes = refine_room_ground(bakes, pieces, actor)
     # Start with 16x16 bakes. Spend remaining space on the worst *directional*
-    # density, not a blanket resolution increase. Always keep a 4 KiB margin.
-    available = budget.vram_limit-budget.vram_bytes-4096
+    # density, not a blanket resolution increase. Keep room for new effects.
+    available = budget.vram_limit-budget.vram_bytes-FOREST_VRAM_MARGIN
     sizes = [[16,16] for g in bakes]
     available -= len(bakes)*tile_bytes(16,16)
     if available < 0:
@@ -349,7 +349,7 @@ def convert(oot, head, actor, out_dir, patches_only=False, rom_dir=None,
     # that is not a tile and spend VRAM the sprite loader was going to need.
     remaining = (budget.vram_limit - sum(tile_bytes(t['width'], t['height'])
                                          for t in tiles.values())
-                 - actor_bytes(actor) - RUNTIME_SPRITE_BYTES - 4096)
+                 - actor_bytes(actor) - RUNTIME_SPRITE_BYTES - FOREST_VRAM_MARGIN)
     floors = []
     for i, (group, tile) in enumerate(pieces):
         if flat_surface(group):

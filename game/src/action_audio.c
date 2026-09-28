@@ -4,6 +4,8 @@
 #include "action_audio_data.h"
 #include "opening_audio_data.h"
 #include "gameplay.h"
+#include "karebaba.h"
+#include "game_over.h"
 #include "music.h"
 
 #define SLOT(s,o) (*(volatile unsigned short *)(0x25b00000UL + (s)*32 + (o)))
@@ -150,6 +152,14 @@ void action_audio_opening_stop(unsigned int channel)
     SLOT(24 + channel,0) = 0x1000;
 }
 
+/* One-shot at a note velocity: OoT mixes (velocity / 127)^2; SCSP TL is
+** 0.375 dB a step, so `extra` = TL steps of that attenuation. */
+static void play_level(unsigned int id, unsigned int slot, unsigned int extra)
+{
+    play_sample(id, slot, (unsigned int)action_pcm_octave[id < ACTION_PCM_COUNT ? id : 0] << 11,
+                12 + extra, false);
+}
+
 static void play(unsigned int id, unsigned int slot)
 {
     /* OCT from the stored rate: half-rate samples (voices, climb, shield,
@@ -190,6 +200,16 @@ static void play_area_pitch(unsigned int id, unsigned int slot, unsigned int shi
     SLOT(slot,22) = 7 << 13;
     SLOT(slot,12) = 12;
     SLOT(slot,0) = key | 0x1800;
+}
+
+/* Kaleido Game Over prompts: PIECE_OF_HEART for Yes, DECIDE for No, CURSOR
+** on a move. */
+void action_audio_game_over(uint32_t ev)
+{
+    if (opening_bank) return;
+    if (ev & GAME_OVER_EV_YES) play(ACTION_HEART_PIECE, 27);
+    else if (ev & GAME_OVER_EV_DECIDE) play(ACTION_DECIDE, 27);
+    else if (ev & GAME_OVER_EV_MOVE) play(ACTION_CURSOR, 27);
 }
 
 void action_audio_navi_dash(void)
@@ -254,7 +274,7 @@ static void rupee_start(void)
     if (!ready || music_busy()) return;
     rupee_active = false; /* interrupt must not touch half-written slot setup */
     rupee_clock = rupee_note = 0;
-    play_sample(ACTION_RUPEE,29,14 << 11,RUPEE_BED_LEVEL,false);
+    play_sample(ACTION_RUPEE,29,(unsigned int)action_pcm_octave[ACTION_RUPEE] << 11,RUPEE_BED_LEVEL,false);
     play_sample(ACTION_RUPEE_WAVE,30,rupee_pitches[0],rupee_levels[0],true);
     rupee_active = true;
 }
@@ -294,7 +314,50 @@ static void rupee_vblank(void)
 
 void action_audio_events(uint32_t events)
 {
+    uint32_t events2 = gameplay.events2;
     if (opening_bank) return;
+    /* Attention_Update: NA_SE_SY_LOCK_ON for an attention+hostile lock,
+    ** NA_SE_SY_LOCK_ON_HUMAN otherwise. */
+    if (events & GP_EVENT_TARGET_ON)
+        play((events2 & GP2_EVENT_LOCK_HOSTILE) ? ACTION_LOCK_ON : ACTION_LOCK_ON_HUMAN, 29);
+    /* Navi, slot 31 (the opening's flight loop is not live in gameplay). */
+    if (events2 & GP2_EVENT_NAVI_HELLO) play(ACTION_NAVI_HELLO, 31);
+    if (events2 & GP2_EVENT_NAVI_CALL) {
+        /* CHAN_60F2: rand 3 over ARRAY_65A7, velocity 100/95/105 (TL 11,
+        ** 13, 9); layer 1's INST_69 glide at velocity 65 (TL 31). */
+        static const unsigned char tl[3] = { 11, 13, 9 };
+        unsigned int take = (voice++) % 3;
+        play_level(ACTION_NAVI_CALL0 + take, 31, tl[take]);
+        play_level(ACTION_NAVI_CHIME, 30, 31);
+    }
+    if (events2 & GP2_EVENT_NAVI_TALK) play(ACTION_NAVI_TALK, 31);
+    /* M2e: func_80837C0C NA_SE_PL_DAMAGE + NA_SE_VO_LI_DAMAGE_S_KID (rand 3);
+    ** knockdown NA_SE_VO_LI_FALL_L_KID; func_80843E64 landing voice (the
+    ** BODY_HIT channel is not rendered: PL_DAMAGE stands in, logged);
+    ** func_80836448 NA_SE_VO_LI_DOWN_KID; Health_IsCritical alarm. */
+    if (events & GP_EVENT_HURT) {
+        play(ACTION_PL_DAMAGE, 24);
+        play(ACTION_HURT0 + (voice++ % 3), 25);
+    }
+    if (events & GP_EVENT_KNOCKDOWN) play(ACTION_FALL_L0, 25);
+    if (events2 & GP2_EVENT_LAND_DAMAGE) {
+        play(ACTION_PL_DAMAGE, 24);
+        play(ACTION_LAND_HURT0, 25);
+    }
+    if (events2 & GP2_EVENT_DEATH) play(ACTION_DOWN, 25);
+    if (events2 & GP2_EVENT_ALARM) play(ACTION_ALARM, 30);
+    {
+        /* En_Karebaba (forest area bank) and its stick pickup. One baba
+        ** sound a step on slot 28; Enemy_StartFinishingBlow on 30. */
+        uint32_t baba = karebaba_events();
+        if (baba & KAREBABA_EV_DEAD) play_area(AREA_SFX_BABA_DEAD, 28);
+        else if (baba & KAREBABA_EV_GROUND) play_area(AREA_SFX_BABA_GROUND, 28);
+        else if (baba & KAREBABA_EV_AWAKEN) play_area(AREA_SFX_BABA_AWAKEN, 28);
+        else if (baba & KAREBABA_EV_MOUTH) play_area(AREA_SFX_BABA_MOUTH, 28);
+        if (baba & KAREBABA_EV_LAST_DAMAGE) play(ACTION_LAST_DAMAGE, 30);
+        /* func_8083E4C4: NA_SE_SY_GET_ITEM for a quiet (already owned) give. */
+        if (baba & KAREBABA_EV_STICK) play(ACTION_GET_ITEM, 27);
+    }
     if (events & GP_EVENT_SWING) {
         play(ACTION_SWING, 24);
         play(ACTION_VOICE0 + (voice++ & 3), 25);
@@ -316,7 +379,8 @@ void action_audio_events(uint32_t events)
     if (events & GP_EVENT_JUMP) play(ACTION_JUMP, 25);
     /* Ledge hop: NA_SE_VO_LI_SWORD_N_KID, the same four takes as a swing. */
     if (events & GP_EVENT_HOP_VOICE) play(ACTION_VOICE0 + (voice++ & 3), 25);
-    if (events & GP_EVENT_CLIMB_END) play(ACTION_CLIMB0, 25);
+    /* CHAN_639A: rand 2 over ARRAY_63AB. */
+    if (events & GP_EVENT_CLIMB_END) play(ACTION_CLIMB0 + (voice++ & 1), 25);
     if (events & GP_EVENT_ROLL_VOICE) play(ACTION_VOICE0 + (voice++ & 3), 25);
     if (events & GP_EVENT_ROLL) play(ACTION_ROLL, 28);
     else if (events & GP_EVENT_FOOTSTEP) play(ACTION_FOOTSTEP, 28);

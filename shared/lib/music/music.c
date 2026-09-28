@@ -12,7 +12,7 @@
 ** slots 16/17's EFSDL/EFPAN (low byte of register 0x16). Every write of
 ** that register keeps them at full level, hard left/right, or a CD track
 ** would be muted whenever those two music voices play. */
-#define CD_SEND(s) ((s) == 16 ? (7<<5) | 0x1F : (s) == 17 ? (7<<5) | 0x0F : 0)
+#define CD_SEND(s) ((s) == 16 ? ((menu_duck ? 6 : 7)<<5) | 0x1F : (s) == 17 ? ((menu_duck ? 6 : 7)<<5) | 0x0F : 0)
 #define MUSIC_MAX_VOICES 24
 #define VOLUME_MAX       15
 /* Default half-fade length; music_fade_to() takes an explicit one. */
@@ -35,6 +35,7 @@ static unsigned int phase, refresh;
 static volatile bool playing;
 static volatile unsigned char state;
 static volatile unsigned char volume = VOLUME_MAX;
+static volatile bool menu_duck;
 static unsigned int fade_step, fade_length = FADE_DEFAULT;
 static unsigned int transition_start, transition_frames;
 /* Switch measurements. audible_frames is request -> new bank actually playing;
@@ -59,7 +60,7 @@ static unsigned int faded_level(unsigned int level)
 {
     static const unsigned char attenuation[16] =
         {255,63,47,37,31,25,21,18,15,12,9,7,5,3,2,0};
-    unsigned int result = level + attenuation[volume];
+    unsigned int result = level + attenuation[volume] + (menu_duck ? 16u : 0u);
     return result > 255 ? 255 : result;
 }
 
@@ -69,6 +70,18 @@ static void set_volume(unsigned int level)
     volume = (unsigned char)level;
     for (i = 0; i < MUSIC_MAX_VOICES; ++i)
         if (active[i]) SLOT(i,12) = faded_level(voice_levels[i]);
+}
+
+void music_menu_duck(bool enabled)
+{
+    if (menu_duck == enabled) return;
+    unsigned i;
+    menu_duck = enabled;
+    for (i=0; i<MUSIC_MAX_VOICES; ++i)
+        if (active[i]) SLOT(i,12)=faded_level(voice_levels[i]);
+    /* CD external sends use the same -6 dB step; preserve music direct sends. */
+    SLOT(16,0x16) = (SLOT(16,0x16) & 0xFF00u) | CD_SEND(16);
+    SLOT(17,0x16) = (SLOT(17,0x16) & 0xFF00u) | CD_SEND(17);
 }
 
 static void stop_all(void)

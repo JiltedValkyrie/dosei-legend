@@ -11,15 +11,19 @@
 **
 ** Reservations (nothing else may use them):
 **   VDP2 VRAM B0 +0x0000  NBG2 page map, 64x64 one-word names (8 KB)
-**   VDP2 VRAM B0 +0x2000  NBG2 cells, 16-colour, up to 16 KB
+**   VDP2 VRAM B0 +0x2000  Minimap cells, 16-colour, up to 8 KB
+**   VDP2 VRAM B0 +0x4000  Gameplay button cells, up to 8 KB
 **   CRAM 768..783         map palette (NBG2 palette 0 at CRAM offset 3)
 **   CRAM 784..799         marker palette (sprite colour bank 0x300)
+**   CRAM 800..815         gameplay buttons (NBG2 palette 2)
 **   Sprite priority 1     marker sprites (PR bit in the colour bank)
 **   Cart carve            MINIMAP.BIN (ram_cart.h RAM_CART_MINIMAP_*)
 */
 #define MINIMAP_VRAM_MAP        0x25E40000u
 #define MINIMAP_VRAM_CELLS      0x25E42000u
-#define MINIMAP_VRAM_CELL_BYTES 0x4000u
+#define MINIMAP_VRAM_CELL_BYTES 0x2000u
+#define HUD_VRAM_CELLS          0x25E44000u
+#define HUD_CRAM                800u
 #define MINIMAP_CRAM_MAP        768u
 #define MINIMAP_CRAM_MARKER     784u
 #define MINIMAP_SPRITE_PRIORITY_BIT 0x2000u   /* type 3 PR bits 14-13 = 01 */
@@ -32,13 +36,14 @@ bool    minimap_init(void);
 void    minimap_scene(unsigned int save_scene);
 /* Hide toggle (future pause-menu option); rules still apply when shown. */
 void    minimap_set_hidden(bool hidden);
-/* NBG2ON when the map should be on screen this frame, else 0. */
+/* Refresh independent map/button visibility; NBG2ON if either is visible. */
 uint32_t minimap_layer_flags(void);
 /* Sprite priority 1 above NBG2; call after each jo_core_set_screens_order. */
 void    minimap_priorities(void);
 /* Pad snapshot each VBlank for the enemy-dot cheat (cheat_code.h). */
-void    minimap_cheat_sample(uint16_t held);
+bool    minimap_cheat_sample(uint16_t held);
 bool    minimap_enemy_dots(void);
+void    minimap_session_reset(void);
 /* True once after the code is entered: the caller plays the get-item sound
 ** (main loop, not VBlank, so it never races action_audio's slot writes). */
 bool    minimap_cheat_chime(void);

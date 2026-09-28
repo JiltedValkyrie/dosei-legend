@@ -145,6 +145,13 @@ typedef struct
     uint8_t             ammo_seeds;
     uint8_t             scene_id;           /* SAVE_SCENE_*, for resume */
     uint8_t             entrance;           /* spawn point within that scene */
+    /* playerData.naviTimer: En_Elf's quest-hint clock, 20 Hz updates. */
+    uint16_t            navi_timer;
+    /* INV_CONTENT(ITEM_DEKU_STICK) != ITEM_NONE, AMMO(ITEM_DEKU_STICK),
+    ** CUR_UPG_VALUE(UPG_DEKU_STICKS): capacity {0, 10, 20, 30}. */
+    uint8_t             stick_owned;
+    uint8_t             stick_ammo;
+    uint8_t             stick_upgrade;
 }                       save_state_t;
 
 extern save_state_t     save_state;
@@ -189,6 +196,10 @@ bool            save_mido_demands_met(void);
 
 /* ---- health ----------------------------------------------------------- */
 void            save_damage(unsigned int units);
+/* Sram_OpenSave: where a loaded file resumes. Dungeon -> its entrance 0;
+** every other scene (the overworld, the houses) -> Link's house, entrance 0,
+** for child Link. Continue after Game Over does NOT go through this. */
+void            save_resume_remap(void);
 void            save_heal(unsigned int units);
 bool            save_is_dead(void);
 

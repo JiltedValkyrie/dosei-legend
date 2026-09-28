@@ -207,6 +207,18 @@ bool            save_mido_demands_met(void)
 
 /* ---- health ------------------------------------------------------------ */
 
+void            save_resume_remap(void)
+{
+    if (save_state.scene_id == SAVE_SCENE_DEKU_TREE ||
+        save_state.scene_id == SAVE_SCENE_DEKU_TREE_BOSS) {
+        save_state.scene_id = SAVE_SCENE_DEKU_TREE;
+        save_state.entrance = 0;
+        return;
+    }
+    save_state.scene_id = SAVE_SCENE_LINKS_HOUSE;
+    save_state.entrance = 0;
+}
+
 void            save_damage(unsigned int units)
 {
     if (units >= save_state.health)
@@ -258,6 +270,10 @@ void            save_new_game(void)
     save_state.equip_shield = 0;
     save_state.slingshot = 0;
     save_state.ammo_seeds = 0;
+    save_state.stick_owned = 0;
+    save_state.stick_ammo = 0;
+    save_state.stick_upgrade = 0;
+    save_state.navi_timer = 0;
     /* A new file begins in Link's house, in bed, exactly as the original does.
     ** Spawn 0 of that scene is the bed, straight from the ROM's spawn list.
     ** Recorded here rather than in the caller so the resume path and the

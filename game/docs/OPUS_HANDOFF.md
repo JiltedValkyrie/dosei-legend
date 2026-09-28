@@ -1,3 +1,288 @@
+# Codex: controller preferences, pause backdrop and map - 2026-09-27
+
+Final Clean build passes: .bss end 0x06082B60, 5,280 B below SGL. 250 focused
+checks pass (155 gameplay, 61 controls, 11 pause/health, 7 button HUD,
+11 minimap, 5 preferences/audio/freeze). Packed map preview inspected;
+hardware palette/keycap alignment and backup persistence await human Kronos.
+
+Saved Saturn/Xbox/N64/GameCube/PS4-5 label presets, custom jump and Reset are
+on System. Separate DOSEICFG record; no adventure save-format change. Presets
+only change labels; jump binding replaces its selected physical button's
+gameplay action, menus unchanged. N64 default jump remains Y with no HUD label.
+Pause freezes visible world animation, grey dither reveals it, music ducks
+6 dB independently of fades/SFX. Enemy-map status hidden unless cheat enabled.
+Map enlarged 216x128 -> 288x171 with near-exact source aspect and eleven
+regional palettes (up to 165 colours). Clouds retained. Clean L/R keycaps have
+only runtime preset labels, no original letters underneath.
+VDP2 ownership: label maps B0+0x12000..0x13FFF reserved (5344 B used); map
+CRAM 848..1023, record 39952 B inside existing 0xA000 cart carve. No VDP1 cost.
+Human review: all label modes on both pads, custom jump/reset and power-cycle
+settings, failed settings save, pause music restore/world freeze, map clarity,
+L/R labels and HUD restoration after leaving every page. No Kronos run/commit.
+
+# Earlier: System page, selection colours, session enemy-map cheat - 2026-09-27
+
+Clean rebuilt successfully; .bss ends 0x06083470, 2,960 B below SGL.
+193 focused checks pass (155 gameplay, 17 game mode, 10 pause/health, 11 minimap).
+No Kronos run or commit. Preserve Claude's Baba collider and digital Z/C fixes.
+
+Start -> R from Equipment now reaches SYSTEM (fifth page). Save opens the
+existing real backup save confirmation. Load and Title show Yes/No with
+"Unsaved progress will be lost", default No; B cancels. Load opens the existing
+file-select screen only after Yes. No automatic save. Start closes any prompt.
+System also reports Controller 1's actual detected type and enemy-map ON/OFF.
+A 3D pad in digital mode reports as a digital pad; hardware gives no distinct
+3D identity in that mode. Selection outlines are light blue, equipped gold.
+
+Cheat repair: old renderer only knew debug launcher/projectile, so Clean showed
+no new Babas. It now scans the active actor pool for hostile enemies/bosses in
+any mapped scene. The code's completing Start is swallowed until release,
+so it no longer immediately pauses and hides the map. Other Start presses work.
+Live-play acknowledgement uses SCSP; the CD fanfare is limited to frozen UI.
+State persists across scene/room changes and in-session respawn, never enters
+save data, clears on new/load file or ending the session at title/load menu.
+Tests compile real cheat state functions and actual VBlank Start routing.
+
+Files: main.c, demo.c, gameplay.c/.h, game_mode.c, minimap.c/.h,
+pause_window_state.c/.h, pause_windows.c, build_pause_windows.py and focused
+tests. New PAUSE50.BIN is the System-page background. No extra VRAM allocation.
+Human batch: System save/no/yes, Load/Title No and B preserve play, Yes changes
+screen; digital/3D/disconnect labels; blue vs gold; enter cheat, change rooms,
+see Baba dots, save, load again and verify OFF. No checks claimed on hardware.
+
+# Codex to Claude: pause windows and live heart HUD ready - 2026-09-27
+
+Human requested four OoT pause pages on VDP2, owned items only, then hearts.
+Implemented Items / Map / Quest Status / Equipment and save window with original
+page artwork. Start opens/closes, L/R pages, D-pad cursor, A equips real owned
+sword/shield; B opens save confirmation. Actual backup-device result is shown.
+New menu_dx/menu_dy/menu_page fields preserve menu_step for dialogue/file select.
+Keep these additions when touching player_input/demo/gameplay for M2e.
+
+HEART HUD READY FOR DAMAGE: health_hud.c reads save_state.health and
+save_state.health_capacity directly, 16 units/heart. No call or notification
+needed from Claude's damage/healing/death/continue code. Original five fill
+textures, source fraction thresholds, pulse and up to two rows of ten hearts.
+No VDP1 slots: NBG2 cells/palette, atlas in VDP2 RAM. Pause uses a 40 KB cart
+carve at 0x1D000; RAM_CART_FIXED_BYTES is now 0x27000. See PAUSE_HUD_UI.md for
+VDP2 ownership; do not reuse these cells/CRAM for Game Over windows.
+
+Final Clean build passed with current Game Over changes; .bss ends 0x06082DF0,
+4,624 bytes below SGL. 153 gameplay + 7 pause/health + 6 button HUD + 8 minimap
+checks passed. No Kronos run, no commit. Human batch review still pending.
+Window coverage is implemented, not full KaleidoScope parity: 3D page flips,
+animated Link portrait, OoT proportional item-name font and future item/quest/
+dungeon actions remain. Owned-only display is deliberate. See BUG-046.
+Files: pause_windows.c/.h, pause_window_state.c/.h, health_hud.c/.h,
+health_hud_state.h, build_pause_windows.py, build_health_hud.py; small edits in
+main/minimap/gameplay/demo/player_input/build integration. Preserve shared edits.
+
+# Codex: silent Clean audio startup fix - 2026-09-27
+
+Human reported no sound. music_banks.c still hardcoded TITLE_PCM_BYTES=480046
+after music was halved to 240048 bytes. music_init rejected the stale size
+against MUSIC_SAMPLE_LIMIT before SCSP setup; main then skipped action_audio_init.
+This affects any rebuilt variant, not a deliberate Clean mute.
+Removed the hardcode; title generator and current title_score.h now export
+TITLE_PCM_BYTES. main reports a failed music load even with Clean HUD hidden.
+Title-size regression reproduces the missing metadata and now passes;
+15 action-audio tests also pass. Clean rebuilt successfully; human listens.
+Files: shared/tools/build_title_audio.py, shared/assets/audio/title/title_score.h,
+game/src/music_banks.c, main.c, tests/test_title_audio_size.py. Audio samples
+and Claude's action-audio logic were not changed by this fix.
+
+# Codex: gameplay button HUD implemented - 2026-09-27
+
+Human expanded the UI request to the gameplay button cluster and selected
+Saturn labels: A interact, X sword, C directions. Codex owns minimap.c/.h,
+build_minimap.py, new build_gameplay_hud.py/gameplay_hud_state.h and HUD tests.
+Small main.c edit removes the old A: Talk/Open/Enter text; makefile adds header
+dependencies. Claude should keep ownership of hint/gameplay/input/audio logic.
+Graphics reads existing gameplay.navi_calling and prompt/equipment fields;
+no new gameplay callback or control remap required. No external message sent.
+Implementation complete: original button/sword/action/empty-C/Navi artwork,
+Saturn A/X/C identifiers, independent map/button visibility and source-timed
+Navi blink. Empty C slots remain empty until actual item assignments exist.
+The direction label switches live to D-PAD for a connected 3D pad in analog
+mode, and back to C in digital mode/disconnect, using the same Jo input-type
+check as demo.c. An eight-cell patch avoids duplicating the HUD variant maps.
+Label follow-up: 6 HUD tests pass; Clean rebuild passed with current shared
+M2 code (2,384 B work-RAM gap). Earlier 12,304 B figure below was the prior build.
+BUTTONS.BIN uses 3,552 VDP2 bytes, no VDP1 slots; minimap stays pixel-aligned.
+Clean built, 13 focused checks pass, 12,304 B work RAM spare. Human graphical
+review pending with full M2. See NAVI_PROMPT_PLAN.md for files and limitations.
+Do not duplicate this UI implementation while continuing M2 gameplay work.
+
+# Codex: obsolete action notices removed - 2026-09-27
+
+User requested removal of bottom-left Sword swing / Grass cut text and related
+obsolete notices. Removed main.c action_hint declaration, call and function,
+including Shield raised and sword/shield-equipped control notices. Existing
+interaction prompts remain. Source/diff checks pass; include in Claude's next
+Clean build with ongoing M2 work. No emulator run or separate build performed.
+
+# Codex to Claude: Navi prompt implementation plan - 2026-09-27
+
+Implement the N64-style on-screen Navi C-Up prompt alongside the hint flow.
+See [NAVI_PROMPT_PLAN.md](NAVI_PROMPT_PLAN.md) for source artwork, coordinates,
+blink/visibility rules, existing VDP2 allocations and integration checks.
+Proposed path: shared NBG2 HUD cells, fixed screen-coordinate page, independent
+minimap/prompt visibility; no VDP1 sprites. Palette reservation needs audit.
+Codex changed docs only. Claude retains code ownership; human checks final M2.
+
+# Human directive to Claude: finish M2 before human review - 2026-09-27
+
+- Claude owns continued implementation; Codex is relaying this directive,
+  not taking over the M2 work.
+- Continue and finish all remaining tasks in M2_COMBAT_PLAN.md before asking
+  for human review. Do not wait on the M2d.1 Navi acquisition visual check
+  or request separate human approval for each camera/attention step.
+- Complete remaining lock-camera work and M2 milestones with source checks,
+  focused tests and Clean builds. Record pending visual checks together for
+  one human review of the completed M2 batch. Do not claim untested parity.
+- Human handles Kronos. No agent background emulator checks.
+- Fix severe blockers as found; log minor gaps without stopping M2 progress.
+
+# Codex: forest load capacity fix - 2026-09-27
+
+- BUG-041: six attention glows exposed an incomplete resident VRAM budget.
+  Old S1R0/S1R1 exceeded capacity by 1,952/2,080 bytes; sprite slots fit.
+- Budget now includes all 40 runtime sprites, 20,160 bytes. User accepts
+  lower detail for stability: forest density allocator reserves those plus
+  32 KiB; rebuilt banks leave 33,504/34,784 bytes (92.5%/92.2% used).
+  Geometry and glows retained. Mirror reuse still pending. Bible updated.
+- Changed tools/vdp1_budget.py, tools/build_hybrid_scene.py, capacity diagnostics in
+  src/kokiri_sgl.c, tests/test_vdp1_budget.py. Existing shared edits preserved.
+- Clean image built and 4 focused tests pass. Human Kronos check: no visible
+  difference after texture reduction. BUG-041 closed.
+- Human handles Kronos testing; do not run background emulator checks.
+
+# Claude to Astra: Navi anchor, glow, sparkles - 2026-09-27
+
+- Anchor traced: Attention_SetNaviState -> naviHoverPos = player focus.pos
+  (head limb x sPlayerFocusOffsetFromHead 1100,-700,0) + lockOnArrowOffset
+  500 x 0.01; En_Elf adds 1500 x 0.008. New link_anim_focus(); demo.c
+  link_focus() feeds navi_step/reset; navi.c ARROW_OFFSET 5 + HOVER_RISE 12
+  (old fixed LINK_HEAD 46 removed). Idle focus 56.5 over the feet: hover
+  73.5 +-5, was 58 +-5 (inside the 66-unit model) -> likely head-clip
+  cause; Kronos confirmation pending. Orbit untouched.
+- Glow: gCircleGlowL/SL profiles, 12 units (+-500 x 0.012), 3 dithered
+  L->SL steps picked by the source envAlpha triangle; solid only inside SL
+  core. Wings stay clear (reach 10.4).
+- Sparkles: EffectSsKiraKira in navi.c (20 Hz), fixed 16-slot pool (384 B),
+  source spawn spread, fall, jitter, spin, life 16; 8x8 dithered sprite
+  from gEffSparklesTex, 2.8 units, slPutSprite angle.
+- RAM: standard 2,352 B free (BUG-039), Clean 5,584 B. Gaps BUG-038.
+  Tests: test_navi 5 OK (anchor + sparkle); full suite 4 old errors.
+  No commit.
+
+# Human batch fixes - 2026-09-27 (Claude, no commit)
+
+- Deku Baba had no contact either way: collider x/y/z are OFFSETS from the
+  owning actor (collide.c base()); karebaba.c stored absolute spawn coords.
+  Now re-expressed each step (home - actor). New host tests drive the real
+  collision pass (bite, sword cut); the old ones only faked the hit.
+- Digital pad: holding C (C + D-pad) returned before `target_held`, so C+Up
+  dropped the Z lock and C-Up never reached Navi. Z now survives C-mode
+  (player_input.c). 3D pad was unaffected (analog path).
+- Corrections to earlier Claude notes: pause pages use VDP2 graphics (Astra);
+  the Game Over prompts are VDP2 text. SFX: after the music went half rate I
+  briefly restored full-rate SFX; that was reverted the same session -- every
+  SFX is half rate (bible rule), music half rate, CD-DA 240,000 budget.
+- The 4 standing test errors (not runtime failures; stale host harnesses that
+  paste game code without its newer symbols):
+  - test_equipment_draw: stub lacks slRotY/ANGLE/cutscene_is_playing
+    (fairy/cutscene code now in the pasted range).
+  - test_forest_partition: ATTR stub lacks `dir`; forest_scene,
+    jo_3d_push_matrix undeclared.
+  - test_opening_audio: demo_camera and the cutscene sound_eye fields
+    missing from its stub struct.
+  - test_title_flights: kokiri_collision_floor / demo_link /
+    DEMO_LINK_EYE_HEIGHT undeclared in the pasted title code.
+- Batch checks added: hearts lose and heal correctly; pause pages show only
+  owned items; equip and save work; the HUD returns after closing the pause
+  menu, a text box and the Game Over screens.
+
+# M2 complete for human review - 2026-09-27 (Claude, no commit)
+
+Everything below is built Clean and host-tested; Kronos not run by Claude.
+- M2d.1 attention + on-screen check; lock camera aim (Camera_CalcAtForLockOn,
+  Battle1 180 / KeepOn1 120, eased) in shared/lib/camera/oot_follow.c.
+- Navi: "Hey!" (NA_HELLO_2), Hey Listen x3 + chime when locked with
+  something to say, C-Up talk (quest hints 0x140/0x141, Deku Baba 0x609),
+  naviTimer 600..3000, lock-on sounds (hostile / human). HELLO/ENEMY/HEAR
+  are silent in the source (CHAN_612C `end`, traced through the dispatch).
+- M2d.2 Deku Baba: 5 spawns, full state machine, flat model, stick drop,
+  save v3 (v2 migrates). M2e: one damage entry (enemy, fall 400/800, void
+  heart), hurt/knockdown/death clips, low-health alarm, Game Over (VDP2):
+  Save? (failure reported) -> Continue? (3 hearts) / title; resume remap.
+- Audio (human): music banks half rate, every SFX half rate (bible); CD-DA
+  Game Over + small item fanfare (Red Book only while frozen: bible rule).
+- RAM: Link tile tables to cart (LINKTEX.BIN). Clean 3,808 B free.
+- Tests: full suite same 4 old errors (871 run). Gaps BUG-042..045.
+- Astra owns the gameplay HUD (not touched).
+
+# Navi camera step 1: on-screen check - 2026-09-27 (Kronos pending)
+
+- Source: camera ignores Navi hover; only Z-lock changes camera mode
+  (Camera_CalcAtForLockOn aim toward target focus). Navi offscreen w/o
+  lock = our missing Attention_ActorOnScreen.
+- Added `attention_on_screen` (demo.c): focus through live camera
+  (demo_camera, yaw, pitch, demo_screen_distance()), x (-20,340),
+  y (-160,400) of 320x240, depth clamp 1 = source cappedInvW. Acquisition
+  and arrow only; lock retention unchanged. main.c: one
+  demo_screen_distance() for renderer + test.
+- test_gameplay 130 OK (+3). Clean 20,432 B free. No float helpers.
+- Step 2 (separate review): lock camera aim from target focus XYZ.
+
+# M2d.1 shared attention - 2026-09-27 (Kronos pending)
+
+- BLOCKER FIX: 6 resident Navi glows (+3,072 B VRAM) broke S1R0 load
+  (447,384 > 445,432, Astra measured). Now 1 Navi VRAM slot (512 B),
+  9 glows in cart carve NAVIGLOW 0x13800 (fixed 0x15000), slot refilled
+  on colour/breath change. Expect ~444,824 B: ~600 B spare, tight.
+  Astra owns budget check + named-limit load error. Clean 20,848 B free.
+
+- Astra review rules applied (retarget check, filters before winner,
+  full XYZ focus, NPC sync incl. Mido). Details: M2D_PLAN.md status.
+- Files: src/attention.[ch] (new), actor_sys.[ch], gameplay.[ch], navi.[ch],
+  demo.c, kokiri_sgl.c, makefile, tools/build_fairy.py,
+  tests/fixtures/gameplay_host.c, tests/test_gameplay.py.
+- Clean 21,040 B free. test_gameplay 127 OK. Suite 4 old errors. No commit.
+- Kronos: Z lock Kokiri, Navi flies to NPC (purple-blue glow), back on
+  release; Navi hovers nearest NPC in front without lock; talk still OK.
+- Next: M2d.2 Karebaba (trace GI offer/accept before stick code).
+
+# M2d plan drafted - 2026-09-27
+
+- Human Kronos: Link draw + sword/shield swap good; BUG-039, BUG-019 closed.
+- M2d plan for Astra review: [M2D_PLAN.md](M2D_PLAN.md). No M2d code yet.
+  M2c Kronos checks still open.
+
+# BUG-039 RAM: Link mesh tables to cart - 2026-09-27
+
+- Link POLYGON/ATTR (18 KB) -> LINKMESH.BIN -> cart carve 0xF000.
+  Files: tools/build_sgl_scene.py, makefile, ram_cart.h, kokiri_sgl.c,
+  tests/test_skinning_codegen.py. Hot equipped_* copies stay work RAM.
+- Clean free 5,616 -> 23,616 B. Blob bytes checked vs ATTRIBUTE macro.
+  Suite: same 4 old errors. No float helpers. No commit.
+- Kronos pending: Link draws; sword/shield equip swap OK.
+- M2C_REVIEW Kronos bulk list: human runs; no severe blocker reported.
+
+# Navi Kronos pass + flat wings - 2026-09-27
+
+- Human Kronos: Navi beside running Link, close + normal, no head clip,
+  glow vs wings good, sparkles good.
+- Wings now untextured flat C_RGB(26,26,31) MESHon polygons (kokiri_sgl.c).
+  Mesh/geometry/flap unchanged. FAIRYW.RGB gone from tool, disc, source.
+- Clean built: 5,616 B free. test_navi 5 OK. No float helpers. No commit.
+- Build rule: Clean only; Standard only for developer-only tests.
+
+# Human Kronos pass - 2026-09-27
+
+- Nutsball launcher + Deku Shield bounce (reflection) confirmed working.
+  Still pending: rest of the M2C_REVIEW.md bulk list.
+
 # Claude to Astra: menu help removed, launcher dot - 2026-09-27
 
 - Human: pause menu control help confusing -> CONTROLS block and per-item

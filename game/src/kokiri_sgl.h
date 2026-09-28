@@ -65,6 +65,9 @@ void            kokiri_fairies_draw(unsigned int tick);
 void            kokiri_items_draw(unsigned int tick);
 void            kokiri_boulder_draw(void);
 void            kokiri_nut_draw(void);
+/* En_Karebaba (karebaba_draw.c). Load is not fatal: no file, no babas drawn. */
+bool            karebaba_draw_load(void);
+void            kokiri_babas_draw(void);
 /* Resident 8-bit colour-bank texture from memory (minimap markers). */
 bool            kokiri_resident_sprite_8bit(const unsigned char *pixels,
                                             unsigned int width, unsigned int height,

@@ -71,7 +71,28 @@ class PlayerControls(unittest.TestCase):
         cls.tmp.cleanup()
 
     def setUp(self):
+        self.lib.player_input_set_jump_button(Y)
         self.lib.control_reset()
+
+    def test_custom_jump_replaces_gameplay_button_but_not_menu_confirm(self):
+        self.lib.player_input_set_jump_button(A)
+        self.tap(A)
+        self.assertTrue(self.lib.control_jump())
+        self.assertFalse(self.lib.control_interact())
+        self.lib.player_input_set_dialogue(True)
+        self.tap(A)
+        self.assertFalse(self.lib.control_jump())
+        self.assertTrue(self.lib.control_interact())
+
+    def test_custom_jump_and_reset_default_do_not_change_target_hold(self):
+        self.lib.player_input_set_jump_button(C)
+        self.hold(Z | C)
+        self.assertTrue(self.lib.control_jump())
+        self.assertTrue(self.lib.control_target_held())
+        self.lib.player_input_set_jump_button(Y)
+        self.hold(0)
+        self.tap(Y)
+        self.assertTrue(self.lib.control_jump())
 
     def test_attack_tap_retains_release_edge(self):
         self.lib.control_sample(X)
@@ -385,6 +406,15 @@ class PlayerControls(unittest.TestCase):
         self.hold(C | UP)
         self.assertEqual(self.lib.control_move_buttons(), 0)
         self.assertEqual(self.lib.control_c_held(), C_UP)
+
+    def test_digital_c_up_keeps_a_held_z_lock(self):
+        # Human report: on the digital pad, C + Up while holding Z dropped
+        # the lock, so C-Up on a locked enemy never reached Navi.
+        self.hold(Z)
+        self.hold(Z | C | UP)
+        self.assertTrue(self.lib.control_target_held())
+        self.assertEqual(self.lib.control_c_held(), C_UP)
+        self.assertEqual(self.lib.control_move_buttons(), 0)
 
     def test_look_consumes_the_dpad(self):
         self.hold(L | LEFT)

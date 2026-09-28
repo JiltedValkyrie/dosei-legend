@@ -41,7 +41,11 @@ typedef enum
     LINK_STATE_PUSH,
     LINK_STATE_SLIDE,
     LINK_STATE_SLIDE_END,
-    LINK_STATE_SWIM
+    LINK_STATE_SWIM,
+    /* M2e damage reactions and death (func_80837C0C, func_80836448): a
+    ** one-shot clip, optionally chained (downA -> down_wake) or held on its
+    ** last frame (derth_rebirth until the Game Over flow ends). */
+    LINK_STATE_REACT
 }                   link_state_t;
 
 /* Pose link_points for one frame of a clip. Cheap to call with an unchanged
@@ -49,11 +53,20 @@ typedef enum
 void                link_anim_pose(unsigned int clip, unsigned int frame,
                                    unsigned int fraction);
 void                link_anim_reset(void);
+/* Play a reaction clip once; `next` (or LINK_REACT_NONE) follows it; `hold`
+** keeps the last frame. link_anim_react_done(): a held clip reached its end. */
+#define LINK_REACT_NONE     0xFFFFu
+void                link_anim_react(unsigned int clip, unsigned int next, bool hold);
+bool                link_anim_react_active(void);
+bool                link_anim_react_done(void);
+void                link_anim_react_cancel(void);
 /* Sample the posed blade once per displayed gameplay step; world-space trail. */
 void                link_anim_trail_update(int x, int y, int z, int yaw, bool active);
 void                link_anim_trail_draw(void);
 void                link_anim_trail_reset(void);
 void                link_anim_blade(int32_t out[2][3]);
+/* Player focus.pos (head x (1100,-700,0)), Link-local Q16. */
+void                link_anim_focus(int32_t out[3]);
 /* Idle analog turn: advances facing by at most 800 binang per 30 Hz step.
 ** Caller supplies only eligible grounded, unlocked light-tilt input. */
 void                link_anim_turn(bool requested, uint16_t target, uint16_t *facing);

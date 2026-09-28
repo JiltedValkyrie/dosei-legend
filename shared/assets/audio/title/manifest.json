@@ -85,7 +85,7 @@
   ],
   "intro_seconds": 10.913317191283245,
   "total_seconds": 77.9023775786394,
-  "pcm_bytes": 480046,
+  "pcm_bytes": 240048,
   "levels_bytes": 112176,
   "omitted_opcodes": [
     "filter",
@@ -103,59 +103,58 @@
     {
       "name": "SAMPLE_0_115",
       "offset": 0,
-      "loop_start": 12417,
-      "loop_end": 18912,
-      "rate": 26372,
+      "loop_start": 6208,
+      "loop_end": 9456,
+      "rate": 13186,
       "unity": 68
     },
     {
       "name": "SAMPLE_0_356",
-      "offset": 37832,
-      "loop_start": 39091,
-      "loop_end": 45651,
-      "rate": 18172,
+      "offset": 18920,
+      "loop_start": 19545,
+      "loop_end": 22825,
+      "rate": 9086,
       "unity": 39
     },
     {
       "name": "SAMPLE_0_357",
-      "offset": 129142,
-      "loop_start": 41313,
-      "loop_end": 56873,
-      "rate": 26372,
-      "unity": 60
-    },
-    {
-      "name": "SAMPLE_0_358",
-      "offset": 242896,
-      "loop_start": 34575,
-      "loop_end": 39217,
+      "offset": 64578,
+      "loop_start": 20656,
+      "loop_end": 28436,
       "rate": 13186,
       "unity": 60
     },
     {
+      "name": "SAMPLE_0_358",
+      "offset": 121458,
+      "loop_start": 17287,
+      "loop_end": 19608,
+      "rate": 6593,
+      "unity": 60
+    },
+    {
       "name": "SAMPLE_0_372",
-      "offset": 321338,
-      "loop_start": 13912,
-      "loop_end": 30026,
-      "rate": 26372,
+      "offset": 160682,
+      "loop_start": 6956,
+      "loop_end": 15013,
+      "rate": 13186,
       "unity": 36
     },
     {
       "name": "SAMPLE_0_373",
-      "offset": 381398,
-      "loop_start": 8196,
-      "loop_end": 26494,
-      "rate": 26372,
+      "offset": 190716,
+      "loop_start": 4098,
+      "loop_end": 13247,
+      "rate": 13186,
       "unity": 56
     },
     {
       "name": "SAMPLE_0_374",
-      "offset": 434394,
-      "loop_start": 7979,
-      "loop_end": 22822,
-      "rate": 26372,
+      "offset": 217218,
+      "loop_start": 3989,
+      "loop_end": 11411,
+      "rate": 13186,
       "unity": 68
     }
-  ],
-  "preview_peak": 0.41635199583910076
+  ]
 }

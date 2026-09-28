@@ -31,10 +31,10 @@ EDGES = {
     FILE_SELECT: {TITLE, LOADING},
     LOADING:     {PLAY, CUTSCENE, FILE_SELECT},
     PLAY:        {PAUSE, DIALOGUE, CUTSCENE, LOADING, GAME_OVER},
-    PAUSE:       {PLAY},
+    PAUSE:       {PLAY, TITLE, FILE_SELECT},
     DIALOGUE:    {PLAY},
     CUTSCENE:    {PLAY, LOADING},
-    GAME_OVER:   {FILE_SELECT, TITLE},
+    GAME_OVER:   {FILE_SELECT, TITLE, LOADING},   # Continue respawns
 }
 
 
@@ -157,7 +157,8 @@ class GameMode(unittest.TestCase):
         self.goto(FILE_SELECT, LOADING, PLAY)
         self.assertFalse(self.lib.game_mode_can(TITLE))
         self.goto(PAUSE)
-        self.assertFalse(self.lib.game_mode_can(TITLE))
+        self.assertTrue(self.lib.game_mode_can(TITLE))
+        self.assertTrue(self.lib.game_mode_can(FILE_SELECT))
 
     # ---- the two derived questions -------------------------------------
 

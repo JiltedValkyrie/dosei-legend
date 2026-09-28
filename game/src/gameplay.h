@@ -63,12 +63,39 @@
 #define GP_EVENT_GUARD      (1u << 27)   /* shield bounced an attack */
 #define GP_EVENT_WALL_HIT   (1u << 28)   /* blade struck a wall (NA_SE_IT_WALL_HIT_*) */
 #define GP_EVENT_REBOUND    (1u << 29)   /* blade bounced off a hard collider */
-#define GP_EVENT_NUT_BREAK  (1u << 30)   /* nutsball broke (NA_SE_EN_OCTAROCK_ROCK) */
+#define GP_EVENT_NUT_BREAK  (1u << 30)
+/* gameplay.events2 */
+#define GP2_EVENT_NAVI_HELLO    (1u << 0)   /* Interface_SetNaviCall 0x1D: NA_SE_VO_NA_HELLO_2 */
+#define GP2_EVENT_NAVI_CALL     (1u << 1)   /* 0x1E: NA_SE_VO_NAVY_CALL */
+#define GP2_EVENT_NAVI_TALK     (1u << 2)   /* C-Up accepted: NA_SE_VO_SK_LAUGH */
+#define GP2_EVENT_ERROR         (1u << 3)   /* NA_SE_SY_ERROR */
+#define GP2_EVENT_LOCK_HOSTILE  (1u << 4)   /* with TARGET_ON: NA_SE_SY_LOCK_ON */
+/* M2e damage/death (z_player.c func_80837C0C, func_80843E64, func_80836448). */
+#define GP2_EVENT_LAND_DAMAGE   (1u << 5)   /* NA_SE_PL_BODY_HIT + LAND_DAMAGE_S voice */
+#define GP2_EVENT_DEATH         (1u << 6)   /* health 0 on the ground: death clip */
+#define GP2_EVENT_VOID_DAMAGE   (1u << 7)   /* respawn heart (NA_SE_OC_REVENGE) */
+#define GP2_EVENT_ALARM         (1u << 8)   /* NA_SE_SY_HITPOINT_ALARM */
+#define GP2_EVENT_HIT_BACK      (1u << 9)   /* with HURT: hit from behind (back anim) */
+#define GP2_EVENT_HIT_HEAVY     (1u << 10)  /* with HURT: damage >= 5 (hit, not shit) */
+#define GP2_EVENT_HIT_ANIM      (1u << 11)  /* with HURT: play the hit clip */
+#define GP2_EVENT_LABELS        (1u << 15)
+#define GP2_EVENT_JUMP_BINDING  (1u << 16)
+#define GP2_EVENT_RESET_PREFS   (1u << 17)
+#define GP2_EVENT_LOAD_MENU     (1u << 13)
+#define GP2_EVENT_RETURN_TITLE  (1u << 14)
+#define GP2_EVENT_ABYSS         (1u << 12)  /* void out began (NA_SE_OC_ABYSS) */
+/* En_Elf / QuestHint timing, source 20 Hz updates. */
+#define GP_NAVI_HINT_FROM   600
+#define GP_NAVI_HINT_TO     3000
+#define GP_NAVI_READ        3001
+#define GP_NAVI_TIMER_MAX   25800   /* nutsball broke (NA_SE_EN_OCTAROCK_ROCK) */
 #define GP_WALLET_CAPACITY  99
 #define GP_DROP_DELAY      15
 
 /* Inventory slots, in menu order. These index the slot table, not the GP_*
 ** owned/equipped bits -- gp_slot_item() maps one to the other. */
+#include "pause_window_state.h"
+
 #define GP_SLOT_SWORD       0
 #define GP_SLOT_SHIELD      1
 /* Not an item: choosing this row writes the quest state to the file the player
@@ -212,6 +239,7 @@ typedef struct
     bool        interact;       /* A pressed this step */
     bool        cancel;         /* B pressed this step: closes a text box */
     bool        pause;          /* Start pressed this step */
+    int8_t      menu_dx, menu_dy, menu_page;
     int8_t      menu_step;      /* D-pad: -1 up/left, +1 down/right, 0 none */
     /* controlStickDirections relative to Link's facing: -1 none, 0 forward,
     ** 1 left, 2 back, 3 right. `moving` = stick outside its dead zone. */
@@ -219,6 +247,8 @@ typedef struct
     bool        moving;
     bool        grounded;
     uint8_t     room;
+    int32_t     focus[3];       /* Link focus.pos (head point), world */
+    bool        c_up;           /* C-Up pressed this step (talk to Navi) */
 }               gameplay_input_t;
 
 typedef struct
@@ -230,7 +260,16 @@ typedef struct
     uint8_t     owned;
     uint8_t     equipped;
     bool        shielding;
-    int16_t     target;         /* kokiri_npcs index, -1 for none */
+    uint32_t    target;         /* actor_handle_t of the lock, 0 none */
+    uint32_t    arrow;          /* arrow-hover actor handle (Navi), 0 none */
+    /* Second event word (the first is full): GP2_EVENT_*. */
+    uint32_t    events2;
+    uint16_t    navi_text;      /* player->naviTextId: pending quest hint */
+    bool        navi_calling;   /* interfaceCtx->naviCalling latch */
+    bool        navi_read;      /* En_Elf fairyFlags 0x80: hint was read */
+    uint8_t     navi_phase;     /* 20 Hz update phase for the timer */
+    uint8_t     alarm_steps;    /* HealthMeter beat: alarm every 30 steps */
+    bool        dead;           /* PLAYER_STATE1_DEAD (until continue/title) */
     /* Consecutive steps L has been held, capped. Distinguishes a tap (which
     ** recentres) from a hold (which locks on). */
     uint8_t     target_hold;
@@ -307,6 +346,7 @@ typedef struct
     uint8_t     page;           /* page within that conversation */
     bool        talking;
     /* Pause inventory. */
+    pause_window_state_t pause_window;
     bool        paused;
     uint8_t     cursor;         /* GP_SLOT_* under the D-pad */
 }               gameplay_t;
@@ -343,6 +383,16 @@ unsigned int        gameplay_contacts_bytes(void);
 bool                gameplay_contacts_init(void *storage, unsigned int bytes);
 void                gameplay_update_facing(int32_t x, int32_t z);
 void                gameplay_step(const gameplay_input_t *in);
+/* M2e: landing after a fall of `fell` world units (func_80843E64: 400..799
+** half a heart, 800+ a heart, intangible 40 frames; none when the landing
+** rolled). Void out: the respawn heart (func_808382DC, -16, no reaction). */
+void                gameplay_land(int32_t fell, bool rolled);
+void                gameplay_void_out(void);
+void                gameplay_void_respawned(void);
+/* The death clip ended (demo.c): the Game Over menu may start. */
+void                gameplay_death_anim_done(void);
+/* kokiri_npcs index of the locked actor, -1 when none or not an NPC. */
+int                 gameplay_target_npc(void);
 bool                gameplay_grass_cut(unsigned int index);
 /* Platform hooks for the sword (demo.c on Saturn; stubs in host tests).
 ** Blade base/tip in world units, y = Link's feet frame, from the last posed

@@ -33,7 +33,10 @@ class Follow(ctypes.Structure):
                 ('pitch', ctypes.c_int32), ('initialised', ctypes.c_bool),
                 ('swing_timer', ctypes.c_int32),
                 ('look_yaw', ctypes.c_int32), ('look_pitch', ctypes.c_int32),
-                ('look_active', ctypes.c_bool), ('targeting', ctypes.c_bool)]
+                ('look_active', ctypes.c_bool), ('targeting', ctypes.c_bool),
+                ('aim_q8', ctypes.c_int32 * 3), ('aim_focus', ctypes.c_int32 * 3),
+                ('aim_distance', ctypes.c_int32),
+                ('aim_active', ctypes.c_bool), ('aim_off_ground', ctypes.c_bool)]
 
 
 @unittest.skipUnless(GCC.is_file(), 'host compiler required')
@@ -107,6 +110,50 @@ class OotFollowCamera(unittest.TestCase):
         self.lib.oot_follow_update(ctypes.byref(cam),ctypes.byref(player),16000,False,
                                   ctypes.byref(eye),ctypes.byref(yaw),ctypes.byref(pitch))
         self.assertEqual(yaw.value,500) # release resumes ordinary idle hold
+
+    def run_lock(self, focus, distance, off_ground=False, steps=20):
+        cam, eye = Follow(), Position()
+        player = Position(0, 90, 0)                    # feet 0, head 62
+        yaw, pitch = ctypes.c_uint16(), ctypes.c_int32()
+        self.lib.oot_follow_snap(ctypes.byref(cam), ctypes.byref(player), 0)
+        self.lib.oot_follow_target(ctypes.byref(cam), True)
+        f = (ctypes.c_int32 * 3)(*focus) if focus else None
+        for _ in range(steps):
+            self.lib.oot_follow_aim(ctypes.byref(cam), f,
+                                    distance, off_ground)
+            self.lib.oot_follow_update(ctypes.byref(cam), ctypes.byref(player), 0, False,
+                                      ctypes.byref(eye), ctypes.byref(yaw), ctypes.byref(pitch))
+        return cam, eye, yaw.value, pitch.value
+
+    def test_lock_aim_shifts_toward_a_close_target_focus(self):
+        """Camera_CalcAtForLockOn: v * (0.75 - 0.6 |v| / d) inside d."""
+        base = self.run_lock(None, 0)[1]
+        cam, eye, yaw, pitch = self.run_lock((0, 62 + 60, 80), 180)   # |v| = 100
+        scale = 0.75 - 0.6 * 100 / 180
+        self.assertAlmostEqual((eye.y - base.y), 60 * scale, delta=1.5)
+        self.assertAlmostEqual((eye.z - base.z), 80 * scale, delta=1.5)
+        self.assertEqual(yaw, 0)                       # orbit untouched
+
+    def test_lock_aim_is_fifteen_percent_past_the_mode_distance(self):
+        base = self.run_lock(None, 0)[1]
+        eye = self.run_lock((0, 62, 400), 120)[1]
+        self.assertAlmostEqual(eye.z - base.z, 400 * 0.15, delta=1.5)
+
+    def test_lock_aim_off_ground_is_a_fifth(self):
+        base = self.run_lock(None, 0)[1]
+        eye = self.run_lock((0, 62, 400), 120, off_ground=True)[1]
+        self.assertAlmostEqual(eye.z - base.z, 400 * 0.03, delta=1.5)
+
+    def test_lock_aim_eases_back_after_release(self):
+        cam, eye, _, _ = self.run_lock((0, 162, 0), 180)
+        player = Position(0, 90, 0)
+        yaw, pitch = ctypes.c_uint16(), ctypes.c_int32()
+        self.lib.oot_follow_target(ctypes.byref(cam), False)
+        for _ in range(30):
+            self.lib.oot_follow_aim(ctypes.byref(cam), None, 0, False)
+            self.lib.oot_follow_update(ctypes.byref(cam), ctypes.byref(player), 0, False,
+                                      ctypes.byref(eye), ctypes.byref(yaw), ctypes.byref(pitch))
+        self.assertEqual(list(cam.aim_q8), [0, 0, 0])
 
     def test_distance_matches_the_scaled_decomp_values(self):
         """200/300 raw, scaled by OUR Link's height of 62, not OoT's 44.

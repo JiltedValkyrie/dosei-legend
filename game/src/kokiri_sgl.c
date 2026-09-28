@@ -34,6 +34,8 @@ static unsigned int texture_base = GAME_TEXTURE_BASE;
 #define TEXTURE_CAPACITY (0x7fef8u - texture_base)
 #define CUTSCENE_TEXTURE_BASE ((3750u * 32 + 8192 + 255) & ~255u)
 #include "demo.h"
+#include "ram_cart.h"
+#include "navi.h"
 #include "cutscene.h"
 #include "link_anim_state.h"
 #include "kokiri_actors.h"
@@ -183,6 +185,16 @@ static unsigned char forest_face_flags(unsigned int i)
 #define FAIRY_HEIGHT        16
 #define FAIRY_PIXEL_BYTES   (FAIRY_WIDTH * FAIRY_HEIGHT * 2)
 #define FAIRY_COLMODE_RGB   5
+/* En_Elf wings (tools/build_fairy.py): gFairyAnim's 10 frames of the four
+** gFairyWing quads, posed offline, 16 POINTs a frame, in the cart. Flat
+** 210,210,255 with MESHon: the dither hid the N64 wing texture anyway. */
+#define FAIRY_FRAMES        10
+#define FAIRY_MESH_FILE     "FAIRY.BIN"
+#define FAIRY_MESH_BYTES    (FAIRY_FRAMES * 16 * 12)
+/* gGlowCircleSmallDL: +-500 x 0.012 = 12 world units over the 16 texels.
+** Three steps of its L -> SL cross-fade (FAIRY, FAIRYM, FAIRYS). */
+#define FAIRY_GLOW_SCALE    49152
+#define FAIRY_GLOW_STEPS    3
 
 static unsigned int  vram_used;      /* bytes claimed in the VDP1 user area */
 static unsigned int  sprite_next = 1;/* next free __jo_sprite_def slot; 0 is Jo's */
@@ -190,7 +202,24 @@ unsigned int        kokiri_sprite_peak;  /* highest sprite_next seen */
 static unsigned int  kokiri_rejected;
 static unsigned int  kokiri_accepted_mask;
 static unsigned int  submitted;
-static unsigned int  fairy_sprite;
+static unsigned int  fairy_sprite, fairy_glow[FAIRY_GLOW_STEPS], sparkle_sprite;
+/* Navi's own glow slot (512 B VRAM), refilled from the cart copy of all
+** nine glows (player / NPC / enemy x 3 breath steps) when her colour or
+** breath step changes. Not fatal: without it she shares fairy_glow. */
+static unsigned int  navi_glow_slot;
+static unsigned char *navi_glow_pixels;     /* cart, [3][3][512] */
+static unsigned int  navi_glow_shown = ~0u; /* set * 3 + step in the slot */
+static bool          sparkle_ready;
+static bool          fairy_wings_ready;
+static POLYGON       fairy_faces[4] = {
+    {{0, 0, 65536}, {0, 1, 2, 3}}, {{0, 0, 65536}, {4, 5, 6, 7}},
+    {{0, 0, 65536}, {8, 9, 10, 11}}, {{0, 0, 65536}, {12, 13, 14, 15}},
+};
+#define FAIRY_WING_ATTR ATTRIBUTE(Dual_Plane, SORT_CEN | UseNearClip, 0, C_RGB(26, 26, 31), \
+                                  No_Gouraud, CL32KRGB | MESHon | ECdis, sprPolygon, No_Option)
+static ATTR          fairy_attrs[4] = {FAIRY_WING_ATTR, FAIRY_WING_ATTR,
+                                       FAIRY_WING_ATTR, FAIRY_WING_ATTR};
+static PDATA         fairy_meshes[FAIRY_FRAMES];
 static unsigned int  grass_sprite;
 static unsigned int  rupee_sprite[2], digit_sprite[10];
 static unsigned int  item_sprite[2];         /* 0 sword, 1 shield */
@@ -391,8 +420,47 @@ static bool         billboard_load(const char *file, unsigned int *slot)
 static bool         fairy_load(void)
 {
     unsigned int i;
-    if (!billboard_load(FAIRY_PIXEL_FILE, &fairy_sprite))
+    if (!billboard_load(FAIRY_PIXEL_FILE, &fairy_sprite) ||
+        !billboard_load("FAIRYM.RGB", &fairy_glow[1]) ||
+        !billboard_load("FAIRYS.RGB", &fairy_glow[2]))
         return false;
+    fairy_glow[0] = fairy_sprite;
+    {
+        static const char *const names[9] = {
+            "FAIRY.RGB", "FAIRYM.RGB", "FAIRYS.RGB",
+            "FAIRYN0.RGB", "FAIRYN1.RGB", "FAIRYN2.RGB",
+            "FAIRYE0.RGB", "FAIRYE1.RGB", "FAIRYE2.RGB" };
+        unsigned char *cart = (unsigned char *)ram_cart_fixed(RAM_CART_NAVIGLOW_OFFSET,
+                                                              9u * FAIRY_PIXEL_BYTES);
+        bool ok = cart && billboard_load(FAIRY_PIXEL_FILE, &navi_glow_slot);
+        for (i = 0; ok && i < 9; ++i) {
+            int length = 0;
+            ok = jo_fs_read_file_ptr(names[i], cart + i * FAIRY_PIXEL_BYTES, &length) &&
+                 length == FAIRY_PIXEL_BYTES;
+        }
+        navi_glow_pixels = ok ? cart : (unsigned char *)0;
+        navi_glow_shown = 0;                 /* the slot holds FAIRY.RGB */
+    }
+    /* Not fatal either: no sparkles is only a missing effect. */
+    sparkle_ready = sprite_load_rect("SPARKLE.RGB", &sparkle_sprite, 8, 8, 8 * 8 * 2);
+    /* The wings are not fatal: without them the glow still draws. */
+    {
+        unsigned char *mesh = (unsigned char *)ram_cart_fixed(RAM_CART_FAIRY_OFFSET,
+                                                              RAM_CART_FAIRY_BYTES);
+        int length = 0;
+        fairy_wings_ready = mesh &&
+            jo_fs_read_file_ptr(FAIRY_MESH_FILE, mesh, &length) &&
+            length == FAIRY_MESH_BYTES;
+        if (fairy_wings_ready) {
+            for (i = 0; i < FAIRY_FRAMES; ++i) {
+                fairy_meshes[i].pntbl = (POINT *)(mesh + i * 16 * 12);
+                fairy_meshes[i].nbPoint = 16;
+                fairy_meshes[i].pltbl = fairy_faces;
+                fairy_meshes[i].nbPolygon = 4;
+                fairy_meshes[i].attbl = fairy_attrs;
+            }
+        }
+    }
     if (!sprite_load("GRASS.RGB", &grass_sprite, 32, 32 * 32 * 2))
         return false;
     if (!billboard_load("RUPEEG.RGB", &rupee_sprite[0]) ||
@@ -637,11 +705,24 @@ static bool room_load_bank(unsigned int scene, unsigned int room)
         header[3] > KOKIRI_TILE_COUNT || header[4] > KOKIRI_PIXEL_BYTES ||
         header[5] > KOKIRI_OBJECT_COUNT ||
         (unsigned int)(from_cache ? opening_cache[room].mesh_bytes : file.size) != expected ||
-        (from_cache && (unsigned int)opening_cache[room].pixel_bytes != header[3]*4) ||
-        resident_bytes + header[4] + header[3]*32 > TEXTURE_CAPACITY ||
-        resident_sprites + header[3] > JO_MAX_SPRITE) {
+        (from_cache && (unsigned int)opening_cache[room].pixel_bytes != header[3]*4)) {
         if (!from_cache) jo_fs_close(&file);
         return false;
+    }
+    /* Check the destination layout, before relocating or overwriting a bank.
+    ** Report capacity failures separately from malformed files. */
+    {
+        unsigned int capacity = 0x7fef8u - (scene == KOKIRI_FIELD_SCENE ?
+                                  CUTSCENE_TEXTURE_BASE : GAME_TEXTURE_BASE);
+        unsigned int required = resident_bytes + header[4] + header[3]*32;
+        if (required > capacity || resident_sprites + header[3] > JO_MAX_SPRITE) {
+            if (!from_cache) jo_fs_close(&file);
+            asset_loading_done();
+            jo_core_error("%s: VRAM %d/%d, sprites %d/%d", mesh_name,
+                          (int)required, (int)capacity,
+                          (int)(resident_sprites + header[3]), (int)JO_MAX_SPRITE);
+            return false;
+        }
     }
     ok = room_read(&file, kokiri_pdata.pntbl, header[1]*sizeof(POINT), &cached) &&
          room_read(&file, kokiri_pdata.pltbl, header[2]*sizeof(POLYGON), &cached) &&
@@ -689,11 +770,34 @@ bool                kokiri_scene_load(void)
                    KOKIRI_POLYGON_COUNT, 0))
         return (false);
 #endif
-    if (!mesh_load(LINK_PIXEL_FILE, LINK_PIXEL_BYTES,
-                   (const kokiri_tile *)link_tiles, LINK_TILE_COUNT,
-                   link_cluts, &link_pdata, LINK_POLYGON_COUNT, 0))
-        return (false);
+    {
+        /* Link's POLYGON/ATTR tables are cold (equipment changes copy them),
+        ** so they live on the cart, not in work RAM. */
+        unsigned char *mesh = (unsigned char *)ram_cart_fixed(RAM_CART_LINKMESH_OFFSET,
+                                                              RAM_CART_LINKMESH_BYTES);
+        int length = 0;
+        if (!mesh || !jo_fs_read_file_ptr(LINK_MESH_FILE, mesh, &length) ||
+            length != (int)LINK_MESH_BYTES)
+            return (false);
+        link_pdata.pltbl = (POLYGON *)mesh;
+        link_pdata.attbl = (ATTR *)(mesh + LINK_POLYGON_COUNT * sizeof(POLYGON));
+    }
+    {
+        /* Tile descriptors + CLUTs: read here only (LINKTEX.BIN, cart). */
+        unsigned char *tex = (unsigned char *)ram_cart_fixed(RAM_CART_LINKTEX_OFFSET,
+                                                             RAM_CART_LINKTEX_BYTES);
+        int length = 0;
+        if (!tex || LINK_TEX_BYTES > RAM_CART_LINKTEX_BYTES ||
+            !jo_fs_read_file_ptr(LINK_TEX_FILE, tex, &length) ||
+            length != (int)LINK_TEX_BYTES ||
+            !mesh_load(LINK_PIXEL_FILE, LINK_PIXEL_BYTES, (const kokiri_tile *)tex,
+                       LINK_TILE_COUNT,
+                       (const unsigned short (*)[16])(tex + LINK_TILE_COUNT * sizeof(link_tile)),
+                       &link_pdata, LINK_POLYGON_COUNT, 0))
+            return (false);
+    }
     if (!fairy_load()) return (false);
+    (void)karebaba_draw_load();
     /* Minimap markers are resident too (before the first bank). */
     if (!minimap_init()) return (false);
 #ifdef KOKIRI_STREAM_ROOMS
@@ -1220,6 +1324,14 @@ static int          fairy_wave(unsigned int angle, int amplitude)
     return (int)(((int64_t)slSin((ANGLE)angle) * amplitude) >> 16);
 }
 
+static void         fairy_draw(int x, int y, int z, uint16_t yaw, unsigned int tick,
+                               unsigned int phase, const unsigned int *glow,
+                               unsigned int colour);
+static uint16_t     fairy_turn(uint16_t yaw, int32_t *last_x, int32_t *last_z,
+                               int32_t x, int32_t z);
+static uint16_t     fairy_yaw[KOKIRI_NPC_COUNT];
+static int32_t      fairy_last[KOKIRI_NPC_COUNT][2];
+
 void                kokiri_fairies_draw(unsigned int tick)
 {
     unsigned int i;
@@ -1227,9 +1339,6 @@ void                kokiri_fairies_draw(unsigned int tick)
         return;
     for (i = 0; i < KOKIRI_NPC_COUNT; ++i) {
         unsigned int angle = tick * (97 + i * 3) + i * 6011;
-        FIXED pos[5];
-        SPR_ATTR attr = SPR_ATTRIBUTE(0, No_Palet, No_Gouraud, ECdis,
-                                      sprNoflip | FUNC_Sprite);
         int x = (int)gameplay_npc_x(i) + fairy_wave(angle, 18);
         int y = kokiri_npcs[i].y + 58 + fairy_wave(angle * 2 + 9000, 9);
         int z = (int)gameplay_npc_z(i) + fairy_wave(angle + 16384, 14);
@@ -1239,31 +1348,109 @@ void                kokiri_fairies_draw(unsigned int tick)
               (int64_t)(z - demo_camera.z) * cosine) >> 16) > FOREST_FAR)
             continue;
 
-        pos[0] = ((FIXED)(x) * 65536);
-        pos[1] = ((FIXED)(-y) * 65536);
-        pos[2] = ((FIXED)(z) * 65536);
-        pos[3] = toFIXED(1);
-        pos[4] = toFIXED(1);
-        attr.texno = (Uint16)fairy_sprite;
-        attr.atrb |= (FAIRY_COLMODE_RGB & 7) << 3;
-        if (slPutSprite(pos, &attr, 0) == FALSE) ++kokiri_rejected;
+        fairy_yaw[i] = fairy_turn(fairy_yaw[i], &fairy_last[i][0], &fairy_last[i][1], x, z);
+        fairy_draw(x, y, z, fairy_yaw[i], tick, i * 3u, fairy_glow, 0);
     }
 }
 
-/* Navi in gameplay. Her position is En_Elf's, stepped in src/navi.c; this
- * only puts the shared fairy billboard where she already is. */
-void                kokiri_navi_draw(int x, int y, int z)
+/* One En_Elf: the posed wings in 3D (gFairyAnim frame, one a 30 Hz step)
+** turned to its heading, then the glow billboard, pulsed as
+** EnElf_OverrideLimbDraw: scale (sin(timer * 0x1000) * 0.1 + 1). */
+static void         fairy_draw(int x, int y, int z, uint16_t yaw, unsigned int tick,
+                               unsigned int phase, const unsigned int *glow,
+                               unsigned int colour)
 {
     FIXED pos[5];
     SPR_ATTR attr = SPR_ATTRIBUTE(0, No_Palet, No_Gouraud, ECdis,
                                   sprNoflip | FUNC_Sprite);
+    unsigned int step = tick / 2u + phase;
+    if (fairy_wings_ready) {
+        jo_3d_push_matrix();
+        jo_3d_translate_matrix(x, -y, z);
+        slRotY((ANGLE)yaw);
+        kokiri_submit_pdata(&fairy_meshes[step % FAIRY_FRAMES]);
+        jo_3d_pop_matrix();
+    }
     pos[0] = x * 65536;
     pos[1] = -y * 65536;
     pos[2] = z * 65536;
-    pos[3] = pos[4] = toFIXED(1);
-    attr.texno = (Uint16)fairy_sprite;
+    pos[3] = pos[4] = FAIRY_GLOW_SCALE +
+        slMulFX(FAIRY_GLOW_SCALE / 10, slSin((ANGLE)(step * 0x1000u)));
+    /* EnElf_Draw: envAlpha = (timer * 50) & 0x1FF, folded to a triangle;
+    ** timer counts 20 Hz updates, so x2/3 per step. 0 = big L, 255 = SL. */
+    {
+        unsigned int env = (step * 100u / 3u) & 0x1FFu;
+        if (env > 255u) env = 511u - env;
+        unsigned int breath = env * FAIRY_GLOW_STEPS / 256u;
+        if (glow) {
+            attr.texno = (Uint16)glow[breath];
+        } else {
+            /* Navi: refill her one slot only when the picture changes. */
+            unsigned int want = colour * FAIRY_GLOW_STEPS + breath;
+            if (want != navi_glow_shown) {
+                const uint16_t *src = (const uint16_t *)(navi_glow_pixels + want * FAIRY_PIXEL_BYTES);
+                volatile uint16_t *dst = (volatile uint16_t *)__jo_sprite_pic[navi_glow_slot].data;
+                unsigned int k;
+                for (k = 0; k < FAIRY_PIXEL_BYTES / 2; ++k) dst[k] = src[k];
+                navi_glow_shown = want;
+            }
+            attr.texno = (Uint16)navi_glow_slot;
+        }
+    }
     attr.atrb |= (FAIRY_COLMODE_RGB & 7) << 3;
     if (slPutSprite(pos, &attr, 0) == FALSE) ++kokiri_rejected;
+}
+
+/* EnElf shape.rot.y: Math_SmoothStepToS toward the travel heading (scale 5,
+** max 0x1000 a frame; 0x400 floor). Heading from the position change. */
+static uint16_t     fairy_turn(uint16_t yaw, int32_t *last_x, int32_t *last_z,
+                               int32_t x, int32_t z)
+{
+    int32_t dx = x - *last_x, dz = z - *last_z, turn, step;
+    *last_x = x;
+    *last_z = z;
+    if (dx * dx + dz * dz < 1)
+        return yaw;
+    turn = (int32_t)(int16_t)(uint16_t)(kokiri_camera_facing(dx, dz) - yaw);
+    step = turn / 5;
+    if (step > 0x1000) step = 0x1000;
+    if (step < -0x1000) step = -0x1000;
+    if (step > -0x400 && step < 0x400)
+        step = turn > 0x400 ? 0x400 : turn < -0x400 ? -0x400 : turn;
+    return (uint16_t)(yaw + step);
+}
+
+/* Navi in gameplay. Her position is En_Elf's, stepped in src/navi.c. */
+void                kokiri_navi_draw(int x, int y, int z)
+{
+    static int32_t last_x, last_z;
+    static uint16_t yaw;
+    unsigned int i;
+    unsigned int colour = navi_colour();     /* attention_colour_t */
+    yaw = fairy_turn(yaw, &last_x, &last_z, x, z);
+    /* NPC 1, ENEMY 2; PLAYER and OTHER (green, no set yet) draw white/blue. */
+    if (colour > 2u) colour = 0;
+    fairy_draw(x, y, z, yaw, demo_world_clock(), 0,
+               navi_glow_pixels ? (const unsigned int *)0 : fairy_glow, colour);
+    /* EffectSsKiraKira: a 28-unit quad x scale 1000 / 10000 = 2.8 units
+    ** over 8 texels, billboarded and turned by its yaw. */
+    for (i = 0; sparkle_ready && i < NAVI_SPARKLES; ++i) {
+        FIXED pos[5];
+        SPR_ATTR attr = SPR_ATTRIBUTE(0, No_Palet, No_Gouraud, ECdis,
+                                      sprNoflip | FUNC_Sprite);
+        int32_t p[3];
+        uint16_t spin;
+        unsigned int life;
+        if (!navi_sparkle(i, p, &spin, &life))
+            continue;
+        pos[0] = p[0] * 65536;
+        pos[1] = -p[1] * 65536;
+        pos[2] = p[2] * 65536;
+        pos[3] = pos[4] = 22938;
+        attr.texno = (Uint16)sparkle_sprite;
+        attr.atrb |= (FAIRY_COLMODE_RGB & 7) << 3;
+        if (slPutSprite(pos, &attr, (ANGLE)spin) == FALSE) ++kokiri_rejected;
+    }
 }
 
 static void         item_billboard(unsigned int sprite, int x, int y, int z)

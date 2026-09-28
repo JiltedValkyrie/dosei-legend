@@ -19,8 +19,8 @@ class Minimap(unittest.TestCase):
         header = (GEN / 'minimap_data.h').read_text()
         row = re.search(r'\{ SAVE_SCENE_KOKIRI_FOREST, ([^}]*)\}', header)[1]
         values = [int(v) for v in row.split(',')]
-        # cells 12x8, 96x62 at (202,160), sOwCompassInfo[4] = {8, 8, 660, -730}
-        self.assertEqual(values[:10], [12, 8, 96, 62, 202, 160, 8, 8, 660, -730])
+        # 2px left padding preserves x=202 on a zero-scroll HUD page.
+        self.assertEqual(values[:10], [13, 8, 96, 62, 202, 160, 8, 8, 660, -730])
 
     def test_file_header_and_size(self):
         blob = BIN.read_bytes()
@@ -34,7 +34,7 @@ class Minimap(unittest.TestCase):
     def test_cells_fit_their_b0_reservation(self):
         header = (GEN / 'minimap_data.h').read_text()
         for cells in re.findall(r'\{ SAVE_SCENE_\w+,(?:[^,]*,){11} (\d+) \}', header):
-            self.assertLessEqual(int(cells), 0x4000)
+            self.assertLessEqual(int(cells), 0x2000)
 
     def test_link_arrow_formula_lands_on_the_map(self):
         # Minimap_DrawCompassIcons for Kokiri Forest at the scene origin.
@@ -99,6 +99,79 @@ class CheatCode(unittest.TestCase):
         self.lib.feed(UP)           # still held: not a second press
         self.lib.feed(0)
         self.assertFalse(self.press([DOWN, DOWN, LEFT, RIGHT, LEFT, RIGHT, A, START]))
+
+
+@unittest.skipUnless(GCC.is_file(), 'host compiler required')
+class CheatSession(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
+        source = (ROOT/'src/minimap.c').read_text()
+        def function(name):
+            match = re.search(r'(?:bool|void)\s+'+name+r'\([^)]*\)\s*\{', source)
+            start = match.start()
+            end = match.end()
+            depth = 1
+            while depth:
+                if source[end] == '{': depth += 1
+                if source[end] == '}': depth -= 1
+                end += 1
+            return source[start:end]
+        # Compile the real state functions and the real VBlank Start routing.
+        demo = (ROOT/'src/demo.c').read_text()
+        start = demo.index('static void demo_vblank(void)')
+        body = demo.index('{', start)+1
+        prefix = demo[body:demo.index('    skip_input_sample(',body)]
+        src = '#include "cheat_code.h"\n#include "input_edge.h"\n'
+        src += 'static cheat_code_t cheat; static volatile bool enemy_dots,chime;\n'
+        src += '\n'.join(function(n) for n in ('minimap_cheat_sample', 'minimap_session_reset',
+                                              'minimap_enemy_dots', 'minimap_cheat_chime'))
+        src += '\nstatic input_edge_t start_edge; static uint16_t pad;\n'
+        src += 'static bool jo_is_pad1_available(void) { return true; }\n'
+        src += 'static uint16_t demo_pad_snapshot(void) { return pad; }\n'
+        src += 'int tick(unsigned held) { pad=held;'+prefix+'return input_edge_consume(&start_edge); }\n'
+        c = pathlib.Path(cls.tmp.name)/'session.c'
+        c.write_text(src)
+        dll = c.with_suffix('.dll')
+        env = dict(os.environ, PATH=str(GCC.parent)+os.pathsep+os.environ.get('PATH',''))
+        subprocess.run([str(GCC),'-shared','-O2','-I'+str(ROOT/'src'),
+                        '-I'+str(ROOT.parent/'shared/lib/camera'),
+                        '-I'+str(ROOT.parent/'shared/lib/collision'),str(c),'-o',str(dll)],check=True,env=env)
+        cls.lib = ctypes.CDLL(str(dll))
+
+    @classmethod
+    def tearDownClass(cls): cls.tmp.cleanup()
+    def setUp(self):
+        self.lib.minimap_session_reset()
+        self.lib.tick(0)
+    def code(self):
+        for button in (UP,UP,DOWN,DOWN,LEFT,RIGHT,LEFT,RIGHT,A):
+            self.lib.tick(button)
+            self.lib.tick(0)
+        return self.lib.tick(START)
+
+    def test_final_start_does_not_pause_or_repeat_while_held(self):
+        self.assertFalse(self.code())
+        self.assertTrue(self.lib.minimap_enemy_dots())
+        self.assertFalse(self.lib.tick(START))
+        self.lib.tick(0)
+        self.assertTrue(self.lib.tick(START)) # a new ordinary Start still works
+
+    def test_toggle_persists_until_explicit_session_reset(self):
+        self.code()
+        for _ in range(100): self.lib.tick(0)
+        self.assertTrue(self.lib.minimap_enemy_dots())
+        self.assertTrue(self.lib.minimap_cheat_chime())
+        self.assertFalse(self.lib.minimap_cheat_chime())
+        self.lib.minimap_session_reset()
+        self.assertFalse(self.lib.minimap_enemy_dots())
+        self.assertFalse(self.lib.minimap_cheat_chime())
+
+    def test_second_code_turns_dots_off(self):
+        self.code()
+        self.lib.tick(0)
+        self.code()
+        self.assertFalse(self.lib.minimap_enemy_dots())
 
 
 if __name__ == '__main__':

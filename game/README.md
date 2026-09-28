@@ -15,6 +15,10 @@ standard is 320x240. Same assets, gameplay and audio. Build sequentially.
 All generated output goes under `build/`, including both `game*.cue/.iso` images,
 objects, generated meshes and CD staging. `disc/` holds checked-in ISO metadata.
 
+**Build rule (human, 2026-09-27):** build **Clean only**. Build Standard only
+when a test needs its developer-only features (debug HUD/overlays). Hi-res only
+on request.
+
 Clean player test: `./game/build.sh --clean` produces `game/build/game-clean.cue`
 and `.iso`, with all in-game diagnostic overlays suppressed (including L+R).
 Choose **clean player test** in the root launcher, or run `run-kronos-clean.bat`.

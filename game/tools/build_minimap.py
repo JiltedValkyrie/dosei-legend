@@ -99,7 +99,17 @@ def build(oot, out_cd, out_gen):
         if image.size != (width[index], height[index]):
             raise SystemExit('%s is %s, map data says %dx%d'
                              % (tex, image.size, width[index], height[index]))
-        blob, cw, ch = cells(image)
+        # Fixed screen-coordinate NBG2 page shared with the button HUD.
+        # Preserve source positions that fall between cell boundaries.
+        padded = Image.new('RGBA', (image.width + pos_x[index] % 8,
+                                    image.height + pos_y[index] % 8))
+        padded.paste(image, (pos_x[index] % 8, pos_y[index] % 8))
+        blob, cw, ch = cells(padded)
+        if len(blob) > 0x2000:
+            raise ValueError('Minimap overlaps gameplay HUD cells')
+        if not (0 <= pos_x[index] and 64 <= pos_y[index] and
+                pos_x[index] + image.width <= 320 and pos_y[index] + image.height <= 240):
+            raise ValueError('Minimap must fit below the gameplay button strip')
         rows.append(dict(save=save, w=width[index], h=height[index], cw=cw, ch=ch,
                          x=pos_x[index], y=pos_y[index],
                          compass=compass[index * 4:index * 4 + 4], bytes=len(blob)))
@@ -116,6 +126,8 @@ def build(oot, out_cd, out_gen):
         blob += cells_blob
     marker_offset = len(blob)
     blob += markers
+    if len(blob) > 0x1000:
+        raise ValueError('MINIMAP.BIN exceeds its cart carve')
     out_cd.mkdir(parents=True, exist_ok=True)
     (out_cd / 'MINIMAP.BIN').write_bytes(blob)
 
@@ -154,6 +166,8 @@ def build(oot, out_cd, out_gen):
     out_gen.mkdir(parents=True, exist_ok=True)
     (out_gen / 'minimap_data.h').write_text('\n'.join(h))
     print('Minimap: %d map(s), %d bytes' % (len(rows), len(blob)))
+    from build_gameplay_hud import build as build_hud
+    build_hud(oot, out_cd, out_gen)
 
 
 if __name__ == '__main__':

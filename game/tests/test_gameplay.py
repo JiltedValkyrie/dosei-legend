@@ -48,10 +48,14 @@ class Gameplay(unittest.TestCase):
                         '-I' + str(GENERATED), '-I' + str(ROOT / 'src'),
                         str(ROOT / 'tests/fixtures/gameplay_host.c'),
                         str(ROOT / 'src/gameplay.c'),
+                        str(ROOT / 'src/pause_window_state.c'),
                         str(ROOT / 'src/dialogue_text.c'),
                         str(ROOT / 'src/text_pool.c'),
                         str(ROOT / 'src/collide.c'),
                         str(ROOT / 'src/actor_sys.c'),
+                        str(ROOT / 'src/attention.c'),
+                        str(ROOT / 'src/karebaba.c'),
+                        str(ROOT / 'src/game_over.c'),
                         str(ROOT / 'src/save_state.c'),
                         str(ROOT / 'src/save_file.c'),
                         str(GENERATED / 'kokiri_actors.c'),
@@ -84,6 +88,12 @@ class Gameplay(unittest.TestCase):
         self.lib.gp_blade_set(0, 0, 0, 0, 0, 0, 0)
         self.lib.gp_blade_wall(0)
         self.lib.gp_ball_wall(0)
+        self.lib.gp_actors_clear()
+        self.lib.gp_sight_block_x(-2**31)
+        self.lib.gp_offscreen_x(-2**31)
+        self.lib.gp_c_up(0)
+        self.lib.gp_navi_timer_set(0)
+        self.lib.gp_go_reset()
         self.lib.gameplay_reset()
         self.lib.gp_room(0)
 
@@ -400,6 +410,504 @@ class Gameplay(unittest.TestCase):
         yaw = self.lib.gp_face_yaw()
         self.assertTrue(yaw < 600 or yaw > 65536 - 600, yaw)
 
+    # --- M2d shared attention -------------------------------------------
+    # Away from every Kokiri NPC; yaw 0 faces +z.
+    SPOT = (6000, 0, 6000)
+    RANGE_1 = 1                      # Karebaba ATTENTION_RANGE_1 (170 / 255)
+
+    def enemy(self, dx=0, dz=100, focus=(0, 40, 0), rng=None, arrow=25):
+        x, y, z = self.SPOT
+        h = self.lib.gp_spawn_enemy(x + dx, y, z + dz, *focus,
+                                    self.RANGE_1 if rng is None else rng, arrow)
+        self.assertNotEqual(0, h)
+        return h
+
+    def hold_at_spot(self, steps=None, yaw=0):
+        self.hold_target(*self.SPOT, steps=steps, yaw=yaw)
+
+    def test_enemy_lock_uses_the_registry_handle(self):
+        h = self.enemy()
+        self.hold_at_spot()
+        self.assertEqual(h, self.lib.gp_target_handle())
+        self.assertEqual(-1, self.lib.gp_target())       # not an NPC
+
+    def test_lock_drops_when_targetable_clears_though_actor_lives(self):
+        """Karebaba clears attention while dying but stays alive to regrow."""
+        h = self.enemy()
+        self.hold_at_spot()
+        self.lib.gp_actor_targetable(h, 0)
+        self.step(*self.SPOT, target=1)
+        self.assertEqual(0, self.lib.gp_target_handle())
+        self.assertTrue(self.lib.gp_events() & GP_EVENT_TARGET_OFF)
+        self.lib.gp_actor_targetable(h, 1)               # regrown
+        self.step(*self.SPOT, target=1)
+        self.assertEqual(h, self.lib.gp_target_handle()) # same identity again
+
+    def test_lock_drops_when_attention_kind_clears(self):
+        h = self.enemy()
+        self.hold_at_spot()
+        self.lib.gp_actor_attention(h, 0)
+        self.step(*self.SPOT, target=1)
+        self.assertEqual(0, self.lib.gp_target_handle())
+
+    def test_killed_target_drops_and_a_reused_slot_is_a_new_identity(self):
+        h = self.enemy()
+        self.hold_at_spot()
+        self.lib.gp_actor_kill(h)
+        self.step(*self.SPOT, target=1)
+        self.assertNotEqual(h, self.lib.gp_target_handle())
+        self.lib.gp_actors_reap()
+        h2 = self.enemy()
+        self.assertNotEqual(h, h2)
+        self.step(*self.SPOT, target=1)
+        self.assertEqual(h2, self.lib.gp_target_handle())
+
+    def test_blocked_nearest_does_not_hide_a_valid_farther_target(self):
+        near = self.enemy(dx=-10, dz=60)
+        far = self.enemy(dx=10, dz=140)
+        self.lib.gp_sight_block_x(self.SPOT[0] - 10)     # line to near blocked
+        self.hold_at_spot()
+        self.assertEqual(far, self.lib.gp_target_handle())
+        self.lib.gp_sight_block_x(-2**31)
+
+    def test_offscreen_nearest_does_not_hide_an_onscreen_farther_target(self):
+        self.enemy(dx=-10, dz=60)
+        far = self.enemy(dx=10, dz=140)
+        self.lib.gp_offscreen_x(self.SPOT[0] - 10)       # near focus off screen
+        self.hold_at_spot()
+        self.assertEqual(far, self.lib.gp_target_handle())
+
+    def test_a_held_lock_survives_going_off_screen(self):
+        """Attention_ActorOnScreen is acquisition only."""
+        h = self.enemy(dz=100)
+        self.hold_at_spot()
+        self.lib.gp_offscreen_x(self.SPOT[0])
+        for _ in range(5):
+            self.step(*self.SPOT, target=1)
+        self.assertEqual(h, self.lib.gp_target_handle())
+
+    def test_navi_skips_an_offscreen_arrow_actor(self):
+        self.enemy(dz=100)
+        self.lib.gp_offscreen_x(self.SPOT[0])
+        self.step(*self.SPOT)
+        self.assertEqual(0, self.lib.gp_arrow_handle())
+
+    def test_acquisition_cone_is_sixty_degrees(self):
+        inside = self.enemy(dx=100, dz=100)             # 45 degrees
+        self.hold_at_spot()
+        self.assertEqual(inside, self.lib.gp_target_handle())
+
+    def test_outside_the_cone_is_not_acquired(self):
+        self.enemy(dx=100, dz=40)                        # ~68 degrees
+        self.hold_at_spot()
+        self.assertEqual(0, self.lib.gp_target_handle())
+
+    def test_out_of_range_is_not_acquired(self):
+        self.enemy(dz=175)                               # RANGE_1 is 170
+        self.hold_at_spot()
+        self.assertEqual(0, self.lib.gp_target_handle())
+
+    def test_retention_uses_the_leash_not_the_range_or_cone(self):
+        h = self.enemy(dz=150)
+        self.hold_at_spot()
+        x, y, z = self.SPOT
+        self.lib.gp_actor_move(h, x, y, z + 205)         # past 170, inside 208
+        self.step(x, y, z, yaw=32768, target=1)          # facing away
+        self.assertEqual(h, self.lib.gp_target_handle())
+        self.lib.gp_actor_move(h, x, y, z + 212)         # past sqrt(170*255)
+        self.step(x, y, z, target=1)
+        self.assertEqual(0, self.lib.gp_target_handle())
+
+    def test_locked_facing_aims_at_the_focus_not_the_origin(self):
+        self.enemy(dz=100, focus=(100, 40, 0))           # focus 45 degrees right
+        self.hold_at_spot()
+        yaw = self.lib.gp_face_yaw()
+        self.assertLessEqual(abs(yaw - 8192), 64)
+
+    def test_npc_actor_tracks_live_mido(self):
+        nx, ny, nz = self.npc(0)
+        self.step(nx, ny, nz - 200)
+        h = self.lib.gp_npc_handle(0)
+        self.assertNotEqual(0, h)
+        for _ in range(20):
+            self.step(nx, ny, nz - 200)
+        ax, ay, az = (ctypes.c_int() for _ in range(3))
+        self.lib.gp_actor_pos(h, *(ctypes.byref(v) for v in (ax, ay, az)))
+        mx, mz = ctypes.c_int(), ctypes.c_int()
+        self.lib.gp_mido_pos(ctypes.byref(mx), ctypes.byref(mz))
+        self.assertEqual((ax.value, az.value), (mx.value, mz.value))
+
+    def test_npc_actors_leave_with_the_forest(self):
+        nx, ny, nz = self.npc(0)
+        self.step(nx, ny, nz - 200)
+        self.assertNotEqual(0, self.lib.gp_npc_handle(0))
+        self.lib.gp_scene(5)
+        self.step(nx, ny, nz - 200)
+        self.assertEqual(0, self.lib.gp_npc_handle(0))
+
+    def navi_hover(self):
+        x, y, z = (ctypes.c_int() for _ in range(3))
+        self.lib.gp_navi_hover(*(ctypes.byref(v) for v in (x, y, z)))
+        return x.value, y.value, z.value
+
+    def test_navi_hovers_the_lock_and_takes_the_enemy_colour(self):
+        self.enemy(dz=100, focus=(0, 40, 0), arrow=25)
+        self.hold_at_spot()
+        for _ in range(9):                               # 4 source updates + margin
+            self.step(*self.SPOT, target=1)
+        x, y, z = self.SPOT
+        self.assertEqual((x, y + 40 + 25, z + 100), self.navi_hover())
+        self.assertEqual(2, self.lib.gp_navi_colour())   # ATTN_COLOUR_ENEMY
+        self.assertFalse(self.lib.gp_navi_moving())
+
+    def test_navi_returns_to_link_on_release(self):
+        self.enemy(dz=100)
+        self.hold_at_spot()
+        for _ in range(9):
+            self.step(*self.SPOT, target=1)
+        # Released and turned away: no lock, no arrow actor in the cone.
+        for _ in range(9):
+            self.step(*self.SPOT, yaw=32768)
+        x, y, z = self.SPOT
+        self.assertEqual((x, y + 56 + 5, z), self.navi_hover())
+        self.assertEqual(0, self.lib.gp_navi_colour())
+        self.assertFalse(self.lib.gp_navi_has_actor())
+
+    def test_navi_hovers_the_arrow_actor_without_a_lock(self):
+        h = self.enemy(dz=100)
+        self.step(*self.SPOT)
+        self.step(*self.SPOT)            # Navi runs 2 of 3 steps (20 Hz)
+        self.assertEqual(h, self.lib.gp_arrow_handle())
+        self.assertTrue(self.lib.gp_navi_has_actor())
+
+    def test_stick_back_while_locked_hides_the_next_arrow(self):
+        self.enemy(dz=100)
+        second = self.enemy(dx=20, dz=120)
+        self.hold_at_spot()
+        self.assertEqual(second, self.lib.gp_arrow_handle())
+        self.lib.gp_stick(2, 1)
+        self.step(*self.SPOT, target=1)
+        self.assertEqual(0, self.lib.gp_arrow_handle())
+        self.lib.gp_stick(-1, 0)
+
+    # --- M2d.2 En_Karebaba --------------------------------------------
+    GROW, IDLE, AWAKEN, UPRIGHT, SPIN, DYING, DROP, RETRACT, DEAD, REGROW = range(10)
+
+    def baba_home(self, i=0):
+        x, y, z = (ctypes.c_int() for _ in range(3))
+        self.lib.gp_baba_home(i, *(ctypes.byref(v) for v in (x, y, z)))
+        return x.value, y.value, z.value
+
+    def baba_pos(self, i=0):
+        x, y, z = (ctypes.c_int() for _ in range(3))
+        self.lib.gp_baba_pos(i, *(ctypes.byref(v) for v in (x, y, z)))
+        return x.value, y.value, z.value
+
+    def at_baba(self, dx=0, dz=0, steps=1, i=0, **kw):
+        hx, hy, hz = self.baba_home(i) if self.lib.gp_baba_count() else (2109, -1, -317)
+        seen = 0
+        for _ in range(steps):
+            self.step(hx + dx, hy, hz + dz, **kw)
+            seen |= self.lib.gp_baba_events()
+        return seen
+
+    def wake(self, i=0):
+        self.lib.gp_room(1)
+        self.at_baba(dz=150, steps=2)
+        self.at_baba(dz=150, steps=40)           # awaken 46 -> 60 at 5 a tick
+        self.assertEqual(self.UPRIGHT, self.lib.gp_baba_action(i))
+
+    def test_five_source_spawns_in_room_1_only(self):
+        self.lib.gp_room(0)
+        self.step(*self.SPOT)
+        self.assertEqual(0, self.lib.gp_baba_count())
+        self.lib.gp_room(1)
+        self.step(*self.SPOT)
+        self.assertEqual(5, self.lib.gp_baba_count())
+        self.assertEqual((2109, -1, -317), self.baba_home(0))
+        self.assertEqual(self.IDLE, self.lib.gp_baba_action(0))
+        self.assertTrue(self.lib.gp_baba_body_hard(0))   # idle bud bounces the sword
+
+    def test_wakes_inside_200_xz_and_30_y(self):
+        self.lib.gp_room(1)
+        self.at_baba(dz=210, steps=4)
+        self.assertEqual(self.IDLE, self.lib.gp_baba_action(0))
+        ev = self.at_baba(dz=150, steps=2)
+        self.assertEqual(self.AWAKEN, self.lib.gp_baba_action(0))
+        self.assertTrue(ev & 1)                          # NA_SE_EN_DUMMY482
+
+    def test_upright_spins_after_40_and_retracts_past_240(self):
+        self.wake()
+        self.assertFalse(self.lib.gp_baba_body_hard(0))
+        self.at_baba(dz=150, steps=61)                   # 40 updates
+        self.assertEqual(self.SPIN, self.lib.gp_baba_action(0))
+        self.at_baba(dz=150, steps=61)
+        self.assertEqual(self.UPRIGHT, self.lib.gp_baba_action(0))
+        self.at_baba(dz=250, steps=2)
+        self.assertEqual(self.RETRACT, self.lib.gp_baba_action(0))
+
+    def test_sword_hit_kills_drops_one_stick_and_regrows(self):
+        self.wake()
+        h = self.lib.gp_baba_handle(0)
+        self.lib.gp_baba_hit(0)
+        ev = self.at_baba(dz=150, steps=2)
+        self.assertEqual(self.DYING, self.lib.gp_baba_action(0))
+        self.assertTrue(ev & 4 and ev & 8)               # DEAD + LAST_DAMAGE
+        hx, hy, hz = self.baba_home()
+        self.lib.gp_baba_floor(hy)
+        ev = self.at_baba(dz=150, steps=30)
+        self.assertEqual(self.DROP, self.lib.gp_baba_action(0))
+        self.assertTrue(ev & 16)                         # DODO_M_GND
+        # Dying cleared attention: a lock cannot take it, but it is alive.
+        self.assertNotEqual(0, h)
+        px, py, pz = self.baba_pos()
+        self.assertEqual(0, self.lib.gp_stick_ammo())
+        ev = 0
+        for _ in range(3):
+            self.step(px, py, pz)
+            ev |= self.lib.gp_baba_events()
+        self.assertTrue(ev & 32)                         # first stick: get-item show
+        self.assertEqual((1, 1), (self.lib.gp_stick_ammo(), self.lib.gp_stick_upgrade()))
+        self.lib.gp_c_up(0)
+        self.step(px, py, pz, cancel=1)
+        for _ in range(4):
+            self.step(px, py, pz)
+        self.assertEqual(self.DEAD, self.lib.gp_baba_action(0))
+        self.assertEqual(1, self.lib.gp_stick_ammo())    # no second reward
+        for _ in range(301 + 31):                        # Dead 200, Regrow 20
+            self.step(*self.SPOT)
+        self.assertEqual(self.IDLE, self.lib.gp_baba_action(0))
+
+    def test_upright_baba_bites_link_through_the_real_collision_pass(self):
+        # Human report: no contact either way. Colliders sit at the spawn
+        # point (source quirk) as offsets from the moving actor.
+        self.lib.gp_health_set(48, 48)
+        self.wake()
+        hx, hy, hz = self.baba_home()
+        for _ in range(6):
+            self.step(hx + 10, hy, hz)
+        self.assertLess(self.lib.gp_health(), 48)
+
+    def test_real_sword_cut_kills_an_upright_baba(self):
+        self.pickup(0)
+        self.lib.gp_health_set(48, 48)
+        self.wake()
+        hx, hy, hz = self.baba_home()
+        # Blade across the base, 30 in front of Link standing 40 south.
+        self.lib.gp_blade_set(1, hx - 20, hy + 30, hz - 10, hx + 20, hy + 30, hz - 10)
+        self.step(hx, hy, hz - 40, attack=1)
+        for _ in range(6):
+            self.step(hx, hy, hz - 40)
+        self.assertEqual(self.DYING, self.lib.gp_baba_action(0))
+
+    def test_full_bag_still_consumes_the_stick(self):
+        self.lib.gp_sticks(1, 10, 1)
+        self.wake()
+        self.lib.gp_baba_hit(0)
+        hx, hy, hz = self.baba_home()
+        self.lib.gp_baba_floor(hy)
+        self.at_baba(dz=150, steps=32)
+        self.assertEqual(self.DROP, self.lib.gp_baba_action(0))
+        px, py, pz = self.baba_pos()
+        ev = 0
+        for _ in range(6):
+            self.step(px, py, pz)
+            ev |= self.lib.gp_baba_events()
+        self.assertTrue(ev & 64)                         # quiet GET_ITEM path
+        self.assertEqual(10, self.lib.gp_stick_ammo())   # clamped at capacity
+        self.assertEqual(self.DEAD, self.lib.gp_baba_action(0))
+
+    def test_unpicked_stick_expires_after_200(self):
+        self.wake()
+        self.lib.gp_baba_hit(0)
+        hx, hy, hz = self.baba_home()
+        self.lib.gp_baba_floor(hy)
+        self.at_baba(dz=150, steps=32)
+        self.at_baba(dz=150, steps=301)
+        self.assertEqual(self.DEAD, self.lib.gp_baba_action(0))
+        self.assertEqual(0, self.lib.gp_stick_ammo())
+
+    def test_dying_baba_drops_the_lock_but_stays_alive(self):
+        self.wake()
+        hx, hy, hz = self.baba_home()
+        h = self.lib.gp_baba_handle(0)
+        for _ in range(self.GP_TARGET_HOLD_STEPS + 2):
+            self.step(hx, hy, hz - 120, target=1)
+        self.assertEqual(h, self.lib.gp_target_handle())
+        self.lib.gp_baba_hit(0)
+        self.lib.gp_baba_floor(hy)
+        for _ in range(32):
+            self.step(hx, hy, hz - 120, target=1)
+        self.assertEqual(self.DROP, self.lib.gp_baba_action(0))
+        self.assertNotEqual(h, self.lib.gp_target_handle())
+
+    # --- M2e hurt, death, Game Over ------------------------------------
+    DEATH, VOID, ALARM, LAND = 64, 128, 256, 32
+    GO_OFF, GO_DYING, GO_DELAY, GO_MESSAGE, GO_SAVE, GO_SAVING, GO_SAVED, GO_CONTINUE, GO_FINISH = range(9)
+
+    def test_fall_damage_thresholds_and_the_landing_roll(self):
+        self.lib.gp_health_set(48, 48)
+        self.lib.gp_land(399, 0)
+        self.assertEqual(48, self.lib.gp_health())
+        self.lib.gp_land(600, 1)                         # rolled: no damage
+        self.assertEqual(48, self.lib.gp_health())
+        self.lib.gp_land(400, 0)
+        self.assertEqual(40, self.lib.gp_health())       # half a heart
+        self.assertEqual(60, self.lib.gp_intangible())   # 40 source frames
+        self.lib.gp_land(800, 0)
+        self.assertEqual(24, self.lib.gp_health())       # a heart
+
+    def test_void_respawn_costs_a_heart(self):
+        self.lib.gp_health_set(48, 48)
+        self.lib.gp_void_respawned()
+        self.assertEqual(32, self.lib.gp_health())
+
+    def test_lethal_hit_kills_once_and_only_on_the_ground(self):
+        self.lib.gp_health_set(8, 48)
+        self.lib.gp_hurt_set(8, 0)
+        self.step(*self.SPOT, grounded=0)
+        self.assertEqual(0, self.lib.gp_health())
+        self.assertFalse(self.lib.gp_dead())             # airborne: not yet
+        seen = 0
+        for _ in range(3):
+            self.step(*self.SPOT)
+            seen += bool(self.lib.gp_events2() & self.DEATH)
+        self.assertTrue(self.lib.gp_dead())
+        self.assertEqual(1, seen)
+        self.assertEqual(self.GO_DYING, self.lib.gp_go_state())
+
+    def die(self):
+        self.lib.gp_navi_timer_set(900)
+        self.lib.gp_health_set(0, 48)
+        self.step(*self.SPOT)
+        self.assertTrue(self.lib.gp_dead())
+        self.assertEqual(0, self.lib.gp_navi_timer())    # DEATH_START reset
+        self.lib.gp_death_anim_done()
+        for _ in range(30 + 60):                         # delay 20 + window 40
+            self.lib.gp_go_step(0, 0)
+        self.assertEqual(self.GO_SAVE, self.lib.gp_go_state())
+
+    def test_game_over_save_failure_is_reported_then_continue_restores_three_hearts(self):
+        self.die()
+        self.lib.gp_go_step(0, 1)                        # Save? Yes
+        self.assertEqual(self.GO_SAVING, self.lib.gp_go_state())
+        self.lib.gp_go_save_done(0)
+        self.assertEqual(self.GO_SAVE, self.lib.gp_go_state())
+        self.assertTrue(self.lib.gp_go_failed())
+        self.lib.gp_go_step(0, 1)
+        self.lib.gp_go_save_done(1)
+        self.assertEqual(self.GO_SAVED, self.lib.gp_go_state())
+        self.lib.gp_go_step(0, 1)                        # too early to skip
+        self.assertEqual(self.GO_SAVED, self.lib.gp_go_state())
+        for _ in range(20):
+            self.lib.gp_go_step(0, 0)
+        self.lib.gp_go_step(0, 1)                        # skip with A
+        self.assertEqual(self.GO_CONTINUE, self.lib.gp_go_state())
+        self.lib.gp_go_step(0, 1)                        # Continue? Yes
+        result = 0
+        for _ in range(60):
+            result = result or self.lib.gp_go_step(0, 0)
+        self.assertEqual(1, result)                      # GAME_OVER_RESULT_CONTINUE
+        self.assertEqual(0x30, self.lib.gp_health())
+
+    def test_game_over_no_and_no_returns_to_title_without_healing(self):
+        self.die()
+        self.lib.gp_go_step(1, 0)                        # cursor to No
+        self.lib.gp_go_step(0, 1)
+        self.assertEqual(self.GO_CONTINUE, self.lib.gp_go_state())
+        self.lib.gp_go_step(1, 0)
+        self.lib.gp_go_step(0, 1)
+        result = 0
+        for _ in range(60):
+            result = result or self.lib.gp_go_step(0, 0)
+        self.assertEqual(2, result)                      # GAME_OVER_RESULT_TITLE
+        self.assertEqual(0, self.lib.gp_health())
+
+    def test_low_health_alarm_beats_every_thirty_steps(self):
+        self.lib.gp_health_set(16, 48)                   # critical: <= 1 heart
+        beats = 0
+        for _ in range(90):
+            self.step(*self.SPOT)
+            beats += bool(self.lib.gp_events2() & self.ALARM)
+        self.assertEqual(3, beats)
+        self.lib.gp_health_set(17, 48)
+        for _ in range(60):
+            self.step(*self.SPOT)
+            self.assertFalse(self.lib.gp_events2() & self.ALARM)
+
+    def test_hit_from_behind_picks_the_back_clip(self):
+        self.lib.gp_health_set(48, 48)
+        self.lib.gp_hurt_set(8, 0)                       # pushed along +z
+        self.step(*self.SPOT, yaw=0)                     # Link faces +z
+        e = self.lib.gp_events2()
+        self.assertTrue(e & (1 << 9) and e & (1 << 10) and e & (1 << 11))
+
+    # --- M2d Navi call / C-Up -------------------------------------------
+    NAVI_HELLO, NAVI_CALL, NAVI_TALK, LOCK_HOSTILE = 1, 2, 4, 16
+
+    def test_navi_hint_waits_for_the_timer_window(self):
+        self.lib.gp_navi_timer_set(598)
+        self.step(*self.SPOT)
+        self.assertEqual(0, self.lib.gp_navi_text())
+        for _ in range(4):
+            self.step(*self.SPOT)
+        self.assertEqual(0x0140, self.lib.gp_navi_text())
+
+    def test_navi_says_hey_once_per_offer_without_a_lock(self):
+        self.lib.gp_navi_timer_set(700)
+        self.step(*self.SPOT)
+        self.assertTrue(self.lib.gp_events2() & self.NAVI_HELLO)
+        self.step(*self.SPOT)
+        self.assertFalse(self.lib.gp_events2() & (self.NAVI_HELLO | self.NAVI_CALL))
+
+    def test_c_up_reads_the_hint_and_marks_it_read(self):
+        self.lib.gp_navi_timer_set(700)
+        self.step(*self.SPOT)
+        self.lib.gp_c_up(1)
+        self.step(*self.SPOT)
+        self.lib.gp_c_up(0)
+        self.assertTrue(self.lib.gp_talking())
+        self.assertTrue(self.lib.gp_events2() & self.NAVI_TALK)
+        self.assertEqual(3001, self.lib.gp_navi_timer())
+        self.assertEqual(0, self.lib.gp_navi_text())
+
+    def test_hint_changes_after_the_deku_tree_opens(self):
+        self.lib.save_set_event_chk_inf(0x05)
+        self.lib.gp_navi_timer_set(700)
+        self.step(*self.SPOT)
+        self.assertEqual(0x0141, self.lib.gp_navi_text())
+
+    def test_no_hint_outside_the_forest(self):
+        self.lib.gp_scene(5)
+        self.lib.gameplay_reset()
+        self.lib.gp_navi_timer_set(700)
+        self.step(*self.SPOT)
+        self.assertEqual(0, self.lib.gp_navi_text())
+
+    def test_locked_enemy_with_navi_text_calls_hey_listen(self):
+        h = self.enemy(dz=100)
+        self.lib.gp_actor_navi_text(h, 0x0140)
+        self.hold_at_spot()
+        seen = 0
+        for _ in range(2):
+            seen |= self.lib.gp_events2()
+            self.step(*self.SPOT, target=1)
+        self.assertTrue(seen & self.NAVI_CALL)
+
+    def test_hostile_lock_flags_the_hostile_lock_sound(self):
+        h = self.enemy(dz=100)
+        self.lib.gp_actor_hostile(h)
+        seen = 0
+        for _ in range(self.GP_TARGET_HOLD_STEPS):
+            self.step(*self.SPOT, target=1)
+            seen |= self.lib.gp_events2()
+        self.assertTrue(seen & self.LOCK_HOSTILE)
+
+    def test_scene_change_resets_a_short_timer(self):
+        self.lib.gp_navi_timer_set(1200)
+        self.lib.gameplay_reset()
+        self.assertEqual(0, self.lib.gp_navi_timer())
+
     # --- dialogue --------------------------------------------------------
     def talk_spot(self, index=0):
         """Stand one step south of a speaker, facing them."""
@@ -526,32 +1034,37 @@ class Gameplay(unittest.TestCase):
         self.assertFalse(self.lib.gp_paused())
         self.assertTrue(self.lib.gp_events() & GP_EVENT_MENU_CLOSE)
 
-    def test_b_returns_to_the_game(self):
+    def test_b_opens_save_confirmation_and_b_returns_to_page(self):
         self.menu(pause=1)
         self.menu(cancel=1)
-        self.assertFalse(self.lib.gp_paused())
+        self.assertTrue(self.lib.gp_paused())
+        self.assertTrue(self.lib.gp_save_prompt())
+        self.menu(cancel=1)
+        self.assertFalse(self.lib.gp_save_prompt())
+        self.assertTrue(self.lib.gp_paused())
 
-    def test_dpad_moves_the_cursor_and_wraps(self):
-        # Driven from GP_SLOT_COUNT rather than a hardcoded two, so adding a
-        # row cannot leave this test silently checking only part of the menu.
-        slots = self.lib.gp_slot_count()
-        self.assertGreaterEqual(slots, 3)       # sword, shield, save
+    def test_start_leaves_save_prompt_and_reopens_main_page(self):
         self.menu(pause=1)
-        self.assertEqual(self.lib.gp_cursor(), 0)
-        for expected in list(range(1, slots)) + [0]:
+        self.menu(cancel=1)
+        self.assertTrue(self.lib.gp_save_prompt())
+        self.menu(pause=1)
+        self.assertFalse(self.lib.gp_paused())
+        self.menu(pause=1)
+        self.assertFalse(self.lib.gp_save_prompt())
+
+    def test_dpad_moves_equipment_cursor_vertically_and_wraps(self):
+        self.menu(pause=1)
+        self.assertEqual(self.lib.gp_cursor(), 1)
+        for expected in (5, 9, 13, 1):
             self.menu(menu_step=1)
             self.assertEqual(self.lib.gp_cursor(), expected)
         self.menu(menu_step=-1)
-        self.assertEqual(self.lib.gp_cursor(), slots - 1)
+        self.assertEqual(self.lib.gp_cursor(), 13)
 
-    def test_the_save_row_raises_a_save_request_and_equips_nothing(self):
-        """gameplay.c must not touch the backup device itself: it raises the
-        intent and demo.c performs the write, so this is assertable without a
-        cartridge."""
+    def test_save_confirmation_raises_request_and_equips_nothing(self):
         GP_EVENT_SAVE = 1 << 19
         self.menu(pause=1)
-        while self.lib.gp_cursor() != GP_SLOT_SAVE:
-            self.menu(menu_step=1)
+        self.menu(cancel=1)
         self.menu(interact=1)
         self.assertTrue(self.lib.gp_events() & GP_EVENT_SAVE)
         self.assertFalse(self.lib.gp_events() & GP_EVENT_EQUIP)
@@ -763,7 +1276,7 @@ class Gameplay(unittest.TestCase):
         menu's SAVE does, wipe everything as returning to the title and loading
         a file would, then read the block back and re-enter the scene.
         """
-        SAVE_FILE_BYTES = 300  # save_file.h v2: 8 + 290 + 2
+        SAVE_FILE_BYTES = 305  # save_file.h v3: 8 + 295 + 2
         for index in range(2):
             x, y, z, _ = self.pickup(index)
             self.step(x, y, z)
@@ -1061,7 +1574,7 @@ class Gameplay(unittest.TestCase):
         self.assertEqual(self.lib.gp_rupees(), 50)
 
     def test_shop_purchase_survives_save_and_reload(self):
-        SAVE_FILE_BYTES = 300
+        SAVE_FILE_BYTES = 305  # v3
         self.shop(45)
         self.to_choice()
         self.shop_step(interact=1)

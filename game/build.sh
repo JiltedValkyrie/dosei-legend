@@ -92,10 +92,14 @@ rm -f "$here"/build/cd/S*.SUR
 "$python" "$here/tools/build_actors.py" --oot "$oot" --rom-dir "$roms"
 "$python" "$here/tools/build_dialogue.py" --oot "$oot"
 "$python" "$here/tools/build_minimap.py" --oot "$oot"
+"$python" "$here/tools/build_pause_windows.py" --oot "$oot"
 "$python" "$here/tools/build_cdda.py"
 "$python" "$here/tools/build_action_audio.py" --oot "$oot"
 "$python" "$here/tools/build_opening_audio.py" --oot "$oot"
 "$python" "$here/tools/build_demo_assets.py" --oot "$oot"
+"$python" "$here/tools/build_fairy.py" --oot "$oot"
+# En_Karebaba flat model (M2d.2) -> build/cd/DEKUBABA.BIN
+"$python" "$here/tools/build_dekubaba.py" --oot "$oot" --rom-dir "$roms"
 # The dream's Hyrule Field: flat shaded, no tiles, so it costs no VDP1
 # texture VRAM and can be resident during the opening alongside nothing else.
 if [ "${STREAM_ROOMS:-1}" = 1 ] && \

@@ -34,6 +34,7 @@ ACTOR_EN_BOX = 0x000A      # treasure chest
 ACTOR_EN_WONDER_ITEM = 0x0112  # invisible reward trigger
 ACTOR_EN_OSSAN = 0x003D    # shopkeeper
 ACTOR_EN_GOROIWA = 0x0130  # maze rolling boulder
+ACTOR_EN_KAREBABA = 0x00C7  # withered Deku Baba
 
 # SAVE_SCENE_* ids (src/save_state.h) for the scenes read here.
 SAVE_SCENE_KOKIRI_FOREST = 0
@@ -168,6 +169,7 @@ def main():
 
     people, grass, signs, rupees, chests, wonders = [], [], [], [], [], []
     boulders = []
+    babas = []
     shop = source.extract(args.oot, args.rom_dir, prefix='kokiri_shop')
     keepers = []
     for actor in read_actors(shop['kokiri_shop_room_0']):
@@ -207,6 +209,11 @@ def main():
                 chests.append(actor)
             elif actor['id'] == ACTOR_EN_GOROIWA:
                 boulders.append(actor)
+            elif actor['id'] == ACTOR_EN_KAREBABA:
+                # params 0 = Grow first; every Kokiri spawn is 1 (Idle).
+                if actor['var'] not in (0, 1) or actor['yaw']:
+                    sys.exit('Karebaba spawn 0x%04X / yaw %d unsupported' % (actor['var'], actor['yaw']))
+                babas.append(actor)
             elif actor['id'] == ACTOR_EN_WONDER_ITEM:
                 mode, drop = actor['var'] >> 11, (actor['var'] >> 6) & 31
                 if mode not in WONDER_MODES:
@@ -281,6 +288,11 @@ def main():
                'extern const kokiri_npc_t  kokiri_npcs[KOKIRI_NPC_COUNT];',
                'extern const kokiri_prop_t kokiri_grass[KOKIRI_GRASS_COUNT];',
                'extern const kokiri_prop_t kokiri_signs[KOKIRI_SIGN_COUNT];',
+               '/* En_Karebaba spawns (child day header). */',
+               '# define KOKIRI_BABA_COUNT  %d' % len(babas),
+               '# define KOKIRI_BABA_GROW   0x%02X  /* bit i: spawn i has params 0 */'
+               % sum(1 << i for i, b in enumerate(babas) if b['var'] == 0),
+               'extern const kokiri_prop_t kokiri_babas[KOKIRI_BABA_COUNT];',
                '',
                '/* En_Box: param = the spawn word (treasure flag bits 0-4). */',
                'typedef struct { int16_t x, y, z; uint16_t yaw, param; uint8_t room; } kokiri_chest_t;',
@@ -315,6 +327,8 @@ def main():
     body += ['};', '', 'const kokiri_prop_t kokiri_grass[KOKIRI_GRASS_COUNT] = {']
     for a in grass:
         body.append('    { %d, %d, %d, %d },' % (a['x'], a['y'], a['z'], a['room']))
+    body += ['};', '', 'const kokiri_prop_t kokiri_babas[KOKIRI_BABA_COUNT] = {']
+    body += ['    { %d, %d, %d, %d },' % (b['x'], b['y'], b['z'], b['room']) for b in babas]
     body += ['};', '', 'const kokiri_prop_t kokiri_signs[KOKIRI_SIGN_COUNT] = {']
     for a in signs:
         body.append('    { %d, %d, %d, %d },' % (a['x'], a['y'], a['z'], a['room']))

@@ -19,7 +19,10 @@ class AudioBank(unittest.TestCase):
         blob = (GEN/'ACTIONS.PCM').read_bytes()
         self.assertEqual(len(blob), manifest['bytes'])
         self.assertLessEqual(manifest['base']+len(blob), 0x80000)
-        self.assertGreaterEqual(manifest['base'], 4096+480082)
+        banks = [ROOT/'levels/kokiri/assets/audio/KOKIRI_PCM.RAW',
+                 ROOT.parent/'shared/assets/audio/title/TITLE_PCM.RAW',
+                 *(ROOT/'assets/audio/cutscenes').glob('*_PCM.RAW')]
+        self.assertGreaterEqual(manifest['base'], 4096 + max(p.stat().st_size for p in banks))
         for sample in manifest['samples']:
             start, length = sample['offset'], sample['length']
             self.assertEqual(start % 2, 0)
@@ -66,7 +69,11 @@ class AudioEvents(unittest.TestCase):
 #include "action_audio_data.h"
 #include "opening_audio_data.h"
 #include "action_audio.h"
-#define MUSIC_SAMPLE_LIMIT 0x76400
+#include "karebaba.h"
+#include "game_over.h"
+#define MUSIC_SAMPLE_LIMIT 0x3C000
+static uint32_t baba_ev;
+uint32_t karebaba_events(void) { return baba_ev; }
 typedef struct { unsigned int size; } jo_file;
 static unsigned short regs[32][16];
 #define SLOT(s,o) regs[s][(o)/2]
@@ -87,6 +94,8 @@ unsigned int reg(unsigned int s, unsigned int o) { return SLOT(s,o); }
 void set_busy(bool b) { busy = b; }
 void tick(void) { rupee_vblank(); }
 void refresh(unsigned int hz) { sound_refresh = hz; }
+void set_baba(unsigned int e) { baba_ev = e; }
+void set_events2(unsigned int e) { gameplay.events2 = e; }
 '''
         env = dict(os.environ, PATH=str(GCC.parent)+os.pathsep+os.environ.get('PATH',''))
         output = Path(cls.temp.name)/'audio.dll'
@@ -98,12 +107,46 @@ void refresh(unsigned int hz) { sound_refresh = hz; }
     @classmethod
     def tearDownClass(cls): cls.temp.cleanup()
 
-    def setUp(self): self.lib.reset()
+    def setUp(self):
+        self.lib.reset()
+        self.lib.set_baba(0)
+        self.lib.set_events2(0)
+
+    def keyed(self, slot):
+        return self.lib.reg(slot, 0) & 0x1800 == 0x1800
+
+    def test_lock_on_plays_human_or_hostile_on_slot_29(self):
+        self.lib.action_audio_events(1 << 3)            # GP_EVENT_TARGET_ON
+        self.assertTrue(self.keyed(29))
+        human = self.lib.reg(29, 2)
+        self.lib.reset()
+        self.lib.set_events2(16)                         # GP2_EVENT_LOCK_HOSTILE
+        self.lib.action_audio_events(1 << 3)
+        self.assertNotEqual(human, self.lib.reg(29, 2))  # a different sample
+
+    def test_navi_hello_and_call_use_slot_31_and_call_adds_the_chime(self):
+        self.lib.set_events2(1)
+        self.lib.action_audio_events(0)
+        self.assertTrue(self.keyed(31))
+        self.lib.reset()
+        self.lib.set_events2(2)
+        self.lib.action_audio_events(0)
+        self.assertTrue(self.keyed(31) and self.keyed(30))
+
+    def test_deku_baba_sounds_play_from_the_area_bank(self):
+        self.lib.set_baba(4 | 8)                         # DEAD + LAST_DAMAGE
+        self.lib.action_audio_events(0)
+        self.assertTrue(self.keyed(28) and self.keyed(30))
+        self.lib.reset()
+        self.lib.set_area(0, True)                       # interior bank: no baba
+        self.lib.set_baba(2)
+        self.lib.action_audio_events(0)
+        self.assertFalse(self.keyed(28))
 
     def test_swing_plays_blade_and_voice_without_touching_music_slots(self):
         self.lib.action_audio_events(2)
-        # Voices are stored at half rate (build_action_audio), so octave 13.
-        for slot, octave in ((24,14),(25,13)):
+        # Every SFX is stored at half rate (bible rule), so octave 13.
+        for slot, octave in ((24,13),(25,13)):
             self.assertEqual(self.lib.reg(slot,0) & 0x1830, 0x1810)
             self.assertEqual(self.lib.reg(slot,16), octave << 11)
             self.assertGreater(self.lib.reg(slot,6), 0)
@@ -206,7 +249,7 @@ void refresh(unsigned int hz) { sound_refresh = hz; }
         self.assertEqual(self.lib.reg(24,16),13 << 11)
         self.assertEqual(self.lib.reg(24,0) & 0x1830,0x1830)
         address = ((self.lib.reg(24,0)&15)<<16) | self.lib.reg(24,2)
-        self.assertGreaterEqual(address,0x76400)
+        self.assertGreaterEqual(address,0x3C000)
         self.assertLessEqual(address+self.lib.reg(24,6),0x80000)
         self.lib.action_audio_opening_stop(0)
         self.assertEqual(self.lib.reg(24,12),255)

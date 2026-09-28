@@ -384,6 +384,24 @@ void            link_anim_reset(void)
     posed_frame = -1;
 }
 
+/* Player focus (z_player_lib.c Player_PostLimbDraw): the head limb (OoT
+ * PLAYER_LIMB_HEAD 0x0B, index 10 here) times sPlayerFocusOffsetFromHead
+ * (1100, -700, 0). Link-local Q16, like link_anim_blade. Navi's anchor. */
+void link_anim_focus(int32_t out[3])
+{
+    const limb_matrix_t *head = &limb_matrices[10];
+    unsigned int axis;
+    for (axis = 0; axis < 3; ++axis) {
+        int32_t model = head->origin[axis] +
+            (FIXED_MUL(head->m[axis][0], INTEGER_FIXED(1100)) +
+             FIXED_MUL(head->m[axis][1], INTEGER_FIXED(-700))) / 65536;
+        out[axis] = model * LINK_ANIM_SCALE_Q16;
+    }
+    out[0] += INTEGER_FIXED(LINK_ANIM_SHIFT_X);
+    out[1] += INTEGER_FIXED(LINK_ANIM_SHIFT_Y);
+    out[2] += INTEGER_FIXED(LINK_ANIM_SHIFT_Z);
+}
+
 /* OoT PLAYER_LIMB_L_HAND is 0x10; imported limb indices start at zero.
  * z_player_lib.c Kokiri sword: base (0,400,0), tip (3000,400,0). */
 void link_anim_blade(int32_t out[2][3])

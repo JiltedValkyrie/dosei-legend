@@ -4,6 +4,10 @@
 #include "dialogue_text.h"
 #include "save_state.h"
 #include "collide.h"
+#include "actor_sys.h"
+#include "attention.h"
+#include "karebaba.h"
+#include "game_over.h"
 #include "player_attack.h"
 #include "link_clips.h"
 
@@ -102,6 +106,61 @@ static const kokiri_npc_t *npc_at(int npc)
         return &mido_live;
     }
     return &kokiri_npcs[npc];
+}
+
+/* Kokiri NPCs as registry actors, so Link's lock and Navi share one
+** identity (M2d). Drawing and talking stay on kokiri_npcs; each step copies
+** the live position (Mido's included) onto the actor. Focus: a head-height
+** stand-in above the feet; arrow: Actor_Init lockOnArrowOffset 2000 x 0.01.
+** Source per-NPC attentionRangeType is a logged gap (ATTN_RANGE_SLICE_NPC). */
+#define GP_NPC_FOCUS_Y  40
+#define GP_NPC_ARROW_Y  20
+#define GP_NPC_ACTOR_ID 0xF001
+static const actor_profile_t npc_profile = {
+    GP_NPC_ACTOR_ID, ACTORCAT_NPC, ACTOR_FLAG_TARGETABLE, 0, 0, 0, 0
+};
+static actor_handle_t npc_actor[KOKIRI_NPC_COUNT];
+
+static void         npc_actors_kill(void)
+{
+    unsigned int i;
+    for (i = 0; i < KOKIRI_NPC_COUNT; ++i) {
+        actor_kill(actor_resolve(npc_actor[i]));
+        npc_actor[i] = ACTOR_HANDLE_NONE;
+    }
+}
+
+static void         sync_npc_actors(void)
+{
+    unsigned int i;
+    if (!in_forest()) {
+        npc_actors_kill();
+        return;
+    }
+    for (i = 0; i < KOKIRI_NPC_COUNT; ++i) {
+        const kokiri_npc_t *npc = npc_at(i);
+        actor_t *a = actor_resolve(npc_actor[i]);
+        if (!a) {
+            a = actor_spawn(&npc_profile, save_state.scene_id, ACTOR_ROOM_NONE,
+                            npc->x, npc->y, npc->z, 0, (uint16_t)i);
+            if (!a)
+                continue;                   /* pool full: this one untargetable */
+            a->attention = ATTN_NPC;
+            a->range = ATTN_RANGE_SLICE_NPC;
+            a->focus[1] = GP_NPC_FOCUS_Y;
+            a->arrow_y = GP_NPC_ARROW_Y;
+            npc_actor[i] = actor_handle(a);
+        }
+        a->x = npc->x;
+        a->y = npc->y;
+        a->z = npc->z;
+    }
+}
+
+int                 gameplay_target_npc(void)
+{
+    const actor_t *a = actor_resolve(gameplay.target);
+    return a && a->profile == &npc_profile ? (int)a->params : -1;
 }
 
 bool                gameplay_npcs_present(void)
@@ -376,17 +435,95 @@ static void         register_nut(void)
     collide_set_ac(c);
 }
 
-static void         consume_link_damage(void)
+#define STEPS_OF(frames) (((frames) * 3 + 1) / 2)    /* 20 Hz frames -> steps */
+
+/* The one damage entry: enemy contact, fall and void all come through here
+** (Health_ChangeBy via Player_InflictDamage / func_80837B18). */
+static void         link_damage(unsigned int units)
 {
+    save_damage(units);
+}
+
+/* Player_UpdateDamage -> func_80837C0C, response NONE (grounded): pushed
+** away 4.0 a frame; the D_808544B0 hit clip unless running (speedXZ > 4)
+** without a hostile lock, which only flinches. Front/back from where the
+** hit came from; damage >= 5 picks the heavier "hit" clips. */
+static void         consume_link_damage(const gameplay_input_t *in)
+{
+    const actor_t *lock;
+    int16_t side;
     if (!gameplay.hurt_pending)
         return;
     gameplay.hurt_pending = 0;
-    save_damage(gameplay.hurt_damage);
+    link_damage(gameplay.hurt_damage);
     gameplay.intangible = GP_INTANGIBLE_STEPS;
     gameplay.knock_yaw = gameplay.hurt_yaw;
     gameplay.knock_speed = GP_HIT_SPEED_Q16;
     gameplay.knock_down = false;
     gameplay.events |= GP_EVENT_HURT;
+    lock = gameplay.face_locked ? actor_resolve(gameplay.target) : (const actor_t *)0;
+    if (!(in->moving && !(lock && (lock->flags & ACTOR_FLAG_HOSTILE))))
+        gameplay.events2 |= GP2_EVENT_HIT_ANIM;
+    /* hurt_yaw points away from the attacker: along Link's facing means the
+    ** hit came from behind. */
+    side = (int16_t)(gameplay.hurt_yaw - in->yaw);
+    if (side > -0x4000 && side < 0x4000)
+        gameplay.events2 |= GP2_EVENT_HIT_BACK;
+    if (gameplay.hurt_damage >= 5)
+        gameplay.events2 |= GP2_EVENT_HIT_HEAVY;
+}
+
+void                gameplay_land(int32_t fell, bool rolled)
+{
+    /* func_80843E64 via the landing branch: a landing roll returns first. */
+    if (rolled || fell < 400 || gameplay.dead)
+        return;
+    link_damage(fell < 800 ? 8 : 16);
+    gameplay.intangible = STEPS_OF(40);      /* Player_SetIntangibility(40) */
+    gameplay.events2 |= GP2_EVENT_LAND_DAMAGE;
+}
+
+void                gameplay_void_out(void)
+{
+    gameplay.events2 |= GP2_EVENT_ABYSS;
+}
+
+void                gameplay_void_respawned(void)
+{
+    /* unk_A86 -> func_808382DC: Player_InflictDamage(-16), REVENGE. */
+    if (gameplay.dead)
+        return;
+    link_damage(16);
+    gameplay.events2 |= GP2_EVENT_VOID_DAMAGE;
+}
+
+void                gameplay_death_anim_done(void)
+{
+    game_over_anim_done();
+}
+
+/* Health_IsCritical (z_lifemeter.c): the threshold grows with capacity. */
+static bool         health_critical(void)
+{
+    unsigned int cap = save_state.health_capacity, h = save_state.health;
+    unsigned int limit = cap <= 0x50 ? 0x10 : cap <= 0xA0 ? 0x18 : cap <= 0xF0 ? 0x20 : 0x2C;
+    return h > 0 && h <= limit;
+}
+
+static void         drop_target(void);
+
+/* Lethal exactly once, on the ground (z_player.c: health 0 and ground). */
+static void         check_death(const gameplay_input_t *in)
+{
+    if (gameplay.dead || save_state.health != 0 || !in->grounded)
+        return;
+    gameplay.dead = true;
+    gameplay.swing = 0;
+    gameplay.attack_phase = 0;
+    gameplay.shielding = false;
+    drop_target();
+    game_over_start();
+    gameplay.events2 |= GP2_EVENT_DEATH;
 }
 
 static void         update_boulder(const gameplay_input_t *in)
@@ -724,8 +861,20 @@ void                gameplay_reset(void)
     gameplay.owned = 0;
     gameplay.equipped = 0;
     gameplay.shielding = false;
-    gameplay.target = -1;
+    npc_actors_kill();
+    karebaba_reset();
+    gameplay.target = ACTOR_HANDLE_NONE;
+    gameplay.arrow = ACTOR_HANDLE_NONE;
     gameplay.target_hold = 0;
+    /* A new scene spawns a new En_Elf: fairyFlags clear, and its init resets
+    ** a timer outside 3000..25800 (z_en_elf.c EnElf_Init). */
+    gameplay.navi_text = 0;
+    gameplay.navi_calling = false;
+    gameplay.navi_read = false;
+    gameplay.dead = false;
+    gameplay.alarm_steps = 0;
+    if (save_state.navi_timer >= GP_NAVI_TIMER_MAX || save_state.navi_timer < GP_NAVI_HINT_TO)
+        save_state.navi_timer = 0;
     gameplay.swing = 0;
     gameplay.swing_hit = 0;
     gameplay.attack_phase = 0;
@@ -777,6 +926,7 @@ void                gameplay_reset(void)
     gameplay.talking = false;
     gameplay.paused = false;
     gameplay.cursor = GP_SLOT_SWORD;
+    gameplay.pause_window = (pause_window_state_t){ .page = PAUSE_EQUIPMENT, .cursor = {0, 0, 18, 1} };
     gameplay.rupees = 0;
     gameplay.rupee_taken = 0;
     gameplay.drop_rng = 0x12345678u;
@@ -1025,43 +1175,27 @@ void                gameplay_attack_cancel(void)
     blade_prev_valid = false;
 }
 
-/* Nearest NPC inside acquisition range and roughly in front of Link.
-**
-** OoT's real rule scores actors by a projected screen position and a per-actor
-** lock-on radius. This is the slice's approximation: nearest by planar
-** distance, inside a 90 degree cone around the facing. Written down as an
-** approximation rather than presented as Z-target parity. */
-static int16_t      find_target(const gameplay_input_t *in)
+/* Acquisition: attention_find (Attention_FindActorInCategory, every filter
+** before the winner). Retention: attention_retains. Separate rules. */
+static void         feet_of(const gameplay_input_t *in, int32_t feet[3])
 {
-    int32_t best = (int32_t)GP_TARGET_RANGE * GP_TARGET_RANGE + 1;
-    int16_t found = -1;
-    unsigned int i;
-    /* kokiri_npcs are Kokiri Forest actors: none exist in other scenes. */
-    if (!in_forest())
-        return -1;
-    for (i = 0; i < KOKIRI_NPC_COUNT; ++i) {
-        const kokiri_npc_t *npc = npc_at(i);
-        int32_t distance = planar_squared(in->x, in->z, npc->x, npc->z);
-        int32_t turn;
-        if (distance >= best)
-            continue;
-        turn = yaw_delta(in->yaw, gameplay_facing(npc->x - in->x,
-                                                  npc->z - in->z));
-        if (turn < 0) turn = -turn;
-        if (turn > 16384)          /* outside +/-90 degrees */
-            continue;
-        best = distance;
-        found = (int16_t)i;
-    }
-    return found;
+    feet[0] = in->x;
+    feet[1] = in->y;
+    feet[2] = in->z;
+}
+
+static void         face_actor(int32_t x, int32_t z, const actor_t *a)
+{
+    int32_t at[3];
+    attention_focus(a, at);
+    gameplay.face_yaw = gameplay_facing(at[0] - x, at[2] - z);
 }
 
 void gameplay_update_facing(int32_t x, int32_t z)
 {
-    if (gameplay.face_locked && gameplay.target >= 0 && gameplay.target < KOKIRI_NPC_COUNT) {
-        const kokiri_npc_t *npc = npc_at(gameplay.target);
-        gameplay.face_yaw = gameplay_facing(npc->x - x, npc->z - z);
-    }
+    const actor_t *a = actor_resolve(gameplay.target);
+    if (gameplay.face_locked && a)
+        face_actor(x, z, a);
 }
 
 /* L presses toggle the lock. OoT supports Switch and Hold; this slice uses
@@ -1069,9 +1203,9 @@ void gameplay_update_facing(int32_t x, int32_t z)
 ** demo.c only recenters when no lock was taken or dropped. */
 static void         drop_target(void)
 {
-    if (gameplay.target >= 0)
+    if (gameplay.target != ACTOR_HANDLE_NONE)
         gameplay.events |= GP_EVENT_TARGET_OFF;
-    gameplay.target = -1;
+    gameplay.target = ACTOR_HANDLE_NONE;
     gameplay.face_locked = false;
 }
 
@@ -1086,13 +1220,15 @@ static void         drop_target(void)
 ** The lock also drops once the actor is past GP_TARGET_DROP, as before. */
 static void         update_target(const gameplay_input_t *in)
 {
+    int32_t feet[3];
+    actor_t *found;
     if (!in->target_held) {
         /* Released. A short press that never became a lock is the recentre
         ** gesture; one that did lock just ends, with no recentre, or the view
         ** would swing away from the actor the player was just looking at. */
         if (gameplay.target_hold > 0 &&
             gameplay.target_hold < GP_TARGET_HOLD_STEPS &&
-            gameplay.target < 0)
+            gameplay.target == ACTOR_HANDLE_NONE)
             gameplay.events |= GP_EVENT_RECENTER;
         gameplay.target_hold = 0;
         drop_target();
@@ -1109,14 +1245,17 @@ static void         update_target(const gameplay_input_t *in)
         return;
     }
 
-    if (gameplay.target >= 0) {
-        const kokiri_npc_t *npc = npc_at(gameplay.target);
-        if (planar_squared(in->x, in->z, npc->x, npc->z) >
-            (int32_t)GP_TARGET_DROP * GP_TARGET_DROP) {
+    feet_of(in, feet);
+    if (gameplay.target != ACTOR_HANDLE_NONE) {
+        /* A live handle is not enough: the actor must still be targetable
+        ** and attention-enabled (a dying Karebaba clears both but lives on
+        ** to regrow), and inside its leash. */
+        const actor_t *a = actor_resolve(gameplay.target);
+        if (!attention_retains(a, feet)) {
             drop_target();
             return;
         }
-        gameplay.face_yaw = gameplay_facing(npc->x - in->x, npc->z - in->z);
+        face_actor(in->x, in->z, a);
         gameplay.face_locked = true;
         return;
     }
@@ -1124,12 +1263,14 @@ static void         update_target(const gameplay_input_t *in)
     /* Held long enough and nothing locked yet: try to acquire. Retried every
     ** step while held, so holding L and turning toward an actor picks them up
     ** rather than requiring a fresh press. */
-    gameplay.target = find_target(in);
-    if (gameplay.target >= 0) {
-        const kokiri_npc_t *npc = npc_at(gameplay.target);
+    found = attention_find(feet, in->focus, in->yaw, (const actor_t *)0);
+    gameplay.target = actor_handle(found);
+    if (found) {
         /* Turn on the acquiring step, not the one after it: a frame of Link
          * still facing his travel heading reads as the lock being ignored. */
-        gameplay.face_yaw = gameplay_facing(npc->x - in->x, npc->z - in->z);
+        face_actor(in->x, in->z, found);
+        if (found->flags & ACTOR_FLAG_HOSTILE)
+            gameplay.events2 |= GP2_EVENT_LOCK_HOSTILE;
         gameplay.face_locked = true;
         gameplay.events |= GP_EVENT_TARGET_ON;
     } else {
@@ -1306,7 +1447,9 @@ static void         run_contacts(const gameplay_input_t *in)
     if (in_forest())
         register_boulder(in);
     register_nut();
+    karebaba_register();
     collide_run();
+    karebaba_collect();
     if (contacts->boulder.result & COL_RES_AT_HIT)
         gameplay.boulder_hit = true;
     if (blade_live)
@@ -1715,52 +1858,41 @@ bool                gameplay_blocks_world(void)
     return gameplay.paused || gameplay.talking;
 }
 
-/* Pause inventory.
-**
-** Start opens and closes it. D-pad moves the cursor over every slot, owned or
-** not, so a missing item can still be read and explained. A equips the slot
-** under the cursor when it is owned; equipping something not owned is refused
-** rather than silently ignored. B returns to the game. */
+/* Four OoT pause pages. Start closes; B opens the save confirmation.
+** Only real owned gear can be equipped. Save emits the existing device request. */
 static void         update_menu(const gameplay_input_t *in)
 {
     if (in->pause) {
         gameplay.paused = !gameplay.paused;
+        gameplay.pause_window.save_prompt = false;
+        gameplay.pause_window.system_confirm = 0;
         gameplay.events |= gameplay.paused ? GP_EVENT_MENU_OPEN
                                            : GP_EVENT_MENU_CLOSE;
         return;
     }
     if (!gameplay.paused)
         return;
-    if (in->cancel) {
-        gameplay.paused = false;
-        gameplay.events |= GP_EVENT_MENU_CLOSE;
-        return;
+    unsigned result = pause_window_step(&gameplay.pause_window,
+        in->menu_dx, in->menu_dy, in->menu_page,
+        in->cancel, in->interact, gameplay.owned);
+    switch (result) {
+    case PAUSE_MOVE: gameplay.events |= GP_EVENT_MENU_MOVE; break;
+    case PAUSE_WRITE_SAVE: gameplay.events |= GP_EVENT_SAVE; break;
+    case PAUSE_LABELS: gameplay.events2 |= GP2_EVENT_LABELS; break;
+    case PAUSE_JUMP_BINDING: gameplay.events2 |= GP2_EVENT_JUMP_BINDING; break;
+    case PAUSE_RESET_PREFS: gameplay.events2 |= GP2_EVENT_RESET_PREFS; break;
+    case PAUSE_LOAD_GAME: gameplay.events2 |= GP2_EVENT_LOAD_MENU; break;
+    case PAUSE_RETURN_TITLE: gameplay.events2 |= GP2_EVENT_RETURN_TITLE; break;
+    case PAUSE_EQUIP_SWORD:
+    case PAUSE_EQUIP_SHIELD:
+        gameplay.equipped |= result == PAUSE_EQUIP_SWORD ? GP_SWORD : GP_SHIELD;
+        sync_gear_to_save();
+        gameplay.events |= GP_EVENT_EQUIP;
+        break;
+    case PAUSE_DENY: gameplay.events |= GP_EVENT_DENIED; break;
+    default: break;
     }
-    if (in->menu_step) {
-        int cursor = (int)gameplay.cursor + in->menu_step;
-        if (cursor < 0)
-            cursor = GP_SLOT_COUNT - 1;
-        else if (cursor >= GP_SLOT_COUNT)
-            cursor = 0;
-        gameplay.cursor = (uint8_t)cursor;
-        gameplay.events |= GP_EVENT_MENU_MOVE;
-    }
-    if (in->interact) {
-        uint8_t item = gameplay_slot_item(gameplay.cursor);
-        if (gameplay.cursor == GP_SLOT_SAVE) {
-            /* Only the request is raised here. demo.c performs the device
-            ** write and reports a failure back, because a save that silently
-            ** did nothing is the worst outcome for the player. */
-            gameplay.events |= GP_EVENT_SAVE;
-        } else if (gameplay.owned & item) {
-            gameplay.equipped |= item;
-            sync_gear_to_save();
-            gameplay.events |= GP_EVENT_EQUIP;
-        } else {
-            /* Nothing to equip: say so rather than pretending it worked. */
-            gameplay.events |= GP_EVENT_DENIED;
-        }
-    }
+
 }
 
 bool                gameplay_is_talking(void)
@@ -1887,14 +2019,14 @@ static int16_t      find_speaker(const gameplay_input_t *in)
     ** wall must not take A away from the door. */
     if (!in_forest())
         return -1;
-    if (gameplay.target >= 0) {
-        const kokiri_npc_t *npc = npc_at(gameplay.target);
+    if (gameplay_target_npc() >= 0) {
+        const kokiri_npc_t *npc = npc_at(gameplay_target_npc());
         int32_t dy = in->y - npc->y;
         if (dy < 0) dy = -dy;
         if (dy <= GP_TALK_HEIGHT &&
             planar_squared(in->x, in->z, npc->x, npc->z) <=
             (int32_t)GP_TALK_RANGE * GP_TALK_RANGE)
-            return gameplay.target;
+            return (int16_t)gameplay_target_npc();
     }
     for (i = 0; i < KOKIRI_NPC_COUNT; ++i) {
         const kokiri_npc_t *npc = npc_at(i);
@@ -2074,9 +2206,105 @@ static void         update_talk(const gameplay_input_t *in)
     gameplay.events |= GP_EVENT_TALK_OPEN;
 }
 
+/* Attention_Update: arrow hover (next attention actor, suppressed while
+** locked with the stick held back) and Navi's hover, lock first. */
+static void         update_attention(const gameplay_input_t *in)
+{
+    int32_t feet[3];
+    actor_t *lock = actor_resolve(gameplay.target), *arrow = (actor_t *)0;
+    feet_of(in, feet);
+    if (!(lock && in->stick_dir == 2))
+        arrow = attention_find(feet, in->focus, in->yaw, lock);
+    gameplay.arrow = actor_handle(arrow);
+    attention_navi_step(feet, in->focus, lock ? lock : arrow);
+}
+
+/* gOverworldNaviQuestHints (elf_message_field.c), the entries the slice
+** can reach: !EVENTCHKINF_05 (Deku Tree mouth not opened) -> 0x0140,
+** !EVENTCHKINF_09 (Deku Tree not cleared) -> 0x0141. Later entries test
+** items, songs and upgrades outside the slice and end at 0x15F, which
+** En_Elf treats as no hint. Only Kokiri Forest loads the overworld script
+** here (interiors use NAVI_QUEST_HINTS_NONE). */
+static uint16_t     navi_quest_hint(void)
+{
+    if (!in_forest())
+        return 0;
+    if (!save_get_event_chk_inf(0x05))
+        return 0x0140;
+    if (!save_get_event_chk_inf(0x09))
+        return 0x0141;
+    return 0;
+}
+
+/* Navi's call and C-Up talk: En_Elf func_80A053F0 (hint pick, naviTimer),
+** Player PLAYER_STATE2_21 + Interface_SetNaviCall (0x1D "Hey!" unlocked,
+** 0x1E "Hey! Listen!" locked, once per offer), C-Up accepting the talk.
+** C-Up with nothing to say is first-person view in the source, not built
+** yet (logged), so it does nothing here rather than beep. */
+static void         update_navi(const gameplay_input_t *in)
+{
+    const actor_t *lock = gameplay.face_locked ? actor_resolve(gameplay.target) : (const actor_t *)0;
+    uint16_t enemy_text = lock ? lock->navi_text : 0;
+    bool offer;
+    if (!gameplay.navi_text && !lock &&
+        save_state.navi_timer >= GP_NAVI_HINT_FROM &&
+        save_state.navi_timer <= GP_NAVI_HINT_TO)
+        gameplay.navi_text = navi_quest_hint();
+    offer = gameplay.navi_text != 0 || enemy_text != 0;
+    if (offer && in->c_up) {
+        uint16_t text = enemy_text ? enemy_text : gameplay.navi_text;
+        if (open_system_text(text)) {
+            gameplay.events2 |= GP2_EVENT_NAVI_TALK;
+            if (!enemy_text) {
+                /* thisx->textId == QuestHint_GetNaviTextId: read. */
+                gameplay.navi_read = true;
+                save_state.navi_timer = GP_NAVI_READ;
+                gameplay.navi_text = 0;
+            }
+            offer = false;
+        }
+    }
+    if (offer) {
+        if (!gameplay.navi_calling)
+            gameplay.events2 |= lock ? GP2_EVENT_NAVI_CALL : GP2_EVENT_NAVI_HELLO;
+        gameplay.navi_calling = true;
+    } else {
+        gameplay.navi_calling = false;          /* Interface_SetNaviCall 0x1F */
+    }
+    /* naviTimer: one per En_Elf update (20 Hz: two of three steps). */
+    gameplay.navi_phase = (uint8_t)(gameplay.navi_phase + 2);
+    if (gameplay.navi_phase >= 3) {
+        gameplay.navi_phase = (uint8_t)(gameplay.navi_phase - 3);
+        if (save_state.navi_timer < GP_NAVI_TIMER_MAX)
+            ++save_state.navi_timer;
+        else if (!gameplay.navi_read)
+            save_state.navi_timer = 0;
+    }
+}
+
+/* En_Karebaba (karebaba.c): room 1 of the forest. The stick offer needs
+** Link free: not charging a spin, not talking, on the ground (Actor_Offer
+** GetItem's player-state gate, reduced to the states the slice has). */
+static void         update_babas(const gameplay_input_t *in)
+{
+    uint32_t ev;
+    bool free = in->grounded && !gameplay.talking &&
+                !(gameplay.attack_phase >= 3 && gameplay.attack_phase <= 5);
+    karebaba_sync(in_forest(), in->room);
+    karebaba_update(in->x, in->y, in->z, free);
+    ev = karebaba_events();
+    /* First stick ever: the get-item show (text 0x0037, GI_DEKU_STICKS_1). */
+    if ((ev & KAREBABA_EV_STICK_FIRST) && open_system_text(0x0037))
+        gameplay.events |= GP_EVENT_PICKUP;
+}
+
 void                gameplay_step(const gameplay_input_t *in)
 {
     gameplay.events = 0;
+    gameplay.events2 = 0;
+    /* Dead: the Game Over flow owns the pad (demo.c steps game_over). */
+    if (gameplay.dead)
+        return;
     /* Pause outranks everything, including an open text box: Start freezes the
     ** world wherever it is. Nothing below runs while the menu is up, so no
     ** menu press can reach a swing, a jump, a talk or the walk/run toggle. */
@@ -2093,8 +2321,10 @@ void                gameplay_step(const gameplay_input_t *in)
     /* A conversation owns the input. Nothing else in the world advances from
     ** the pad while a box is open -- no pickup grab, no lock change, no swing,
     ** no guard -- so a held button cannot leak an action through the box. */
+    sync_npc_actors();
     if (gameplay.talking) {
         update_talk(in);
+        update_attention(in);
         gameplay.shielding = false;
         return;
     }
@@ -2102,12 +2332,31 @@ void                gameplay_step(const gameplay_input_t *in)
     update_wonders(in);
     if (gameplay.intangible)
         --gameplay.intangible;
-    consume_link_damage();
+    consume_link_damage(in);
+    check_death(in);
+    if (gameplay.dead)
+        return;
+    /* HealthMeter beat: NA_SE_SY_HITPOINT_ALARM each bottom, ~20 frames. */
+    if (health_critical()) {
+        if (++gameplay.alarm_steps >= 30) {
+            gameplay.alarm_steps = 0;
+            gameplay.events2 |= GP2_EVENT_ALARM;
+        }
+    } else {
+        gameplay.alarm_steps = 0;
+    }
     update_boulder(in);
     update_nut(in);
     if (in_forest())
         update_mido(in);
     update_target(in);
+    update_attention(in);
+    update_navi(in);
+    update_babas(in);
+    if (gameplay.talking) {
+        gameplay.shielding = false;
+        return;
+    }
     if (update_chest(in)) {
         gameplay.shielding = false;
         return;

@@ -19,11 +19,16 @@ import build_title_audio as audio
 
 TRACKS = (
     # file, sequence, soundfont
-    ('TRACK02.BIN', 43, 3),
+    ('TRACK02.BIN', 43, 3),     # NA_BGM_OPEN_TRE_BOX
+    ('TRACK03.BIN', 32, 35),    # NA_BGM_GAME_OVER (func_80836448 death)
+    ('TRACK04.BIN', 57, 35),    # NA_BGM_SMALL_ITEM_GET (first Deku Stick)
 )
 HZ = 44100
 # Offline render: no SCSP voice budget; the CD track is plain PCM.
 audio.VOICES = 64
+# Nor the halved SCSP music budget: the CD render keeps the old 240,000
+# samples (full rate would pass the 16-bit LEA limit in load_font).
+audio.MUSIC_SAMPLE_BUDGET = 240000   # the pre-2026-09-27 music budget
 SECTOR = 2352
 
 

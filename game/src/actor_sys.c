@@ -209,6 +209,28 @@ actor_t        *actor_sys_find(uint16_t id, const actor_t *after)
     return ((actor_t *)0);
 }
 
+/* sAttentionRanges {range, lockOnLeashRange}; RANGE_6/7 leash rounded. */
+static const uint16_t attention_ranges[ATTN_RANGE_COUNT][2] = {
+    {70, 140}, {170, 255}, {280, 5600}, {350, 525}, {700, 1050},
+    {1000, 1500}, {100, 105}, {140, 163}, {240, 576}, {280, 65535},
+    {320, 420},
+};
+
+uint32_t        actor_attention_range_sq(const actor_t *actor)
+{
+    uint32_t r = attention_ranges[actor->range < ATTN_RANGE_COUNT ? actor->range : 0][0];
+    return r * r;
+}
+
+uint32_t        actor_attention_leash_sq(const actor_t *actor)
+{
+    unsigned int k = actor->range < ATTN_RANGE_COUNT ? actor->range : 0;
+    /* The slice NPC keeps its planar 420 drop: 420^2, not 320 * 420. */
+    if (k == ATTN_RANGE_SLICE_NPC)
+        return 420u * 420u;
+    return (uint32_t)attention_ranges[k][0] * attention_ranges[k][1];
+}
+
 actor_t        *actor_sys_nearest_attention(int32_t x, int32_t y, int32_t z,
                                             int32_t range, unsigned int mask)
 {
