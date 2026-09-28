@@ -752,19 +752,21 @@ static void         inventory_menu(void)
     const pause_window_state_t *state = &gameplay.pause_window;
     bool paused = gameplay_is_paused();
     if (paused != was_paused) {
-        jo_clear_screen();
+        if (!paused) jo_clear_screen();
         was_paused = paused;
     }
     if (!paused) { last_window = -1; return; }
     {
         int window = state->system_confirm ? 10 + state->system_confirm :
             state->save_prompt ? PAUSE_SAVE : state->page;
-        if (window != last_window) { jo_clear_screen(); last_window = window; }
+        if (window != last_window) last_window = window;
     }
+    if (pause_windows_failed()) { jo_printf(5,12,"PAUSE ART LOAD FAILED"); return; }
+    if (!pause_windows_text_ready()) return;
     if (!state->save_prompt) {
         bool analog = jo_is_pad1_available() && jo_is_input_analog(0);
-        jo_printf(2, 14, "%-2s", ui_button_label(UI_KEY_L, analog));
-        jo_printf(35, 14, "%-2s", ui_button_label(UI_KEY_R, analog));
+        pause_windows_printf(2, 14, "%-2s", ui_button_label(UI_KEY_L, analog));
+        pause_windows_printf(35, 14, "%-2s", ui_button_label(UI_KEY_R, analog));
     }
     if (state->system_confirm || (state->page == PAUSE_EXTRA && !state->save_prompt)) {
         const char *pad;
@@ -775,11 +777,11 @@ static void         inventory_menu(void)
         default: pad = "Unsupported device"; break;
         }
         bool analog = jo_is_pad1_available() && jo_is_input_analog(0);
-        jo_printf(16, 6, "SYSTEM");
+        pause_windows_printf(16, 6, "SYSTEM");
         if (state->system_confirm) {
-            jo_printf(8, 10, "%-25s", state->system_confirm == 1 ? "Open load menu?" : "Return to title?");
-            jo_printf(6, 13, "Unsaved progress will be lost.");
-            jo_printf(12, 16, "%c YES     %c NO", state->save_choice == 0 ? '>' : ' ',
+            pause_windows_printf(8, 10, "%-25s", state->system_confirm == 1 ? "Open load menu?" : "Return to title?");
+            pause_windows_printf(6, 13, "Unsaved progress will be lost.");
+            pause_windows_printf(12, 16, "%c YES     %c NO", state->save_choice == 0 ? '>' : ' ',
                       state->save_choice == 1 ? '>' : ' ');
         } else {
             static const char *const options[3] = {"Save game", "Load game", "Return to title"};
@@ -787,23 +789,18 @@ static void         inventory_menu(void)
             const char *jump = ui_button_label(ui_jump_key(), analog);
             int report = save_device_preferences_report();
             for (i = 0; i < 3; ++i)
-                jo_printf(8, 8 + 2 * i, "%c %-25s", selected == i ? '>' : ' ', options[i]);
-            jo_printf(8, 14, "%c Labels: %-17s", selected == 3 ? '>' : ' ', ui_label_name());
-            jo_printf(8, 16, "%c Jump: %-10s (%c)  ", selected == 4 ? '>' : ' ',
+                pause_windows_printf(8, 8 + 2 * i, "%c %-25s", selected == i ? '>' : ' ', options[i]);
+            pause_windows_printf(8, 14, "%c Labels: %-17s", selected == 3 ? '>' : ' ', ui_label_name());
+            pause_windows_printf(8, 16, "%c Jump: %-10s (%c)  ", selected == 4 ? '>' : ' ',
                       *jump ? jump : "Unmapped", "YABXCZLR"[ui_jump_binding()]);
-            jo_printf(8, 18, "%c Reset defaults          ", selected == 5 ? '>' : ' ');
-            jo_printf(7, 21, "Pad 1: %-23s", pad);
-            jo_printf(7, 23, "%s: Choose  %s: Close     ",
+            pause_windows_printf(8, 18, "%c Reset defaults          ", selected == 5 ? '>' : ' ');
+            pause_windows_printf(7, 21, "Pad 1: %-23s", pad);
+            pause_windows_printf(7, 23, "%s: Choose  %s: Close     ",
                       ui_button_label(UI_KEY_A, analog), ui_button_label(UI_KEY_START, analog));
-            jo_printf(8, 25, "%-24s", minimap_enemy_dots() ? "Enemy map: ON" : "");
-            jo_printf(7, 27, "%-27s", report == 0 ? "Settings NOT saved" :
+            pause_windows_printf(8, 25, "%-24s", minimap_enemy_dots() ? "Enemy map: ON" : "");
+            pause_windows_printf(7, 27, "%-27s", report == 0 ? "Settings NOT saved" :
                       selected == 4 ? "Replaces old button action" : report == 1 ? "Settings saved" : "");
         }
-        return;
-    }
-    if (pause_windows_failed()) {
-        jo_printf(5, 12, "PAUSE ART LOAD FAILED");
-        jo_printf(5, 14, "%s: RETURN TO GAME", ui_button_label(UI_KEY_START, false));
         return;
     }
     {
@@ -822,14 +819,14 @@ static void         inventory_menu(void)
             } else if (p->page == PAUSE_MAP) name = "Kokiri Forest";
             else if (save_check_quest_item(QUEST_KOKIRI_EMERALD)) name = "Kokiri Emerald";
         }
-        jo_printf(11, 25, "%-18s", name);
+        pause_windows_printf(11, 25, "%-18s", name);
     }
     /* Backup writes remain the real demo/save-device path. */
     if (gameplay.pause_window.save_prompt) {
         int report = demo_save_report();
-        jo_printf(10, 22, "%-24s", !save_device_ready() ? "NO BACKUP RAM" :
+        pause_windows_printf(10, 22, "%-24s", !save_device_ready() ? "NO BACKUP RAM" :
             report < 0 ? "" : report ? "SAVED" : "SAVE FAILED");
-    } else jo_printf(10, 22, "%-24s", "");
+    }
 
 }
 

@@ -28,7 +28,7 @@
 /* The top of bank 2 is kept OUT of jo_malloc for fixed runtime pools (actor
 ** pool first). A fixed carve keeps these off the 56 KB work-RAM malloc arena,
 ** which jo_malloc would otherwise fill first. */
-#define RAM_CART_FIXED_BYTES    0x27000u
+#define RAM_CART_FIXED_BYTES    0x70000u
 #define RAM_CART_FIXED_ADDRESS  (RAM_CART_BANK2_ADDRESS + RAM_CART_BANK2_BYTES - RAM_CART_FIXED_BYTES)
 
 /* Fixed carve for the actor pool (actor_sys_bytes() must fit). */
@@ -87,7 +87,11 @@
 #define RAM_CART_DIALOGUE_BYTES     0x3000u
 
 #define RAM_CART_PAUSE_OFFSET 0x1D000u
-#define RAM_CART_PAUSE_BYTES  0xA000u
+#define RAM_CART_PAUSE_BYTES  0x26000u
+/* RGB page + font, and exact backup of HUD VRAM and the spare bitmap rows
+ * temporarily borrowed for pause. Original font and scene bitmap stay live. */
+#define RAM_CART_PAUSE_BACKUP_OFFSET 0x43000u
+#define RAM_CART_PAUSE_BACKUP_BYTES  0x29880u
 
 /* Pointer into the fixed carve, or 0 when no cart / out of range. */
 void   *ram_cart_fixed(unsigned int offset, unsigned int bytes);

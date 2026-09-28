@@ -217,11 +217,11 @@ uint32_t minimap_layer_flags(void)
     static bool pause_visible;
     if (gameplay_is_paused() && demo_link_active) {
         pause_visible = true;
-        return pause_windows_update() ? NBG2ON : 0;
+        return pause_windows_update() ? NBG0ON : 0;
     }
     if (pause_visible) {
-        minimap_scene(row ? row->save_scene : ~0u);
         pause_windows_reset();
+        minimap_scene(row ? row->save_scene : ~0u);
         pause_visible = false;
     }
     bool visible = hud_ready && demo_link_active && !demo_title_is_visible() &&

@@ -1,5 +1,6 @@
 #include <jo/jo.h>
 #include "demo.h"
+#include "pause_windows.h"
 #include "music.h"
 #include "music_banks.h"
 #include "texture_probe.h"
@@ -2359,10 +2360,16 @@ void demo_update(void)
         if (gameplay_blocks_world() || !demo_link_active) cdda_play(CDDA_TRACK_CHEST);
         else action_audio_events(GP_EVENT_MENU_OPEN); /* live play: SCSP, no CD seek */
     }
-    slScrAutoDisp(NBG0ON | minimap_layer_flags() |
+    unsigned layers = NBG0ON | minimap_layer_flags() |
                   ((title_visible ||
                     (kokiri_scene_backdrop_active() &&
-                     !cutscene_hides_scene())) ? NBG1ON : 0));
+                     !cutscene_hides_scene())) ? NBG1ON : 0);
+    if (gameplay_is_paused() && demo_link_active && !pause_windows_failed()) {
+        /* RGB page on NBG0; preserve NBG1's frozen interior underneath.
+         * RGB carousel uses enlargement, with explicit fetch scheduling. */
+        slScrDisp(layers & ~NBG2ON);
+        slScrCycleSet(0x5555FEEEu,0x05555EEEu,0x4444EEEEu,0x4444EEEEu);
+    } else slScrAutoDisp(layers);
 }
 
 /* -1 no attempt yet this session, 0 failed, 1 succeeded. */

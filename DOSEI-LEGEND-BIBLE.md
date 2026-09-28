@@ -236,3 +236,7 @@ button's former gameplay action; menu confirm/back remain unchanged. Store
 preferences separately from adventure saves, never serialize the session cheat.
 Keep map proportions and sufficient colour/detail for legibility. Unvisited
 regions remain clouded. Page-button art must contain no stale baked labels.
+Latest menu directive: every page uses full RGB555 colour, not a small shared
+palette. Map fog should leave terrain legible. Remove System's SAVE lettering
+with matching repeated frame texture. Page changes use VDP2 hardware scaling
+and sliding as a carousel; preserve and restore the frozen world/HUD resources.

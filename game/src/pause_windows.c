@@ -1,32 +1,111 @@
-/* NBG2 pause windows share the HUD name table, but not its character cells.
- * One page is streamed into the reserved cart pool on a page/ownership change.
- * Cursor movement restores from that copy; it never reads the CD. */
+/* Full RGB pause pages on scaling NBG0. NBG1 keeps the frozen room backdrop.
+ * Font/HUD are restored exactly on exit; no VDP1 textures or commands. */
 #include <jo/jo.h>
 #include "pause_windows.h"
 #include "gameplay.h"
 #include "save_state.h"
 #include "ram_cart.h"
+#include "demo.h"
 #include "pause_cursor_data.h"
 
-#define PAGE_MAP ((volatile unsigned short *)0x25E40000u)
-#define PAGE_CELLS ((volatile unsigned short *)0x25E46000u)
-#define PAGE_BYTES 38432u
-#define MAP_BYTES 39952u
-static int loaded = -1, drawn = -1;
-static bool failed;
+#define PAGE_BYTES (320u * 240u * 2u)
+#define PAGE_MAP ((volatile unsigned short *)0x25E3C000u)
+#define CELLS0 ((volatile unsigned short *)0x25E40000u)
+#define CELLS1 ((volatile unsigned short *)0x25E68000u)
+static int loaded = -1, drawn = -1, direction;
+static unsigned phase, started;
+static bool failed, active;
+static unsigned short cycles[6];
 
-void pause_windows_reset(void) { loaded = drawn = -1; failed = false; }
-bool pause_windows_failed(void) { return failed; }
-
-static void pixel(int x, int y, unsigned colour)
+static unsigned short *cache(void) { return ram_cart_fixed(RAM_CART_PAUSE_OFFSET, RAM_CART_PAUSE_BYTES); }
+static volatile unsigned short *cell(unsigned tile)
 {
-    unsigned offset, shift;
-    if (x < 0 || x >= 320 || y < 0 || y >= 240) return;
-    offset = ((y / 8) * 40 + x / 8) * 16 + (y & 7) * 2 + (x & 7) / 4;
-    shift = (3 - (x & 3)) * 4;
-    PAGE_CELLS[offset] = (PAGE_CELLS[offset] & ~(15u << shift)) | (colour << shift);
+    return tile < 1024 ? CELLS0 + tile * 64 : CELLS1 + (tile - 1024) * 64;
 }
-
+static void copy_words(volatile unsigned short *to, const volatile unsigned short *from, unsigned count)
+{
+    while (count--) *to++ = *from++;
+}
+static bool read_file(const char *name, void *data, unsigned size)
+{
+    jo_file file;
+    unsigned i;
+    bool ok;
+    if (!jo_fs_open(&file, (char *)name)) return false;
+    ok = file.size == size;
+    for (i=0; ok && i<size; i+=2048) {
+        unsigned n=size-i;
+        if (n>2048) n=2048;
+        ok=jo_fs_read_next_bytes(&file,(char *)data+i,n)==(int)n;
+    }
+    jo_fs_close(&file);
+    return ok;
+}
+static bool begin(void)
+{
+    unsigned short *backup=ram_cart_fixed(RAM_CART_PAUSE_BACKUP_OFFSET,RAM_CART_PAUSE_BACKUP_BYTES);
+    unsigned i;
+    if (!backup || !cache() || !read_file("PAUSEFNT.BIN",(char *)cache()+PAGE_BYTES,1024)) return false;
+    copy_words(backup,CELLS0,0x10000);
+    copy_words(backup+0x10000,CELLS1,0x2C40);
+    copy_words(backup+0x12C40,PAGE_MAP,0x2000);
+    cycles[0]=JO_VDP2_CYCB0L; cycles[1]=JO_VDP2_CYCB0U;
+    cycles[2]=JO_VDP2_CYCB1L; cycles[3]=JO_VDP2_CYCB1U;
+    cycles[4]=JO_VDP2_CYCA1L; cycles[5]=JO_VDP2_CYCA1U;
+    /* RGB NBG0 uses ZOOM_1 (enlargement only), four character fetches.
+     * Names live in unused bottom rows of the NBG1 bitmap. A1 retains
+     * four NBG1 bitmap fetches and three CPU slots alongside one name. */
+    JO_VDP2_CYCB0L=JO_VDP2_CYCB1L=0x4444;
+    JO_VDP2_CYCB0U=JO_VDP2_CYCB1U=0xEEEE;
+    JO_VDP2_CYCA1L=0x0555; JO_VDP2_CYCA1U=0x5EEE;
+    for (i=0;i<64;++i) cell(1200)[i]=0;
+    for (i=0;i<4096;++i) {
+        unsigned x=i%64,y=i/64;
+        unsigned tile=x<40 && y<30 ? y*40+x : 1200;
+        PAGE_MAP[i*2]=0;
+        PAGE_MAP[i*2+1]=((unsigned)cell(tile)-0x25E00000u)/32u;
+    }
+    slCharNbg0(COL_TYPE_32768,CHAR_SIZE_1x1);
+    slPageNbg0((void *)CELLS0,(void *)JO_VDP2_CRAM,PNB_2WORD);
+    slPlaneNbg0(PL_SIZE_1x1);
+    slMapNbg0((void *)PAGE_MAP,(void *)PAGE_MAP,(void *)PAGE_MAP,(void *)PAGE_MAP);
+    slZoomModeNbg0(ZOOM_1);
+    slScrWindowModeNbg0(win0_IN);
+    active=true;
+    return true;
+}
+void pause_windows_reset(void)
+{
+    if (active) {
+        const unsigned short *backup=ram_cart_fixed(RAM_CART_PAUSE_BACKUP_OFFSET,RAM_CART_PAUSE_BACKUP_BYTES);
+        copy_words(CELLS0,backup,0x10000);
+        copy_words(CELLS1,backup+0x10000,0x2C40);
+        copy_words(PAGE_MAP,backup+0x12C40,0x2000);
+        JO_VDP2_CYCB0L=cycles[0]; JO_VDP2_CYCB0U=cycles[1];
+        JO_VDP2_CYCB1L=cycles[2]; JO_VDP2_CYCB1U=cycles[3];
+        JO_VDP2_CYCA1L=cycles[4]; JO_VDP2_CYCA1U=cycles[5];
+        slCharNbg0(COL_TYPE_256,CHAR_SIZE_1x1);
+        slPageNbg0((void *)VDP2_VRAM_B1,(void *)JO_VDP2_CRAM,PNB_1WORD | CN_10BIT);
+        slPlaneNbg0(PL_SIZE_1x1);
+        slMapNbg0((void *)NBG0_MAP,(void *)NBG0_MAP,(void *)NBG0_MAP,(void *)NBG0_MAP);
+        slZoomModeNbg0(ZOOM_1);
+        slZoomNbg0(65536,65536); slScrPosNbg0(0,0);
+        slScrWindowModeNbg0(0);
+    }
+    loaded=drawn=-1; phase=0; active=failed=false;
+}
+bool pause_windows_failed(void) { return failed; }
+bool pause_windows_text_ready(void)
+{
+    const pause_window_state_t *s=&gameplay.pause_window;
+    unsigned page=s->system_confirm ? PAUSE_EXTRA : s->save_prompt ? PAUSE_SAVE : s->page;
+    return active && !failed && phase!=1 && loaded/4==(int)page;
+}
+static void pixel(int x,int y,unsigned colour)
+{
+    if (x<0 || x>=320 || y<0 || y>=240) return;
+    cell((y/8)*40+x/8)[(y&7)*8+(x&7)]=colour;
+}
 static void frame(int x, int y, int size, unsigned colour)
 {
     int side, xx, yy, dx, dy;
@@ -40,60 +119,105 @@ static void frame(int x, int y, int size, unsigned colour)
     }
 }
 
+
+static void paint(void)
+{
+    const unsigned short *data=cache();
+    unsigned x,y,tile,i;
+    for (tile=0;tile<1200;++tile) {
+        volatile unsigned short *dst=cell(tile);
+        x=(tile%40)*8; y=(tile/40)*8;
+        for (i=0;i<64;++i) dst[i]=data[(y+i/8)*320+x+i%8];
+    }
+}
+void pause_windows_print(int x,int y,const char *text)
+{
+    const unsigned short *data=cache();
+    const unsigned char *font=(const unsigned char *)data+PAGE_BYTES;
+    if (!pause_windows_text_ready() || !data || y<0 || y>=30) return;
+    while (*text && x<40) {
+        unsigned c=(unsigned char)*text++,xx,yy;
+        if (x>=0) for (yy=0;yy<8;++yy) for (xx=0;xx<8;++xx) {
+            unsigned colour=data[(y*8+yy)*320+x*8+xx];
+            if (c<128 && (font[c*8+yy] & (0x80u>>xx))) colour=0xFFFF;
+            pixel(x*8+xx,y*8+yy,colour);
+        }
+        ++x;
+    }
+}
+static bool load_page(int key)
+{
+    char name[]="PAUSE00.BIN";
+    name[5]+=key/4; name[6]+=key%4;
+    failed=!read_file(name,cache(),PAGE_BYTES);
+    loaded=key; drawn=-1;
+    return !failed;
+}
+static void transform(unsigned t)
+{
+    int width=320,height=240,centre=160,left,top,right,bottom;
+    /* RGB555 normal planes allow enlargement, not sub-1x reduction.
+     * Bring each departing/arriving page forward on the carousel arc. */
+    if (phase==1) { width+=64*(int)t/12; height+=48*(int)t/12; centre-=direction*400*(int)t/12; }
+    if (phase==2) { width=384-64*(int)t/12; height=288-48*(int)t/12; centre+=direction*400*(12-(int)t)/12; }
+    left=centre-width/2; top=120-height/2; right=left+width-1;
+    bottom=top+height-1;
+    /* SGL takes reciprocal scales; scroll origin uses source pixels. */
+    slZoomNbg0(320*65536/width,240*65536/height);
+    slScrPosNbg0((-left*65536/width)*320,(-top*65536/height)*240);
+    if (left<0) left=0; if (left>319) left=319;
+    if (right<left) right=left; if (right>319) right=319;
+    if (top<0) top=0; if (bottom>239) bottom=239;
+    slScrWindow0(left,top,right,bottom);
+}
 bool pause_windows_update(void)
 {
-    pause_window_state_t *s = &gameplay.pause_window;
-    unsigned page = s->system_confirm ? PAUSE_EXTRA : s->save_prompt ? PAUSE_SAVE : s->page;
-    unsigned variant = page == PAUSE_EQUIPMENT ? gameplay.owned & 3 :
-        page == PAUSE_ITEMS ? (!!save_state.stick_owned | (!!save_state.slingshot << 1)) :
-        page == PAUSE_QUEST ? !!(save_state.quest_items & (1u << QUEST_KOKIRI_EMERALD)) : 0;
-    int key = page * 4 + variant;
-    unsigned bytes = page == PAUSE_MAP ? MAP_BYTES : PAGE_BYTES;
-    unsigned pixel_start = page == PAUSE_MAP ? 1552u : 32u;
-    unsigned char *data = ram_cart_fixed(RAM_CART_PAUSE_OFFSET, bytes);
-    unsigned x, y, tile, i;
-    int cursor = s->save_prompt ? s->save_choice : s->cursor[s->page];
-    int stamp = cursor + (gameplay.equipped << 8);
-    if (!data) { failed = true; return false; }
-    if (key != loaded) {
-        jo_file stream;
-        char name[] = "PAUSE00.BIN";
-        bool ok = false;
-        name[5] += page; name[6] += variant;
-        if (jo_fs_open(&stream, name)) {
-            ok = stream.size == bytes;
-            for (i = 0; ok && i < bytes; i += 512) {
-                unsigned n = bytes - i;
-                if (n > 512) n = 512;
-                ok = jo_fs_read_next_bytes(&stream, (char *)data + i, n) == (int)n;
-            }
-            jo_fs_close(&stream);
-        }
-        loaded = key; drawn = -1; failed = !ok;
-        if (failed) return false;
-        for (i = 0; i < (page == PAUSE_MAP ? 176u : 16u); ++i)
-            ((volatile unsigned short *)JO_VDP2_CRAM)[(page == PAUSE_MAP ? 848 : 816) + i] =
-                ((unsigned)data[i * 2] << 8) | data[i * 2 + 1];
-    }
+    pause_window_state_t *s=&gameplay.pause_window;
+    unsigned page=s->system_confirm ? PAUSE_EXTRA : s->save_prompt ? PAUSE_SAVE : s->page;
+    unsigned variant=page==PAUSE_EQUIPMENT ? gameplay.owned&3 :
+        page==PAUSE_ITEMS ? ((!!save_state.stick_owned) | ((!!save_state.slingshot)<<1)) :
+        page==PAUSE_QUEST ? !!(save_state.quest_items&(1u<<QUEST_KOKIRI_EMERALD)) : 0;
+    int key=page*4+variant;
+    int cursor=s->save_prompt ? s->save_choice : s->cursor[s->page];
+    int stamp=cursor+(gameplay.equipped<<8)+(s->system_confirm<<16);
+    unsigned now=demo_clock(),t;
     if (failed) return false;
-    if (stamp == drawn) return true;
-    for (tile = 0; tile < 1200; ++tile) {
-        x = (tile % 40) * 4; y = (tile / 40) * 8;
-        PAGE_MAP[(tile / 40) * 64 + tile % 40] =
-            ((page == PAUSE_MAP ? (unsigned)data[352 + tile] : 3u) << 12) | (0x6000u / 32 + tile);
-        for (i = 0; i < 16; ++i) {
-            unsigned offset = pixel_start + (y + i / 2) * 160 + x + (i & 1) * 2;
-            PAGE_CELLS[tile * 16 + i] = ((unsigned)data[offset] << 8) | data[offset + 1];
-        }
+    if (!active && !begin()) { failed=true; return false; }
+    if (loaded<0) { if (!load_page(key)) goto fail; }
+    if (!phase && key!=loaded) {
+        if (key/4!=loaded/4 && page!=PAUSE_SAVE && loaded/4!=PAUSE_SAVE && !s->system_confirm) {
+            int from=loaded/4==PAUSE_EXTRA ? 4 : loaded/4;
+            int to=page==PAUSE_EXTRA ? 4 : page;
+            direction=((to-from+5)%5)<=2 ? 1 : -1;
+            phase=1; started=now;
+        } else if (!load_page(key)) goto fail;
     }
-    if (page == PAUSE_ITEMS) frame(64 + (cursor % 6) * 32, 62 + (cursor / 6) * 32, 31, 15);
-    else if (page == PAUSE_EQUIPMENT) {
-        static const short columns[4] = {46, 172, 204, 236};
-        if (gameplay.equipped & GP_SWORD) frame(173, 63, 29, 14);
-        if (gameplay.equipped & GP_SHIELD) frame(173, 95, 29, 14);
-        frame(columns[cursor % 4], 62 + (cursor / 4) * 32, 31, 15);
-    } else if (page == PAUSE_SAVE) frame(cursor ? 168 : 100, 118, 47, 15);
-    else if (page == PAUSE_QUEST && variant) frame(179, 165, 25, 15);
-    drawn = stamp;
+    t=now-started;
+    if (phase && t>=12) {
+        if (phase==1) {
+            if (!load_page(key)) goto fail;
+            phase=2; started=demo_clock(); t=0;
+        } else { phase=0; t=0; }
+    }
+    if (phase==1) { transform(t); return !failed; }
+    if (key!=loaded) { transform(phase ? t : 0); return !failed; }
+    if (failed) return false;
+    if (stamp!=drawn) {
+        paint();
+        if (page==PAUSE_ITEMS) frame(64+(cursor%6)*32,62+(cursor/6)*32,31,0xFF50);
+        else if (page==PAUSE_EQUIPMENT) {
+            static const short columns[4]={46,172,204,236};
+            if (gameplay.equipped&GP_SWORD) frame(173,63,29,0x83FF);
+            if (gameplay.equipped&GP_SHIELD) frame(173,95,29,0x83FF);
+            frame(columns[cursor%4],62+(cursor/4)*32,31,0xFF50);
+        } else if (page==PAUSE_SAVE) frame(cursor ? 168 : 100,118,47,0xFF50);
+        else if (page==PAUSE_QUEST && variant) frame(179,165,25,0xFF50);
+        drawn=stamp;
+    }
+    transform(phase ? t : 0);
     return true;
+fail:
+    pause_windows_reset();
+    failed=true;
+    return false;
 }
