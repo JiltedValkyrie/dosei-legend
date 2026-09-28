@@ -1,4 +1,38 @@
-# Codex: controller preferences, pause backdrop and map - 2026-09-27
+# Codex: full-colour pause carousel - 2026-09-27
+
+Clean build passes; .bss end 0x060836B0, 2,384 B below SGL. 29 focused checks
+pass (12 pause/health assets/state, 6 actual renderer, 11 minimap). Packed
+map/System previews inspected. No Kronos run. RAM remains tight (BUG-043).
+
+Supersedes the NBG2/4bpp pause layout below. Every pause page is now direct
+RGB555 (153600 bytes), not a 13-colour or regional-palette approximation.
+World map keeps aspect ratio; reduced cloud opacity preserves unvisited-region
+shading while revealing terrain. System's baked SAVE heading is replaced by
+repeating its own clean border strip, including the topmost lettering pixels.
+
+Pause temporarily uses NBG0 RGB cells and hardware reciprocal zoom/scroll.
+Pages zoom/slide out and the next page zooms/slides in (12 ticks each at
+60 Hz). Text is rasterized from the original OoT glyphs into the same page,
+so labels move with it. This is a scale/slide carousel, not a 3D perspective
+rotation. NBG1 keeps the frozen interior bitmap; VDP1 world remains frozen.
+Font, HUD, scroll/window state and VRAM fetch schedule restore on close/failure.
+
+Memory: cells B0 0..0x1FFFF plus B1+0x8000..0xD87F (last cell transparent).
+Two-word names use A1+0x1C000..0x1FFFF: unused bottom 16 rows of the existing
+512x256 bitmap, outside the visible 320x240 room. B1 font and sky untouched.
+Pause borrows these ranges only, with exact cart backup. Fixed cart carve now
+0x70000: page/font at 0x1D000/0x26000, backup at 0x43000/0x29880. No VDP1 cost.
+RGB uses legal ZOOM_1 enlargement (1.0x to 1.2x), not sub-1x RGB reduction.
+Cycle schedule: 4 RGB fetches + 4 CPU slots per B bank; 1 NBG0 name + 4 NBG1
+bitmap fetches + 3 CPU slots in A1. No pause palette allocation.
+
+Human Kronos: all five pages in forest AND Link's house; both turn directions,
+fast taps and Start during animation; System heading, save failure, owned-item
+colours, map terrain, font/HUD/interior restore after closing. No emulator run.
+SGL reciprocal zoom reference:
+https://docs.exodusemulator.com/Archives/SSDDV1R1E/refe/func3/func62.htm
+
+# Earlier: controller preferences, pause backdrop and map - 2026-09-27
 
 Urgent Navi follow-up: cutscene cue channel 8 now calls the gameplay fairy
 renderer with the scripted position, neutral white/blue glow, animated wings,

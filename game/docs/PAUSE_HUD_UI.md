@@ -1,5 +1,35 @@
 # VDP2 pause windows and health HUD
 
+## Current renderer: full RGB and hardware carousel
+
+Clean build: .bss 0x060836B0, 2,384 B below SGL; 29 focused checks pass.
+Packed previews inspected; human Kronos visual/timing review remains pending.
+
+This section supersedes the older NBG2 page storage notes below. All six page
+types now use direct RGB555, preserving every source pixel to Saturn's native
+five bits per channel. No palette quantization. Map clouds are softly shaded
+instead of opaque; this changes presentation only, not discovery flags.
+System removes the complete SAVE heading by repeating the original clean
+eight-pixel border strip. Selection/equipped colours remain light blue/gold.
+
+While paused, NBG0 displays RGB cells and scales/slides pages with reciprocal
+hardware zoom, clipped to their current screen rectangle. Text uses original
+OoT glyphs rasterized into the page, so it follows the transformation. Two
+12-tick phases provide departure/arrival. This is a scale/slide carousel;
+perspective rotation and the Link equipment portrait are still not implemented.
+NBG1's visible room bitmap stays intact. NBG2 HUD is hidden while paused.
+
+VRAM borrowed: B0 all 128 KiB; B1+0x8000..0xD87F (page tail plus blank cell);
+A1+0x1C000..0x1FFFF (two-word names, below the visible 240 bitmap rows).
+All borrowed bytes are backed up/restored, including HUD labels/heart atlas.
+Original B1 font/sky remain untouched. Cart fixed pool is 0x70000, page/font
+uses 0x1D000/0x26000 and backup uses 0x43000/0x29880. Each page file is 153600 B;
+PAUSEFNT.BIN is 1024 B. There is no pause CRAM or VDP1 allocation.
+
+Host renderer tests exercise real page upload, both transition directions,
+rapid input, cursor/text updates without CD reads, error cleanup, and exact
+VRAM restoration. Hardware fetch timing still needs the human Kronos check.
+
 Human scope: four OoT Start-menu pages and save window; show only actually
 owned items. Existing gear equip/save stay live. Unimplemented item actions
 must not report success. Human handles Kronos; no emulator was launched.

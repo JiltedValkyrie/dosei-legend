@@ -105,7 +105,7 @@ whether work stops. Optional features stay in backlog until assigned.
 | BUG-040 | M2d.1 attention gaps (on-screen test, NPC range types, NPC focus, Navi voice) | `bug`, `priority: P3` | Claude | M3 Kokiri NPCs | Open |
 | BUG-041 | Forest load rejected after attention glows: resident VRAM undercount | `bug`, `priority: P0` | Codex | Done | Closed: human Kronos check |
 | BUG-042 | M2d.2 Deku Baba presentation gaps (effects, shadow, hit-stop, SFX layers) | `bug`, `priority: P3` | Claude | M5 enemy polish | Open |
-| BUG-043 | Clean work RAM: 5,280 B after moving HUD label maps to VDP2 | `bug`, `priority: P1` | Claude | Before next code addition | Open |
+| BUG-043 | Clean work RAM: 2,384 B after full-colour pause carousel | `bug`, `priority: P1` | Claude | Before next code addition | Open |
 | BUG-044 | Navi/C-Up gaps: first-person view, colour blend, NPC ranges | `bug`, `priority: P3` | Claude | M4 C-items | Open |
 | BUG-045 | M2e death/Game Over presentation gaps | `bug`, `priority: P3` | Claude | M5 dungeon continue / polish | Open |
 | BUG-047 | All audio skipped after title-bank sample-rate reduction | `bug`, `priority: P1` | Codex | Human audio check | Fixed metadata; listening pending |
@@ -323,7 +323,7 @@ En_Karebaba logic, colliders, drop and regrow follow z_en_karebaba.c
 - Player-state gate for the offer reduced to grounded / not charging /
   not talking.
 
-### BUG-043: Clean work RAM 5,280 B
+### BUG-043: Clean work RAM 2,384 B
 
 **Labels:** `bug`, `priority: P1`. **Assignee:** Claude. **State:** Open.
 
@@ -337,6 +337,11 @@ Latest UI build: .bss ends 0x06082B60, 5,280 B below SGL. Button label maps
 now live in VDP2 B0+0x12000 (5,344 bytes) instead of work RAM. This includes
 saved controller/jump preferences and the richer pause map. Budget remains
 tight; earlier measurements above are historical.
+
+Full-RGB pause carousel follow-up: .bss 0x060836B0 leaves 2,384 B. Page/font
+data and exact borrowed-VRAM backup use the cart, not work RAM. Fixed cart
+carve grows to 0x70000; validate pause/open/close in the human forest/interior
+batch before considering runtime memory behaviour verified.
 
 ### BUG-044: Navi / C-Up gaps
 

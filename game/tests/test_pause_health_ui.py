@@ -17,29 +17,30 @@ GCC = Path('C:/msys64/mingw64/bin/gcc.exe')
 
 
 class Assets(unittest.TestCase):
-    def test_map_regional_palettes_fit_and_preserve_detail(self):
-        source = pause.page_image(OOT, 1)
-        blob = pause.pack_map(source)
-        self.assertEqual(len(blob), 39952)
-        self.assertLessEqual(len(blob), 0xA000)
-        palettes = struct.unpack('>176H', blob[:352])
-        self.assertEqual(set(blob[352:1552]), set(range(5,16)))
-        self.assertGreater(len(set(palettes)), 32)
-        old = pause.pack(source)
-        old_palette = struct.unpack('>16H', old[:32])
-        errors = [0,0]
-        for y in range(240):
-            for x in range(320):
-                pixel = y*320+x
-                shift = 0 if x&1 else 4
-                index = (blob[1552+pixel//2] >> shift)&15
-                self.assertEqual(index != 0, source.getpixel((x,y))[3]>=128)
-                bank = blob[352+(y//8)*40+x//8]-5
-                words = (palettes[bank*16+index], old_palette[(old[32+pixel//2]>>shift)&15])
-                if source.getpixel((x,y))[3]>=128:
-                    for version, word in enumerate(words):
-                        errors[version] += sum((source.getpixel((x,y))[c] - ((word>>(c*5))&31)*255//31)**2 for c in range(3))
-        self.assertLess(errors[0],errors[1])
+    def test_every_page_keeps_full_rgb555_and_alpha(self):
+        for page in range(6):
+            source=pause.page_image(OOT,page,gear=3,stick=True,emerald=True,slingshot=True)
+            blob=pause.pack(source)
+            self.assertEqual(len(blob),153600)
+            self.assertLessEqual(len(blob)+1024,0x26000)
+            for (word,), (r,g,b,a) in zip(struct.iter_unpack('>H',blob),source.getdata()):
+                self.assertEqual(word != 0,a>=128)
+                if a>=128:
+                    self.assertEqual((word&31,(word>>5)&31,(word>>10)&31),(r>>3,g>>3,b>>3))
+            if page==1: self.assertGreater(len(set(struct.unpack('>76800H',blob))),256)
+
+    def test_system_heading_has_no_save_lettering(self):
+        system=pause.page_image(OOT,5)
+        save=pause.page_image(OOT,4)
+        self.assertNotEqual(system.crop((128,40,192,55)).tobytes(),save.crop((128,40,192,55)).tobytes())
+        # The repaired centre frame repeats the same 8-pixel border strip.
+        # Source frame colours are interpolated, so compare alpha and allow
+        # the small smooth tint change rather than requiring identical RGB.
+        for y in range(40,55):
+            for x in range(128,184):
+                a,b=system.getpixel((x,y)),system.getpixel((x+8,y))
+                self.assertEqual(a[3],b[3])
+                self.assertLessEqual(max(abs(a[c]-b[c]) for c in range(3)),8)
 
     def test_owned_gear_only_changes_its_slot(self):
         empty = pause.page_image(OOT, 3)
@@ -47,20 +48,13 @@ class Assets(unittest.TestCase):
         self.assertEqual(empty.crop((174,96,202,124)).tobytes(), sword.crop((174,96,202,124)).tobytes())
         self.assertNotEqual(empty.crop((174,64,202,92)).tobytes(), sword.crop((174,64,202,92)).tobytes())
 
-    def test_backdrop_is_dithered_and_cursor_colours_reserved(self):
-        blob = pause.pack(pause.page_image(OOT, 3, gear=3))
-        self.assertEqual(len(blob), 38432)
-        self.assertLessEqual(len(blob), 0xA000)
-        self.assertEqual(struct.unpack('>16H', blob[:32])[15], 0xFF50)
-        self.assertEqual(struct.unpack('>16H', blob[:32])[14], 0x83FF)
-        self.assertNotEqual(blob[32] >> 4, 0)
-        self.assertEqual(blob[32] & 15, 0)
-        self.assertEqual(blob[32+160] >> 4, 0)
-        self.assertNotEqual(blob[32+160] & 15, 0)
-        for byte in blob[32:]:
-            self.assertIn(byte >> 4, range(0,14))
-            self.assertIn(byte & 15, range(0,14))
-        self.assertLessEqual(0x6000 + len(blob)-32, 0x10000) # heart cells start here
+    def test_backdrop_keeps_transparent_checkerboard(self):
+        blob=pause.pack(pause.page_image(OOT,3,gear=3))
+        words=struct.unpack('>76800H',blob)
+        self.assertNotEqual(words[0],0)
+        self.assertEqual(words[1],0)
+        self.assertEqual(words[320],0)
+        self.assertNotEqual(words[321],0)
 
     def test_hearts_include_all_five_fill_levels(self):
         with tempfile.TemporaryDirectory() as tmp:
