@@ -1872,16 +1872,16 @@ void kokiri_cutscene_effects_draw(void)
     unsigned int i, count = cutscene_rain_count();
     if (cutscene_hides_scene()) return;
     if (cutscene_actor_channel_visible(8)) {
-        FIXED pos[5];
-        SPR_ATTR attr = SPR_ATTRIBUTE(0, No_Palet, No_Gouraud, ECdis,
-                                      sprNoflip | FUNC_Sprite);
-        pos[0] = cutscene_actor_channel_x(8) * 65536;
-        pos[1] = -cutscene_actor_channel_y(8) * 65536;
-        pos[2] = cutscene_actor_channel_z(8) * 65536;
-        pos[3] = pos[4] = toFIXED(1);
-        attr.texno = (Uint16)fairy_sprite;
-        attr.atrb |= (FAIRY_COLMODE_RGB & 7) << 3;
-        if (slPutSprite(pos, &attr, 0) == FALSE) ++kokiri_rejected;
+        /* Keep the scripted position, but use the same wings, world scale
+         * and breathing glow as gameplay Navi instead of the old bare orb.
+         * Opening cues always use her neutral colour, not a stale lock tint. */
+        static uint16_t yaw;
+        static int32_t last_x, last_z;
+        int x = cutscene_actor_channel_x(8);
+        int y = cutscene_actor_channel_y(8);
+        int z = cutscene_actor_channel_z(8);
+        yaw = fairy_turn(yaw, &last_x, &last_z, x, z);
+        fairy_draw(x, y, z, yaw, demo_clock(), 0, fairy_glow, 0);
     }
     if (count) {
         /* Original raindrop triangle (gameplay_keep/gRaindropVtx), scaled

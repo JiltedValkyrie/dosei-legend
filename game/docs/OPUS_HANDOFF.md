@@ -1,5 +1,11 @@
 # Codex: controller preferences, pause backdrop and map - 2026-09-27
 
+Urgent Navi follow-up: cutscene cue channel 8 now calls the gameplay fairy
+renderer with the scripted position, neutral white/blue glow, animated wings,
+heading smoothing and the same 12-unit pulsing body. Removed legacy 16-unit
+static glow-only sprite. No additional textures or VRAM. Human opening check
+pending; existing dialogue checkerboard is separate from Navi's glow.
+
 Final Clean build passes: .bss end 0x06082B60, 5,280 B below SGL. 250 focused
 checks pass (155 gameplay, 61 controls, 11 pause/health, 7 button HUD,
 11 minimap, 5 preferences/audio/freeze). Packed map preview inspected;
