@@ -2,6 +2,12 @@
 
 ## Current renderer: full RGB and hardware carousel
 
+Readability follow-up: page text now uses Jo's native 8x8 bitmap font, without
+resampling/thresholding the 16x16 OoT glyphs. Font asset stays 1024 bytes.
+System text sits on solid dark panels; controller and close hints moved up
+one row to clear the lower frame. This supersedes the OoT glyph note below.
+Uncommitted; human review required before any Git publication.
+
 Clean build: .bss 0x060836B0, 2,384 B below SGL; 29 focused checks pass.
 Packed previews inspected; human Kronos visual/timing review remains pending.
 
@@ -136,3 +142,17 @@ Clean built successfully with shared M2e/Game Over changes; final .bss end
 0x06082DF0 leaves 4,624 bytes below SGL. 153 gameplay, 7 pause/health, 6 button
 HUD and 8 minimap checks passed. No Kronos run or commit. Human batch review
 remains pending; BUG-046 tracks incomplete visual parity.
+
+## Item counts, assignment and text recoil (2026-09-27)
+
+Items shows live stick/seed counts and Down/Left/Right bindings. Plain D-pad
+navigates; hold Saturn C + Down/Left/Right assigns an owned item on either pad.
+Gold marks assigned items; blue marks cursor. Save v4 appends bindings; v2/v3
+migrate with empty slots. Live stick/slingshot weapon actions remain pending.
+Baba events are per-step and consumed once: first-stick fanfare no longer
+restarts during text. Text/menu blocks knockback and weapon recoil, clearing
+residual push. 265 focused host checks pass; Clean build passes, .bss ends
+0x06083E40 (448 B below SGL with concurrent UI changes). No Kronos run or commit.
+Human review: first-stick sound, text after hurt/rebound, counts, all assignment
+directions on digital/analog pads, save/reload. Preserve concurrent UI edits.
+

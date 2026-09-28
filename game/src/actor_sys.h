@@ -16,7 +16,11 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#define ACTOR_POOL_MAX      64
+/* M3 worst case (docs/M3A_ACTOR_MANIFEST.md, OPUS_HANDOFF M3 pool budget):
+** 49 placed pool actors in spot04 child day/night + 8 Obj_Mure2 children
+** = 57, plus runtime drops/Navi/effects reserve. 96 x 72 B (SH-2) = 6,912 B,
+** inside the 0x2000 cart carve. A full pool is counted, never silent. */
+#define ACTOR_POOL_MAX      96
 #define ACTOR_ROOM_NONE     (-1)
 #define ACTOR_DATA_WORDS    8
 
@@ -101,6 +105,8 @@ struct actor
 /* Bytes the caller must supply. */
 unsigned int    actor_sys_bytes(void);
 bool            actor_sys_init(void *storage, unsigned int bytes);
+/* Spawns refused because the pool was full, since init. */
+unsigned int    actor_sys_spawn_failures(void);
 void            actor_sys_clear(void);      /* destroy everything */
 
 actor_t        *actor_spawn(const actor_profile_t *profile, unsigned int scene,

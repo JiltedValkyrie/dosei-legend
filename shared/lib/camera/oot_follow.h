@@ -19,12 +19,11 @@
 **
 ** with CAM_YOFFSET_NORM = -0.1.
 **
-** playerHeight is OUR model's height, not OoT's 44: Camera_Normal1 scales the
-** whole camera to whatever the player actually measures, and our baked child
-** Link is 62 world units tall. Using 44 produced a camera correct for a
-** smaller Link -- too close, and framed so his feet fell off the bottom of the
-** screen. At 62 the scale is 0.6260, giving 125.2 to 187.8 units of distance
-** and a 12.5-unit at-offset.
+** playerHeight is Player_GetHeight's child 44. Link was baked at 1.45x
+** (62 units) and the camera once scaled to that; BUG-009 fixed the model to
+** the source actor scale 0.01, so the source value applies again. At 44 the
+** scale is 0.4640, giving 92.8 to 139.2 units of distance and a 9.3-unit
+** at-offset.
 **
 ** Includes a behind-Link targeting adaptation. Full Parallel/KeepOn, first-person
 ** and the swing/collision behaviour are separate Camera_* functions and are
@@ -32,16 +31,16 @@
 */
 
 /* Scaled from the table above; see the derivation in oot_follow.c. */
-#define OOT_CAM_DIST_MIN        125
-#define OOT_CAM_DIST_MAX        188
-#define OOT_CAM_Y_OFFSET        (-12)
+#define OOT_CAM_DIST_MIN        93
+#define OOT_CAM_DIST_MAX        139
+#define OOT_CAM_Y_OFFSET        (-9)
 /* CAM_DEG_TO_BINANG(10): 10 * 0x10000 / 360. */
 #define OOT_CAM_PITCH_TARGET    1820
 
 /* Storage Y is feet+90. Camera_CalcAtDefault targets player origin PLUS
 ** Player_GetHeight() PLUS yOffset; neither the storage eye nor feet alone. */
 #define OOT_CAM_PLAYER_ORIGIN   90
-#define OOT_CAM_PLAYER_HEIGHT   62
+#define OOT_CAM_PLAYER_HEIGHT   44
 
 typedef struct
 {

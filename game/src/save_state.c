@@ -236,6 +236,142 @@ void            save_heal(unsigned int units)
     save_state.health = (uint16_t)healed;
 }
 
+/* ---- Item_Give --------------------------------------------------------- */
+
+static const uint8_t    stick_capacity[4] = { 0, 10, 20, 30 };
+static const uint8_t    nut_capacity[4] = { 0, 20, 30, 40 };
+
+static void             ammo_add(uint8_t *owned, uint8_t *ammo, uint8_t *upgrade,
+                                 const uint8_t capacity[4], unsigned int count,
+                                 bool set_first)
+{
+    unsigned int    total;
+
+    if (!*owned) {
+        /* INV_CONTENT == ITEM_NONE: Inventory_ChangeUpgrade(.., 1). Source
+        ** SETS stick ammo on a first get but ADDS nuts_5/10 without a clamp. */
+        *owned = 1;
+        if (*upgrade == 0)
+            *upgrade = 1;
+        total = set_first ? count : *ammo + count;
+        *ammo = (uint8_t)(total > 255 ? 255 : total);
+        return;
+    }
+    total = *ammo + count;
+    if (total > capacity[*upgrade & 3])
+        total = capacity[*upgrade & 3];
+    *ammo = (uint8_t)total;
+}
+
+bool            save_item_give(save_item_t item)
+{
+    static const uint8_t rupee[3] = { 1, 5, 20 };
+    unsigned int    total;
+
+    switch (item) {
+    case SAVE_ITEM_RUPEE_GREEN:
+    case SAVE_ITEM_RUPEE_BLUE:
+    case SAVE_ITEM_RUPEE_RED:
+        total = save_state.rupees + rupee[item - SAVE_ITEM_RUPEE_GREEN];
+        save_state.rupees = (uint16_t)(total > SAVE_WALLET_CAPACITY ?
+                                       SAVE_WALLET_CAPACITY : total);
+        return true;
+    case SAVE_ITEM_SEEDS_5:
+        if (!save_state.slingshot) return false;
+        total = save_state.ammo_seeds + 5;
+        save_state.ammo_seeds = (uint8_t)(total > 30 ? 30 : total);
+        return true;
+    case SAVE_ITEM_RECOVERY_HEART:
+        save_heal(SAVE_HEART_UNIT);     /* Health_ChangeBy(play, 0x10) */
+        return true;
+    case SAVE_ITEM_DEKU_STICK:
+    case SAVE_ITEM_DEKU_STICKS_5:
+    case SAVE_ITEM_DEKU_STICKS_10:
+        ammo_add(&save_state.stick_owned, &save_state.stick_ammo,
+                 &save_state.stick_upgrade, stick_capacity,
+                 item == SAVE_ITEM_DEKU_STICK ? 1 : item == SAVE_ITEM_DEKU_STICKS_5 ? 5 : 10,
+                 true);
+        return true;
+    case SAVE_ITEM_DEKU_NUT:
+    case SAVE_ITEM_DEKU_NUTS_5:
+    case SAVE_ITEM_DEKU_NUTS_10:
+        /* First single nut: AMMO = ITEM_DEKU_NUT (1). */
+        ammo_add(&save_state.nut_owned, &save_state.nut_ammo,
+                 &save_state.nut_upgrade, nut_capacity,
+                 item == SAVE_ITEM_DEKU_NUT ? 1 : item == SAVE_ITEM_DEKU_NUTS_5 ? 5 : 10,
+                 item == SAVE_ITEM_DEKU_NUT);
+        return true;
+    case SAVE_ITEM_SWORD_KOKIRI:
+        save_give_equip(EQUIP_TYPE_SWORD, EQUIP_VALUE_SWORD_KOKIRI);
+        return true;
+    case SAVE_ITEM_SHIELD_DEKU:
+        save_give_equip(EQUIP_TYPE_SHIELD, EQUIP_VALUE_SHIELD_DEKU);
+        return true;
+    default:
+        return false;
+    }
+}
+
+bool            save_item_first_get(save_item_t item)
+{
+    switch (item) {
+    case SAVE_ITEM_DEKU_STICK: case SAVE_ITEM_DEKU_STICKS_5: case SAVE_ITEM_DEKU_STICKS_10:
+        return !save_state.stick_owned;
+    case SAVE_ITEM_DEKU_NUT: case SAVE_ITEM_DEKU_NUTS_5: case SAVE_ITEM_DEKU_NUTS_10:
+        return !save_state.nut_owned;
+    case SAVE_ITEM_SWORD_KOKIRI:
+        return save_all_equip_value(EQUIP_TYPE_SWORD) != EQUIP_VALUE_SWORD_KOKIRI;
+    case SAVE_ITEM_SHIELD_DEKU:
+        return save_all_equip_value(EQUIP_TYPE_SHIELD) != EQUIP_VALUE_SHIELD_DEKU;
+    default:
+        return false;                   /* rupees/hearts are never ITEM_NONE */
+    }
+}
+
+save_canbuy_t   save_item_can_buy(save_item_t item, unsigned int price)
+{
+    bool            full;
+
+    switch (item) {
+    case SAVE_ITEM_DEKU_STICK:
+        full = save_state.stick_owned &&
+               save_state.stick_ammo >= stick_capacity[save_state.stick_upgrade & 3];
+        break;
+    case SAVE_ITEM_DEKU_NUTS_5:
+    case SAVE_ITEM_DEKU_NUTS_10:
+        full = save_state.nut_owned &&
+               save_state.nut_ammo >= nut_capacity[save_state.nut_upgrade & 3];
+        break;
+    case SAVE_ITEM_SHIELD_DEKU:
+        full = !save_item_first_get(item);
+        break;
+    case SAVE_ITEM_RECOVERY_HEART:
+        /* No fanfare branch in EnGirlA_CanBuy_RecoveryHeart. */
+        if (save_state.health_capacity == save_state.health)
+            return SAVE_CANBUY_CANT_GET_NOW;
+        return save_state.rupees < price ? SAVE_CANBUY_NEED_RUPEES : SAVE_CANBUY_SUCCESS;
+    default:
+        return SAVE_CANBUY_CANT_GET_NOW;  /* not a Kokiri shop item */
+    }
+    if (full)
+        return SAVE_CANBUY_CANT_GET_NOW;
+    if (save_state.rupees < price)
+        return SAVE_CANBUY_NEED_RUPEES;
+    return save_item_first_get(item) ? SAVE_CANBUY_SUCCESS_FANFARE : SAVE_CANBUY_SUCCESS;
+}
+
+save_canbuy_t   save_item_buy(save_item_t item, unsigned int price)
+{
+    save_canbuy_t   result = save_item_can_buy(item, price);
+
+    if (result == SAVE_CANBUY_SUCCESS || result == SAVE_CANBUY_SUCCESS_FANFARE) {
+        /* EnGirlA_ItemGive_*: Item_Give, then Rupees_ChangeBy(-price). */
+        save_item_give(item);
+        save_state.rupees = (uint16_t)(save_state.rupees - price);
+    }
+    return result;
+}
+
 bool            save_is_dead(void)
 {
     return (save_state.health == 0);
@@ -273,6 +409,8 @@ void            save_new_game(void)
     save_state.stick_owned = 0;
     save_state.stick_ammo = 0;
     save_state.stick_upgrade = 0;
+    save_state.nut_owned = save_state.nut_ammo = save_state.nut_upgrade = 0;
+    for (i = 0; i < 3; ++i) save_state.c_items[i] = 0;
     save_state.navi_timer = 0;
     /* A new file begins in Link's house, in bed, exactly as the original does.
     ** Spawn 0 of that scene is the bed, straight from the ROM's spawn list.

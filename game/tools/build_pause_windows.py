@@ -94,8 +94,27 @@ def page_image(oot, page, gear=0, stick=False, emerald=False, slingshot=False):
         dot=load_texture(textures,'gWorldMapDotTex')
         dot.putdata([(r,r,0,a) for r,g,b,a in dot.getdata()])
         map_layer.alpha_composite(dot,(234,129))
+        # Reuse the page's stone rim around the enlarged map. The frame sits
+        # outside its 288x171 image, so no terrain is cropped or squeezed.
+        stone=image.crop((48,192,128,200))
+        side=image.crop((40,72,48,168)).resize((8,171),Image.Resampling.LANCZOS)
+        for x in range(8,312,80):
+            strip=stone.crop((0,0,min(80,312-x),8))
+            image.alpha_composite(strip,(x,24))
+            image.alpha_composite(strip,(x,203))
+        image.alpha_composite(side,(8,32))
+        image.alpha_composite(side.transpose(Image.Transpose.FLIP_LEFT_RIGHT),(304,32))
+        rim=ImageDraw.Draw(image)
+        rim.rectangle((8,24,311,210),outline=(76,80,86,255))
+        rim.rectangle((15,31,304,203),outline=(12,14,18,255))
         image.alpha_composite(map_layer.crop((52,59,268,187)).resize(
             (288,171),Image.Resampling.LANCZOS),(16,32))
+        # Current region marker: a dark outline and white ring remain visible
+        # against both forest greens and pale clouds. Baked VDP2 art, no sprite.
+        marker=ImageDraw.Draw(image)
+        marker.ellipse((254,121,274,141),fill=(8,12,20,255))
+        marker.ellipse((256,123,272,139),fill=(255,255,255,255))
+        marker.ellipse((259,126,269,136),fill=(255,224,32,255))
     if page==4:
         for name,x,y in (('gPauseSavePromptENGTex',84,84),
                          ('gPauseYesENGTex',102,126),('gPauseNoENGTex',170,126)):
@@ -107,10 +126,15 @@ def page_image(oot, page, gear=0, stick=False, emerald=False, slingshot=False):
         for x in (12,276):
             draw.rounded_rectangle((x,104,x+31,127),radius=4,
                                    fill=(55,61,72,255),outline=(210,218,230,255),width=1)
-        for name,x in (('gInfoPanelBgLeftTex',88),('gInfoPanelBgRightTex',160)):
+        for name,x in (() if page==5 else (('gInfoPanelBgLeftTex',88),('gInfoPanelBgRightTex',160))):
             panel=load_texture(textures,name)
             panel.putdata([(r*90//255,r*100//255,r*130//255,a) for r,g,b,a in panel.getdata()])
             image.alpha_composite(panel,(x,204 if page==1 else 196))
+    if page==5:
+        # Solid text beds stop the frozen world/dither cutting through glyphs.
+        draw=ImageDraw.Draw(image)
+        draw.rectangle((48,60,271,187),fill=(12,16,23,255))
+        draw.rectangle((48,196,271,231),fill=(12,16,23,255))
     return image
 
 
@@ -121,7 +145,20 @@ def pack(image):
         for r,g,b,a in image.getdata())
 
 
-def build(oot,cd,out):
+def menu_font(sdk):
+    """Use Jo's native 8x8 bitmap, without resampling or threshold erosion.
+
+    Font source: jo_engine/tools.c, Jo Engine BSD-3-Clause (Johannes Fetz).
+    The SDK license remains with that source; only the existing bitmap is baked.
+    """
+    source=(sdk/'jo_engine/tools.c').read_text(encoding='utf-8')
+    body=source.split('static unsigned char __jo_font[] =',1)[1].split('};',1)[0]
+    font=bytes(int(v,16) for v in re.findall(r'0x([0-9A-Fa-f]{2})',body))
+    if len(font)!=1024: raise ValueError('Expected Jo native 128-glyph 8x8 font')
+    return font
+
+
+def build(oot,cd,out,sdk=ROOT.parent.parent/'joengine'):
     cd.mkdir(parents=True,exist_ok=True);out.mkdir(parents=True,exist_ok=True)
     for page in range(6):
         variants=range(4) if page in (0,3) else range(2) if page==2 else range(1)
@@ -142,14 +179,7 @@ def build(oot,cd,out):
         masks.append([sum(1<<x for x in range(16) if tex.getpixel((x,y))[3]>=128) for y in range(16)])
     (out/'pause_cursor_data.h').write_text('/* Original OoT cursor alpha masks. */\nstatic const unsigned short pause_cursor_masks[4][16] = {\n'+
         ',\n'.join('{'+','.join(map(str,m))+'}' for m in masks)+'\n};\n')
-    # Source message glyphs become a compact 8x8 alpha font for page text.
-    # Text is rasterized into the RGB page, so it follows hardware scaling.
-    font=[]
-    for code in range(128):
-        candidates=list((textures/'nes_font_static').glob('gMsgChar%02X*.png'%code))
-        glyph=Image.open(candidates[0]).convert('L').resize((8,8),Image.Resampling.LANCZOS) if candidates else Image.new('L',(8,8))
-        font.extend(sum(1<<(7-x) for x in range(8) if glyph.getpixel((x,y))>=80) for y in range(8))
-    (cd/'PAUSEFNT.BIN').write_bytes(bytes(font))
+    (cd/'PAUSEFNT.BIN').write_bytes(menu_font(sdk))
     print('Pause windows: full RGB555, 153600 bytes per page; font 1024 bytes')
 
 
@@ -158,4 +188,5 @@ if __name__=='__main__':
     p.add_argument('--oot',type=Path,default=Path('D:/Workspace-Claude/game-decomps/n64/oot'))
     p.add_argument('--cd',type=Path,default=ROOT/'build/cd')
     p.add_argument('--out',type=Path,default=ROOT/'build/generated')
-    a=p.parse_args();build(a.oot,a.cd,a.out)
+    p.add_argument('--sdk',type=Path,default=ROOT.parent.parent/'joengine')
+    a=p.parse_args();build(a.oot,a.cd,a.out,a.sdk)

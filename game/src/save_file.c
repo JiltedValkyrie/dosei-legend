@@ -106,6 +106,11 @@ static void     pack_payload(const save_state_t *state, cursor *c)
     put8(c, state->stick_ammo);
     put8(c, state->stick_upgrade);
     put16(c, state->navi_timer);
+    for (i = 0; i < 3; ++i) put8(c, state->c_items[i]);
+    /* v5 */
+    put8(c, state->nut_owned);
+    put8(c, state->nut_ammo);
+    put8(c, state->nut_upgrade);
 }
 
 static void     unpack_payload(save_state_t *state, cursor *c, uint16_t version)
@@ -136,6 +141,8 @@ static void     unpack_payload(save_state_t *state, cursor *c, uint16_t version)
     state->ammo_seeds = get8(c);
     state->scene_id = get8(c);
     state->entrance = get8(c);
+    for (i = 0; i < 3; ++i) state->c_items[i] = 0;
+    state->nut_owned = state->nut_ammo = state->nut_upgrade = 0;
     if (version < 3) {
         state->stick_owned = state->stick_ammo = state->stick_upgrade = 0;
         state->navi_timer = 0;
@@ -145,11 +152,23 @@ static void     unpack_payload(save_state_t *state, cursor *c, uint16_t version)
     state->stick_ammo = get8(c);
     state->stick_upgrade = get8(c);
     state->navi_timer = get16(c);
+    if (version >= 4)
+        for (i = 0; i < 3; ++i) {
+            unsigned item = get8(c);
+            state->c_items[i] = item <= 2 ? item : 0;
+        }
+    if (version >= 5) {
+        state->nut_owned = get8(c);
+        state->nut_ammo = get8(c);
+        state->nut_upgrade = get8(c);
+    }
 }
 
 static unsigned int payload_bytes(uint16_t version)
 {
-    return version == 2 ? SAVE_FILE_V2_PAYLOAD_BYTES : SAVE_FILE_PAYLOAD_BYTES;
+    return version == 2 ? SAVE_FILE_V2_PAYLOAD_BYTES :
+           version == 3 ? SAVE_FILE_V3_PAYLOAD_BYTES :
+           version == 4 ? SAVE_FILE_V4_PAYLOAD_BYTES : SAVE_FILE_PAYLOAD_BYTES;
 }
 
 /* ---- public ------------------------------------------------------------ */
@@ -196,7 +215,8 @@ static save_file_status validate(const uint8_t *in, unsigned int bytes)
         return (SAVE_FILE_BAD_MAGIC);
     }
     version = (uint16_t)((in[4] << 8) | in[5]);
-    if (version != SAVE_FILE_VERSION && version != 2)
+    if (version != SAVE_FILE_VERSION && version != 5 && version != 4 && version != 3 &&
+        version != 2)
         return (SAVE_FILE_BAD_VERSION);
     payload = payload_bytes(version);
     if (bytes < 8 + payload + 2)
@@ -221,6 +241,14 @@ save_file_status    save_file_unpack(save_state_t *state, const uint8_t *in,
     c.read = in;
     c.at = 8;
     unpack_payload(state, &c, (uint16_t)((in[4] << 8) | in[5]));
+    if (((in[4] << 8) | in[5]) < 6) {
+        /* v2-v5 saved forest rupee indices, not source collectible flags.
+         * Greens have temporary flags >=32; persistent blues migrate. */
+        uint32_t old = state->scene[SAVE_SCENE_KOKIRI_FOREST].collect;
+        state->scene[SAVE_SCENE_KOKIRI_FOREST].collect = (old & ~255u) |
+            ((old & 0x10) ? 1u<<0x12 : 0) | ((old & 0x20) ? 1u<<0x11 : 0) |
+            ((old & 0x40) ? 1u<<0x0F : 0) | ((old & 0x80) ? 1u<<0x0E : 0);
+    }
     return (SAVE_FILE_OK);
 }
 

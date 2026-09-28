@@ -41,7 +41,7 @@ typedef struct { Uint16 texno, atrb; } SPR_ATTR;
 gameplay_t gameplay;
 static struct { int x,y,z; } demo_camera;
 static int forest_room;
-static unsigned int rupee_sprite[2]={40,41}, digit_sprite[10]={50,51,52,53,54,55,56,57,58,59};
+static unsigned int rupee_sprite[3]={40,41,42}, digit_sprite[10]={50,51,52,53,54,55,56,57,58,59};
 static unsigned int kokiri_rejected, count, hud_count;
 static FIXED positions[64][5], hud[3][5];
 static Uint16 textures[64], hud_tex[3];

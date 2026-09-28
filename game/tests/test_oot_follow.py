@@ -113,7 +113,7 @@ class OotFollowCamera(unittest.TestCase):
 
     def run_lock(self, focus, distance, off_ground=False, steps=20):
         cam, eye = Follow(), Position()
-        player = Position(0, 90, 0)                    # feet 0, head 62
+        player = Position(0, 90, 0)                    # feet 0, head 44
         yaw, pitch = ctypes.c_uint16(), ctypes.c_int32()
         self.lib.oot_follow_snap(ctypes.byref(cam), ctypes.byref(player), 0)
         self.lib.oot_follow_target(ctypes.byref(cam), True)
@@ -127,22 +127,46 @@ class OotFollowCamera(unittest.TestCase):
 
     def test_lock_aim_shifts_toward_a_close_target_focus(self):
         """Camera_CalcAtForLockOn: v * (0.75 - 0.6 |v| / d) inside d."""
-        base = self.run_lock(None, 0)[1]
-        cam, eye, yaw, pitch = self.run_lock((0, 62 + 60, 80), 180)   # |v| = 100
+        cam, eye, yaw, pitch = self.run_lock((0, 44 + 60, 80), 180)   # |v| = 100
         scale = 0.75 - 0.6 * 100 / 180
-        self.assertAlmostEqual((eye.y - base.y), 60 * scale, delta=1.5)
-        self.assertAlmostEqual((eye.z - base.z), 80 * scale, delta=1.5)
-        self.assertEqual(yaw, 0)                       # orbit untouched
+        self.assertAlmostEqual(cam.aim_q8[1] / 256, 60 * scale, delta=1.5)
+        self.assertAlmostEqual(cam.aim_q8[2] / 256, 80 * scale, delta=1.5)
 
     def test_lock_aim_is_fifteen_percent_past_the_mode_distance(self):
-        base = self.run_lock(None, 0)[1]
-        eye = self.run_lock((0, 62, 400), 120)[1]
-        self.assertAlmostEqual(eye.z - base.z, 400 * 0.15, delta=1.5)
+        cam = self.run_lock((0, 44, 400), 120)[0]
+        self.assertAlmostEqual(cam.aim_q8[2] / 256, 400 * 0.15, delta=1.5)
 
     def test_lock_aim_off_ground_is_a_fifth(self):
-        base = self.run_lock(None, 0)[1]
-        eye = self.run_lock((0, 62, 400), 120, off_ground=True)[1]
-        self.assertAlmostEqual(eye.z - base.z, 400 * 0.03, delta=1.5)
+        cam = self.run_lock((0, 44, 400), 120, off_ground=True)[0]
+        self.assertAlmostEqual(cam.aim_q8[2] / 256, 400 * 0.03, delta=1.5)
+
+    def _offset_after(self, focus, distance, steps):
+        cam, eye, yaw, pitch = self.run_lock(focus, distance, steps=steps)
+        at = [cam.aim_q8[0] / 256, 44 + cam.aim_q8[1] / 256, cam.aim_q8[2] / 256]
+        target = math.degrees(math.atan2(focus[0] - at[0], focus[2] - at[2]))
+        view = yaw * 360 / 65536
+        return (target - view + 180) % 360 - 180, cam
+
+    def test_keepon1_moves_a_dead_ahead_target_off_centre(self):
+        """KeepOn1: standing still, a target straight ahead drifts to the
+        swing angle (25..45 deg) instead of hiding behind Link."""
+        off, cam = self._offset_after((0, 44, 100), 120, 600)
+        # distRatio 100/120: swing = 25 + 20 * (1.1 - 0.833) = 30.3 deg.
+        self.assertAlmostEqual(abs(off), 30.3, delta=1.5)
+        self.assertGreaterEqual(cam.distance, 120)
+        self.assertLessEqual(cam.distance, 140)
+
+    def test_battle1_uses_its_own_swing_and_distance(self):
+        off, cam = self._offset_after((0, 44, 300), 180, 600)
+        # distRatio 1: swing = 10 + 70 * 0.1 = 17 deg; eyeDist 180.
+        self.assertAlmostEqual(abs(off), 17, delta=1.5)
+        self.assertEqual(cam.distance, 180)
+
+    def test_far_off_centre_target_turns_the_view_toward_it(self):
+        cam = Follow()
+        off, _ = self._offset_after((300, 44, 0), 120, 1)
+        off2, _ = self._offset_after((300, 44, 0), 120, 40)
+        self.assertLess(abs(off2), abs(off))
 
     def test_lock_aim_eases_back_after_release(self):
         cam, eye, _, _ = self.run_lock((0, 162, 0), 180)
@@ -156,18 +180,18 @@ class OotFollowCamera(unittest.TestCase):
         self.assertEqual(list(cam.aim_q8), [0, 0, 0])
 
     def test_distance_matches_the_scaled_decomp_values(self):
-        """200/300 raw, scaled by OUR Link's height of 62, not OoT's 44.
+        """200/300 raw, scaled by Player_GetHeight's child 44 (BUG-009:
+        Link now draws at the source 0.01 scale, 44 units tall).
 
-        Camera_Normal1 scales to whatever the player actually measures.
-        yNormal = 1 + (-0.1) - (-0.1 * 68/62) = 1.00968
-        scale   = yNormal * 0.62              = 0.62600
+        yNormal = 1 + (-0.1) - (-0.1 * 68/44) = 1.05455
+        scale   = yNormal * 0.44              = 0.46400
         """
-        scale = (1 - 0.1 + 0.1 * (68.0 / 62.0)) * 0.62
-        self.assertAlmostEqual(200 * scale, 125.2, places=1)
-        self.assertAlmostEqual(300 * scale, 187.8, places=1)
+        scale = (1 - 0.1 + 0.1 * (68.0 / 44.0)) * 0.44
+        self.assertAlmostEqual(200 * scale, 92.8, places=1)
+        self.assertAlmostEqual(300 * scale, 139.2, places=1)
         source = (ROOT.parent / 'shared/lib/camera/oot_follow.h').read_text()
-        self.assertIn('OOT_CAM_DIST_MIN        125', source)
-        self.assertIn('OOT_CAM_DIST_MAX        188', source)
+        self.assertIn('OOT_CAM_DIST_MIN        93', source)
+        self.assertIn('OOT_CAM_DIST_MAX        139', source)
 
     def test_camera_is_far_closer_than_the_retired_viewer_follow(self):
         """The viewer camera sat 260 units back. The real one is not close.
@@ -182,9 +206,9 @@ class OotFollowCamera(unittest.TestCase):
 
     def test_settles_between_dist_min_and_max(self):
         stopped, _e, _y, _p = self.run_steps(200, moving=False)
-        self.assertEqual(stopped.distance, 125)
+        self.assertEqual(stopped.distance, 93)
         running, _e, _y, _p = self.run_steps(200, moving=True)
-        self.assertEqual(running.distance, 188)
+        self.assertEqual(running.distance, 139)
 
     def test_pitch_output_is_negative_so_the_view_looks_down(self):
         """The eye is raised, so the view must look down to stay on Link.
@@ -197,7 +221,7 @@ class OotFollowCamera(unittest.TestCase):
 
     def test_link_is_framed_on_screen_at_both_distances(self):
         """Project through camera pitch too, not a fictitious level camera."""
-        SCREEN_DISTANCE, EYE_HEIGHT, LINK_HEIGHT = 240, 90, 62
+        SCREEN_DISTANCE, EYE_HEIGHT, LINK_HEIGHT = 240, 90, 44
         for moving in (False, True):
             cam, eye, _yaw, _pitch = self.run_steps(200, moving=moving)
             depth = math.hypot(eye.x, eye.z)
@@ -218,7 +242,7 @@ class OotFollowCamera(unittest.TestCase):
         for moving in (False, True):
             cam, eye, _yaw, _pitch = self.run_steps(200, moving=moving)
             rise = int(cam.distance * math.sin(cam.pitch * 2 * math.pi / 65536))
-            self.assertAlmostEqual(eye.y + 90 - rise, 62 - 12, delta=1)
+            self.assertAlmostEqual(eye.y + 90 - rise, 44 - 9, delta=1)
 
     def test_yaw_follows_the_player_only_while_moving(self):
         """Normal1 swings back behind the player only while xzSpeed > 0."""

@@ -1,4 +1,4 @@
-"""Saturn pad -> OoT control mapping (2026-09-22 layout: Z targets, L looks).
+"""Saturn pad -> OoT control mapping (C-Up view owns look axes; Z targets).
 
 Executes the real player_input.c, kokiri_camera.c and oot_follow.c on the host.
 These checks cover the MAPPING and its consumption rules only: they say nothing
@@ -94,6 +94,25 @@ class PlayerControls(unittest.TestCase):
         self.tap(Y)
         self.assertTrue(self.lib.control_jump())
 
+    def test_pause_c_chord_assigns_without_moving_cursor(self):
+        for direction, assigned in ((DOWN, C_DOWN), (LEFT, C_LEFT), (RIGHT, C_RIGHT)):
+            self.lib.control_reset()
+            self.lib.player_input_set_dialogue(True)
+            self.hold(C | direction)
+            self.assertEqual(self.lib.control_c_pressed(), assigned)
+            self.assertEqual(self.lib.control_menu_step(), 0)
+            self.assertEqual(self.lib.control_move_buttons(), 0)
+            self.lib.control_step(True)
+            self.assertEqual(self.lib.control_c_pressed(), C_NONE)
+
+    def test_pause_assign_short_tap_survives_release_before_step(self):
+        self.lib.player_input_set_dialogue(True)
+        self.lib.control_sample(C | LEFT)
+        self.lib.control_sample(0)
+        self.lib.control_step(True)
+        self.assertEqual(self.lib.control_c_pressed(), C_LEFT)
+        self.assertEqual(self.lib.control_menu_step(), 0)
+
     def test_attack_tap_retains_release_edge(self):
         self.lib.control_sample(X)
         self.lib.control_sample(0)
@@ -136,16 +155,16 @@ class PlayerControls(unittest.TestCase):
                             (0, 0), (127, 127), (144, 144)):
             sample(0, True, 128, 128, right, left)
             self.lib.control_step(True)
-            self.assertEqual(self.lib.control_shield(), right >= 176 and left < 176)
-            self.assertEqual(self.lib.control_look_mode(), left >= 176)
+            self.assertEqual(self.lib.control_shield(), right >= 176)
+            self.assertFalse(self.lib.control_look_mode())
         sample(0, False, 128, 128, 255, 255)
         self.lib.control_step(True)
         self.assertFalse(self.lib.control_shield())
         self.assertFalse(self.lib.control_look_mode())
         sample(L | R, True, 128, 128, 0, 0)
         self.lib.control_step(True)
-        self.assertFalse(self.lib.control_shield())  # L look retains its priority
-        self.assertTrue(self.lib.control_look_mode())
+        self.assertTrue(self.lib.control_shield())
+        self.assertFalse(self.lib.control_look_mode())
 
     def test_trigger_deadzone_and_hysteresis_release_camera(self):
         sample = self.lib.player_input_sample_3d
@@ -155,7 +174,7 @@ class PlayerControls(unittest.TestCase):
                                (144, False), (150, False), (128, False)):
             sample(0, True, 128, 128, 0, value)
             self.lib.control_step(True)
-            self.assertEqual(self.lib.control_look_mode(), pressed)
+            self.assertFalse(self.lib.control_look_mode())
 
     def test_light_tilt_turns_without_translation(self):
         self.analog(x=180)  # mapped strength 41: turn only
@@ -223,9 +242,11 @@ class PlayerControls(unittest.TestCase):
         self.assertEqual(self.lib.control_motion_speed(), 0)
 
     def test_analog_look_and_digital_reconnect(self):
+        self.lib.player_input_set_view_look(True)
         self.analog(L, x=255)
         self.assertEqual(self.lib.control_look_yaw(), -420)
         self.assertEqual(self.lib.control_motion_speed(), 0)
+        self.lib.player_input_set_view_look(False)
         self.hold(0)
         self.assertEqual(self.lib.control_motion_speed(), 0)
         self.hold(RIGHT)
@@ -394,6 +415,7 @@ class PlayerControls(unittest.TestCase):
         self.assertFalse(self.lib.control_jump())
 
     def test_y_is_consumed_in_look_mode_not_queued(self):
+        self.lib.player_input_set_view_look(True)
         self.lib.control_sample(L | Y)
         self.lib.control_step(True)
         self.assertFalse(self.lib.control_jump())
@@ -417,6 +439,7 @@ class PlayerControls(unittest.TestCase):
         self.assertEqual(self.lib.control_move_buttons(), 0)
 
     def test_look_consumes_the_dpad(self):
+        self.lib.player_input_set_view_look(True)
         self.hold(L | LEFT)
         self.assertEqual(self.lib.control_move_buttons(), 0)
         self.assertTrue(self.lib.control_look_mode())
@@ -430,10 +453,12 @@ class PlayerControls(unittest.TestCase):
         self.assertFalse(self.lib.control_look_mode())
 
     def test_look_outranks_c(self):
+        self.lib.player_input_set_view_look(True)
         self.hold(L | C | RIGHT)
         self.assertTrue(self.lib.control_look_mode())
         self.assertEqual(self.lib.control_c_held(), C_NONE)
-        self.assertEqual(self.lib.control_c_pressed(), C_NONE)
+        self.assertEqual(self.lib.control_c_pressed(), C_RIGHT)
+        self.assertTrue(self.lib.control_look_exited())
         self.assertEqual(self.lib.control_move_buttons(), 0)
 
     def test_c_outranks_movement(self):
@@ -447,7 +472,7 @@ class PlayerControls(unittest.TestCase):
         self.hold(C | UP)
         self.assertEqual(self.lib.control_move_buttons(), 0)
         self.hold(L | UP)
-        self.assertEqual(self.lib.control_move_buttons(), 0)
+        self.assertEqual(self.lib.control_move_buttons(), UP)
 
     def test_releasing_modifier_resumes_movement_without_phantom_action(self):
         self.hold(C | UP, steps=3)
@@ -494,6 +519,7 @@ class PlayerControls(unittest.TestCase):
     # --- L look mode ------------------------------------------------------
 
     def test_look_aims_with_the_dpad_and_moves_nothing(self):
+        self.lib.player_input_set_view_look(True)
         # Looking RIGHT DECREASES yaw. With the camera's +Y-up, +Z-forward
         # convention, screen right is (f x up) = -X, so increasing yaw swings
         # the view left. This assertion used to expect the opposite, from when
@@ -501,25 +527,31 @@ class PlayerControls(unittest.TestCase):
         self.hold(L | RIGHT)
         self.assertLess(self.lib.control_look_yaw(), 0)
         self.lib.control_reset()
+        self.lib.player_input_set_view_look(True)
         self.hold(L | LEFT)
         self.assertGreater(self.lib.control_look_yaw(), 0)
         self.lib.control_reset()
+        self.lib.player_input_set_view_look(True)
         self.hold(L | RIGHT)
         self.assertEqual(self.lib.control_look_pitch(), 0)
         self.assertEqual(self.lib.control_move_buttons(), 0)
         self.lib.control_reset()
+        self.lib.player_input_set_view_look(True)
         self.hold(L | UP)
         self.assertGreater(self.lib.control_look_pitch(), 0)
         self.hold(L | DOWN)
         self.assertLess(self.lib.control_look_pitch(), 0)
 
     def test_look_never_raises_the_shield(self):
+        self.lib.player_input_set_view_look(True)
         self.hold(L | R)
         self.assertTrue(self.lib.control_look_mode())
         self.assertFalse(self.lib.control_shield())
 
     def test_releasing_look_exits_look_mode_once(self):
+        self.lib.player_input_set_view_look(True)
         self.hold(L | UP, steps=3)
+        self.lib.player_input_set_view_look(False)
         self.hold(0)
         self.assertFalse(self.lib.control_look_mode())
         self.assertTrue(self.lib.control_look_exited())
@@ -664,7 +696,8 @@ class PlayerControls(unittest.TestCase):
     def test_diagnostics_chord_leaves_plain_look_plus_guard_alone(self):
         self.lib.control_reset()
         self.hold(L | R, steps=2)
-        self.assertTrue(self.lib.control_look_mode())
+        self.assertFalse(self.lib.control_look_mode())
+        self.assertTrue(self.lib.control_shield())
 
     # --- source guards ----------------------------------------------------
 

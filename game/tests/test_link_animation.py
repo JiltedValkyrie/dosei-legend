@@ -383,7 +383,7 @@ class SkinningReproducesTheBakedPose(unittest.TestCase):
 
         faces, original = blm.collect_equipment(data, keep, placed, blm.OOT_DEFAULT)
         blm.apply_primitive_colour(faces)
-        scale = 0.0145
+        scale = 0.01
         faces = blm.scale_faces(faces, scale)
         faces = blm.drop_degenerate(faces)
         _, shift = blm.ground_and_centre(blm.scale_faces(original, scale))

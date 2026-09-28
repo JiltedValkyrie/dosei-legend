@@ -538,14 +538,15 @@ class PlayerBg(unittest.TestCase):
         climb = [i for i, e in enumerate(events) if e & GP_EVENT_CLIMB_END]
         self.assertEqual(climb, [23])            # frame 30: 24 * 1.3 = 31.2
         # 150: offset holds until past frame 5 (update 4: 5.2), then 1 unit a
-        # step.
+        # step toward zero (the 44-unit child's rise is below the 42 lift, so
+        # the start offset is negative since BUG-009).
         self.assertEqual(offsets[3], offsets[0])
-        self.assertEqual(offsets[4], offsets[0] - 256)
+        self.assertEqual(offsets[4], offsets[0] + (256 if offsets[0] < 0 else -256))
 
     def test_step_up_rise_is_the_child_adjusted_root(self):
         """The drawn rise is the root delta after x0.64, at the mesh scale."""
-        self.assertAlmostEqual(rise('STEP100') / 256, (3377 - -638) * 0.64 * 0.0145, delta=0.5)
-        self.assertAlmostEqual(rise('STEP150') / 256, (3377 - -2612) * 0.64 * 0.0145, delta=0.5)
+        self.assertAlmostEqual(rise('STEP100') / 256, (3377 - -638) * 0.64 * 0.01, delta=0.5)
+        self.assertAlmostEqual(rise('STEP150') / 256, (3377 - -2612) * 0.64 * 0.01, delta=0.5)
 
     def test_movement_interrupts_only_the_last_four_frames(self):
         _, _, full = self.play_step_up(False, 30)

@@ -64,7 +64,7 @@ def loop_label_of(seq_path):
     return found.group(1) if found else None
 
 
-def build_one(source, output, name, sequence, stem):
+def build_one(source, output, name, sequence, stem, preserve_intro=False):
     seq = source / ('sequences/seq_%d.seq' % sequence)
     if not seq.is_file():
         raise SystemExit('missing sequence: %s' % seq)
@@ -108,7 +108,7 @@ def build_one(source, output, name, sequence, stem):
               '#include <stdint.h>',
               '#define %s_VOICES %d' % (name, audio.VOICES),
               '#define %s_FRAMES %d' % (name, frames),
-              '#define %s_LOOP_FRAME 0' % name,
+              '#define %s_LOOP_FRAME %d' % (name, round(times[intro] * audio.FPS) if preserve_intro else 0),
               '#define %s_SAMPLE_BASE %d' % (name, audio.SAMPLE_BASE),
               '#define %s_PCM_BYTES %d' % (name, len(pcm)),
               '#define %s_LEVEL_BYTES %d' % (name, len(levels)),
@@ -132,8 +132,9 @@ def build_one(source, output, name, sequence, stem):
                     voices=audio.VOICES, pcm_bytes=len(pcm),
                     levels_bytes=len(levels), total_seconds=times[end],
                     omitted_opcodes=sorted(omitted),
-                    limitations=['Loops from the top: a cutscene cue has no '
-                                 'musical loop point',
+                    loop_frame=round(times[intro] * audio.FPS) if preserve_intro else 0,
+                    limitations=[('Source sequence intro/loop point preserved' if preserve_intro else
+                                  'Loops from the top: a cutscene cue has no musical loop point'),
                                  'No N64 reverb or vibrato',
                                  'PCM resampled to fit SCSP RAM',
                                  '60 Hz envelopes and quantized SCSP pitch/pan',

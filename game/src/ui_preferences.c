@@ -1,3 +1,5 @@
+#pragma GCC optimize("Os") /* Cold text/load paths: scarce work RAM. */
+#include <string.h>
 #include "ui_preferences.h"
 #include "kokiri_camera.h"
 static uint8_t labels, jump_binding;
@@ -53,4 +55,99 @@ const char *ui_button_label(unsigned key, bool analog)
     if (labels == UI_LABEL_SATURN && analog && key < 2) return key ? "RT" : "LT";
     if (analog && key == UI_KEY_C) return "";
     return names[labels][key];
+}
+
+const char *ui_assign_modifier_label(void)
+{
+    /* Label presets describe emulator wiring, not remapping. N64/GameCube
+     * have no defined C modifier in the preset: name the Saturn binding. */
+    if (labels == UI_LABEL_XBOX) return "LB";
+    if (labels == UI_LABEL_PLAYSTATION) return "L1";
+    if (labels == UI_LABEL_SATURN) return "C";
+    return "Sat C";
+}
+
+
+static bool text_analog;
+void ui_text_set_analog(bool analog) { text_analog = analog; }
+unsigned ui_text_revision(void)
+{
+    return (labels * UI_JUMP_COUNT + jump_binding) * 2 + text_analog;
+}
+
+/* Tokens name actions in the source, not similarly named Saturn buttons.
+ * Source B attacks (Saturn X), Z targets, and C-Up enters view/Navi. */
+static const char *text_button(const char *token, char label[32])
+{
+    unsigned key = 10;
+    bool menu = false;
+    const char *value;
+    if (!strcmp(token, "AssignModifier")) return ui_assign_modifier_label();
+    if (!strcmp(token, "AssignDirections")) {
+        strcpy(label, ui_button_label(UI_KEY_DPAD, text_analog));
+        strcat(label, " Down/Left/Right");
+        return label;
+    }
+    if (!strcmp(token, "MenuPrev")) { key = UI_KEY_L; menu = true; }
+    if (!strcmp(token, "MenuNext")) { key = UI_KEY_R; menu = true; }
+    if (!strcmp(token, "Confirm")) { key = UI_KEY_A; menu = true; }
+    if (!strcmp(token, "Cancel")) { key = UI_KEY_B; menu = true; }
+    if (!strcmp(token, "A")) key = UI_KEY_A;
+    else if (!strcmp(token, "B")) key = UI_KEY_X;
+    else if (!strcmp(token, "Z")) key = UI_KEY_Z;
+    else if (!strcmp(token, "R")) key = UI_KEY_R;
+    else if (!strcmp(token, "L")) key = UI_KEY_L;
+    else if (!strcmp(token, "Jump")) key = ui_jump_key();
+    else if (!strcmp(token, "Start")) key = UI_KEY_START;
+    if (key < 10) {
+        if (!menu && key == ui_jump_key() && strcmp(token, "Jump")) return "unbound";
+        value = ui_button_label(key, text_analog);
+        if (*value) return value;
+        /* A preset may omit a Saturn binding, but an instruction may not. */
+        strcpy(label, "Sat ");
+        label[4] = "LRABXYCZ"[key < 8 ? key : 0]; label[5] = 0;
+        return label;
+    }
+    if (!strcmp(token, "Control-Pad") || !strcmp(token, "Control-Stick"))
+        return text_analog ? "Stick" : "D-Pad";
+    if (token[0] == 'C' && (token[1] == '-' || !token[1])) {
+        const char *dir = token[1] ? token + 2 : "D-Pad";
+        if (text_analog && !token[1]) return ui_button_label(UI_KEY_DPAD, true);
+        if (text_analog) {
+            if (labels == UI_LABEL_N64 || labels == UI_LABEL_GAMECUBE) {
+                strcpy(label, labels == UI_LABEL_N64 ? "C-" : "C-Stick ");
+            } else strcpy(label, "D-Pad ");
+        } else {
+            if (ui_jump_key() == UI_KEY_C) return "unbound";
+            strcpy(label, ui_assign_modifier_label()); strcat(label, "+");
+        }
+        strncat(label, dir, 12);
+        return label;
+    }
+    return token;
+}
+
+void ui_text_expand(const char *source, char *out, unsigned capacity)
+{
+    unsigned n = 0;
+    if (!capacity) return;
+    while (source && *source && n + 1 < capacity) {
+        if (*source == '[') {
+            const char *end = strchr(source + 1, ']');
+            if (end && end - source < 24) {
+                char token[24], label[32];
+                const char *value;
+                unsigned len = (unsigned)(end - source - 1);
+                memcpy(token, source + 1, len); token[len] = 0;
+                value = text_button(token, label);
+                out[n++] = '[';
+                while (*value && n + 1 < capacity) out[n++] = *value++;
+                if (n + 1 < capacity) out[n++] = ']';
+                source = end + 1;
+                continue;
+            }
+        }
+        out[n++] = *source++;
+    }
+    out[n] = 0;
 }

@@ -13,7 +13,13 @@ void ui_preferences_reset(void);
 void ui_preferences_pack(uint8_t out[UI_PREF_BYTES]);
 bool ui_preferences_unpack(const uint8_t *data, unsigned bytes);
 const char *ui_label_name(void);
+/* Physical Saturn-C binding used by pause, independent of analog routing. */
+const char *ui_assign_modifier_label(void);
 const char *ui_button_label(unsigned key, bool analog);
 unsigned ui_jump_key(void);
 uint16_t ui_jump_mask(void);
+/* Expand OoT action tokens before dialogue wrapping, using current bindings. */
+void ui_text_set_analog(bool analog);
+unsigned ui_text_revision(void);
+void ui_text_expand(const char *source, char *out, unsigned capacity);
 #endif

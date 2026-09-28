@@ -57,6 +57,19 @@ SCENES = (
     dict(prefix='kokiri_shop', rooms=1, shape='image',
          scene='SCENE_KOKIRI_SHOP', sfx=0,
          save='SAVE_SCENE_KOKIRI_SHOP', name='Kokiri Shop'),
+    # M3b: the other Kokiri interiors, prerendered like Link's house.
+    dict(prefix='kokiri_home', rooms=1, shape='image',
+         scene='SCENE_KNOW_IT_ALL_BROS_HOUSE', sfx=0,
+         save='SAVE_SCENE_KNOW_IT_ALL_HOUSE', name='Know-It-All Brothers'),
+    dict(prefix='kokiri_home3', rooms=1, shape='image',
+         scene='SCENE_TWINS_HOUSE', sfx=0,
+         save='SAVE_SCENE_TWINS_HOUSE', name='House of Twins'),
+    dict(prefix='kokiri_home4', rooms=1, shape='image',
+         scene='SCENE_MIDOS_HOUSE', sfx=0,
+         save='SAVE_SCENE_MIDOS_HOUSE', name="Mido's House"),
+    dict(prefix='kokiri_home5', rooms=1, shape='image',
+         scene='SCENE_SARIAS_HOUSE', sfx=0,
+         save='SAVE_SCENE_SARIAS_HOUSE', name="Saria's House"),
 )
 
 # A new file begins here: Link's house, spawn 0 (the bed).

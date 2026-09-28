@@ -14,6 +14,7 @@ import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 GCC = pathlib.Path('C:/msys64/mingw64/bin/gcc.exe')
+POOL = 96          # ACTOR_POOL_MAX; M3 worst case 57 + reserve
 
 NPC, ENEMY, SWITCH, KEEP, FAIL = range(5)
 ATTN_NPC, ATTN_ENEMY = 1, 2
@@ -91,12 +92,14 @@ class ActorSys(unittest.TestCase):
         self.assertLessEqual(self.lib.actor_sys_bytes(), 8192)
 
     def test_spawn_runs_init_and_fills_to_capacity(self):
-        slots = [self.spawn(NPC) for _ in range(64)]
-        self.assertEqual(sorted(slots), list(range(64)))
-        self.assertEqual(self.lib.as_inits(), 64)
+        slots = [self.spawn(NPC) for _ in range(POOL)]
+        self.assertEqual(sorted(slots), list(range(POOL)))
+        self.assertEqual(self.lib.as_inits(), POOL)
         self.assertEqual(self.lib.as_data0(0), 7)
+        self.assertEqual(self.lib.actor_sys_spawn_failures(), 0)
         self.assertEqual(self.spawn(NPC), -1)
-        self.assertEqual(self.lib.actor_sys_live(), 64)
+        self.assertEqual(self.lib.actor_sys_spawn_failures(), 1)   # counted
+        self.assertEqual(self.lib.actor_sys_live(), POOL)
 
     def test_init_self_kill_returns_no_actor(self):
         self.assertEqual(self.spawn(FAIL), -1)

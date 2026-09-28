@@ -68,8 +68,13 @@ Aim for 1:1 behavior. Visible actor alone not complete.
 - Verify meaningful cases: source table selection, reward/no-reward branches,
   conditional drops and no duplicate collection. Check visible drop/pickup too.
 
-Current grass gap: only rupee slots implemented. Hearts, ammo, magic and
-FLEXIBLE resolution still pending; empty slots are a known approximation.
+2026-09-28 source checkpoint (unbuilt): grass/rock drops now use the original
+15x16 ID/quantity tables and inventory/health/FLEXIBLE filtering. Child arrows
+convert to seeds; missing slingshot, bomb bag or magic suppress their drops per
+source. Hearts, nuts, sticks and seeds use the shared grant path. Fairy healing
+works, but fairy color/motion, fragment effects and exact scattered-drop physics
+remain visual/source-parity gaps; see `game/docs/M3CD_IMPLEMENTATION.md`.
+Never reintroduce the old rupee-only grass shortcut.
 
 ## Renderer repairs: reproduce movement before changing the pipeline
 
@@ -193,8 +198,9 @@ save sound RAM, unless the human identifies a specific SFX as sounding too bad.
 - Only raise an individual effect's sample rate when the human requests a
   quality exception for that effect. Record the exception and its RAM cost.
 - Music banks: the human chose half rate too (2026-09-27, M2 sound RAM):
-  build_title_audio MUSIC_SAMPLE_BUDGET 120,000 samples, banks ~240 KB,
-  SFX region from 0x3C000. CD-DA renders keep the old 240,000 budget.
+  superseded for music on 2026-09-28: human approved +33% over that budget.
+  build_title_audio MUSIC_SAMPLE_BUDGET 159,600 samples, banks ~319 KB,
+  SFX region from 0x50000. SFX stay half-rate; CD-DA keeps 240,000 samples.
 - Include resampled bytes, alignment and playback buffers in sound-RAM
   budgets. Keep capacity guards enabled; half-rate storage is not proof that
   the complete active bank fits.
@@ -240,3 +246,58 @@ Latest menu directive: every page uses full RGB555 colour, not a small shared
 palette. Map fog should leave terrain legible. Remove System's SAVE lettering
 with matching repeated frame texture. Page changes use VDP2 hardware scaling
 and sliding as a carousel; preserve and restore the frozen world/HUD resources.
+## Dynamic controller labels in all game text (2026-09-28)
+
+Permanent human directive: every player-facing button reference must resolve
+from the user's saved controller-label preset and current control bindings.
+This applies everywhere: NPC dialogue, the Know-It-All Brothers' tutorials,
+choice boxes, signs, item messages, cutscenes, HUD prompts, menus and help.
+
+- Do not leave original N64 button names or icons hardcoded in dialogue.
+  Represent the intended action with a token and resolve it through the shared
+  controller-label system when displaying text. Selecting N64 labels remains
+  valid; hardcoding N64 labels regardless of settings does not.
+- Match the actual action binding, including custom jump and digital/analog
+  pad differences. Explain required modifiers and directional combinations
+  using the selected platform's labels. Preset changes label existing wiring;
+  they do not silently remap input.
+- Resolve labels before text wrapping/pagination and width checks. Multi-word
+  labels and button combinations must remain complete and readable; never
+  show an empty label, clipped instruction or unresolved token.
+- Existing dialogue and newly added text follow the same rule. Changing the
+  preset must update subsequent displayed instructions without rebuilding
+  assets or starting a new adventure. Persist preferences as already specified.
+- Verify the three brothers' control lessons and other button-bearing text
+  with every supported preset, both pad modes and custom jump bindings.
+
+Implemented in code 2026-09-28: ui_text_expand resolves original action tokens
+using preferences and pad mode before dialogue_prepare wraps/paginates them.
+Source B means attack (Saturn X), not walk/run. A jump binding that steals
+another action is shown as unbound in that action's lesson. Unknown preset
+bindings use an explicit Saturn physical-button fallback, never an empty label.
+Human verified 2026-09-28: dynamic labels look correct, dialogue no longer
+flickers, and interior C-Up switching works. This does not certify every
+preset/pad/custom-binding combination or outdoor first-person.
+
+Regression rules: preserve retained dialogue rows; never blank/repaint the
+whole visible page every frame. Resolve semantic actions before wrapping;
+menu confirm/page/assignment actions must not inherit gameplay jump stealing.
+Speaker names use bold glyphs distinct from body text, with modest vertical
+padding. Generate bold only into verified unused glyph cells: the source must
+contain ink, while its destination must be blank. Do not silently regress
+names to plain text by requiring unused cells to already contain a glyph.
+
+# Human review before Git publication (2026-09-27)
+
+Never commit, merge, or push changes before the human has checked them and
+explicitly approved those Git actions. A successful build or automated test
+run is not human approval. Earlier commit/push instructions do not carry over
+to later fixes or follow-up changes. Leave work uncommitted for human review.
+This rule supersedes earlier standing instructions to commit when done.
+
+## Shop merchandise: flat colours (human directive 2026-09-28)
+
+All shop item models use flat face colours, not texture artwork. Preserve original
+geometry and material colour; do not restore nut/heart scrolling textures. Shelves,
+room backdrops and the counter keep their original materials. This rule applies to
+merchandise, not the shopkeeper's permitted facial artwork.

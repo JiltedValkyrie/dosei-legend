@@ -31,6 +31,7 @@ static input_edge_t         edge_c[4];
 /* Menu cursor edges: the raw D-pad, taken before the modifier routing, so a
 ** paused game can step the list without C or L having any say. */
 static input_edge_t         edge_menu[4];
+static input_edge_t         edge_assign[4];
 static input_edge_t         edge_page[2];
 /* Release counters for the C directions. A rising-edge latch counts presses, so
 ** releases are counted with their own pair of counters rather than by inverting
@@ -39,6 +40,8 @@ static volatile unsigned int c_release_produced[4];
 static unsigned int          c_release_consumed[4];
 static bool                  c_direction_held[4];
 static bool                 look_was_active;
+static bool                 view_look;
+void player_input_set_view_look(bool active) { view_look = active; }
 static bool                 diagnostics_chord_held;
 
 static const uint16_t       c_direction_bit[4] = {
@@ -65,11 +68,11 @@ void player_input_reset(void)
     for (i = 0; i < 4; ++i)
     {
         edge_c[i] = (input_edge_t){0};
-        edge_menu[i] = (input_edge_t){0};
+        edge_menu[i] = edge_assign[i] = (input_edge_t){0};
         c_release_produced[i] = c_release_consumed[i] = 0;
         c_direction_held[i] = false;
     }
-    look_was_active = false;
+    look_was_active = view_look = false;
     diagnostics_chord_held = false;
 }
 
@@ -99,8 +102,7 @@ void player_input_sample_pad(uint16_t held, bool analog, uint8_t x, uint8_t y)
     unsigned int i;
     input_edge_sample(&edge_jump, (held & jump_button) != 0);
     if (!dialogue_open) held &= (uint16_t)~jump_button;
-    bool look = (held & CAMERA_L) != 0;
-    bool c_mode = !look && (analog || (held & CAMERA_C) != 0);
+    bool c_mode = analog || (held & CAMERA_C) != 0;
 
     input_edge_sample(&edge_page[0], (held & CAMERA_L) != 0);
     input_edge_sample(&edge_page[1], (held & CAMERA_R) != 0);
@@ -112,8 +114,11 @@ void player_input_sample_pad(uint16_t held, bool analog, uint8_t x, uint8_t y)
     if (!(held & CAMERA_X) && edge_attack.held) ++attack_release_produced;
     input_edge_sample(&edge_attack, (held & CAMERA_X) != 0);
     input_edge_sample(&edge_recenter, (held & CAMERA_Z) != 0);
-    for (i = 0; i < 4; ++i)
-        input_edge_sample(&edge_menu[i], (held & c_direction_bit[i]) != 0);
+    for (i = 0; i < 4; ++i) {
+        bool assign = dialogue_open && (held & CAMERA_C) != 0;
+        input_edge_sample(&edge_menu[i], !assign && (held & c_direction_bit[i]) != 0);
+        input_edge_sample(&edge_assign[i], assign && (held & c_direction_bit[i]) != 0);
+    }
     for (i = 0; i < 4; ++i)
     {
         bool down = c_mode && (held & c_direction_bit[i]) != 0;
@@ -134,15 +139,15 @@ static int stick_radius(int x, int y)
     return (int)root;
 }
 
-/* Priority order: L look, then C buttons, then ordinary movement. Z is the
+/* Priority order: active C-Up view, then C buttons, then movement. Z is the
 ** target button and is read on the movement path, so holding it strafes. */
 void player_input_step(bool in_gameplay, player_input_t *out)
 {
     bool analog = analog_snapshot;
     uint16_t held = held_snapshot;
     uint16_t dpad = held & DPAD_MASK;
-    bool look = (held & CAMERA_L) != 0;
-    bool c_mode = !look && (analog || (held & CAMERA_C) != 0);
+    bool look = view_look;
+    bool c_mode = analog || (held & CAMERA_C) != 0;
     bool toggled = input_edge_consume(&edge_walk_toggle);
     bool jumped = input_edge_consume(&edge_jump);
     bool interacted = input_edge_consume(&edge_interact);
@@ -152,7 +157,7 @@ void player_input_step(bool in_gameplay, player_input_t *out)
     bool recentered = input_edge_consume(&edge_recenter);
     bool page_left = input_edge_consume(&edge_page[0]);
     bool page_right = input_edge_consume(&edge_page[1]);
-    bool c_pressed[4], c_released[4];
+    bool c_pressed[4], c_released[4], assigned[4];
     unsigned int i;
     int horizontal, vertical;
     attack_release_consumed = attack_releases;
@@ -161,6 +166,7 @@ void player_input_step(bool in_gameplay, player_input_t *out)
     {
         unsigned int releases = c_release_produced[i];
 
+        assigned[i] = input_edge_consume(&edge_assign[i]);
         c_pressed[i] = input_edge_consume(&edge_c[i]);
         c_released[i] = releases != c_release_consumed[i];
         c_release_consumed[i] = releases;
@@ -187,8 +193,10 @@ void player_input_step(bool in_gameplay, player_input_t *out)
     out->interact_held = false;
     out->diagnostics_toggled = false;
     out->camera_swap_toggled = false;
+    out->map_toggled = false;
     out->cancel_pending = false;
     out->menu_dx = out->menu_dy = out->menu_page = 0;
+    out->menu_hold_x = out->menu_hold_y = 0;
     out->menu_step = 0;
     out->move_mode = move_mode;
 
@@ -238,16 +246,23 @@ void player_input_step(bool in_gameplay, player_input_t *out)
             continue;
         if (!dialogue_open)
             continue;
+
         if (i < 2) out->menu_dy = i == 0 ? -1 : 1;
         else out->menu_dx = i == 2 ? -1 : 1;
         out->menu_step = (c_direction_bit[i] == CAMERA_UP ||
                           c_direction_bit[i] == CAMERA_LEFT) ? -1 : 1;
     }
-    if (dialogue_open) out->menu_page = page_right - page_left;
+    if (dialogue_open) {
+        out->menu_page = page_right - page_left;
+        for (i = 0; i < 4; ++i)
+            if (assigned[i]) out->c_pressed = (player_c_button_t)(PLAYER_C_UP + i);
+        if (out->c_pressed != PLAYER_C_NONE)
+            out->menu_step = out->menu_dx = out->menu_dy = 0;
+    }
     /* B toggles the persistent mode once per physical press -- unless a text
     ** box has the pad, where the same press closes the box instead. One press
     ** never does both. */
-    if (toggled && !dialogue_open)
+    if (toggled && !dialogue_open && !look)
         move_mode = move_mode == PLAYER_MOVE_RUN ? PLAYER_MOVE_WALK
                                                  : PLAYER_MOVE_RUN;
     out->move_mode = move_mode;
@@ -257,6 +272,17 @@ void player_input_step(bool in_gameplay, player_input_t *out)
 
     if (dialogue_open)
     {
+        int hx = !!(held & c_direction_bit[3]) - !!(held & c_direction_bit[2]);
+        int hy = !!(held & c_direction_bit[0]) - !!(held & c_direction_bit[1]);
+        hx *= 70; hy *= 70;
+        if (analog) {
+            /* N64 stick reaches about +-80; ours +-127 from the centre. */
+            int sx = ((int)axis_x - 128) * 80 / 127, sy = (128 - (int)axis_y) * 80 / 127;
+            if (sx > 30 || sx < -30) hx = sx;
+            if (sy > 30 || sy < -30) hy = sy;
+        }
+        out->menu_hold_x = (int8_t)hx;
+        out->menu_hold_y = (int8_t)hy;
         out->attack_pending = false;
         out->attack_released = false;
         out->shield_held = false;
@@ -285,7 +311,12 @@ void player_input_step(bool in_gameplay, player_input_t *out)
         ** substitution and no shoulder orbit. */
         horizontal = !!(dpad & CAMERA_RIGHT) - !!(dpad & CAMERA_LEFT);
         vertical = !!(dpad & CAMERA_UP) - !!(dpad & CAMERA_DOWN);
+        if (!analog && (held & CAMERA_C)) horizontal = vertical = 0;
         out->look_mode = true;
+        for (i = 0; i < 4; ++i)
+            if (c_pressed[i]) out->c_pressed = (player_c_button_t)(PLAYER_C_UP + i);
+        out->look_exited = interacted || attacked || toggled || recentered ||
+            (held & CAMERA_R) || jumped || out->c_pressed != PLAYER_C_NONE;
         /* NEGATED, same handedness correction as the movement basis. With a
         ** +Y-up, +Z-forward camera, screen right is (f x up) = -X, so
         ** INCREASING yaw swings the view to the left. Pressing right must
@@ -297,6 +328,7 @@ void player_input_step(bool in_gameplay, player_input_t *out)
         out->stick_x = out->stick_y = 0;
         out->shield_held = false;
         look_was_active = true;
+        out->attack_pending = false;
         /* Y is consumed rather than queued: a jump must not fire the instant L
         ** is released. */
         return;
@@ -332,6 +364,7 @@ void player_input_step(bool in_gameplay, player_input_t *out)
         if (c_released[i])
             out->c_released = (player_c_button_t)(PLAYER_C_UP + i);
 
+    out->map_toggled = page_left;
     out->move_buttons = analog
         ? ((out->stick_x > 0 ? CAMERA_RIGHT : out->stick_x < 0 ? CAMERA_LEFT : 0) |
            (out->stick_y > 0 ? CAMERA_UP : out->stick_y < 0 ? CAMERA_DOWN : 0))

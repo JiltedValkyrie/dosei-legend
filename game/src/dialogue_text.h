@@ -18,4 +18,8 @@ bool         dialogue_text_bind(const uint8_t *blob, uint32_t bytes);
 /* Line i of the pool, "" when unbound or out of range. */
 const char  *dialogue_line(unsigned int index);
 
+/* Expanded, wrapped rows of one source page. Choices remain together on its
+ * final displayed page. Returned rows persist until the next prepare. */
+unsigned dialogue_prepare(unsigned first, unsigned count, unsigned choices);
+const char *dialogue_row(unsigned row);
 #endif

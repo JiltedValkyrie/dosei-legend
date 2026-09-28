@@ -151,7 +151,7 @@ def build_equip_outline(source, size=32):
     return out
 
 
-def build_rupee_sprite(source, blue=False):
+def build_rupee_sprite(source, blue=False, red=False):
     """Original IA8 HUD silhouette; green uses OoT's prim/env colours.
 
     Blue is the slice's recolour for five-rupee billboards. N64 world rupees
@@ -161,6 +161,7 @@ def build_rupee_sprite(source, blue=False):
     if source.size != (16, 16):
         raise ValueError('Unexpected rupee icon dimensions')
     prim, env = ((100, 180, 255), (0, 0, 80)) if blue else ((200, 255, 100), (0, 80, 0))
+    if red: prim, env = (255,100,100), (80,0,0)
     out = Image.new('RGB', source.size)
     out.putdata([(tuple(max(8, e + (p-e)*r//255) for p,e in zip(prim,env))
                   if a >= 64 else (0,0,0)) for r,g,b,a in source.getdata()])
@@ -202,10 +203,21 @@ def main(oot=None):
     (ROOT / 'build/cd/GRASS.RGB').write_bytes(b''.join(
         struct.pack('>H', rgb555(pixel)) for pixel in grass.getdata()))
 
+    # Original En_Item00 pickup textures, including previously omitted hearts.
+    keep = Path(oot) / 'extracted/ntsc-1.2/assets/objects/gameplay_keep'
+    for name, texture in (('DROPHE', 'gDropRecoveryHeartTex'),
+                          ('DROPNUT', 'gDropDekuNutTex'),
+                          ('DROPSTK', 'gDropDekuStickTex'),
+                          ('DROPSED', 'gDropDekuSeedsTex')):
+        with Image.open(keep / (texture + '.rgba16.png')) as source:
+            icon = build_item_icon(source)
+        (ROOT / ('build/cd/%s.RGB' % name)).write_bytes(b''.join(
+            struct.pack('>H', rgb555(pixel)) for pixel in icon.getdata()))
+
     hud = Path(oot) / 'extracted/ntsc-1.2/assets/textures/parameter_static'
-    for name, blue in (('RUPEEG', False), ('RUPEEB', True)):
+    for name, blue, red in (('RUPEEG',False,False),('RUPEEB',True,False),('RUPEER',False,True)):
         with Image.open(hud / 'gRupeeCounterIconTex.ia8.png') as source:
-            icon = build_rupee_sprite(source, blue)
+            icon = build_rupee_sprite(source, blue, red)
         icon.save(ROOT / ('build/generated/%s-preview.png' % name.lower()))
         (ROOT / ('build/cd/%s.RGB' % name)).write_bytes(b''.join(
             struct.pack('>H', rgb555(pixel)) for pixel in icon.getdata()))

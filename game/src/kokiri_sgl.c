@@ -35,6 +35,7 @@ static unsigned int texture_base = GAME_TEXTURE_BASE;
 #define CUTSCENE_TEXTURE_BASE ((3750u * 32 + 8192 + 255) & ~255u)
 #include "demo.h"
 #include "ram_cart.h"
+#include "ram_low.h"
 #include "navi.h"
 #include "cutscene.h"
 #include "link_anim_state.h"
@@ -56,10 +57,16 @@ static unsigned char forest_scene;
 #define FOREST_FAR (forest_far_current)
 #define FOREST_FOG_END (forest_scene == 2 ? 1310 : FOREST_FAR)
 #define FOREST_FOG_START (FOREST_FOG_END / 2)
-static short forest_depth[KOKIRI_VERTEX_COUNT];
-static short tile_depth[KOKIRI_TILE_COUNT];
-static unsigned char tile_fog[KOKIRI_TILE_COUNT];
-static unsigned char forest_mesh[KOKIRI_POLYGON_COUNT];
+/* Low RAM is not zeroed at boot: depths are written before each prep reads
+ * them; mesh flags and fog sentinels are filled on every bank load. */
+#define forest_depth ((short *)RAM_LOW(RAM_LOW_FOREST_DEPTH_OFFSET))
+#define tile_depth ((short *)RAM_LOW(RAM_LOW_TILE_DEPTH_OFFSET))
+#define tile_fog ((unsigned char *)RAM_LOW(RAM_LOW_TILE_FOG_OFFSET))
+#define forest_mesh ((unsigned char *)RAM_LOW(RAM_LOW_FOREST_MESH_OFFSET))
+typedef char forest_depth_fits[KOKIRI_VERTEX_COUNT * sizeof(short) <= RAM_LOW_FOREST_DEPTH_BYTES ? 1 : -1];
+typedef char tile_depth_fits[KOKIRI_TILE_COUNT * sizeof(short) <= RAM_LOW_TILE_DEPTH_BYTES ? 1 : -1];
+typedef char tile_fog_fits[KOKIRI_TILE_COUNT <= RAM_LOW_TILE_FOG_BYTES ? 1 : -1];
+typedef char forest_mesh_fits[KOKIRI_POLYGON_COUNT <= RAM_LOW_FOREST_MESH_BYTES ? 1 : -1];
 static unsigned char *forest_palette;
 #ifdef KOKIRI_STREAM_ROOMS
 static unsigned int forest_polygon_count, forest_vertex_count, forest_tile_count;
@@ -198,6 +205,7 @@ static unsigned char forest_face_flags(unsigned int i)
 
 static unsigned int  vram_used;      /* bytes claimed in the VDP1 user area */
 static unsigned int  sprite_next = 1;/* next free __jo_sprite_def slot; 0 is Jo's */
+static unsigned int actor_vram_base, actor_sprite_base, actor_bank_generation;
 unsigned int        kokiri_sprite_peak;  /* highest sprite_next seen */
 static unsigned int  kokiri_rejected;
 static unsigned int  kokiri_accepted_mask;
@@ -221,7 +229,8 @@ static ATTR          fairy_attrs[4] = {FAIRY_WING_ATTR, FAIRY_WING_ATTR,
                                        FAIRY_WING_ATTR, FAIRY_WING_ATTR};
 static PDATA         fairy_meshes[FAIRY_FRAMES];
 static unsigned int  grass_sprite;
-static unsigned int  rupee_sprite[2], digit_sprite[10];
+static unsigned int  rupee_sprite[3], digit_sprite[10];
+static unsigned int  drop_sprite[4];
 static unsigned int  item_sprite[2];         /* 0 sword, 1 shield */
 static unsigned int  menu_sprite[GP_SLOT_COUNT];
 static unsigned int  menu_equip_sprite;
@@ -464,12 +473,17 @@ static bool         fairy_load(void)
     if (!sprite_load("GRASS.RGB", &grass_sprite, 32, 32 * 32 * 2))
         return false;
     if (!billboard_load("RUPEEG.RGB", &rupee_sprite[0]) ||
-        !billboard_load("RUPEEB.RGB", &rupee_sprite[1])) return false;
+        !billboard_load("RUPEEB.RGB", &rupee_sprite[1]) ||
+        !billboard_load("RUPEER.RGB", &rupee_sprite[2])) return false;
     for (i = 0; i < 10; ++i) {
         char file[] = "DIGIT0.RGB";
         file[5] = (char)('0' + i);
         if (!sprite_load_rect(file, &digit_sprite[i], 8, 16, 256)) return false;
     }
+    if (!billboard_load("DROPHE.RGB", &drop_sprite[0]) ||
+        !billboard_load("DROPNUT.RGB", &drop_sprite[1]) ||
+        !billboard_load("DROPSTK.RGB", &drop_sprite[2]) ||
+        !billboard_load("DROPSED.RGB", &drop_sprite[3])) return false;
     if (!billboard_load(SWORD_PIXEL_FILE, &item_sprite[0]) ||
         !billboard_load(SHIELD_PIXEL_FILE, &item_sprite[1]))
         return false;
@@ -626,6 +640,11 @@ bool kokiri_scene_load_backdrop(unsigned int scene, unsigned int room)
     jo_free(strip.data);
     asset_loading_done();
     if (!ok) return false;
+    vram_used = resident_bytes;
+    sprite_next = resident_sprites;
+    actor_vram_base = vram_used;
+    actor_sprite_base = sprite_next;
+    ++actor_bank_generation;
     backdrop_active = true;
     screens_for_backdrop(true);
     return true;
@@ -756,6 +775,9 @@ static bool room_load_bank(unsigned int scene, unsigned int room)
     forest_scene = (unsigned char)scene;
     forest_far_current = scene == KOKIRI_FIELD_SCENE ? FIELD_FAR :
                          (scene == 2 ? 2620 : FOREST_FAR_DEFAULT);
+    actor_vram_base = vram_used;
+    actor_sprite_base = sprite_next;
+    ++actor_bank_generation;
     return true;
 }
 #endif
@@ -829,7 +851,7 @@ bool kokiri_scene_update(void)
     ** Link is not walking anywhere during a cutscene, so there is nothing to
     ** stream for. */
     if (cutscene_is_playing()) { room_gameplay = false; return true; }
-    if (!demo_link_active || demo_title_is_visible()) { room_gameplay = false; return true; }
+    if (!demo_link_active || demo_title_is_visible() || backdrop_active || forest_scene == 4) { room_gameplay = false; return true; }
     if (!room_gameplay) { target = 0; room_gameplay = true; }
     for (i=0;i<KOKIRI_PORTAL_COUNT;++i) {
         const kokiri_portal *p = &kokiri_portals[i];
@@ -919,8 +941,14 @@ static void         submit(PDATA *pdata, unsigned int bit)
 }
 
 #include "link_equipment.h"
-static POLYGON equipped_polygons[LINK_VISIBLE_POLYGONS];
-static ATTR equipped_attributes[LINK_VISIBLE_POLYGONS];
+/* Low Work RAM (ram_low.h): 16.6 KB off high work RAM. Filled before any
+** submit (equipped_mask starts invalid), so boot garbage is never read. */
+#define equipped_polygons   ((POLYGON *)RAM_LOW(RAM_LOW_EQUIP_POLY_OFFSET))
+#define equipped_attributes ((ATTR *)RAM_LOW(RAM_LOW_EQUIP_ATTR_OFFSET))
+typedef char equip_poly_fits[LINK_VISIBLE_POLYGONS * sizeof(POLYGON) <=
+                             RAM_LOW_EQUIP_POLY_BYTES ? 1 : -1];
+typedef char equip_attr_fits[LINK_VISIBLE_POLYGONS * sizeof(ATTR) <=
+                             RAM_LOW_EQUIP_ATTR_BYTES ? 1 : -1];
 static unsigned int equipped_count;
 static unsigned int equipped_mask = 255;
 static void invalidate_equipped(void) { equipped_mask = 255; }
@@ -1339,6 +1367,8 @@ void                kokiri_fairies_draw(unsigned int tick)
         return;
     for (i = 0; i < KOKIRI_NPC_COUNT; ++i) {
         unsigned int angle = tick * (97 + i * 3) + i * 6011;
+        if (!gameplay_npc_present(i))
+            continue;
         int x = (int)gameplay_npc_x(i) + fairy_wave(angle, 18);
         int y = kokiri_npcs[i].y + 58 + fairy_wave(angle * 2 + 9000, 9);
         int z = (int)gameplay_npc_z(i) + fairy_wave(angle + 16384, 14);
@@ -1472,23 +1502,33 @@ static void         item_billboard(unsigned int sprite, int x, int y, int z)
     if (slPutSprite(pos, &attr, 0) == FALSE) ++kokiri_rejected;
 }
 
-/* Closed chests (stand-in icon) and the item held up during get-item text. */
+void kokiri_drop_draw(unsigned int item, int x, int y, int z, unsigned int tick)
+{
+    unsigned int sprite;
+    if (item == 254) {
+        fairy_draw(x, y + 15, z, 0, tick, 0, fairy_glow, 0);
+        return;
+    }
+    if (item <= 2) sprite = rupee_sprite[item];
+    else if (item == 3) sprite = drop_sprite[0];
+    else if (item == 12) sprite = drop_sprite[1];
+    else if (item == 13) sprite = drop_sprite[2];
+    else if (item == 16) sprite = drop_sprite[3];
+    else return;
+    item_billboard(sprite, x, y, z);
+}
+
+/* Item held up during get-item text; chests use original animated models. */
 void                kokiri_items_draw(unsigned int tick)
 {
-    unsigned int i;
-    for (i = 0; i < KOKIRI_CHEST_COUNT; ++i) {
-        const kokiri_chest_t *c = &kokiri_chests[i];
-#ifdef KOKIRI_STREAM_ROOMS
-        if (c->room != (unsigned int)forest_room) continue;
-#endif
-        if (!gameplay_chest_opened(i))
-            item_billboard(item_sprite[0], c->x,
-                           c->y + 16 + fairy_wave(tick * 140 + i * 21845, 2), c->z);
+    if (gameplay.get_item) {
+        unsigned int sprite = gameplay.get_item == GP_SWORD ? item_sprite[0] :
+            gameplay.get_item == GP_SHIELD ? item_sprite[1] :
+            gameplay.get_item == GP_GET_NUT ? drop_sprite[1] :
+            gameplay.get_item == GP_GET_STICK ? drop_sprite[2] : drop_sprite[0];
+        item_billboard(sprite, demo_link.x,
+                       demo_link.y - DEMO_LINK_EYE_HEIGHT + 70, demo_link.z);
     }
-    if (gameplay.get_item)
-        item_billboard(item_sprite[gameplay.get_item == GP_SWORD ? 0 : 1],
-                       demo_link.x, demo_link.y - DEMO_LINK_EYE_HEIGHT + 70,
-                       demo_link.z);
 }
 
 #include "boulder_mesh.h"
@@ -1551,7 +1591,7 @@ static void rupee_world(int x, int y, int z, unsigned int room,
     else { int bob = (int)((tick >> 1) & 15); y += bob < 8 ? bob : 15 - bob; }
     pos[0] = x * 65536; pos[1] = -y * 65536; pos[2] = z * 65536;
     pos[3] = pos[4] = 98304;
-    attr.texno = (Uint16)rupee_sprite[value == 5 ? 1 : 0];
+    attr.texno = (Uint16)rupee_sprite[value == 20 ? 2 : value == 5 ? 1 : 0];
     attr.atrb |= (FAIRY_COLMODE_RGB & 7) << 3;
     if (slPutSprite(pos, &attr, 0) == FALSE) ++kokiri_rejected;
 }
@@ -1788,6 +1828,15 @@ void kokiri_cutscene_tiles_reset(void)
 #endif
 }
 
+unsigned int kokiri_actor_bank_generation(void) { return actor_bank_generation; }
+void kokiri_actor_tiles_reset(void)
+{
+#ifdef KOKIRI_STREAM_ROOMS
+    vram_used = actor_vram_base;
+    sprite_next = actor_sprite_base;
+#endif
+}
+
 unsigned int        kokiri_bank_tile_upload(const void *pixels,
                                             const void *clut,
                                             unsigned int width,
@@ -1838,6 +1887,42 @@ unsigned int        kokiri_bank_tile_upload(const void *pixels,
     return (slot);
 #else
     (void)pixels; (void)clut; (void)width; (void)height; (void)colno;
+    return (KOKIRI_TILE_NONE);
+#endif
+}
+
+/* RGB555 tile into the same actor bank (interior occlusion masks): pixels
+** are big-endian 15-bit colour, MSB set = opaque, 0x0000 = transparent. */
+unsigned int        kokiri_bank_rgb_upload(const void *pixels,
+                                           unsigned int width,
+                                           unsigned int height)
+{
+#ifdef KOKIRI_STREAM_ROOMS
+    unsigned int   bytes = width * height * 2;
+    unsigned char *vram = (unsigned char *)JO_VDP1_VRAM + texture_base
+                          + vram_used;
+    const unsigned char *source = (const unsigned char *)pixels;
+    jo_texture_definition *texture;
+    unsigned int   slot, i;
+
+    if (!width || !height || (width & 7) ||
+        vram_used + bytes > TEXTURE_CAPACITY || sprite_next >= JO_MAX_SPRITE)
+        return (KOKIRI_TILE_NONE);
+    for (i = 0; i < bytes; ++i)
+        vram[i] = source[i];
+    slot = sprite_next++;
+    if (sprite_next > kokiri_sprite_peak) kokiri_sprite_peak = sprite_next;
+    texture = &__jo_sprite_def[slot];
+    texture->width = (unsigned short)width;
+    texture->height = (unsigned short)height;
+    texture->adr = (unsigned short)VRAM_UNITS((unsigned int)vram - JO_VDP1_VRAM);
+    texture->size = JO_MULT_BY_32(width & 0x1f8) | height;
+    __jo_sprite_pic[slot].color_mode = COL_32K;
+    __jo_sprite_pic[slot].data = vram;
+    vram_used += bytes;
+    return (slot);
+#else
+    (void)pixels; (void)width; (void)height;
     return (KOKIRI_TILE_NONE);
 #endif
 }

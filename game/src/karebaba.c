@@ -132,18 +132,7 @@ static bool     body_hit(const karebaba_t *b)
 
 static void     item_give_stick(void)
 {
-    /* Item_Give(ITEM_DEKU_STICK), z_parameter.c */
-    static const uint8_t capacity[4] = { 0, 10, 20, 30 };
-    if (!save_state.stick_owned) {
-        save_state.stick_owned = 1;
-        if (save_state.stick_upgrade == 0)
-            save_state.stick_upgrade = 1;   /* Inventory_ChangeUpgrade(.., 1) */
-        save_state.stick_ammo = 1;
-        return;
-    }
-    ++save_state.stick_ammo;
-    if (save_state.stick_ammo > capacity[save_state.stick_upgrade & 3])
-        save_state.stick_ammo = capacity[save_state.stick_upgrade & 3];
+    save_item_give(SAVE_ITEM_DEKU_STICK);   /* Item_Give(ITEM_DEKU_STICK) */
 }
 
 static void     tick(karebaba_t *b, actor_t *a, const int32_t link[3], bool can_take)
@@ -327,7 +316,7 @@ static void     spawn(karebaba_t *b, unsigned int i)
     actor_t *a = actor_spawn(&profile, SAVE_SCENE_KOKIRI_FOREST, ACTOR_ROOM_NONE,
                              p->x, p->y, p->z, 0, 1);
     unsigned int k;
-    if (!a) return;
+    if (!a) { b->handle = 0; return; }  /* retried by karebaba_sync */
     for (k = 0; k < sizeof(*b); ++k) ((unsigned char *)b)[k] = 0;
     b->handle = actor_handle(a);
     b->spawn = (uint8_t)i;
@@ -392,10 +381,17 @@ void            karebaba_sync(bool in_scene, unsigned int room)
     if (count) {
         for (i = 0; i < count; ++i)
             if (!actor_resolve(babas[i].handle)) break;
-        if (i == count) return;
-        karebaba_reset();               /* unloaded under us: respawn fresh */
+        if (i < count)
+            karebaba_reset();           /* unloaded under us: respawn fresh */
     }
+    /* Required placements: a spawn refused by a full pool (counted by
+    ** actor_sys) is retried every sync until it lands, never dropped. */
     for (i = 0; i < KOKIRI_BABA_COUNT && count < KAREBABA_MAX; ++i) {
+        unsigned int k;
+        for (k = 0; k < count; ++k)
+            if (babas[k].spawn == i) break;
+        if (k < count)
+            continue;
         spawn(&babas[count], i);
         if (babas[count].handle) ++count;
     }

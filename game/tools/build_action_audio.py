@@ -17,7 +17,7 @@ import fairy_audio
 import sys
 
 ROOT = Path(__file__).resolve().parents[1]
-BASE = 0x3C000  # above largest music bank end (0x1000 + 240132), aligned to 1 KiB
+BASE = 0x50000  # above music banks at 0x1000 with 159600-sample budget
 RATE = 11025
 # seq_0.prg.seq layer, instrument, note, bounded one-shot seconds.
 EFFECTS = (

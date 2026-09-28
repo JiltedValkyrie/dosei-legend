@@ -65,6 +65,7 @@ void clock_feed(unsigned now,bool p) { clock_now=now; paused=p; }
         cls.lib = ctypes.CDLL(str(dll))
         cls.lib.ui_button_label.restype = ctypes.c_char_p
         cls.lib.ui_label_name.restype = ctypes.c_char_p
+        cls.lib.ui_jump_mask.restype = ctypes.c_uint16
         cls.lib.ui_preferences_unpack.restype = ctypes.c_bool
 
     @classmethod

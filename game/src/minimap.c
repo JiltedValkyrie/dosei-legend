@@ -175,6 +175,7 @@ void    minimap_scene(unsigned int save_scene)
 }
 
 void    minimap_set_hidden(bool h) { hidden = h; }
+void minimap_toggle(void) { hidden = !hidden; }
 
 bool    minimap_cheat_sample(uint16_t held)
 {

@@ -64,3 +64,13 @@ unsigned int sf_fingerprint(void)
     save_file_pack(&save_state, block);
     return (unsigned int)save_file_checksum(block + 8, SAVE_FILE_PAYLOAD_BYTES);
 }
+
+void sf_set_c_item(int slot, int item) { save_state.c_items[slot] = item; }
+int sf_c_item(int slot) { return save_state.c_items[slot]; }
+void sf_set_nuts(int owned, int ammo, int upgrade)
+{
+    save_state.nut_owned = owned;
+    save_state.nut_ammo = ammo;
+    save_state.nut_upgrade = upgrade;
+}
+int sf_nut_ammo(void) { return save_state.nut_owned * 1000 + save_state.nut_ammo * 10 + save_state.nut_upgrade; }

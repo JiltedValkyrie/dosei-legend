@@ -3,6 +3,8 @@
 #include "player_input.h"
 #include "kokiri_camera.h"
 bool demo_init(void);
+/* Bind TITLEPTH.BIN (cart carve): the title camera paths, BUG-043. */
+bool demo_title_paths_bind(const uint8_t *blob, uint32_t bytes);
 void demo_update(void);
 bool demo_title_is_visible(void);
 /* Live screen distance in pixels (main.c; slSetScreenDist uses it). */
@@ -19,6 +21,8 @@ bool demo_skip_prompt(void);
 bool demo_enter_prompt(void);
 /* Camera_Subj4 in a crawlspace: first person, Link not drawn. */
 bool demo_first_person(void);
+bool demo_shop_browsing(void);
+bool demo_view_first_person(void);
 extern camera_position_t demo_camera;
 extern uint16_t demo_yaw;
 extern int32_t demo_pitch;

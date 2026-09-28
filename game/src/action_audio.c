@@ -349,7 +349,8 @@ void action_audio_events(uint32_t events)
     {
         /* En_Karebaba (forest area bank) and its stick pickup. One baba
         ** sound a step on slot 28; Enemy_StartFinishingBlow on 30. */
-        uint32_t baba = karebaba_events();
+        uint32_t baba = gameplay.baba_events;
+        gameplay.baba_events = 0; /* Other motion sounds can call us again this step. */
         if (baba & KAREBABA_EV_DEAD) play_area(AREA_SFX_BABA_DEAD, 28);
         else if (baba & KAREBABA_EV_GROUND) play_area(AREA_SFX_BABA_GROUND, 28);
         else if (baba & KAREBABA_EV_AWAKEN) play_area(AREA_SFX_BABA_AWAKEN, 28);

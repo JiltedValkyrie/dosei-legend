@@ -1,14 +1,16 @@
 # Dosei Legend game
 
 Active Jo Engine / SGL project. See the [directory map](../README.md),
-[scope](../VERTICALSLICE.md) and [progress](../VSLICEPROGRESS.md).
+[approved demo scope](docs/DEMO_PLAN.md) and [progress](../VSLICEPROGRESS.md).
 
 ## Build and launch
 
 Configure local dependencies with `../launch-game.bat` > **Config > Paths...**.
 See [developer setup](../tools/launcher/SETUP.md) for the SDK, decomp and exact ROM.
 Settings are saved to the repository's ignored `config.ini`. From Windows, use
-`build.bat` or `build.bat -Variant hires`.
+`build.bat -Variant clean` for the normal player build. Standard and Hi-res
+are developer/requested alternatives; see the [variant table](../README.md#build-and-play).
+The game requires a **4 MB RAM expansion cartridge**.
 
 In MSYS2 bash, run `./build.sh` here. Add `--hires` for 320x480i;
 standard is 320x240. Same assets, gameplay and audio. Build sequentially.
@@ -19,7 +21,7 @@ objects, generated meshes and CD staging. `disc/` holds checked-in ISO metadata.
 when a test needs its developer-only features (debug HUD/overlays). Hi-res only
 on request.
 
-Clean player test: `./game/build.sh --clean` produces `game/build/game-clean.cue`
+Clean player test from `game/`: `./build.sh --clean` produces `build/game-clean.cue`
 and `.iso`, with all in-game diagnostic overlays suppressed (including L+R).
 Choose **clean player test** in the root launcher, or run `run-kronos-clean.bat`.
 Windows build: `build.bat -Variant clean`. Reopen the launcher after updating.
@@ -41,6 +43,15 @@ Double-click `../launch-game.bat` to choose a mode in the GUI, or use
 Xbox-style controller as 3D Control Pad: LT/RT need a Kronos patch, see
 [SETUP](../tools/launcher/SETUP.md#xbox-style-controller-triggers-3d-control-pad-need-a-kronos-patch).
 
+## Player options
+
+Use the root README for [launcher options](../README.md#build-and-play),
+[controls](../README.md#controls-current-build),
+[item assignment](../README.md#pause-pages-and-item-assignment) and
+[save/controller preferences](../README.md#system-options-and-saves).
+C-slot assignment and ammo counts work; live stick/slingshot actions remain
+pending. Equipment requires A to equip owned gear. Start closes pause.
+
 ## Content and code
 
 Forest content lives in `levels/kokiri/assets/`; actor recipes in `assets/dynamic/`.
@@ -49,7 +60,8 @@ meshes live in `build/generated/`. Shared title UI/audio and reusable libraries
 live in `../shared/`; game-specific bank selection stays in `src/music_banks.c`.
 
 See the [current controls table](../README.md#controls-current-build) for the
-standard digital Saturn pad; planned controls are marked there and the mapping
+digital and analog pads, [pause pages](../README.md#pause-pages-and-item-assignment)
+and [System options](../README.md#system-options-and-saves). The mapping
 itself lives in `src/player_input.c`.
 
 Slash/recovery and guard use real OoT pose clips. Equipped sword/shield use
@@ -75,7 +87,7 @@ runtime from the skeleton -- pre-baked frames do not fit in the RAM below SGL's
 work area. `src/link_anim_state.c` picks the clip from the distance collision
 actually moved him, so walking into a wall idles rather than running on the
 spot; the landing/roll split follows OoT's own rule. `RUN_SPEED_MIN` there is
-the walk/run threshold. Diagnostics show heap use and animation state; L+R
+the walk/run threshold. Diagnostics show heap use and animation state; L+R+Down
 switches views in regular builds. Clean player-test builds hide all of it.
 
 All objects track included headers through compiler-generated `.d` files.
@@ -118,10 +130,10 @@ See [texture implementation and evidence](docs/TEXTURE_PLAN.md).
 From MSYS2 bash in `game/`:
 
 ```bash
-./build.sh                                  # normal gameplay, new textures
-./build.sh --hires                          # same game, 320x480i
-TEXTURE_PATH=legacy ./build.sh              # original FOREST.BIN texture fallback
-./build.sh --hires TEXTURE_PROBE=1          # optional ground/treeline camera sweep
+./build.sh --clean                          # default player review
+./build.sh --hires                          # requested 320x480i experiment
+TEXTURE_PATH=legacy ./build.sh --clean       # developer texture fallback
+./build.sh TEXTURE_PROBE=1                   # developer ground/treeline sweep
 ```
 
 The probe replaces that mode's image: rebuild without `TEXTURE_PROBE=1` before

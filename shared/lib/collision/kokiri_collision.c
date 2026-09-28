@@ -4,6 +4,8 @@
 
 #define RADIUS 24
 #define EYE_HEIGHT 90
+/* Head sphere centre above the feet: radius 8 tops out at the child's 44. */
+#define LINK_HEAD_SPHERE_Y 36
 #define STEP 4
 /* OoT child Link checks walls at y=26 with radius 14 and checks ceilings up
  * to y=40. One sphere with those dimensions reproduces both limits here and
@@ -346,10 +348,10 @@ static void move_axis(camera_position_t *position, int axis, int32_t amount,
                 if (next.y-position->y > STEP ||
                     !(actor ? actor_clear(next) : kokiri_collision_clear(next))) break;
                 if (actor && axis == 1 && step > 0) {
-                        /* Rendered child is 62 units tall. Sweep a small head
+                        /* Rendered child is 44 units tall (BUG-009). Sweep a small head
                          * sphere too when rising; don't jump through a bridge. */
                         camera_position_t head = next;
-                        head.y += 54 - EYE_HEIGHT;
+                        head.y += LINK_HEAD_SPHERE_Y - EYE_HEIGHT;
                         if (!collision_clear_radius(head, 8)) break;
                 }
                 *position = next;
@@ -504,12 +506,12 @@ static void actor_step_y(camera_position_t *position, int32_t dy)
                 camera_position_t head = *position;
                 int32_t y = feet, to;
                 /* The old rise's head sphere at the drawn height (the child
-                 * mesh is 62 tall), in its STEP increments, so a jump cannot
+                 * mesh is 44 tall), in its STEP increments, so a jump cannot
                  * pass up through a walkable bridge. Ceiling polys are left to
                  * the source rule above. */
                 while (y < next) {
                         to = next - y > STEP ? y + STEP : next;
-                        head.y = to + 54;
+                        head.y = to + LINK_HEAD_SPHERE_Y;
                         if (!clear_radius(head, 8, true, BG_IGNORE_ENTITY)) { next = y; break; }
                         y = to;
                 }

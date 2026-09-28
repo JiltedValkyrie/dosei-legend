@@ -85,7 +85,7 @@
   ],
   "intro_seconds": 10.913317191283245,
   "total_seconds": 77.9023775786394,
-  "pcm_bytes": 240048,
+  "pcm_bytes": 319238,
   "levels_bytes": 112176,
   "omitted_opcodes": [
     "filter",
@@ -103,57 +103,57 @@
     {
       "name": "SAMPLE_0_115",
       "offset": 0,
-      "loop_start": 6208,
-      "loop_end": 9456,
-      "rate": 13186,
+      "loop_start": 8257,
+      "loop_end": 12576,
+      "rate": 17537,
       "unity": 68
     },
     {
       "name": "SAMPLE_0_356",
-      "offset": 18920,
-      "loop_start": 19545,
-      "loop_end": 22825,
-      "rate": 9086,
+      "offset": 25160,
+      "loop_start": 25995,
+      "loop_end": 30357,
+      "rate": 12084,
       "unity": 39
     },
     {
       "name": "SAMPLE_0_357",
-      "offset": 64578,
-      "loop_start": 20656,
-      "loop_end": 28436,
-      "rate": 13186,
+      "offset": 85882,
+      "loop_start": 27472,
+      "loop_end": 37820,
+      "rate": 17537,
       "unity": 60
     },
     {
       "name": "SAMPLE_0_358",
-      "offset": 121458,
-      "loop_start": 17287,
-      "loop_end": 19608,
-      "rate": 6593,
+      "offset": 161530,
+      "loop_start": 22990,
+      "loop_end": 26077,
+      "rate": 8768,
       "unity": 60
     },
     {
       "name": "SAMPLE_0_372",
-      "offset": 160682,
-      "loop_start": 6956,
-      "loop_end": 15013,
-      "rate": 13186,
+      "offset": 213692,
+      "loop_start": 9251,
+      "loop_end": 19967,
+      "rate": 17537,
       "unity": 36
     },
     {
       "name": "SAMPLE_0_373",
-      "offset": 190716,
-      "loop_start": 4098,
-      "loop_end": 13247,
-      "rate": 13186,
+      "offset": 253634,
+      "loop_start": 5450,
+      "loop_end": 17618,
+      "rate": 17537,
       "unity": 56
     },
     {
       "name": "SAMPLE_0_374",
-      "offset": 217218,
-      "loop_start": 3989,
-      "loop_end": 11411,
-      "rate": 13186,
+      "offset": 288878,
+      "loop_start": 5306,
+      "loop_end": 15176,
+      "rate": 17537,
       "unity": 68
     }
   ]

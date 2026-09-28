@@ -7,6 +7,7 @@ import struct
 import build_hybrid_scene as hybrid
 from vdp1_budget import Budget
 import asset_names
+from build_sgl_scene import floor_uses_far_sort
 
 
 def transitions(oot, rom_dir=None, prefix='spot04'):
@@ -53,13 +54,16 @@ def pack_room(vertices, faces, tiles, records, normal):
     for f in faces:
         data.extend(struct.pack('>3i4H',*normal(baked,f['idx']),*f['idx']))
     for f in faces:
+        # Preserve the same floor tag as the resident scene exporter.
+        # Runtime switches tagged overhead planes back to centre sorting.
+        sort = 0x66 if floor_uses_far_sort(baked, f['idx'], normal(baked, f['idx'])) else 0x67
         if 'colour' in f:
-            data.extend(struct.pack('>BB5H', 0 if f['cull'] else 1, 0x67,
+            data.extend(struct.pack('>BB5H', 0 if f['cull'] else 1, sort,
                                     0, 0xA8, f['colour'], 0, 4))
             continue
         # SGL 3.02j ATTR: flag, sort, texno, atrb, colno, gstb, dir.
         # Matches ATTRIBUTE(... SORT_CEN|UsePalette|UseNearClip, sprNoflip).
-        data.extend(struct.pack('>BB5H',0 if f['cull'] else 1,0x67,
+        data.extend(struct.pack('>BB5H',0 if f['cull'] else 1,sort,
                                 tiles[f['tex_off']]['index'],0x88 | (0x100 if f['mesh'] else 0),0,0,2))
     offset = 0
     for t in tiles.values():

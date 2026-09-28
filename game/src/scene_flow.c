@@ -1,3 +1,4 @@
+#pragma GCC optimize("Os") /* Cold text/load paths: scarce work RAM. */
 /*
 ** Scene loading and the doors between scenes. Contract in scene_flow.h.
 */
@@ -11,6 +12,8 @@
 #include "kokiri_collision.h"
 #include "ram_cart.h"
 #include "actor_sys.h"
+#include "npc_draw.h"
+#include "vdp1_draw_wait.h"
 
 static unsigned int current_scene;
 static bool         loaded;
@@ -72,6 +75,51 @@ const scene_entry_t *scene_flow_entry(void)
 bool            scene_flow_is_interior(void)
 {
     return (loaded && scene_flow_entry()->image != 0);
+}
+
+/* Play_SetViewpoint: five house panoramas toggle against their locked JPEG.
+ * The shop has FIXED_SHOP_VIEWPOINT and never accepts the toggle. */
+bool scene_flow_pivot(void)
+{
+    return scene_flow_is_interior() && !kokiri_scene_backdrop_active();
+}
+
+bool scene_flow_toggle_view(void)
+{
+    bool pivot = scene_flow_pivot(), ok;
+    if (!scene_flow_is_interior() || current_scene == SCENE_KOKIRI_SHOP)
+        return false;
+    if (!vdp1_wait_for_draw_end()) return false;
+    ok = pivot ? kokiri_scene_load_backdrop(current_scene, 0) :
+                 kokiri_scene_load_bank(4, current_scene);
+    if (!ok) {
+        /* A partial read can replace pixels. Restore the whole old view. */
+        ok = pivot ? kokiri_scene_load_bank(4, current_scene) :
+                     kokiri_scene_load_backdrop(current_scene, 0);
+        if (!ok) jo_core_error("Interior view reload failed");
+        return false;
+    }
+    return true;
+}
+
+/* Play_SetShopBrowsingViewpoint: talking to EnOssan switches the Kokiri
+ * Shop to its pivot view (SKYBOX_KOKIRI_SHOP, bank 4) and back afterwards. */
+bool scene_flow_shop_browse(bool on)
+{
+    bool ok;
+    if (!scene_flow_is_interior() || current_scene != SCENE_KOKIRI_SHOP ||
+        on == scene_flow_pivot())
+        return false;
+    if (!vdp1_wait_for_draw_end()) return false;
+    ok = on ? kokiri_scene_load_bank(4, current_scene) :
+              kokiri_scene_load_backdrop(current_scene, 0);
+    if (!ok) {
+        ok = on ? kokiri_scene_load_backdrop(current_scene, 0) :
+                  kokiri_scene_load_bank(4, current_scene);
+        if (!ok) jo_core_error("Shop view reload failed");
+        return false;
+    }
+    return true;
 }
 
 const scene_spawn_t *scene_flow_spawn(unsigned int scene, unsigned int spawn)
@@ -146,11 +194,13 @@ bool            scene_flow_load(unsigned int scene, unsigned int spawn)
     if (scene >= SCENE_COUNT)
         return (false);
     entry = &scene_entries[scene];
+    npc_draw_free();
     if (!collision_load(scene))
         return (false);
     if (entry->image) {
         /* A prerendered interior: one backdrop on VDP2, no geometry at all. */
-        if (!kokiri_scene_load_backdrop(scene, 0))
+        if (!(scene == SCENE_KOKIRI_SHOP ? kokiri_scene_load_backdrop(scene, 0) :
+              kokiri_scene_load_bank(4, scene)))
             return (false);
     } else {
         if (!kokiri_scene_load_bank(scene, 0))
@@ -163,6 +213,10 @@ bool            scene_flow_load(unsigned int scene, unsigned int spawn)
     current_scene = scene;
     loaded = true;
     door_armed = false;
+    if (!npc_draw_load(entry->save_scene)) {
+        jo_core_error("NPC model load failed: scene %u", entry->save_scene);
+        return false;
+    }
     return (true);
 }
 

@@ -42,6 +42,10 @@ unsigned int    scene_flow_scene(void);
 /* SAVE_SCENE_* -> table index, so a saved file resumes in the right scene. */
 unsigned int    scene_flow_index_for_save(unsigned int save_scene);
 bool            scene_flow_is_interior(void);
+bool scene_flow_pivot(void);
+/* Kokiri Shop browsing view on/off (true when it switched). */
+bool scene_flow_shop_browse(bool on);
+bool scene_flow_toggle_view(void);
 
 /* The loaded scene's table entry, for the fixed camera and room count. */
 const scene_entry_t *scene_flow_entry(void);

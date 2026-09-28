@@ -27,6 +27,7 @@ typedef enum
     CUTSCENE_ACTOR_HORSE_GANON,
     CUTSCENE_ACTOR_BRIDGE,
     CUTSCENE_ACTOR_CHAINS,
+    CUTSCENE_ACTOR_GATE_FIRE,
     CUTSCENE_ACTOR_COUNT
 }               cutscene_actor_id;
 
@@ -41,6 +42,7 @@ void            cutscene_actors_free(void);
 bool            cutscene_actors_ready(void);
 /* Prepare poses and cart-to-VRAM residency before drawing any actor. */
 void            cutscene_actors_prepare(void);
+void            cutscene_gate_fire_draw(void);
 
 /* Draw one rider at a world position and facing. Does nothing if it is not
 ** loaded, so a shot that names an actor we failed to read simply lacks it

@@ -8,6 +8,8 @@
 #include "attention.h"
 #include "karebaba.h"
 #include "game_over.h"
+#include "world_props.h"
+#include "world_signs.h"
 #include "player_attack.h"
 #include "link_clips.h"
 
@@ -16,6 +18,7 @@ gameplay_t          gameplay;
 typedef struct {
     collider_t blade[3], tufts[KOKIRI_GRASS_COUNT], wonders[KOKIRI_WONDER_COUNT];
     collider_t link_body, link_shield, boulder, nut;
+    collider_t props[4];
 } gp_contacts_t;
 
 /* Tags of the actorless colliders: tufts 0.., wonders 0x100+i. */
@@ -94,17 +97,86 @@ static bool         in_forest(void)
     return save_state.scene_id == SAVE_SCENE_KOKIRI_FOREST;
 }
 
+/* Does placement `npc` exist in the current scene (M3b)? Scene first, then
+** the source spawn rule. En_Ko child types are filtered offline
+** (EnKo_CanSpawn). EnMd_ShouldSpawn: forest until EVENTCHKINF_1C / Zelda's
+** letter, his house after. EnSa_GetType (child): forest until the Emerald;
+** her house needs the Fairy Ocarina, which this slice never grants. */
+bool                gameplay_npc_present(unsigned int npc)
+{
+    const kokiri_npc_t *p;
+    bool left;
+    if (npc >= KOKIRI_NPC_COUNT)
+        return false;
+    p = &kokiri_npcs[npc];
+    if (p->scene != save_state.scene_id)
+        return false;
+    left = save_get_event_chk_inf(EVENTCHKINF_MIDO_LEFT_FOR_HIS_HOUSE) ||
+           save_get_event_chk_inf(EVENTCHKINF_OBTAINED_ZELDAS_LETTER);
+    switch (p->kind) {
+    case KOKIRI_NPC_MIDO:
+        return p->scene == SAVE_SCENE_KOKIRI_FOREST ? !left :
+               p->scene == SAVE_SCENE_MIDOS_HOUSE && left;
+    case KOKIRI_NPC_SARIA:
+        return p->scene == SAVE_SCENE_KOKIRI_FOREST &&
+               !save_check_quest_item(QUEST_KOKIRI_EMERALD);
+    default:
+        return true;
+    }
+}
+
+/* Forest Mido runs the Deku Tree gate; his house copy never moves. */
+static bool         gate_mido(int npc)
+{
+    return kokiri_npcs[npc].kind == KOKIRI_NPC_MIDO &&
+           kokiri_npcs[npc].scene == SAVE_SCENE_KOKIRI_FOREST;
+}
+
 /* Speaker placement with Mido's live position swapped in. */
 static kokiri_npc_t mido_live;
+static kokiri_npc_t exit_blocker_live;
+static bool exit_blocker_valid;
+static uint16_t mido_yaw;
+
+static bool exit_blocker(unsigned int npc)
+{
+    return kokiri_npcs[npc].scene == SAVE_SCENE_KOKIRI_FOREST &&
+           kokiri_npcs[npc].kind == KOKIRI_NPC_CHILD &&
+           (kokiri_npcs[npc].param & 255) == 3;
+}
+
+/* EnKo func_80A995CC: stand on the 80-unit ring around home, facing Link.
+ * Its source path is only used after the Emerald (M5/M6). */
+static void update_exit_blocker(const gameplay_input_t *in)
+{
+    unsigned int i;
+    if (!in_forest() || save_check_quest_item(QUEST_KOKIRI_EMERALD)) return;
+    for (i = 0; i < KOKIRI_NPC_COUNT; ++i) if (exit_blocker(i)) {
+        int32_t sine, cosine;
+        const kokiri_npc_t *home = &kokiri_npcs[i];
+        uint16_t yaw = gameplay_facing(in->x - home->x, in->z - home->z);
+        gameplay_sincos(yaw, &sine, &cosine);
+        exit_blocker_live = *home;
+        exit_blocker_live.x += (80 * sine) >> 16;
+        exit_blocker_live.z += (80 * cosine) >> 16;
+        exit_blocker_live.yaw = gameplay_facing(in->x - exit_blocker_live.x,
+                                               in->z - exit_blocker_live.z);
+        exit_blocker_valid = true;
+        return;
+    }
+}
 
 static const kokiri_npc_t *npc_at(int npc)
 {
-    if (kokiri_npcs[npc].kind == KOKIRI_NPC_MIDO) {
+    if (gate_mido(npc)) {
         mido_live = kokiri_npcs[npc];
         mido_live.x = (int16_t)gameplay.mido_x;
         mido_live.z = (int16_t)gameplay.mido_z;
+        mido_live.yaw = mido_yaw;
         return &mido_live;
     }
+    if (exit_blocker(npc) && exit_blocker_valid &&
+        !save_check_quest_item(QUEST_KOKIRI_EMERALD)) return &exit_blocker_live;
     return &kokiri_npcs[npc];
 }
 
@@ -120,6 +192,20 @@ static const actor_profile_t npc_profile = {
     GP_NPC_ACTOR_ID, ACTORCAT_NPC, ACTOR_FLAG_TARGETABLE, 0, 0, 0, 0
 };
 static actor_handle_t npc_actor[KOKIRI_NPC_COUNT];
+/* shape.rot.y after NPC_TRACKING_FULL_BODY turns. Live copies (gate Mido,
+** the type-3 exit ring) own their facing and ignore it. */
+static uint16_t     npc_turn[KOKIRI_NPC_COUNT];
+static uint32_t     npc_turned;
+
+
+void gameplay_npc_focus(unsigned int npc, const int32_t offset[3])
+{
+    actor_t *a;
+    unsigned int k;
+    if (npc >= KOKIRI_NPC_COUNT) return;
+    a = actor_resolve(npc_actor[npc]);
+    if (a) for (k = 0; k < 3; ++k) a->focus[k] = (int16_t)offset[k];
+}
 
 static void         npc_actors_kill(void)
 {
@@ -133,18 +219,20 @@ static void         npc_actors_kill(void)
 static void         sync_npc_actors(void)
 {
     unsigned int i;
-    if (!in_forest()) {
-        npc_actors_kill();
-        return;
-    }
     for (i = 0; i < KOKIRI_NPC_COUNT; ++i) {
         const kokiri_npc_t *npc = npc_at(i);
         actor_t *a = actor_resolve(npc_actor[i]);
+        if (!gameplay_npc_present(i)) {
+            npc_turned &= ~(1u << i);
+            if (a) actor_kill(a);
+            npc_actor[i] = ACTOR_HANDLE_NONE;
+            continue;
+        }
         if (!a) {
             a = actor_spawn(&npc_profile, save_state.scene_id, ACTOR_ROOM_NONE,
                             npc->x, npc->y, npc->z, 0, (uint16_t)i);
             if (!a)
-                continue;                   /* pool full: this one untargetable */
+                continue;       /* pool full: counted, retried next step */
             a->attention = ATTN_NPC;
             a->range = ATTN_RANGE_SLICE_NPC;
             a->focus[1] = GP_NPC_FOCUS_Y;
@@ -165,7 +253,11 @@ int                 gameplay_target_npc(void)
 
 bool                gameplay_npcs_present(void)
 {
-    return in_forest();
+    unsigned int i;
+    for (i = 0; i < KOKIRI_NPC_COUNT; ++i)
+        if (gameplay_npc_present(i))
+            return true;
+    return false;
 }
 
 int32_t             gameplay_npc_x(unsigned int npc)
@@ -176,6 +268,26 @@ int32_t             gameplay_npc_x(unsigned int npc)
 int32_t             gameplay_npc_z(unsigned int npc)
 {
     return npc < KOKIRI_NPC_COUNT ? npc_at((int)npc)->z : 0;
+}
+
+uint16_t gameplay_npc_yaw(unsigned int npc)
+{
+    const kokiri_npc_t *p;
+    if (npc >= KOKIRI_NPC_COUNT) return 0;
+    p = npc_at((int)npc);
+    return p == &kokiri_npcs[npc] && (npc_turned & (1u << npc)) ? npc_turn[npc] : p->yaw;
+}
+
+void                gameplay_npc_turn(unsigned int npc, uint16_t yaw)
+{
+    if (npc >= KOKIRI_NPC_COUNT || npc_at((int)npc) != &kokiri_npcs[npc]) return;
+    npc_turn[npc] = yaw;
+    npc_turned |= 1u << npc;
+}
+
+void                gameplay_npc_turns_reset(void)
+{
+    npc_turned = 0;
 }
 
 static void         mido_place(void)
@@ -196,6 +308,8 @@ static void         mido_place(void)
 ** while his box is open (talkState != IDLE freezes the block position). */
 static void         update_mido(const gameplay_input_t *in)
 {
+    if (!gameplay.talking)
+        mido_yaw = gameplay_facing(in->x - gameplay.mido_x, in->z - gameplay.mido_z);
     if (gameplay.mido_state == 0) {
         int32_t sine, cosine;
         if (in->room != MIDO_ROOM || gameplay.talking)
@@ -655,12 +769,21 @@ static bool         open_system_text(uint16_t text_id)
         gameplay.rule = (int16_t)dialogue_system[i].rule;
         gameplay.speaker = -1;
         gameplay.prompt = -1;
-        gameplay.page = 0;
+        gameplay.page = gameplay.page_part = 0;
         gameplay.talking = true;
         gameplay.events |= GP_EVENT_TALK_OPEN;
         return true;
     }
     return false;
+}
+
+void gameplay_drop_message(unsigned int item)
+{
+    if (open_system_text(item == 12 ? 0x0034 : 0x0037)) {
+        gameplay.get_item = item == 12 ? GP_GET_NUT : GP_GET_STICK;
+        gameplay.get_item_age = 0;
+        gameplay.events |= GP_EVENT_PICKUP;
+    }
 }
 
 /* ---- En_Box (z_en_box.c) --------------------------------------------------- */
@@ -670,7 +793,7 @@ static bool         open_system_text(uint16_t text_id)
 bool                gameplay_chest_opened(unsigned int index)
 {
     return index < KOKIRI_CHEST_COUNT &&
-           save_get_treasure(save_state.scene_id, CHEST_FLAG(&kokiri_chests[index]));
+           save_get_treasure(kokiri_chests[index].scene, CHEST_FLAG(&kokiri_chests[index]));
 }
 
 /* EnBox_WaitOpen: Link in the chest's own frame at -50 < z < 0, |x| < 20,
@@ -680,13 +803,11 @@ bool                gameplay_chest_opened(unsigned int index)
 static int16_t      chest_in_reach(const gameplay_input_t *in)
 {
     unsigned int i;
-    if (!in_forest())
-        return -1;
     for (i = 0; i < KOKIRI_CHEST_COUNT; ++i) {
         const kokiri_chest_t *c = &kokiri_chests[i];
         int32_t dx = in->x - c->x, dy = in->y - c->y, dz = in->z - c->z;
         int32_t sine, cosine, lx, lz, turn;
-        if (in->room != c->room || gameplay_chest_opened(i))
+        if (save_state.scene_id != c->scene || in->room != c->room || gameplay_chest_opened(i))
             continue;
         if (dy <= -10 || dy >= 10)
             continue;
@@ -711,13 +832,29 @@ static bool         update_chest(const gameplay_input_t *in)
     if (gameplay.chest_prompt < 0 || !in->interact)
         return false;
     c = &kokiri_chests[gameplay.chest_prompt];
-    save_set_treasure(save_state.scene_id, CHEST_FLAG(c));
-    gameplay.owned |= GP_SWORD;
-    sync_gear_to_save();
-    gameplay.chest_prompt = -1;
-    gameplay.get_item = GP_SWORD;
-    gameplay.events |= GP_EVENT_PICKUP;
-    open_system_text(0x00A4);
+    {
+        unsigned int reward = (c->param >> 5) & 0x7F;
+        save_item_t item;
+        unsigned int text;
+        switch (reward) {
+        case 0x27: item = SAVE_ITEM_SWORD_KOKIRI; text = 0xA4; break;
+        case 0x48: item = SAVE_ITEM_RECOVERY_HEART; text = 0x55; break;
+        case 0x4C: item = SAVE_ITEM_RUPEE_GREEN; text = 0x6F; break;
+        case 0x4D: item = SAVE_ITEM_RUPEE_BLUE; text = 0xCC; break;
+        default: return false; /* Never consume a chest we cannot grant. */
+        }
+        /* EnBox opens even when its heart/wallet reward is already full.
+         * The shared grant clamps/refuses the excess; this is not a purchase. */
+        save_item_give(item);
+        save_set_treasure(c->scene, CHEST_FLAG(c));
+        gameplay.rupees = (uint8_t)save_state.rupees;
+        if (reward == 0x27) gameplay.owned |= GP_SWORD;
+        gameplay.chest_prompt = -1;
+        gameplay.get_item_age = 0;
+        gameplay.get_item = reward == 0x27 ? GP_SWORD : reward == 0x48 ? GP_GET_HEART : 0;
+        gameplay.events |= GP_EVENT_PICKUP;
+        open_system_text(text);
+    }
     return true;
 }
 
@@ -858,6 +995,9 @@ bool                gameplay_wonder_drop(unsigned int index)
 void                gameplay_reset(void)
 {
     unsigned int i;
+    exit_blocker_valid = false;
+    for (i = 0; i < KOKIRI_NPC_COUNT; ++i)
+        if (gate_mido(i)) { mido_yaw = kokiri_npcs[i].yaw; break; }
     gameplay.owned = 0;
     gameplay.equipped = 0;
     gameplay.shielding = false;
@@ -871,6 +1011,7 @@ void                gameplay_reset(void)
     gameplay.navi_text = 0;
     gameplay.navi_calling = false;
     gameplay.navi_read = false;
+    gameplay.navi_phase = 0;
     gameplay.dead = false;
     gameplay.alarm_steps = 0;
     if (save_state.navi_timer >= GP_NAVI_TIMER_MAX || save_state.navi_timer < GP_NAVI_HINT_TO)
@@ -891,6 +1032,7 @@ void                gameplay_reset(void)
     blade_prev_valid = false;
     nut_bg_hit = false;
     gameplay.grass_cut = 0;
+    world_props_reset();
     /* swing_count restarts below, so old attack ids would read as repeats. */
     for (i = 0; contacts && i < KOKIRI_GRASS_COUNT; ++i)
         collide_forget(&contacts->tufts[i]);
@@ -906,6 +1048,10 @@ void                gameplay_reset(void)
     gameplay.chest_prompt = -1;
     gameplay.get_item = 0;
     gameplay.shop_state = 0;
+    gameplay.shop_cursor = 0;
+    gameplay.shop_face = gameplay.shop_target = 0;
+    gameplay.shop_accum_x = gameplay.shop_accum_y = 0;
+    gameplay.shop_move_x = false;
     gameplay.choice = 0;
     boulder_reset();
     gameplay.boulder_live = false;
@@ -922,7 +1068,7 @@ void                gameplay_reset(void)
     gameplay.speaker = -1;
     gameplay.prompt = -1;
     gameplay.rule = -1;
-    gameplay.page = 0;
+    gameplay.page = gameplay.page_part = 0;
     gameplay.talking = false;
     gameplay.paused = false;
     gameplay.cursor = GP_SLOT_SWORD;
@@ -965,24 +1111,26 @@ static bool rupee_near(const gameplay_input_t *in, int x, int y, int z, int room
 
 static void grant_rupee(unsigned int value)
 {
-    unsigned int total = gameplay.rupees + value;
-    gameplay.rupees = total > GP_WALLET_CAPACITY ? GP_WALLET_CAPACITY : total;
-    /* The wallet is saved state: the Deku Shield costs 40 rupees, so losing
-    ** the count on a reload would undo real progress. */
+    /* Item_Give via the shared grant path (save_item_give): the wallet is
+    ** saved state and clamps there; gameplay.rupees is only its cache. */
     save_state.rupees = gameplay.rupees;
+    save_item_give(value >= 20 ? SAVE_ITEM_RUPEE_RED :
+                   value >= 5 ? SAVE_ITEM_RUPEE_BLUE : SAVE_ITEM_RUPEE_GREEN);
+    gameplay.rupees = (uint8_t)save_state.rupees;
     gameplay.events |= GP_EVENT_RUPEE;
 }
 
 static void collect_rupees(const gameplay_input_t *in)
 {
     unsigned int i;
+    if (!in_forest()) return;
     for (i = 0; i < KOKIRI_RUPEE_COUNT; ++i) {
         const kokiri_rupee_t *r = &kokiri_rupees[i];
         if (!gameplay_rupee_taken(i) && rupee_near(in, r->x, r->y, r->z, r->room)) {
             gameplay.rupee_taken |= (uint16_t)(1u << i);
             /* Per-scene collectible flag, where OoT keeps them, so a rupee
             ** already picked up does not reappear after a save and reload. */
-            save_set_collectible(save_state.scene_id, i);
+            save_set_collectible(save_state.scene_id, (r->param >> 8) & 63);
             grant_rupee(r->value);
         }
     }
@@ -1050,7 +1198,7 @@ static void         sync_gear_from_save(void)
     ** deliberately never saves, so regrowing is the original's behaviour. */
     gameplay.rupee_taken = 0;
     for (i = 0; i < KOKIRI_RUPEE_COUNT && i < 16; ++i)
-        if (save_get_collectible(save_state.scene_id, i))
+        if (in_forest() && save_get_collectible(save_state.scene_id, (kokiri_rupees[i].param >> 8) & 63))
             gameplay.rupee_taken |= (uint16_t)(1u << i);
 }
 
@@ -1347,7 +1495,7 @@ targets:
     for (i = 0; i < KOKIRI_GRASS_COUNT; ++i) {
         const kokiri_prop_t *tuft = &kokiri_grass[i];
         collider_t *c = &contacts->tufts[i];
-        if (in->room != tuft->room || (gameplay.grass_cut & (1u << i)))
+        if (!in_forest() || in->room != tuft->room || (gameplay.grass_cut & (1u << i)))
             continue;
         c->shape = COLSHAPE_CYLINDER;
         c->actor = 0;
@@ -1448,7 +1596,9 @@ static void         run_contacts(const gameplay_input_t *in)
         register_boulder(in);
     register_nut();
     karebaba_register();
+    world_props_register(contacts->props, 4, in);
     collide_run();
+    world_props_collect();
     karebaba_collect();
     if (contacts->boulder.result & COL_RES_AT_HIT)
         gameplay.boulder_hit = true;
@@ -1482,8 +1632,7 @@ static void         run_contacts(const gameplay_input_t *in)
         gameplay.grass_cut |= (uint16_t)(1u << tuft);
         /* One source-table roll per tuft, never rerolled by standing/swinging.
          * Tiny slice RNG; source odds, not the original global random stream. */
-        gameplay.grass_rupee[tuft] =
-            kokiri_grass_rupees[tuft][drop_random() & 15];
+        world_props_grass_drop(tuft, drop_random());
         gameplay.grass_age[tuft] = 0;
         gameplay.swing_hit = 1;
         ++gameplay.cut_count;
@@ -1872,6 +2021,21 @@ static void         update_menu(const gameplay_input_t *in)
     }
     if (!gameplay.paused)
         return;
+    if (in->c_assign && in->c_assign <= 3 && !in->cancel && !in->menu_page &&
+        !gameplay.pause_window.save_prompt && !gameplay.pause_window.system_confirm &&
+        gameplay.pause_window.page == PAUSE_ITEMS) {
+        unsigned cursor = gameplay.pause_window.cursor[PAUSE_ITEMS];
+        unsigned item = cursor == 0 && save_state.stick_owned ? 1 :
+                        cursor == 6 && save_state.slingshot ? 2 : 0;
+        if (item) {
+            unsigned i;
+            for (i = 0; i < 3; ++i)
+                if (save_state.c_items[i] == item) save_state.c_items[i] = 0;
+            save_state.c_items[in->c_assign - 1] = item;
+            gameplay.events |= GP_EVENT_EQUIP;
+        } else gameplay.events |= GP_EVENT_DENIED;
+        return;
+    }
     unsigned result = pause_window_step(&gameplay.pause_window,
         in->menu_dx, in->menu_dy, in->menu_page,
         in->cancel, in->interact, gameplay.owned);
@@ -1911,6 +2075,8 @@ static int16_t      convo_for(unsigned int npc)
     for (i = 0; i < DIALOGUE_CONVO_COUNT; ++i) {
         if (dialogue_convos[i].speaker != person->kind)
             continue;
+        if (person->kind == KOKIRI_NPC_MIDO &&
+            dialogue_convos[i].kind != (person->scene == SAVE_SCENE_MIDOS_HOUSE ? 1 : 0)) continue;
         if (person->kind != KOKIRI_NPC_CHILD ||
             dialogue_convos[i].kind == kind)
             return (int16_t)i;
@@ -1978,32 +2144,48 @@ static int16_t      rule_for(unsigned int npc)
     return -1;
 }
 
-unsigned int        gameplay_page_lines(void)
-{
-    const dialogue_rule_t *rule;
-    if (!gameplay.talking || gameplay.rule < 0)
-        return 0;
-    rule = &dialogue_rules[gameplay.rule];
-    if (gameplay.page >= rule->pages)
-        return 0;
-    return dialogue_pages[rule->first_page + gameplay.page].lines;
-}
-
-const char         *gameplay_page_line(unsigned int line)
+static unsigned int source_choice_lines(void);
+static unsigned int page_rows(void)
 {
     const dialogue_rule_t *rule;
     const dialogue_page_t *page;
-    if (line >= gameplay_page_lines())
-        return 0;
+    if (!gameplay.talking || gameplay.rule < 0) return 0;
     rule = &dialogue_rules[gameplay.rule];
+    if (gameplay.page >= rule->pages) return 0;
     page = &dialogue_pages[rule->first_page + gameplay.page];
-    return dialogue_line(page->first_line + line);
+    return dialogue_prepare(page->first_line, page->lines, source_choice_lines());
+}
+bool gameplay_page_more(void)
+{
+    return page_rows() > (gameplay.page_part + 1u) * DIALOGUE_MAX_LINES;
+}
+unsigned int gameplay_page_lines(void)
+{
+    unsigned count = page_rows(), first = gameplay.page_part * DIALOGUE_MAX_LINES;
+    if (count <= first) return 0;
+    count -= first;
+    return count > DIALOGUE_MAX_LINES ? DIALOGUE_MAX_LINES : count;
+}
+const char *gameplay_page_line(unsigned int line)
+{
+    if (line >= gameplay_page_lines()) return 0;
+    return dialogue_row(gameplay.page_part * DIALOGUE_MAX_LINES + line);
 }
 
 const char         *gameplay_speaker_name(void)
 {
     if (!gameplay.talking || gameplay.speaker < 0)
         return gameplay.talking ? "" : 0;       /* speakerless text */
+    if (kokiri_npcs[gameplay.speaker].kind == KOKIRI_NPC_CHILD) {
+        /* OoT's box shows no name. Named cast: Fado (ENKO_TYPE_CHILD_FADO)
+        ** and the Know-It-All Brothers (types 7/8/11, their house); the rest
+        ** by EnKo sModelInfo body: object_kw1 girls, object_km1 boys. */
+        unsigned int type = kokiri_npcs[gameplay.speaker].param & 255;
+        if (type == 12) return "Fado";
+        if (type == 7 || type == 8 || type == 11) return "Know-It-All Brother";
+        return type == 1 || type == 5 || type == 6 || type == 9 || type == 10 ?
+               "Kokiri Girl" : "Kokiri Boy";
+    }
     return dialogue_speaker_names[kokiri_npcs[gameplay.speaker].kind];
 }
 
@@ -2015,10 +2197,8 @@ static int16_t      find_speaker(const gameplay_input_t *in)
     int32_t best = (int32_t)GP_TALK_RANGE * GP_TALK_RANGE + 1;
     int16_t found = -1;
     unsigned int i;
-    /* Forest actors only: inside Link's house a Kokiri standing outside the
-    ** wall must not take A away from the door. */
-    if (!in_forest())
-        return -1;
+    /* Only this scene's people (gameplay_npc_present): a Kokiri placed in
+    ** another scene must never take A away from a door. */
     if (gameplay_target_npc() >= 0) {
         const kokiri_npc_t *npc = npc_at(gameplay_target_npc());
         int32_t dy = in->y - npc->y;
@@ -2029,9 +2209,13 @@ static int16_t      find_speaker(const gameplay_input_t *in)
             return (int16_t)gameplay_target_npc();
     }
     for (i = 0; i < KOKIRI_NPC_COUNT; ++i) {
-        const kokiri_npc_t *npc = npc_at(i);
-        int32_t distance = planar_squared(in->x, in->z, npc->x, npc->z);
-        int32_t dy = in->y - npc->y, turn;
+        const kokiri_npc_t *npc;
+        int32_t distance, dy, turn;
+        if (!gameplay_npc_present(i))
+            continue;
+        npc = npc_at(i);
+        distance = planar_squared(in->x, in->z, npc->x, npc->z);
+        dy = in->y - npc->y;
         if (dy < 0) dy = -dy;
         if (dy > GP_TALK_HEIGHT || distance >= best)
             continue;
@@ -2054,33 +2238,236 @@ static int16_t      find_speaker(const gameplay_input_t *in)
 ** Item_CheckObtainability is ITEM_NONE): debit and grant together, then the
 ** get-item text 0x004C. Don't buy returns to the item text. */
 
-static bool         shop_open(uint16_t text_id, uint8_t state)
+/* EnOssan Kokiri shopkeeper state machine (z_en_ossan.c) over the shelf of
+** sShopkeeperStores[0] and sShopItemEntries (z_en_girla.c). Right shelf is
+** slots 0-3, left 4-7; even = bottom row, odd = top. Text is opened by id
+** (Message_ContinueTextbox). B ends the exchange wherever the source runs
+** EnOssan_TestEndInteraction, and only cancels the buy prompt. */
+static const struct {
+    uint16_t desc, prompt, get_text, price;
+    int8_t   item;          /* save_item_t; -1 = never obtainable here */
+} shop_stock[8] = {
+    { 0x009F, 0x0089, 0x004C, 40, SAVE_ITEM_SHIELD_DEKU },   /* SI_DEKU_SHIELD */
+    { 0x00B2, 0x007F, 0x0034, 15, SAVE_ITEM_DEKU_NUTS_5 },   /* SI_DEKU_NUTS_5 */
+    { 0x00A2, 0x0087, 0x0034, 30, SAVE_ITEM_DEKU_NUTS_10 },  /* SI_DEKU_NUTS_10 */
+    { 0x00A1, 0x0088, 0x0037, 10, SAVE_ITEM_DEKU_STICK },    /* SI_DEKU_STICK */
+    /* No bullet bag / bow yet: EnGirlA_CanBuy_DekuSeeds / _Arrows refuse
+    ** (CANT_GET_NOW / CANT_GET_NOW_5), both text 0x86. */
+    { 0x00DF, 0x00DE, 0, 30, -1 },                            /* SI_DEKU_SEEDS_30 */
+    { 0x00A0, 0x008A, 0, 20, -1 },                            /* SI_ARROWS_10 */
+    { 0x00C1, 0x009B, 0, 60, -1 },                            /* SI_ARROWS_30 */
+    { 0x00AC, 0x0095, 0, 10, SAVE_ITEM_RECOVERY_HEART },      /* SI_RECOVERY_HEART */
+};
+
+static void         shop_text(uint16_t text_id, uint8_t state)
 {
-    if (!open_system_text(text_id))
-        return false;
     gameplay.shop_state = state;
     gameplay.choice = 0;
-    return true;
+    if (!open_system_text(text_id))
+        gameplay.talking = false;
 }
 
+/* EnOssan_EndInteraction: box closed, locked viewpoint, face angle 0. */
+static void         shop_end(void)
+{
+    gameplay.shop_state = GP_SHOP_NONE;
+    gameplay.shop_face = 0;
+    gameplay.talking = false;
+    gameplay.speaker = -1;
+    gameplay.rule = -1;
+    gameplay.get_item = 0;
+    gameplay.events |= GP_EVENT_TALK_CLOSE;
+}
+
+/* EnOssan_StartShopping: facing the shopkeeper, text 0x83. */
+static void         shop_facing(void)
+{
+    shop_text(0x0083, GP_SHOP_FACING);
+}
+
+static void         shop_describe(void)
+{
+    shop_text(shop_stock[gameplay.shop_cursor].desc, GP_SHOP_BROWSE);
+}
+
+static void         shop_turn(int8_t target)
+{
+    gameplay.shop_target = target;
+    gameplay.shop_state = GP_SHOP_TURN;
+    gameplay.events |= GP_EVENT_MENU_MOVE;          /* NA_SE_SY_CURSOR */
+}
+
+/* EnOssan_HandleCanBuyItem, through the shared grant transaction. */
 static void         shop_buy(void)
 {
-    if (gameplay.owned & GP_SHIELD) {
-        shop_open(0x0086, 4);
+    unsigned int slot = gameplay.shop_cursor;
+    save_canbuy_t result = SAVE_CANBUY_CANT_GET_NOW;
+    save_state.rupees = gameplay.rupees;    /* the cache is authoritative here */
+    if (shop_stock[slot].item >= 0)
+        result = save_item_buy((save_item_t)shop_stock[slot].item, shop_stock[slot].price);
+    if (result == SAVE_CANBUY_CANT_GET_NOW || result == SAVE_CANBUY_NEED_RUPEES) {
+        shop_text(result == SAVE_CANBUY_CANT_GET_NOW ? 0x0086 : 0x0085, GP_SHOP_RESULT);
         gameplay.events |= GP_EVENT_DENIED;
         return;
     }
-    if (gameplay.rupees < GP_SHIELD_PRICE) {
-        shop_open(0x0085, 4);
-        gameplay.events |= GP_EVENT_DENIED;
+    gameplay.rupees = (uint8_t)save_state.rupees;
+    if (shop_stock[slot].item == SAVE_ITEM_SHIELD_DEKU)
+        gameplay.owned |= GP_SHIELD;
+    if (result == SAVE_CANBUY_SUCCESS_FANFARE) {
+        /* EnOssan_GiveItemWithFanfare: locked view, Link holds it up. */
+        shop_text(shop_stock[slot].get_text, GP_SHOP_GET);
+        gameplay.get_item_age = 0;
+        gameplay.get_item = shop_stock[slot].item == SAVE_ITEM_SHIELD_DEKU ? GP_SHIELD :
+            shop_stock[slot].item == SAVE_ITEM_DEKU_STICK ? GP_GET_STICK : GP_GET_NUT;
+        gameplay.events |= GP_EVENT_PICKUP;
         return;
     }
-    gameplay.rupees = (uint8_t)(gameplay.rupees - GP_SHIELD_PRICE);
-    gameplay.owned |= GP_SHIELD;
-    sync_gear_to_save();                /* wallet and shield in one write */
-    shop_open(0x004C, 4);
-    gameplay.get_item = GP_SHIELD;
-    gameplay.events |= GP_EVENT_PICKUP;
+    shop_text(0x0084, GP_SHOP_QUICK);               /* quick buy */
+}
+
+static void         shop_choice(const gameplay_input_t *in)
+{
+    int next = (int)gameplay.choice + in->menu_dy;
+    if (next < 0) next = 0;
+    if (next > 1) next = 1;
+    if (next == gameplay.choice) return;
+    gameplay.choice = (uint8_t)next;
+    gameplay.events |= GP_EVENT_MENU_MOVE;
+}
+
+/* EnOssan_UpdateJoystickInputState: a push past 30 moves once and starts
+** accumulating; the source adds the stick value every 20 Hz frame (x2/3 a
+** 30 Hz step), capped at 2000; releasing or reversing resets. */
+static void         shop_stick_axis(int value, int16_t *accum, bool *moved)
+{
+    *moved = false;
+    if (*accum == 0) {
+        if (value > 30 || value < -30) { *accum = (int16_t)value; *moved = true; }
+    } else if (value <= 30 && value >= -30) {
+        *accum = 0;
+    } else if ((int32_t)*accum * value < 0) {
+        *accum = (int16_t)value;
+        *moved = true;
+    } else {
+        int32_t next = *accum + value * 2 / 3;
+        if (next > 2000) next = 2000;
+        if (next < -2000) next = -2000;
+        *accum = (int16_t)next;
+    }
+}
+
+/* EnOssan_SetCursorIndexFromNeutral, every slot stocked: keep the row. */
+static void         shop_enter_shelf(unsigned int offset)
+{
+    gameplay.shop_cursor = (uint8_t)(offset | (gameplay.shop_cursor & 1));
+}
+
+static void         shop_browse(const gameplay_input_t *in)
+{
+    unsigned int cursor = gameplay.shop_cursor, next = cursor;
+    bool left_shelf = cursor >= 4;
+    unsigned int low = left_shelf ? 4 : 0;
+    int ax = gameplay.shop_accum_x, dir = 0;
+    if (in->cancel) { shop_end(); return; }
+    if (in->interact) {                             /* HasPlayerSelectedItem */
+        shop_text(shop_stock[cursor].prompt, GP_SHOP_SELECTED);
+        return;
+    }
+    /* moveHorizontal steps once; a hold past 500 steps every update. */
+    if (gameplay.shop_move_x || ax > 500 || ax < -500)
+        dir = ax > 0 ? 1 : ax < 0 ? -1 : 0;
+    /* Toward the shopkeeper (EnOssan_CursorRight): right on the left shelf,
+    ** left on the right one; off the inner edge looks back at him. */
+    if ((left_shelf && dir > 0) || (!left_shelf && dir < 0)) {
+        if (cursor >= low + 2) next = cursor - 2;
+        else { shop_turn(0); return; }
+    } else if (dir != 0 && cursor + 2 < low + 4) {
+        next = cursor + 2;                          /* EnOssan_CursorLeft */
+    }
+    /* EnOssan_CursorUpDown: stickAccumY < 0 bottom row, > 0 top row. */
+    if (gameplay.shop_accum_y < 0) next &= ~1u;
+    else if (gameplay.shop_accum_y > 0) next |= 1u;
+    if (next != cursor) {
+        gameplay.shop_cursor = (uint8_t)next;
+        shop_describe();
+        gameplay.events |= GP_EVENT_MENU_MOVE;
+    }
+}
+
+static void         shop_update(const gameplay_input_t *in)
+{
+    bool moved_y;
+    gameplay.prompt = -1;
+    shop_stick_axis(in->menu_hold_x, &gameplay.shop_accum_x, &gameplay.shop_move_x);
+    shop_stick_axis(in->menu_hold_y, &gameplay.shop_accum_y, &moved_y);
+    switch (gameplay.shop_state) {
+    case GP_SHOP_HELLO:                             /* 0x9E */
+        if (in->cancel) shop_end();
+        else if (in->interact) shop_facing();
+        break;
+    case GP_SHOP_FACING:                            /* 0x83: talk / quit */
+        if (in->cancel) { shop_end(); break; }
+        shop_choice(in);
+        if (in->interact) {
+            if (gameplay.choice == 0) shop_text(0x10BA, GP_SHOP_OWNER);
+            else shop_end();
+        } else if (gameplay.shop_accum_x < 0) {
+            shop_enter_shelf(4);                    /* LOOK_SHELF_LEFT: +30 */
+            shop_turn(30);
+        } else if (gameplay.shop_accum_x > 0) {
+            shop_enter_shelf(0);                    /* LOOK_SHELF_RIGHT: -30 */
+            shop_turn(-30);
+        }
+        break;
+    case GP_SHOP_OWNER:                             /* EnOssan_TalkKokiriShopkeeper */
+        if (in->interact || in->cancel) shop_facing();
+        break;
+    case GP_SHOP_TURN: {
+        /* Math_ApproachF(angle, target, 0.5, 10) at 20 Hz, ~x2/3 a step. */
+        int diff = gameplay.shop_target - gameplay.shop_face;
+        int step = diff / 2;
+        if (step > 7) step = 7;
+        if (step < -7) step = -7;
+        /* EnOssan_State_LookTo*Shelf zeroes stickAccumX while turning. */
+        gameplay.shop_accum_x = 0;
+        if (diff >= -1 && diff <= 1) gameplay.shop_face = gameplay.shop_target;
+        else gameplay.shop_face = (int8_t)(gameplay.shop_face + step);
+        if (gameplay.shop_face == gameplay.shop_target) {
+            if (gameplay.shop_target == 0) shop_facing();
+            else shop_describe();
+        }
+        break;
+    }
+    case GP_SHOP_BROWSE:
+        shop_browse(in);
+        break;
+    case GP_SHOP_SELECTED:                          /* buy / don't buy */
+        shop_choice(in);
+        if (in->cancel || (in->interact && gameplay.choice == 1)) shop_describe();
+        else if (in->interact) shop_buy();
+        break;
+    case GP_SHOP_RESULT:                            /* EnOssan_State_CantGetItem */
+    case GP_SHOP_QUICK:                             /* EnOssan_State_QuickBuyDialog */
+        if (in->interact || in->cancel) shop_describe();
+        break;
+    case GP_SHOP_GET:                               /* EnOssan_State_ItemPurchased */
+        if (in->interact || in->cancel) {
+            gameplay.get_item = 0;
+            shop_text(0x006B, GP_SHOP_CONTINUE);
+        }
+        break;
+    case GP_SHOP_CONTINUE:                          /* 0x6B: continue / quit */
+        if (in->cancel) { shop_end(); break; }
+        shop_choice(in);
+        if (in->interact) {
+            if (gameplay.choice == 0) shop_facing();
+            else shop_end();
+        }
+        break;
+    default:
+        shop_end();
+        break;
+    }
 }
 
 static bool         shop_in_reach(const gameplay_input_t *in)
@@ -2099,7 +2486,7 @@ static bool         shop_in_reach(const gameplay_input_t *in)
     return turn <= 16384;
 }
 
-unsigned int        gameplay_choice_lines(void)
+static unsigned int source_choice_lines(void)
 {
     unsigned int i;
     const dialogue_rule_t *rule;
@@ -2108,21 +2495,40 @@ unsigned int        gameplay_choice_lines(void)
     rule = &dialogue_rules[gameplay.rule];
     if (gameplay.page + 1u != rule->pages)
         return 0;
+    /* By text id: a speaker's own rule for a choice text (En_Ko 0x1038)
+    ** shares the count exported with its system entry. */
     for (i = 0; i < DIALOGUE_SYSTEM_COUNT; ++i)
-        if (dialogue_system[i].rule == (uint16_t)gameplay.rule)
+        if (dialogue_system[i].text_id == rule->text_id)
             return dialogue_system[i].choices;
     return 0;
 }
 
-/* After a shop box closes: what the exchange opens next. */
-static void         shop_next(bool accepted)
+unsigned int gameplay_choice_lines(void)
 {
-    uint8_t state = gameplay.shop_state;
-    gameplay.shop_state = 0;
-    if (state == 1 && accepted)
-        shop_open(0x009F, 2);
-    else if (state == 2 && accepted)
-        shop_open(0x0089, 3);
+    return gameplay_page_more() ? 0 : source_choice_lines();
+}
+
+static const dialogue_branch_t *choice_branch(void)
+{
+    unsigned int i;
+    uint16_t text_id = gameplay.rule >= 0 ? dialogue_rules[gameplay.rule].text_id : 0;
+    for (i = 0; i < DIALOGUE_BRANCH_COUNT; ++i)
+        if (dialogue_branch[i].text_id == text_id)
+            return &dialogue_branch[i];
+    return 0;
+}
+
+/* Message_ContinueTextbox: same box and speaker, next text by id. */
+static bool         continue_text(uint16_t text_id)
+{
+    int16_t speaker = gameplay.speaker;
+    if (!open_system_text(text_id))
+        return false;
+    gameplay.speaker = speaker;
+    gameplay.events &= ~GP_EVENT_TALK_OPEN;
+    gameplay.events |= GP_EVENT_TALK_PAGE;
+    gameplay.choice = 0;
+    return true;
 }
 
 /* End the box. Speaker side effects fire on close, as in the source. */
@@ -2132,11 +2538,38 @@ static void         close_talk(void)
     close_talk_as(true);
 }
 
+/* Source EnKo/EnSa TEXT_STATE_CLOSING: remember conversations on close.
+ * Only the original actor kind may write a flag; system text cannot. */
+static void npc_talk_closed(unsigned int kind, unsigned int text)
+{
+    static const uint16_t ko[][2] = {
+        {0x1005,0x1E},{0x1008,0x22},{0x100A,0x24},{0x100C,0x26},
+        {0x100E,0x28},{0x104F,0x59},{0x1053,0x61},{0x1055,0x41},
+        {0x1058,0x51},{0x105D,0x47},{0x10D7,0xB7}
+    };
+    unsigned int i;
+    if (kind == KOKIRI_NPC_CHILD) {
+        for(i=0;i<sizeof(ko)/sizeof(ko[0]);++i)
+            if(ko[i][0]==text) { save_set_inf_table(ko[i][1]); break; }
+    } else if(kind == KOKIRI_NPC_SARIA) {
+        /* The greeting camera sequence is still an M3b follow-up. Until it
+         * owns EnSa_Cutscene completion, close its greeting text once rather
+         * than trapping Saria forever on 0x1001. */
+        if(text==0x1001) save_set_inf_table(INFTABLE_SARIA_GREETED_LINK);
+        if(text==0x1002) save_set_inf_table(INFTABLE_SARIA_NOTICED_FAIRY);
+        if(text==0x1031) {
+            save_set_event_chk_inf(EVENTCHKINF_SARIA_WAS_TOLD_ABOUT_MIDO);
+            save_set_inf_table(INFTABLE_SARIA_WAS_TOLD_ABOUT_MIDO);
+        }
+        if(text==0x1047) save_set_inf_table(0x05); /* INFTABLE_SARIA_SPOKE_IN_HER_HOUSE */
+    }
+}
+
 static void         close_talk_as(bool accepted)
 {
     uint16_t text_id = gameplay.rule >= 0 ? dialogue_rules[gameplay.rule].text_id : 0;
-    bool mido = gameplay.speaker >= 0 &&
-                kokiri_npcs[gameplay.speaker].kind == KOKIRI_NPC_MIDO;
+    bool mido = gameplay.speaker >= 0 && gate_mido(gameplay.speaker);
+    if (gameplay.speaker >= 0) npc_talk_closed(kokiri_npcs[gameplay.speaker].kind,text_id);
     gameplay.talking = false;
     gameplay.speaker = -1;
     gameplay.rule = -1;
@@ -2144,8 +2577,7 @@ static void         close_talk_as(bool accepted)
     gameplay.events |= GP_EVENT_TALK_CLOSE;
     if (mido)
         mido_talk_closed(text_id);
-    if (gameplay.shop_state)
-        shop_next(accepted);
+    (void)accepted;
 }
 
 /* One press does one thing. A opens, then advances, then closes on the last
@@ -2153,24 +2585,37 @@ static void         close_talk_as(bool accepted)
 ** cannot also skip page one, and every transition needs a fresh press edge. */
 static void         update_talk(const gameplay_input_t *in)
 {
+    if (gameplay.shop_state) {
+        shop_update(in);
+        return;
+    }
     if (gameplay.talking) {
         const dialogue_rule_t *rule = &dialogue_rules[gameplay.rule];
         gameplay.prompt = -1;
-        if (gameplay_choice_lines()) {
-            /* TWO_CHOICE: D-pad moves, A picks, B is the second option. */
-            if (in->menu_step) {
-                gameplay.choice ^= 1;
+        unsigned int choices = gameplay_choice_lines();
+        if (choices) {
+            /* Message_HandleChoiceSelection: vertical only, clamped (no wrap);
+            ** the cursor sound plays only when it actually moved. */
+            const dialogue_branch_t *branch = choice_branch();
+            int next = (int)gameplay.choice + in->menu_dy;
+            if (next < 0) next = 0;
+            if (next > (int)choices - 1) next = (int)choices - 1;
+            if (next != gameplay.choice) {
+                gameplay.choice = (uint8_t)next;
                 gameplay.events |= GP_EVENT_MENU_MOVE;
             }
-            if (in->interact || in->cancel) {
-                bool buy = in->interact && gameplay.choice == 0;
-                gameplay.shop_state = 0;
-                close_talk();
-                if (buy)
-                    shop_buy();
-                else
-                    shop_open(0x009F, 2);   /* back to the item text */
+            if (branch) {
+                /* En_Ko: Message_ShouldAdvance (A, B or C-Up) takes the
+                ** cursor's choice; there is no cancel option. */
+                if ((in->interact || in->cancel || in->c_up) &&
+                    branch->next[gameplay.choice] &&
+                    !continue_text(branch->next[gameplay.choice]))
+                    close_talk();
+                return;
             }
+            /* A system choice with no branch: A or B closes. */
+            if (in->interact || in->cancel)
+                close_talk();
             return;
         }
         if (in->cancel) {
@@ -2179,7 +2624,13 @@ static void         update_talk(const gameplay_input_t *in)
         }
         if (!in->interact)
             return;
+        if (gameplay_page_more()) {
+            ++gameplay.page_part;
+            gameplay.events |= GP_EVENT_TALK_PAGE;
+            return;
+        }
         if (gameplay.page + 1 < rule->pages) {
+            gameplay.page_part = 0;
             ++gameplay.page;
             gameplay.events |= GP_EVENT_TALK_PAGE;
             return;
@@ -2190,9 +2641,16 @@ static void         update_talk(const gameplay_input_t *in)
     gameplay.shop_prompt = shop_in_reach(in);
     if (gameplay.shop_prompt) {
         gameplay.prompt = -1;
-        if (in->interact)
-            shop_open(0x10BA, 1);
+        if (in->interact) {
+            /* EnOssan_State_Idle: talk accepted; EnOssan_SetupHelloDialog 0x9E. */
+            gameplay.shop_face = 0;
+            shop_text(0x009E, GP_SHOP_HELLO);
+        }
         return;
+    }
+    {
+        unsigned int sign_text=world_signs_text(in);
+        if(sign_text && in->interact) { open_system_text((uint16_t)sign_text);return; }
     }
     gameplay.prompt = find_speaker(in);
     if (!in->interact || gameplay.prompt < 0)
@@ -2201,7 +2659,7 @@ static void         update_talk(const gameplay_input_t *in)
     if (gameplay.rule < 0)
         return;
     gameplay.speaker = gameplay.prompt;
-    gameplay.page = 0;
+    gameplay.page = gameplay.page_part = 0;
     gameplay.talking = true;
     gameplay.events |= GP_EVENT_TALK_OPEN;
 }
@@ -2271,6 +2729,9 @@ static void         update_navi(const gameplay_input_t *in)
     } else {
         gameplay.navi_calling = false;          /* Interface_SetNaviCall 0x1F */
     }
+    /* EnElf func_80A053F0 increments only in the not-talking branch.
+     * Accepting a hint must leave its newly assigned timer at 3001. */
+    if (gameplay.talking) return;
     /* naviTimer: one per En_Elf update (20 Hz: two of three steps). */
     gameplay.navi_phase = (uint8_t)(gameplay.navi_phase + 2);
     if (gameplay.navi_phase >= 3) {
@@ -2293,15 +2754,16 @@ static void         update_babas(const gameplay_input_t *in)
     karebaba_sync(in_forest(), in->room);
     karebaba_update(in->x, in->y, in->z, free);
     ev = karebaba_events();
+    gameplay.baba_events = ev;
     /* First stick ever: the get-item show (text 0x0037, GI_DEKU_STICKS_1). */
-    if ((ev & KAREBABA_EV_STICK_FIRST) && open_system_text(0x0037))
-        gameplay.events |= GP_EVENT_PICKUP;
+    if (ev & KAREBABA_EV_STICK_FIRST) gameplay_drop_message(13);
 }
 
 void                gameplay_step(const gameplay_input_t *in)
 {
     gameplay.events = 0;
     gameplay.events2 = 0;
+    gameplay.baba_events = 0;
     /* Dead: the Game Over flow owns the pad (demo.c steps game_over). */
     if (gameplay.dead)
         return;
@@ -2321,13 +2783,17 @@ void                gameplay_step(const gameplay_input_t *in)
     /* A conversation owns the input. Nothing else in the world advances from
     ** the pad while a box is open -- no pickup grab, no lock change, no swing,
     ** no guard -- so a held button cannot leak an action through the box. */
+    update_exit_blocker(in);
     sync_npc_actors();
     if (gameplay.talking) {
+        if (gameplay.get_item && gameplay.get_item_age < 65535) ++gameplay.get_item_age;
         update_talk(in);
         update_attention(in);
         gameplay.shielding = false;
         return;
     }
+    world_props_step(in);
+    if (gameplay.talking) return;
     collect_rupees(in);
     update_wonders(in);
     if (gameplay.intangible)
@@ -2357,9 +2823,12 @@ void                gameplay_step(const gameplay_input_t *in)
         gameplay.shielding = false;
         return;
     }
-    if (update_chest(in)) {
+    if (!world_props_carrying() && update_chest(in)) {
         gameplay.shielding = false;
         return;
+    }
+    if (world_props_interact(in)) {
+        gameplay_attack_cancel();gameplay.shielding=false;run_contacts(in);return;
     }
     update_talk(in);
     if (gameplay.talking) {

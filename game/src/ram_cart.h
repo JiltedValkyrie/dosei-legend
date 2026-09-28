@@ -28,7 +28,7 @@
 /* The top of bank 2 is kept OUT of jo_malloc for fixed runtime pools (actor
 ** pool first). A fixed carve keeps these off the 56 KB work-RAM malloc arena,
 ** which jo_malloc would otherwise fill first. */
-#define RAM_CART_FIXED_BYTES    0x70000u
+#define RAM_CART_FIXED_BYTES    0x7C000u
 #define RAM_CART_FIXED_ADDRESS  (RAM_CART_BANK2_ADDRESS + RAM_CART_BANK2_BYTES - RAM_CART_FIXED_BYTES)
 
 /* Fixed carve for the actor pool (actor_sys_bytes() must fit). */
@@ -44,6 +44,14 @@
 ** contact colliders' first carve (0x6800..0x8000), outgrown in M2c. */
 #define RAM_CART_CUTTEXT_OFFSET     0x6800u
 #define RAM_CART_CUTTEXT_BYTES      0x1800u
+
+/* Retained expanded dialogue page, using part of the retired text slot. */
+#define RAM_CART_TEXT_LAYOUT_OFFSET 0x8000u
+#define RAM_CART_TEXT_LAYOUT_BYTES  0x500u
+
+/* CURSOR.RGB: EnOssan's shop cursor, 4 baked pulse steps x 32x32 RGB555. */
+#define RAM_CART_CURSOR_OFFSET      0x8800u
+#define RAM_CART_CURSOR_BYTES       0x2000u
 
 /* Fixed carve for the sword/grass/nut contact colliders (gameplay_contacts_*).
 ** Moved here when M2c's three blade capsules and the nutsball outgrew 0x1800. */
@@ -82,9 +90,12 @@
 #define RAM_CART_LINKTEX_OFFSET     0x1B000u
 #define RAM_CART_LINKTEX_BYTES      0x2000u
 
-/* Fixed carve for dialogue line text (DIALOG.TXT, dialogue_text.h). */
-#define RAM_CART_DIALOGUE_OFFSET    0x8000u
-#define RAM_CART_DIALOGUE_BYTES     0x3000u
+/* Fixed carve for dialogue line text (DIALOG.TXT, dialogue_text.h). Moved
+** from 0x8000 (0x3000, 704 B left) to the end of the carve for M3 NPC text;
+** 0x8000..0xAFFF is now unused. Boot reads it through a temporary heap
+** buffer of the file's size, so keep it well below the 51,200 B arena. */
+#define RAM_CART_DIALOGUE_OFFSET    0x71000u
+#define RAM_CART_DIALOGUE_BYTES     0x5000u
 
 #define RAM_CART_PAUSE_OFFSET 0x1D000u
 #define RAM_CART_PAUSE_BYTES  0x26000u
@@ -92,6 +103,14 @@
  * temporarily borrowed for pause. Original font and scene bitmap stay live. */
 #define RAM_CART_PAUSE_BACKUP_OFFSET 0x43000u
 #define RAM_CART_PAUSE_BACKUP_BYTES  0x29880u
+
+/* Cold constant tables moved out of work RAM (BUG-043), from disc at boot:
+** every music bank's triggers (MUSICTRG.BIN) and the title camera paths
+** (TITLEPTH.BIN). tools/build_cart_tables.py checks both limits. */
+#define RAM_CART_MUSICTRG_OFFSET    0x76000u
+#define RAM_CART_MUSICTRG_BYTES     0x6000u
+#define RAM_CART_TITLEPTH_OFFSET    0x6F800u
+#define RAM_CART_TITLEPTH_BYTES     0x1800u
 
 /* Pointer into the fixed carve, or 0 when no cart / out of range. */
 void   *ram_cart_fixed(unsigned int offset, unsigned int bytes);

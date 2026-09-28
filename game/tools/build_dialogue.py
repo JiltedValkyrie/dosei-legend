@@ -38,16 +38,35 @@ MAX_PAGES = 16
 # Messages that belong to no speaker's text-id ladder: get-item text and the
 # Kokiri Shop's Deku Shield exchange (z_player.c sGetItemTable, z_en_girla.c,
 # z_en_ossan.c). The runtime opens them by id; see dialogue_system[].
-SYSTEM_TEXTS = (0x00A4, 0x004C, 0x10BA, 0x009F, 0x0089, 0x0084, 0x0085, 0x0086,
+SYSTEM_TEXTS = (0x006F, 0x00CC, 0x00A4, 0x004C, 0x10BA, 0x009F, 0x0089, 0x0084, 0x0085, 0x0086,
+                # Full Kokiri Shop (EnOssan/EnGirlA): hello, facing choice,
+                # continue choice, each shelf item's text and buy prompt, and
+                # the get-item texts a first buy shows.
+                0x009E, 0x0083, 0x006B,
+                0x00B2, 0x007F, 0x00A2, 0x0087, 0x00A1, 0x0088, 0x00DF, 0x00DE,
+                0x00A0, 0x008A, 0x00C1, 0x009B, 0x00AC, 0x0095, 0x0034, 0x0055,
                 # Navi's C-Up quest hints (elf_message_field.c): Deku Tree.
                 0x0140, 0x0141,
                 # GI_DEKU_STICKS_1 get-item text; Navi on a Deku Baba (0x600 + 9).
-                0x0037, 0x0609)
+                0x0037, 0x0609,
+                # Forest EnKanban authored text IDs (params | 0x300).
+                0x0320, 0x0337, 0x0340, 0x0338, 0x0336, 0x031F, 0x0341, 0x0312, 0x0345)
+# Choice branches (M3a): a choice box continues into the text its cursor
+# picks. En_Ko EnKo_UpdateTalkState TEXT_STATE_CHOICE (z_en_ko.c): the
+# Know-It-All tutorials. Every id here is exported and openable by id.
+CHOICE_BRANCHES = {
+    0x1035: (0x1036, 0x1037),               # icons: yes / no
+    0x1038: (0x1039, 0x103A, 0x103B),       # map / items / nothing
+    0x103E: (0x103F, 0x1040),               # C-Up: yes / no
+}
+BRANCH_TEXTS = tuple(dict.fromkeys(
+    [k for k in CHOICE_BRANCHES] + [t for v in CHOICE_BRANCHES.values() for t in v]))
+
 # A trailing TEXTID(n) chains straight into message n (z_message.c
 # Message_Decode): the box keeps going, so the pages belong to one talk.
 CHAIN = re.compile(r'TEXTID\((0x[0-9A-Fa-f]+)\)\s*$')
 MAX_LINES = 4
-MAX_COLUMNS = 34
+MAX_COLUMNS = 38   # box prints 38 columns (main.c dialogue_box)
 
 SPEAKER_NAMES = {'CHILD': 'Kokiri', 'MIDO': 'Mido', 'SARIA': 'Saria'}
 
@@ -373,8 +392,10 @@ def enko_cases(symbols, oot, report):
     for chunk in chunks:
         label, _, tail = chunk.partition(':')
         label = label.strip()
-        # ENKO_TYPE_CHILD_0..11 are the numbered Kokiri. FADO and the other
-        # named types belong to other scenes; they are reported, not guessed.
+        # Fado is child type 12 and is placed in the forest too.
+        if label == 'ENKO_TYPE_CHILD_FADO':
+            cases[12] = parse_rules(symbols, tail, report)
+            continue
         number = re.fullmatch(r'ENKO_TYPE_CHILD_(\d+)', label)
         if not number:
             report.append('ignored En_Ko case %s (not a numbered forest child)'
@@ -394,6 +415,9 @@ def speaker_rules(symbols, oot, report):
     mido = function_body(oot / 'src/overlays/actors/ovl_En_Md/z_en_md.c',
                          'EnMd_GetTextIdKokiriForest')
     out.append(('MIDO', 0, parse_rules(symbols, mido, report)))
+    house = function_body(oot / 'src/overlays/actors/ovl_En_Md/z_en_md.c',
+                          'EnMd_GetTextIdMidosHouse')
+    out.append(('MIDO', 1, parse_rules(symbols, house, report)))
     saria = function_body(oot / 'src/overlays/actors/ovl_En_Sa/z_en_sa.c',
                           'EnSa_GetTextId')
     out.append(('SARIA', 0, parse_rules(symbols, saria, report)))
@@ -420,13 +444,13 @@ def chain_pages(messages, text_id):
     while text_id is not None and text_id not in seen and len(seen) < 8:
         seen.add(text_id)
         message = messages.get(text_id)
-        pages += clean_pages(message)
+        pages += clean_pages(message, text_id)
         match = CHAIN.search(message['body']) if message else None
         text_id = int(match.group(1), 16) if match else None
     return pages
 
 
-def clean_pages(message):
+def clean_pages(message, text_id=None):
     """Plain ASCII pages and lines from one message.
 
     The dialogue box has no colour today, so the parser's colour runs are
@@ -435,13 +459,32 @@ def clean_pages(message):
     """
     if not message:
         return []
-    pages = oot_messages.parse_pages(message['body'], max_lines=MAX_LINES,
-                                     max_columns=MAX_COLUMNS,
+    pages = oot_messages.parse_pages(message['body'].replace('START', '[Start]'), max_lines=32,
+                                     max_columns=512,
                                      max_pages=MAX_PAGES)
     # A source \\" is a quote mark inside the literal; left escaped it prints
     # the backslash, which the Saturn font draws as a yen sign (BUG-026).
-    return [[line.replace('\\"', '"') for line in oot_messages.plain(page)]
-            for page in pages]
+    result = [[line.replace('\\"', '"') for line in oot_messages.plain(page)]
+              for page in pages]
+    # Source button symbols sometimes mean menu actions, not gameplay actions.
+    # Preserve lessons while describing the port's actual page/assign routing.
+    if text_id == 0x103A:
+        result = [[line.replace('[C] Button', 'C-slot').replace('[Z]', '[MenuPrev]').replace('[R]', '[MenuNext]')
+                       .replace('[A]', '[Confirm]') for line in page] for page in result]
+        result[2] = ['You can assign owned items to the Down, Left and Right C slots.']
+        result[6] = ['To equip gear, press [Confirm]. To assign an item, hold',
+                     '[AssignModifier] and press [AssignDirections].']
+    elif text_id == 0x103B:
+        result = [[line.replace('[B]', '[Cancel]') for line in page] for page in result]
+    elif text_id == 0x103D:
+        result[2] = [line.replace('[Z]', '[MenuPrev]').replace('[R]', '[MenuNext]')
+                     for line in result[2]]
+        result[3] = [line.replace('[A]', '[Confirm]') for line in result[3]]
+        result[4] = ['Once you equip the shield, hold [R] to guard. Tee hee!']
+    elif text_id == 0x103F:
+        result[1] = ['Indoors, switch between the room view and an overhead view.',
+                     'Outdoors, look from your own eyes.']
+    return result
 
 
 def text_blob(lines):
@@ -523,11 +566,15 @@ def main():
 
     # System texts: unconditional rules, opened by id rather than by speaker.
     system = []
-    for text_id in SYSTEM_TEXTS:
+    for text_id in tuple(dict.fromkeys(SYSTEM_TEXTS + BRANCH_TEXTS)):
         pages = clean_pages(messages.get(text_id))
         if not pages:
             sys.exit('build_dialogue: system text 0x%04X missing' % text_id)
-        choices = 2 if 'TWO_CHOICE' in messages[text_id]['body'] else 0
+        body = messages[text_id]['body']
+        choices = 3 if 'THREE_CHOICE' in body else 2 if 'TWO_CHOICE' in body else 0
+        if text_id in CHOICE_BRANCHES and len(CHOICE_BRANCHES[text_id]) != choices:
+            sys.exit('build_dialogue: 0x%04X has %d choices, branch lists %d'
+                     % (text_id, choices, len(CHOICE_BRANCHES[text_id])))
         first_page = len(pages_pool)
         for page in pages:
             first_line = len(lines_pool)
@@ -564,7 +611,8 @@ def main():
               '# define DIALOGUE_LINE_COUNT  %d' % len(lines_pool),
               '# define DIALOGUE_MAX_LINES   %d' % MAX_LINES,
               '# define DIALOGUE_MAX_COLUMNS %d' % MAX_COLUMNS,
-              '# define DIALOGUE_SYSTEM_COUNT %d' % len(system), '',
+              '# define DIALOGUE_SYSTEM_COUNT %d' % len(system),
+              '# define DIALOGUE_BRANCH_COUNT %d' % len(CHOICE_BRANCHES), '',
               '/* dialogue_cond_t.kind */']
     for value, name in sorted(COND_NAMES.items()):
         header.append('# define DIALOGUE_COND_%-9s %d' % (name, value))
@@ -601,6 +649,9 @@ def main():
                '   the last page (0 = none). */',
                'typedef struct { uint16_t text_id, rule; uint8_t choices; } dialogue_system_t;',
                'extern const dialogue_system_t dialogue_system[DIALOGUE_SYSTEM_COUNT];',
+               '/* Choice box -> text per cursor index (0 = unused slot). */',
+               'typedef struct { uint16_t text_id, next[3]; } dialogue_branch_t;',
+               'extern const dialogue_branch_t dialogue_branch[DIALOGUE_BRANCH_COUNT];',
                '#endif', '']
     (args.out / 'kokiri_dialogue.h').write_text('\n'.join(header))
 
@@ -627,6 +678,10 @@ def main():
     body += ['    "%s",' % SPEAKER_NAMES[name] for name in ('CHILD', 'MIDO', 'SARIA')]
     body += ['};', '', 'const dialogue_system_t dialogue_system[DIALOGUE_SYSTEM_COUNT] = {']
     body += ['    { 0x%04X, %d, %d },' % entry for entry in system]
+    body += ['};', '', 'const dialogue_branch_t dialogue_branch[DIALOGUE_BRANCH_COUNT] = {']
+    for text_id, nexts in CHOICE_BRANCHES.items():
+        n = list(nexts) + [0] * (3 - len(nexts))
+        body.append('    { 0x%04X, { 0x%04X, 0x%04X, 0x%04X } },' % (text_id, *n))
     body += ['};', '', '/* END OF FILE */', '']
     (args.out / 'kokiri_dialogue.c').write_text('\n'.join(body))
 
@@ -640,7 +695,7 @@ def main():
         print('  %d rule(s) had no extractable text and use an authored '
               'placeholder' % authored)
     else:
-        print('  every rule uses original US 1.2 English text')
+        print('  original US 1.2 English; control lessons adapted to actual port bindings')
     for note in dict.fromkeys(report):
         print('  note: %s' % note)
 

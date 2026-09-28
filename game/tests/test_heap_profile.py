@@ -90,3 +90,19 @@ static inline void jo_core_error(const char *s, ...) { (void)s; }
         self.assertFalse(self.alloc(64))
         self.assertEqual(self.profile.failed,1)
         self.assertEqual(self.profile.zone[0].capacity,32)
+
+    def test_exact_size_spills_full_work_heap_and_exhausts_all_zones(self):
+        self.zone(32);self.zone(40)
+        self.assertTrue(self.alloc(24))
+        self.assertTrue(self.alloc(12,2))
+        self.assertTrue(self.alloc(12,2))
+        self.assertFalse(self.alloc(12,2))
+        self.assertEqual(self.profile.zone[1].live,40)
+        self.assertEqual(self.profile.failed,1)
+
+    def test_exact_size_reuses_matching_hole_only(self):
+        self.zone(96)
+        large=self.alloc(24);small=self.alloc(12);tail=self.alloc(12)
+        self.lib.jo_free(large);self.lib.jo_free(small)
+        self.assertEqual(self.alloc(12,2),small)
+        self.assertNotEqual(self.alloc(12,2),large)

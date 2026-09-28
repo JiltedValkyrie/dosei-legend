@@ -86,13 +86,19 @@ if [ -n "${AUTHORED_OBJ:-}" ]; then
     "$python" "$here/tools/build_authored_scene.py" --obj "$AUTHORED_OBJ" ${AUTHORED_UV_FROM:+--uv-from "$AUTHORED_UV_FROM"} ${AUTHORED_ATLAS:+--atlas "$AUTHORED_ATLAS"}          ${AUTHORED_UNITS_PER_TEXEL:+--units-per-texel "$AUTHORED_UNITS_PER_TEXEL"}         ${AUTHORED_MAX_TILE:+--max-tile "$AUTHORED_MAX_TILE"}         ${AUTHORED_SPLIT_SPAN:+--split-span "$AUTHORED_SPLIT_SPAN"}         ${AUTHORED_MAX_DEPTH:+--max-depth "$AUTHORED_MAX_DEPTH"}         ${AUTHORED_POLYGON_CAP:+--polygon-cap "$AUTHORED_POLYGON_CAP"}
 fi
 "$python" "$here/tools/build_scene_table.py" --oot "$oot" --rom-dir "$roms"
+"$python" "$here/tools/build_npc_models.py" --oot "$oot" --rom-dir "$roms"
+cp "$here"/build/generated/npcs/NPC*.BIN "$here"/build/generated/npcs/NPC*.ANM "$here"/build/generated/npcs/NPC*.TRK "$here/build/cd/"
 # Surface bits now live inside S<n>.COL (KBG2); drop the retired .SUR files.
 rm -f "$here"/build/cd/S*.SUR
 "$python" "$here/tools/build_scene_backdrops.py" --oot "$oot" --rom-dir "$roms"
+# Occlusion masks from the room depth mesh (needs the backdrop above).
+"$python" "$here/tools/build_interior_masks.py" --oot "$oot" --rom-dir "$roms"
+"$python" "$here/tools/build_world_props.py" --oot "$oot" --rom-dir "$roms"
+"$python" "$here/tools/build_shop_props.py" --oot "$oot" --rom-dir "$roms"
 "$python" "$here/tools/build_actors.py" --oot "$oot" --rom-dir "$roms"
 "$python" "$here/tools/build_dialogue.py" --oot "$oot"
 "$python" "$here/tools/build_minimap.py" --oot "$oot"
-"$python" "$here/tools/build_pause_windows.py" --oot "$oot"
+"$python" "$here/tools/build_pause_windows.py" --oot "$oot" --sdk "$sdk"
 "$python" "$here/tools/build_cdda.py"
 "$python" "$here/tools/build_action_audio.py" --oot "$oot"
 "$python" "$here/tools/build_opening_audio.py" --oot "$oot"
@@ -116,8 +122,15 @@ fi
 "$python" "$here/tools/build_cutscene_props.py" --oot "$oot" --rom-dir "$roms"
 cp "$here/build/generated/BRIDGE.BIN" "$here/build/cd/BRIDGE.BIN"
 cp "$here/build/generated/CHAINS.BIN" "$here/build/cd/CHAINS.BIN"
+cp "$here/build/generated/GATEFIRE.BIN" "$here/build/cd/GATEFIRE.BIN"
 "$python" "$here/tools/build_cutscenes.py" --oot "$oot"
 "$python" "$here/tools/build_title_paths.py"
+"$python" "$here/tools/build_interior_audio.py" --oot "$oot"
+for area_bank in HOUSE SHOP; do
+    cp "$here/build/generated/${area_bank}_PCM.RAW" "$here/build/cd/$area_bank.PCM"
+    cp "$here/build/generated/${area_bank}_LEVELS.RAW" "$here/build/cd/$area_bank.LVL"
+done
+"$python" "$here/tools/build_cart_tables.py"
 if [ "${STREAM_ROOMS:-1}" = 1 ]; then
     # One bank per (scene, room). Only scenes whose rooms are real geometry
     # have banks; OoT interiors are prerendered backdrops and have none.

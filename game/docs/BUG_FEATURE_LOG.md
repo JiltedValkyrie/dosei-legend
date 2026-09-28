@@ -67,7 +67,7 @@ whether work stops. Optional features stay in backlog until assigned.
 | BUG-003 | Locomotion tests match obsolete source text | `bug`, `priority: P2` | Unassigned | Next locomotion-test edit | Open |
 | BUG-004 | Locomotion clip cadence 2/3 of source | `bug`, `priority: P2` | Unassigned | M8 polish / locomotion anim work | Open |
 | BUG-005 | M1c wall/ledge subset gaps | `bug`, `priority: P2` | Unassigned | Wall-sensitive actions (M1e-M1h) | Open |
-| BUG-006 | Talk claims A before ledge climb | `bug`, `priority: P2` | Unassigned | M3 NPC placement near ledges | Open |
+| BUG-006 | Talk claims A before ledge climb | `bug`, `priority: P2` | Astra | M3 NPC placement near ledges | Fixed in code; Kronos pending |
 | BUG-007 | Floor jump/land SFX and second climb voice missing | `bug`, `priority: P2` | Unassigned | SFX bank rework / M8 | Open |
 | BUG-008 | Source-snippet tests no longer compile | `bug`, `priority: P2` | Unassigned | Next edit of demo.c/cutscene.c/kokiri_sgl.c tests | Open |
 | BUG-009 | Link drawn 1.45x source child vs source headroom | `bug`, `priority: P2`, `needs-triage` | Unassigned | Human visual check / M8 | Open |
@@ -77,7 +77,7 @@ whether work stops. Optional features stay in backlog until assigned.
 | BUG-013 | Point-in-poly slack was 1 unit, source is detMax 300 | `bug`, `priority: P1` | Claude (M1e) | Fixed M1e; Kronos walk check | Closed |
 | BUG-014 | Climb port subset gaps | `bug`, `priority: P2` | Unassigned | Vine-heavy scenes (M5) | Open |
 | BUG-015 | House ladder descent from the porch unverified | `bug`, `priority: P2`, `needs-triage` | Unassigned | Human check vs real OoT | Open |
-| BUG-016 | Grounded ceiling check missed the -7.5 dy | `bug`, `priority: P1` | Claude (M1f) | Fixed M1f; Kronos check | Open |
+| BUG-016 | Grounded ceiling check missed the -7.5 dy | `bug`, `priority: P1` | Claude (M1f) | Fixed M1f | Closed: human play 2026-09-27 |
 | BUG-017 | Crawl port subset gaps | `bug`, `priority: P2` | Unassigned | M1l camera / M8 | Open |
 | BUG-018 | M1g turn/bonk source subset gaps | `bug`, `priority: P2` | Unassigned | M8 polish; M7 bonk actors | Open |
 | BUG-019 | Bonk/hang voice sounds wrong to human | `bug`, `priority: P2` | Unassigned | Done | Closed |
@@ -94,10 +94,10 @@ whether work stops. Optional features stay in backlog until assigned.
 | BUG-030 | Hit-history eviction and multiple hurtbox policy | `bug`, `priority: P2` | Claude | Live actor damage integration | Fixed |
 | FEAT-001 | Real sword chest, shop shield and Mido equipment gate | `enhancement`, `priority: P1`, `required` | Claude | M2b.1, before M2c human testing | Human route passed; boulder pending |
 | BUG-031 | M2b.1 presentation stand-ins: chest, shopkeeper, get-item | `bug`, `priority: P2` | Claude | M3 actor models / M8 | Open |
-| BUG-032 | Maze rolling boulder (En_Goroiwa) not implemented | `bug`, `priority: P1`, `required` | Claude | Final M2 acceptance | Implemented, Kronos check pending |
+| BUG-032 | Maze rolling boulder (En_Goroiwa) not implemented | `bug`, `priority: P1`, `required` | Claude | Final M2 acceptance | Closed: human Kronos 2026-09-27 (see BUG-051) |
 | BUG-033 | Work-RAM gap down to 5,488 B | `bug`, `priority: P1` | Claude | Before next large code/text addition | Fixed, Kronos text check pending |
 | BUG-034 | kokiri_camera_facing uses toFIXED(variable) soft-float | `bug`, `priority: P2`, `performance` | Unassigned | Next SH-2 hot-path pass | Open |
-| BUG-035 | Work-RAM heap arena at 99% peak (50,692 / 51,200 B) | `bug`, `priority: P2` | Claude | Before any new work-RAM allocation | Open |
+| BUG-035 | Work-RAM heap arena at 99% peak (50,692 / 51,200 B) | `bug`, `priority: P2` | Claude | Later human batch playtest; sooner on allocation failure | Open: measurement deferred by human |
 | BUG-036 | M2c combat gaps: SFX, charge glow, hostile-lock clips, blade pose lag | `bug`, `priority: P2` | Claude | M2d enemy / M2e audio bank | Open |
 | BUG-037 | Standard work-RAM gap 5,504 B after M2c (Clean 8,896 B) | `bug`, `priority: P1` | Claude | Before next large code addition | Fixed: 7,168 / 10,368 B |
 | BUG-038 | En_Elf fairy look gaps (colours, wing UVs, sparkle alpha, NPC sparkles) | `bug`, `priority: P3` | Claude | M3 Kokiri NPCs | Open |
@@ -105,11 +105,18 @@ whether work stops. Optional features stay in backlog until assigned.
 | BUG-040 | M2d.1 attention gaps (on-screen test, NPC range types, NPC focus, Navi voice) | `bug`, `priority: P3` | Claude | M3 Kokiri NPCs | Open |
 | BUG-041 | Forest load rejected after attention glows: resident VRAM undercount | `bug`, `priority: P0` | Codex | Done | Closed: human Kronos check |
 | BUG-042 | M2d.2 Deku Baba presentation gaps (effects, shadow, hit-stop, SFX layers) | `bug`, `priority: P3` | Claude | M5 enemy polish | Open |
-| BUG-043 | Clean work RAM: 2,384 B after full-colour pause carousel | `bug`, `priority: P1` | Claude | Before next code addition | Open |
+| BUG-043 | Clean work RAM: 14,656 B below SGL after cart tables (was 288 B) | `bug`, `priority: P1` | Claude | Before next code addition | Open |
 | BUG-044 | Navi/C-Up gaps: first-person view, colour blend, NPC ranges | `bug`, `priority: P3` | Claude | M4 C-items | Open |
 | BUG-045 | M2e death/Game Over presentation gaps | `bug`, `priority: P3` | Claude | M5 dungeon continue / polish | Open |
-| BUG-047 | All audio skipped after title-bank sample-rate reduction | `bug`, `priority: P1` | Codex | Human audio check | Fixed metadata; listening pending |
+| BUG-047 | All audio skipped after title-bank sample-rate reduction | `bug`, `priority: P1` | Codex | Human audio check | Closed: human listening 2026-09-27 |
 | BUG-046 | Pause window visual parity remains incomplete | `bug`, `priority: P2` | Codex | Pause UI parity / human batch review | Open |
+| BUG-048 | Death Save prompt cannot select No | `bug`, `priority: P1` | Claude | M2e regression | Fixed; human Kronos pending |
+| BUG-049 | Continue Yes spawns Link in sky/nowhere and freezes | `bug`, `priority: P0` | Claude | M2e blocker | Fixed (probable cause); human Kronos pending |
+| BUG-050 | Child Link death voice sounds like adult Link | `bug`, `priority: P3` | Claude | M8 audio polish / next death-audio work | Open: deferred by human |
+| BUG-051 | Maze boulder slides as static mesh, no rolling spin | `bug`, `priority: P2` | Claude | M8 polish / En_Goroiwa visual | Open |
+| BUG-052 | Loading a Game Over save starts Link dying | `bug`, `priority: P0` | Claude | M2e save/load regression; before further M3 expansion | Open |
+| BUG-053 | Pause corruption after Continue with rebuilt mounted ISO | `bug`, `priority: P1` | Codex | Cold-boot Continue retest; keep mounted image unchanged | Open: live wrong-sector reads confirmed |
+| BUG-054 | Fresh-boot title hangs in full-work-heap callback allocation | `bug`, `priority: P0` | Astra | Cold boot title | Code fixed; Clean build passes; runtime retest pending |
 
 ### BUG-046: Pause window parity follow-up
 
@@ -235,6 +242,13 @@ NPC lines, 191 -> 310 lines). Move dialogue strings/pages to a cart file (or
 disc) before the next large addition.
 
 ### BUG-035: Work-RAM heap arena nearly full
+
+Human directive (2026-09-27): P2, defer new peak readings to later batch
+playtesting. Not an M3a entry gate; proceed with feature work. Keep allocation
+and capacity guards, preserve arena size, and place large buffers in cart.
+A real allocation failure/crash escalates independently; deferral is not a
+claim that current peaks were measured. The 50,692 B figure remains historical.
+
 
 **Labels:** `bug`, `priority: P2`. **Assignee:** Claude. **State:** Open.
 
@@ -634,13 +648,18 @@ push). **State:** Open. Disclosed by Claude, M1c; code inspection.
 
 **Labels:** `bug`, `priority: P2`
 
-**Assignee:** Unassigned. **Milestone:** M3 NPC placement. **State:** Open.
+**Assignee:** Astra. **Milestone:** M3 NPC placement. **State:** Fixed in code; Kronos pending.
 
 Source list8 checks Player_ActionHandler_12 before TALK; gameplay_step()
 consumes A for talk/pickup/menu first, and only an unclaimed A reaches the
 ledge climb. Only differs with an NPC in talk range facing a 27+ ledge.
 
-- [ ] Reorder when the action-handler list is ported, or confirm no such spot.
+- [x] 2026-09-27: demo.c preflights the real ledge selector before sending A
+  to gameplay. A valid moving/grounded climb reserves the press for traversal;
+  open text, pause, carrying, attack/shield and invalid ledges keep their rules.
+  `test_ledge_talk.py` executes the selector/preflight, including the delayed
+  dynamic-wall case. No extra position update or duplicated climb action.
+- [ ] Kronos: ledge beside NPC, ordinary talk, final text advance on both pads.
 
 ### BUG-007: Floor jump/land SFX and the second climb-end voice are missing
 
@@ -672,7 +691,7 @@ not touch. Seen in the M1c full run (628 tests: these 4 errors + BUG-003's 2).
 
 ### BUG-009: Link drawn at 1.45x the source child against source headroom
 
-**Labels:** `bug`, `priority: P2`, `needs-triage`
+**Labels:** `bug`, `priority: P1`, `needs-triage`
 
 **Assignee:** Unassigned. **Milestone:** human visual check / M8. **State:** Open.
 
@@ -685,7 +704,14 @@ M1d root transfers (pull-up x/z, let-go pelvis) also use the drawn scale:
 letting go of a hang puts the actor ~60 below the top where the source's
 child goes ~35.
 
-- [ ] Human judges the scale; if changed, rebuild RISE and Navi LINK_HEAD.
+- [x] Human judges the scale; if changed, rebuild RISE and Navi LINK_HEAD.
+- Fixed in code 2026-09-28 (human: "Fix Link P1 issue", raised to P1). Recipe
+  0.0145 -> source 0.01: Link bakes 44 units tall, same scale as En_Ko/Md/Sa.
+  RISE constants regenerate from the scale. Camera Normal1 player height
+  62 -> Player_GetHeight child 44: dist 93/139, yOffset -9, hang -37, climb
+  -14/-5. Collision head sphere 54 -> 36 (+8 radius = 44). Kronos pending:
+  Link size vs Kokiri, camera framing, step-up/hang/let-go, jump under
+  bridges, Navi hover, sword/shield on back.
 
 ### BUG-010: 250 jump has no mid-air ledge grab yet
 
@@ -1227,3 +1253,175 @@ clears on new/load game/session end, and never enters saves. 193 focused checks
 and Clean build pass; human Kronos check pending. Owner: Codex.
 Audio startup record renumbered BUG-047 to avoid Claude's existing BUG-045
 Game Over record; no change to either issue's status.
+
+2026-09-27 Codex item/text follow-up: counts, saved C-slot assignment, stale pickup audio and text recoil fixed in code; human runtime review pending. Live stick/slingshot actions remain pending for item-action milestone. BUG-043: shared Clean build now only 448 B below SGL (0x06083E40).
+
+### BUG-048: Death Save prompt cannot select No
+
+**Labels:** `bug`, `priority: P1`. **Assignee:** Claude (M2e owner).
+**State:** Open. **Reported:** human gameplay review, 2026-09-27.
+**Milestone:** M2e regression; investigate with BUG-049.
+
+Reproduction reported: die, reach the Save Yes / No prompt, attempt to choose
+No. Actual: only Yes is selectable. Expected: both choices can be selected;
+No skips saving and proceeds through the normal death flow. Prevents declining
+a save. Controller type, attempted direction, scene and exact build not supplied.
+Cause unknown; no agent reproduction or fix claimed.
+
+Verification after repair: both choices on digital and analog pads, one change
+per press, No performs no save, Yes reports actual save success/failure.
+
+### BUG-049: Continue Yes spawns Link in sky/nowhere and freezes
+
+**Labels:** `bug`, `priority: P0`. **Assignee:** Claude (M2e owner).
+**State:** Open. **Reported:** human gameplay review, 2026-09-27.
+**Milestone:** M2e blocker; address before further M3 expansion.
+
+Reproduction reported: die, advance the death prompts, choose Continue = Yes.
+Actual: Link loads into the sky/nowhere and the game freezes. Expected: resume
+at a valid scene entrance with collision loaded and responsive gameplay.
+Death location, scene/entrance, save outcome and exact build not supplied.
+Cause unknown; do not label this a proven bad-spawn or memory-corruption cause.
+No agent reproduction or fix claimed. Separate from BUG-045 presentation gaps.
+
+Verification after repair: reproduce the reported path, check valid ground and
+camera, movement/combat responsiveness, restored health and retained inventory;
+check forest/interior deaths, Save Yes/No, and Continue No returning to title.
+
+### BUG-050: Child Link death voice sounds like adult Link
+
+**Labels:** `bug`, `priority: P3`. **Assignee:** Claude (M2e owner).
+**State:** Open. **Reported:** human listening review, 2026-09-27.
+**Milestone / trigger:** M2e death audio; check alongside BUG-048/049.
+
+Reproduction reported: child Link dies. Actual: death voice sounds like adult
+Link. Expected: child Link's death voice with original pitch and duration.
+Adult sample selection is not yet proven: inspect source age/voice mapping,
+extracted sample and playback rate/pitch before diagnosing. Preserve the
+half-rate SFX policy; offline resampling must not lower playback pitch.
+No agent listening verification or fix claimed. Verify corrected death voice
+in game; retain Continue freeze (BUG-049) as the higher-priority blocker.
+
+2026-09-27 Claude death-flow fixes (uncommitted, human Kronos pending):
+
+- BUG-048 cause: demo.c ends each step with player_input_set_dialogue(
+  gameplay_blocks_world()). Dead is neither paused nor talking, so the flag
+  dropped to false and player_input discarded every D-pad menu edge; only
+  the default Yes could be confirmed. Now `|| gameplay.dead`.
+- BUG-049 probable cause (not reproduced): Continue called enter_world()
+  mid-step, re-reading the SAME scene from disc (whole-file jo_fs_read_file
+  with the heap near peak, BUG-035). With Link already active, a failed load
+  had no fallback and left the mode in LOADING. Now respawn_after_game_over():
+  same resident scene respawns without a disc read; other scene loads like a
+  door; failed load respawns in the resident scene at spawn 0; mode always
+  reaches PLAY; the stale catch-up step is abandoned like take_door().
+- BUG-050: CHAN_6424 (NA_SE_VO_LI_DOWN_KID) -> transpose 1, notes 0/1/2 ->
+  Soundfont_0 EFFECT_1/2/3 = SAMPLE_0_127/128/129, sequential 98/106/58
+  ticks at 96 ticks/s. Build matches; OCT -3 plays 5512.5 Hz at true pitch.
+  Adult CHAN_625F uses EFFECT_14..16 (143..145), not used. Likely cause:
+  5.5 kHz storage (bible half-rate rule) removes >2.7 kHz brightness, so the
+  child voice sounds darker. Not changed: exemption (~13.5 KB more sound RAM
+  at 11025 Hz) needs a human decision.
+- BUG-051 new: human 2026-09-27, boulder moves/damages/knocks down correctly
+  but mesh does not roll.
+- Clean build: .bss end 0x06083EE0, 288 B below SGL. 253 focused checks pass.
+
+Human update (2026-09-27): lower importance to P3, deferred audio polish.
+Does not block RAM work or M3. Human identifies the heard voice as adult Link;
+actual built-sample/playback cause remains unresolved. Source mapping checks
+alone do not settle the audible report. Keep half-rate policy; no rate exception
+requested. Revisit during M8 audio polish or the next death-audio change.
+
+### BUG-052: Loading a Game Over save starts Link dying
+
+**Labels:** `bug`, `priority: P0`. **Assignee:** Claude (M2e owner).
+**State:** Open. **Reported:** human gameplay review, 2026-09-27.
+**Milestone / trigger:** M2e save/load regression; fix before further M3 expansion.
+
+Reported reproduction: die, save on the Game Over screen, then load that saved
+game. Actual: the loaded game starts with Link dying. Expected: loading the
+save starts a playable, living Link with the source-defined restored health and
+valid spawn. Blocks normal recovery through the saved adventure. Repeated
+reload/death loop and permanent save corruption are not established.
+Scene, slot, exact build and intervening Continue/Title choices not supplied.
+
+Cause unverified: inspect saved health, load-time health restoration and reset
+of transient death/reaction state against the original game. Do not assume
+zero health was serialized or label the save corrupt without evidence.
+Separate from BUG-049 (Continue spawn/freeze); test both paths after repair.
+No agent reproduction, runtime check or fix claimed in this logging turn.
+
+Acceptance: Game Over Save Yes -> load the same slot produces a living,
+controllable Link; repeat after forest/interior deaths. Verify inventory/flags
+survive, ordinary saves still load, and Save No leaves the previous save intact.
+
+2026-09-27 Claude BUG-043: triggers + title paths moved to cart
+(MUSICTRG.BIN/TITLEPTH.BIN). Clean gap 14,656 B, Standard 11,360 B. Heap
+peak (BUG-035) needs human Standard-build row 27 reading. Kronos pending.
+
+### BUG-053: Pause corruption after Continue / Link room
+
+Human screenshot and live Kronos capture confirm displaced pause art and
+unreadable glyphs. Read-only inspection proves both the page and font buffers
+match the rebuilt mounted ISO exactly two sectors (4096 B) late. Emulator
+started before ISO rewrite and still runs the older binary/file positions.
+See [live evidence](CONTINUE_MENU_CORRUPTION_2026-09-27.md).
+
+P1; owner Codex. Cause of this captured corruption: disc replacement under a
+running session. No renderer change warranted from this evidence. Cold boot
+with an unchanged disc and repeat Continue in house/forest before closing;
+no fresh-boot acceptance claimed. Runtime session preserved. Never rebuild
+mounted test media. Separate from BUG-049/052 gameplay recovery defects.
+
+
+### BUG-054: Fresh-boot title freezes with music and VDP1 0 FPS
+
+- Priority: P0. Owner: Astra. Code fixed; target retest pending.
+- Human reported 2026-09-28; fresh boot after build confirmed.
+- Live CPU evidence: SDK exact-size allocator loops in the full 51200-byte
+  work zone during action_audio_init callback allocation, despite free cart
+  zones. Music interrupt continues; main draw callback is never registered.
+- Fix in heap_profile.c: bounded exact-size scan with next-zone fallback;
+  shared SDK unchanged. Five focused allocator tests pass.
+- Clean rebuild passes; 5568 B below SGL (160 B fix cost).
+- Retest: cold boot same Clean image; moving title forest and music together.
+
+
+### Report: Brother dialogue flickers and teaches unavailable camera modes (2026-09-28)
+
+- P1, code fixed; Kronos acceptance pending. main.c no longer clears and
+  repaints an unchanged dialogue page each frame. Speaker probes moved offscreen.
+- C-Up camera implementation: five source house panoramas/overhead toggles,
+  outdoor first-person, shop fixed by source rule. Temporary hold-L look removed;
+  L toggles the map. Navi retains first claim on C-Up.
+- Dialogue action labels resolve from saved preset, pad mode and jump binding
+  before wrapping; extra pages preserve words and choice grouping.
+- Source audit, limitations and human checklist: CAMERA_TEXT_PLAN.md.
+
+### Human acceptance: dialogue and interior view (2026-09-28)
+
+Human confirms long dialogue no flicker, dynamic labels look correct, interior
+C-Up works. Close the reported flicker for the tested session; full controller
+matrix/outdoor camera acceptance remains separate. Speaker bold was silently
+falling back because its guard required ink in an unused destination cell.
+Guard corrected; panel gains 4 px top/bottom padding. Visual retest pending.
+
+
+### M3c/M3d follow-ups ? 2026-09-28 unbuilt checkpoint
+
+Owner: Astra. Source implementation and acceptance remain separate; no bugs or
+milestones are closed by host tests alone. See [M3c/M3d details](M3CD_IMPLEMENTATION.md).
+
+- P2 visual/source parity: simplified sign-piece and thrown-prop/drop motion,
+  missing pot/rock debris, collectible-fairy appearance, reduced gossip reaction,
+  and heart/nut two-layer combiner approximation. Revisit during M3 runtime review;
+  escalate if a reward or interaction fails. Item-dependent water/song reactions
+  stay linked to those item integrations.
+- M3b required follow-up: original Saria greeting camera/cues. Current greeting
+  text closes its progression flag; this does not complete the cutscene.
+- Context HUD follow-up: Read/Grab/Throw labels are absent from the current
+  Talk/Open/Enter artwork bank, although context A interactions are implemented.
+- Old Navi hint timer test: source branch ordering fixed, including fractional
+  phase reset. Previously failed alone (3002 instead of 3001); now passes alone.
+- Required next verification: authorized target build and real RAM gap, then
+  Kronos props/chests/shop/pad/save checks. Last 7,424-byte gap is historical.

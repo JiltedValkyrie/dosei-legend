@@ -41,15 +41,32 @@ class Gameplay(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.tmp = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
+        generated = pathlib.Path(cls.tmp.name) / 'generated'
+        generated.mkdir()
+        import shutil, sys
+        for file in GENERATED.iterdir():
+            if file.suffix in ('.h', '.c'): shutil.copy2(file, generated / file.name)
+        subprocess.run([sys.executable, str(ROOT / 'tools/build_actors.py'),
+                        '--out', str(generated)], check=True, capture_output=True)
+        subprocess.run([sys.executable, str(ROOT / 'tools/build_dialogue.py'),
+                        '--out', str(generated), '--cd', str(generated)],
+                       check=True, capture_output=True)
+        cls.generated = generated
         output = pathlib.Path(cls.tmp.name) / 'gameplay.dll'
         env = dict(os.environ)
         env['PATH'] = str(GCC.parent) + os.pathsep + env.get('PATH', '')
         subprocess.run([str(GCC), '-shared', '-O2', '-o', str(output),
-                        '-I' + str(GENERATED), '-I' + str(ROOT / 'src'),
+                        '-I' + str(generated), '-I' + str(ROOT / 'src'),
+                        '-I' + str(ROOT.parent / 'shared/lib/camera'),
+                        '-I' + str(ROOT.parent / 'shared/lib/collision'),
                         str(ROOT / 'tests/fixtures/gameplay_host.c'),
                         str(ROOT / 'src/gameplay.c'),
+                        str(ROOT / 'src/world_props.c'),
+                        str(ROOT / 'src/world_signs.c'),
+                        str(ROOT / 'src/item_drop.c'),
                         str(ROOT / 'src/pause_window_state.c'),
                         str(ROOT / 'src/dialogue_text.c'),
+                        str(ROOT / 'src/ui_preferences.c'),
                         str(ROOT / 'src/text_pool.c'),
                         str(ROOT / 'src/collide.c'),
                         str(ROOT / 'src/actor_sys.c'),
@@ -58,13 +75,13 @@ class Gameplay(unittest.TestCase):
                         str(ROOT / 'src/game_over.c'),
                         str(ROOT / 'src/save_state.c'),
                         str(ROOT / 'src/save_file.c'),
-                        str(GENERATED / 'kokiri_actors.c'),
-                        str(GENERATED / 'kokiri_dialogue.c')],
+                        str(generated / 'kokiri_actors.c'),
+                        str(generated / 'kokiri_dialogue.c')],
                        check=True, env=env, cwd=str(ROOT))
         cls.lib = ctypes.CDLL(str(output))
         cls.lib.gp_page_line.restype = ctypes.c_char_p
         # Line text comes from the disc file, as on target (BUG-033).
-        cls.text = ctypes.create_string_buffer((ROOT / 'build/cd/DIALOG.TXT').read_bytes())
+        cls.text = ctypes.create_string_buffer((generated / 'DIALOG.TXT').read_bytes())
         assert cls.lib.gp_bind_text(cls.text, len(cls.text.raw) - 1)
         cls.lib.gp_speaker_name.restype = ctypes.c_char_p
         cls.lib.gp_slot_name.restype = ctypes.c_char_p
@@ -78,6 +95,8 @@ class Gameplay(unittest.TestCase):
             getattr(cls.lib, name).restype = None
 
     def setUp(self):
+        self.lib.ui_preferences_reset()
+        self.lib.ui_text_set_analog(False)
         # gameplay_reset() deliberately does NOT clear the save: quest flags
         # outlive a scene by design. Each test therefore starts a fresh file
         # too, or flags set by one test would leak into the next.
@@ -96,6 +115,17 @@ class Gameplay(unittest.TestCase):
         self.lib.gp_go_reset()
         self.lib.gameplay_reset()
         self.lib.gp_room(0)
+
+    def test_interior_people_have_dialogue_and_no_forest_targets(self):
+        for scene, expected in ((4,1),(6,3),(7,1),(5,0),(8,0),(9,0)):
+            self.lib.gp_scene(scene)
+            self.lib.gameplay_reset()
+            present = [i for i in range(self.lib.gp_npc_count()) if self.lib.gp_npc_present(i)]
+            self.assertEqual(len(present),expected)
+            for i in present:
+                self.assertEqual(self.lib.gp_npc_scene(i),scene)
+                self.assertGreater(self.talk_to(i),0)
+                self.lib.gameplay_reset()
 
     # --- helpers ---------------------------------------------------------
     def pickup(self, index):
@@ -397,11 +427,21 @@ class Gameplay(unittest.TestCase):
         self.assertEqual(-1, self.lib.gp_target())
 
     def test_locked_facing_refreshes_from_post_movement_position(self):
-        nx, ny, nz = self.npc(2)   # a child: Mido (0) steps toward Link
+        nx, ny, nz = self.npc(2)   # EnKo type 3 also moves toward Link (M3b)
         self.hold_target(nx, ny, nz - 200)
         self.assertEqual(2, self.lib.gp_target())
+        nx, nz = self.lib.gameplay_npc_x(2), self.lib.gameplay_npc_z(2)
         self.lib.gameplay_update_facing(nx - 100, nz)
         self.assertLessEqual(abs(self.lib.gp_face_yaw() - 16384), 1)
+
+    def test_exit_kokiri_tracks_player_on_source_80_unit_ring(self):
+        x, y, z = self.npc(2)
+        self.step(x + 200, y, z)
+        self.assertAlmostEqual(self.lib.gameplay_npc_x(2), x + 80, delta=1)
+        self.assertAlmostEqual(self.lib.gameplay_npc_z(2), z, delta=1)
+        self.step(x, y, z - 200)
+        self.assertAlmostEqual(self.lib.gameplay_npc_x(2), x, delta=1)
+        self.assertAlmostEqual(self.lib.gameplay_npc_z(2), z - 80, delta=1)
 
     def test_locked_facing_points_at_the_target(self):
         nx, ny, nz = self.npc(0)
@@ -667,6 +707,10 @@ class Gameplay(unittest.TestCase):
             self.step(px, py, pz)
             ev |= self.lib.gp_baba_events()
         self.assertTrue(ev & 32)                         # first stick: get-item show
+        self.step(px, py, pz)
+        self.assertEqual(self.lib.gp_step_baba_events(), 0)
+        self.step(px, py, pz)
+        self.assertEqual(self.lib.gp_step_baba_events(), 0)
         self.assertEqual((1, 1), (self.lib.gp_stick_ammo(), self.lib.gp_stick_upgrade()))
         self.lib.gp_c_up(0)
         self.step(px, py, pz, cancel=1)
@@ -700,6 +744,18 @@ class Gameplay(unittest.TestCase):
             self.step(hx, hy, hz - 40)
         self.assertEqual(self.DYING, self.lib.gp_baba_action(0))
 
+    def test_item_assignment_owned_only_and_moves_existing_binding(self):
+        self.lib.gp_assign_item(0, 1)
+        self.assertEqual(self.lib.gp_c_item(0), 0)
+        self.lib.gp_sticks(1, 4, 1)
+        self.lib.gp_assign_item(0, 1)
+        self.assertEqual(self.lib.gp_c_item(0), 1)
+        self.lib.gp_assign_item(0, 3)
+        self.assertEqual(self.lib.gp_c_item(0), 0)
+        self.assertEqual(self.lib.gp_c_item(2), 1)
+        self.lib.gp_assign_item(5, 3)
+        self.assertEqual(self.lib.gp_c_item(2), 1)
+
     def test_full_bag_still_consumes_the_stick(self):
         self.lib.gp_sticks(1, 10, 1)
         self.wake()
@@ -726,6 +782,19 @@ class Gameplay(unittest.TestCase):
         self.at_baba(dz=150, steps=301)
         self.assertEqual(self.DEAD, self.lib.gp_baba_action(0))
         self.assertEqual(0, self.lib.gp_stick_ammo())
+
+    def test_baba_refused_by_full_pool_is_retried_not_dropped(self):
+        self.lib.karebaba_reset()
+        self.lib.gp_fill_pool(2)
+        room = 1                                   # kokiri_babas[0].room
+        self.lib.gp_baba_sync(room)
+        self.assertEqual(self.lib.gp_baba_count(), 2)
+        self.lib.gp_baba_sync(room)                # still full: no duplicates
+        self.assertEqual(self.lib.gp_baba_count(), 2)
+        self.lib.gp_free_fillers()
+        self.lib.gp_baba_sync(room)
+        self.assertEqual(self.lib.gp_baba_count(), 5)
+        self.assertEqual(sorted(self.lib.gp_baba_spawn(i) for i in range(5)), list(range(5)))
 
     def test_dying_baba_drops_the_lock_but_stays_alive(self):
         self.wake()
@@ -1010,7 +1079,11 @@ class Gameplay(unittest.TestCase):
             self.step(x, y, z, yaw=0, interact=1)
             if not self.lib.gp_talking():
                 continue
-            self.assertEqual(self.lib.gp_speaker_name(), b'Kokiri')
+            name = self.lib.gp_speaker_name()
+            self.assertIn(name, (b'Kokiri Boy', b'Kokiri Girl', b'Fado', b'Know-It-All Brother'))
+            girl = (self.lib.gp_npc_param(index) & 255) in (1, 5, 6, 9, 10)
+            if name.startswith(b'Kokiri'):
+                self.assertEqual(name, b'Kokiri Girl' if girl else b'Kokiri Boy')
             return
         self.skipTest('no child speaker reachable')
 
@@ -1245,9 +1318,10 @@ class Gameplay(unittest.TestCase):
         self.lib.gameplay_reset()
         self.lib.gp_room(room)
         self.assertEqual(value, self.lib.gp_rupees())
-        # And the rupee itself stays collected rather than respawning.
+        # Source flag 0x24 is temporary: scene reload respawns this green.
+        self.assertEqual(0x24, self.lib.gp_rupee_flag(0))
         self.step(x, y, z)
-        self.assertEqual(value, self.lib.gp_rupees())
+        self.assertEqual(value * 2, self.lib.gp_rupees())
 
     def test_a_new_game_still_starts_empty_handed(self):
         """The fix must not make a fresh file inherit the last one's gear."""
@@ -1276,11 +1350,11 @@ class Gameplay(unittest.TestCase):
         menu's SAVE does, wipe everything as returning to the title and loading
         a file would, then read the block back and re-enter the scene.
         """
-        SAVE_FILE_BYTES = 305  # save_file.h v3: 8 + 295 + 2
+        SAVE_FILE_BYTES = 311  # v5: 8 + 301 + 2
         for index in range(2):
             x, y, z, _ = self.pickup(index)
             self.step(x, y, z)
-        rupee_x, rupee_y, rupee_z, value, room = self.rupee(0)
+        rupee_x, rupee_y, rupee_z, value, room = self.rupee(4)
         self.lib.gp_room(room)
         self.step(rupee_x, rupee_y, rupee_z)
         self.assertEqual(GP_SWORD | GP_SHIELD, self.lib.gp_owned())
@@ -1330,8 +1404,165 @@ class Gameplay(unittest.TestCase):
                             room=room, rot_z=rot_z, param=param))
         return out
 
+    def test_mido_chests_grant_source_rewards_once_and_keep_scene_flags_separate(self):
+        import math
+        for i, reward in ((1, 5), (2, 5), (3, 1), (4, 0)):
+            self.lib.gp_scene(8)
+            self.lib.gameplay_reset()
+            self.lib.gp_room(0)
+            vals = [ctypes.c_int() for _ in range(5)]
+            self.lib.gp_chest_at(i, *(ctypes.byref(v) for v in vals))
+            x,y,z,yaw,room = (v.value for v in vals)
+            angle = yaw * math.tau / 65536
+            px, pz = x-round(25*math.sin(angle)), z-round(25*math.cos(angle))
+            before = self.lib.gp_rupees()
+            self.lib.gp_step_full(px,y,pz,yaw,0,0,0,1,1,0,0,0)
+            self.assertTrue(self.lib.gp_chest_flag(i))
+            self.assertFalse(self.lib.save_get_treasure(0, i-1))
+            self.assertEqual(before+reward, self.lib.gp_rupees())
+            self.lib.gameplay_reset()
+            self.lib.gp_step_full(px,y,pz,yaw,0,0,0,1,1,0,0,0)
+            self.assertEqual(before+reward,self.lib.gp_rupees())
+
+    def world_prop(self, kind):
+        for i in range(self.lib.gp_world_prop_count()):
+            v=[ctypes.c_int() for _ in range(6)]
+            self.lib.gp_world_prop_at(i,*(ctypes.byref(x) for x in v))
+            x,y,z,aid,scene,param=(x.value for x in v)
+            if aid==kind:
+                self.lib.gp_scene(scene);self.lib.gameplay_reset();self.lib.gp_actors_reap()
+                self.lib.gp_room(self.lib.gp_world_prop_room(i))
+                self.step(x,y,z-35)
+                return i,x,y,z,param
+        self.fail('missing source actor '+hex(kind))
+
+    def test_pot_attaches_to_hand_then_throw_breaks_on_impact(self):
+        i,x,y,z,param=self.world_prop(0x111)
+        handle=self.lib.gp_prop_handle(i)
+        self.assertNotEqual(0,handle)
+        self.step(x,y,z-35,interact=1)
+        self.assertTrue(self.lib.gp_world_carrying())
+        self.lib.gp_lift_sync(1,0,0,0,x,y+50,z-20)
+        pos=[ctypes.c_int() for _ in range(3)]
+        self.lib.gp_actor_pos(handle,*(ctypes.byref(v) for v in pos))
+        self.assertEqual([x,y+50,z-20],[v.value for v in pos])
+        self.lib.gp_lift_sync(2,2048,3072,0,x,y+50,z-20)
+        self.assertFalse(self.lib.gp_world_carrying())
+        self.lib.gp_ball_wall(1)
+        self.step(x+200,y,z)
+        self.assertEqual(0,self.lib.gp_prop_handle(i))
+        self.assertTrue(self.lib.gp_events() & GP_EVENT_CUT)
+        self.lib.gp_ball_wall(0)
+        self.step(x+200,y,z)
+        self.assertEqual(0,self.lib.gp_prop_handle(i))
+
+    def test_put_down_keeps_pot_and_rock_cannot_be_cut_by_sword(self):
+        i,x,y,z,param=self.world_prop(0x111)
+        self.step(x,y,z-35,interact=1)
+        self.lib.gp_lift_sync(1,0,0,0,x,y+20,z)
+        self.lib.gp_lift_sync(2,0,0,0,x,y+20,z)
+        self.lib.gp_ball_wall(1);self.step(x+200,y,z)
+        self.assertNotEqual(0,self.lib.gp_prop_handle(i))
+        self.assertEqual(0,self.lib.gp_prop_data(self.lib.gp_prop_handle(i),1))
+        self.lib.gp_ball_wall(0)
+        i,x,y,z,param=self.world_prop(0x14E)
+        self.lib.gp_grant(GP_SWORD,GP_SWORD);self.step(x,y,z-35,attack=1)
+        for _ in range(20): self.step(x,y,z-35)
+        self.assertNotEqual(0,self.lib.gp_prop_handle(i))
+
+    def test_sword_breaks_pot_once(self):
+        i,x,y,z,param=self.world_prop(0x111)
+        self.lib.gp_grant(GP_SWORD,GP_SWORD);self.step(x,y,z-35,attack=1)
+        for _ in range(20): self.step(x,y,z-35)
+        self.assertEqual(0,self.lib.gp_prop_handle(i))
+        self.lib.gp_actors_reap();self.step(x,y,z-35)
+        self.assertEqual(0,self.lib.gp_prop_handle(i))
+
+    def test_all_signs_read_their_authored_text(self):
+        import math
+        for i in range(self.lib.gp_sign_count()):
+            self.lib.gameplay_reset();self.lib.gp_actors_reap()
+            v=[ctypes.c_int() for _ in range(6)]
+            self.lib.gp_sign_at(i,*(ctypes.byref(x) for x in v))
+            x,y,z,yaw,room,text=(a.value for a in v)
+            angle=yaw*math.tau/65536
+            self.lib.gp_room(room)
+            self.step(x+round(40*math.sin(angle)),y,z+round(40*math.cos(angle)),yaw=yaw+32768,interact=1)
+            self.assertEqual(text,self.lib.gp_rule_text_id(),i)
+
+    def test_cut_sign_spawns_pieces_and_stops_reading_until_scene_reset(self):
+        v=[ctypes.c_int() for _ in range(6)]
+        self.lib.gp_sign_at(0,*(ctypes.byref(x) for x in v))
+        x,y,z,yaw,room,text=(a.value for a in v)
+        self.lib.gp_room(room);self.gear()
+        self.step(x,y,z-35,attack=1)
+        for _ in range(20): self.step(x,y,z-35)
+        self.assertNotEqual(0x7FF,self.lib.gp_sign_parts(0))
+        self.assertGreater(self.lib.gp_piece_count(),0)
+        self.lib.gameplay_reset()
+        self.assertEqual(0x7FF,self.lib.gp_sign_parts(0))
+        self.assertEqual(0,self.lib.gp_piece_count())
+
+    def test_gossip_stone_reacts_without_becoming_a_drop(self):
+        i,x,y,z,param=self.world_prop(0x1B9)
+        self.lib.gp_grant(GP_SWORD,GP_SWORD);before=self.lib.gp_drop_count()
+        self.step(x,y,z-35,attack=1)
+        seen=False
+        for _ in range(18):
+            self.step(x,y,z-35)
+            seen |= self.lib.gp_prop_data(self.lib.gp_prop_handle(i),6)>0
+        self.assertTrue(seen)
+        self.assertNotEqual(0,self.lib.gp_prop_handle(i))
+        self.assertEqual(before,self.lib.gp_drop_count())
+
+    def test_fado_has_her_source_dialogue(self):
+        fado=next(i for i in range(self.lib.gp_npc_count()) if self.lib.gp_npc_kind(i)==0 and (self.lib.gp_npc_param(i)&255)==12)
+        self.assertEqual(0x10D7,self.talk_to(fado))
+        self.step(*self.talk_spot(fado),cancel=1)
+        self.assertTrue(self.lib.save_get_inf_table(0xB7))
+        self.assertEqual(0x10D8,self.talk_to(fado))
+
+    def test_saria_greeting_then_fairy_line_advance_on_close(self):
+        saria=next(i for i in range(self.lib.gp_npc_count()) if self.lib.gp_npc_kind(i)==2 and self.lib.gp_npc_scene(i)==0)
+        self.assertEqual(0x1001,self.talk_to(saria))
+        x,y,z=self.talk_spot(saria)
+        self.step(x,y,z,cancel=1)
+        self.assertTrue(self.lib.save_get_inf_table(0))
+        self.assertEqual(0x1002,self.talk_to(saria))
+        self.step(x,y,z,cancel=1)
+        self.assertTrue(self.lib.save_get_inf_table(1))
+        self.assertEqual(0x1003,self.talk_to(saria))
+
+    def test_heart_chest_still_opens_when_health_is_full(self):
+        import math
+        self.lib.gp_scene(8);self.lib.gameplay_reset()
+        vals=[ctypes.c_int() for _ in range(5)]
+        self.lib.gp_chest_at(4,*(ctypes.byref(v) for v in vals))
+        x,y,z,yaw,room=(v.value for v in vals)
+        self.lib.gp_room(room);self.lib.gp_health_set(48,48)
+        angle=yaw*math.tau/65536
+        self.step(x-round(25*math.sin(angle)),y,z-round(25*math.cos(angle)),yaw=yaw,interact=1)
+        self.assertTrue(self.lib.gp_chest_flag(4))
+        self.assertEqual(48,self.lib.gp_health())
+
+    def test_placed_hearts_do_not_convert_to_rupees_and_collect_once(self):
+        for i in range(self.lib.gp_world_prop_count()):
+            vals=[ctypes.c_int() for _ in range(6)]
+            self.lib.gp_world_prop_at(i,*(ctypes.byref(v) for v in vals))
+            x,y,z,aid,scene,param=(v.value for v in vals)
+            if aid!=0x15: continue
+            self.lib.gp_scene(scene);self.lib.gameplay_reset();self.lib.gp_room(0)
+            self.lib.save_damage(16)
+            before=self.lib.gp_rupees()
+            self.step(x,y,z)
+            if ((param>>8)&63) < 32:
+                self.assertTrue(self.lib.save_get_collectible(scene,(param>>8)&63))
+            self.assertEqual(before,self.lib.gp_rupees())
+            self.lib.gameplay_reset();self.step(x,y,z)
+            self.assertEqual(before,self.lib.gp_rupees())
+
     def test_sword_chest_is_the_source_maze_chest(self):
-        self.assertEqual(self.lib.gp_chest_total(), 1)
+        self.assertEqual(self.lib.gp_chest_total(), 5)
         x, y, z, yaw, room = self.chest()
         self.assertEqual((x, y, z, yaw, room), (-232, 178, 2245, 0, 2))
         self.assertEqual(self.lib.gp_chest_param(0), 0x04E0)
@@ -1523,18 +1754,63 @@ class Gameplay(unittest.TestCase):
         self.lib.gp_room(0)
         self.lib.gp_wallet(rupees)
 
-    def shop_step(self, interact=0, cancel=0, menu_step=0):
+    def shop_step(self, interact=0, cancel=0, menu_step=0, dx=0):
         x, y, z, yaw = self.COUNTER
+        self.lib.gp_menu_dx(dx)
         self.lib.gp_step_full(x, y, z, yaw, 0, 0, 0, interact, 1, cancel, 0, menu_step)
+        self.lib.gp_menu_dx(0)
         return self.lib.gp_rule_text_id() if self.lib.gp_talking() else None
 
-    def to_choice(self):
+    def to_facing(self):
         self.shop_step()
         self.assertTrue(self.lib.gp_shop_prompt())
-        self.assertEqual(self.shop_step(interact=1), 0x10BA)
-        self.assertEqual(self.shop_step(interact=1), 0x009F)
+        self.assertEqual(self.shop_step(interact=1), 0x009E)     # hello
+        self.assertEqual(self.shop_step(interact=1), 0x0083)     # talk / quit
+        self.assertEqual(self.lib.gp_choice_lines(), 2)
+
+    def to_shelf(self, dx):
+        """D-pad toward a shelf: the view turns 30 degrees, then the item text."""
+        self.to_facing()
+        self.shop_step(dx=dx)
+        for _ in range(40):
+            if self.lib.gp_shop_state() != 4:                   # GP_SHOP_TURN
+                break
+            self.shop_step()
+        self.assertEqual(self.lib.gp_shop_face(), 30 if dx < 0 else -30)
+        return self.lib.gp_rule_text_id()
+
+    def to_choice(self):
+        """Right shelf, bottom slot 0: the Deku Shield, then its buy prompt."""
+        self.assertEqual(self.to_shelf(1), 0x009F)
         self.assertEqual(self.shop_step(interact=1), 0x0089)
         self.assertEqual(self.lib.gp_choice_lines(), 2)
+
+    # ---- M3a generic choices (En_Ko EnKo_UpdateTalkState) -----------------
+
+    def choice_step(self, interact=0, cancel=0, menu_step=0):
+        self.lib.gp_step_full(0, 0, 0, 0, 0, 0, 0, interact, 1, cancel, 0, menu_step)
+        return self.lib.gp_rule_text_id() if self.lib.gp_talking() else None
+
+    def test_three_choice_clamps_and_continues_to_the_picked_text(self):
+        self.assertTrue(self.lib.gp_open_choice(0x1038, 0))
+        self.assertEqual(self.lib.gp_choice_lines(), 3)
+        self.choice_step(menu_step=-1)
+        self.assertEqual(self.lib.gp_choice(), 0)           # clamped, no wrap
+        self.choice_step(menu_step=1)
+        self.choice_step(menu_step=1)
+        self.choice_step(menu_step=1)
+        self.assertEqual(self.lib.gp_choice(), 2)           # clamped at last
+        self.assertEqual(self.choice_step(interact=1), 0x103B)
+        self.assertEqual(self.lib.gp_speaker(), 0)          # same box, same speaker
+
+    def test_npc_choice_b_confirms_the_cursor_like_message_should_advance(self):
+        self.assertTrue(self.lib.gp_open_choice(0x1035, 0))
+        self.choice_step(menu_step=1)
+        self.assertEqual(self.choice_step(cancel=1), 0x1037)
+
+    def test_two_choice_first_option(self):
+        self.assertTrue(self.lib.gp_open_choice(0x103E, 0))
+        self.assertEqual(self.choice_step(interact=1), 0x103F)
 
     def test_shield_costs_exactly_40_and_is_owned_not_equipped(self):
         self.shop(40)
@@ -1544,8 +1820,9 @@ class Gameplay(unittest.TestCase):
         self.assertEqual(self.lib.gp_owned(), GP_SHIELD)
         self.assertEqual(self.lib.gp_equipped(), 0)
         self.assertEqual(self.lib.gp_get_item(), GP_SHIELD)
-        while self.lib.gp_talking():
-            self.shop_step(interact=1)
+        self.assertEqual(self.shop_step(interact=1), 0x006B)     # continue?
+        self.shop_step(menu_step=1)
+        self.assertEqual(self.shop_step(interact=1), None)       # quit
         # A second purchase is refused and costs nothing.
         self.lib.gp_wallet(99)
         self.to_choice()
@@ -1565,16 +1842,116 @@ class Gameplay(unittest.TestCase):
         self.shop_step(menu_step=1)
         self.assertEqual(self.lib.gp_choice(), 1)
         self.assertEqual(self.shop_step(interact=1), 0x009F)
-        self.assertEqual(self.shop_step(cancel=1), None)
         self.assertEqual(self.lib.gp_rupees(), 50)
         self.assertEqual(self.lib.gp_owned(), 0)
-        # B on the choice is Don't buy too.
-        self.to_choice()
+        # B on the buy prompt is Don't buy (EnOssan_TestCancelOption).
+        self.shop_step(interact=1)
         self.assertEqual(self.shop_step(cancel=1), 0x009F)
         self.assertEqual(self.lib.gp_rupees(), 50)
 
+    def test_shop_shelf_cursor_follows_en_ossan(self):
+        self.shop(99)
+        self.assertEqual(self.to_shelf(1), 0x009F)               # slot 0
+        self.assertEqual(self.shop_step(menu_step=-1), 0x00B2)   # up: nuts 5
+        self.assertEqual(self.shop_step(dx=1), 0x00A1)           # outer: stick (3)
+        self.assertEqual(self.lib.gp_shop_cursor(), 3)
+        self.assertEqual(self.shop_step(dx=1), 0x00A1)           # edge: stays
+        self.shop_step(dx=-1)                                    # back to 1
+        self.shop_step()                                         # release
+        self.shop_step(dx=-1)                                    # inner edge: turn
+        self.assertEqual(self.lib.gp_shop_state(), 4)
+        for _ in range(40):
+            if self.lib.gp_shop_state() != 4:
+                break
+            self.shop_step()
+        self.assertEqual(self.lib.gp_rule_text_id(), 0x0083)
+        self.assertEqual(self.lib.gp_shop_face(), 0)
+        # Left shelf enters at slot 4 (seeds) keeping the top/bottom row.
+        self.lib.gp_menu_dx(0)
+        self.shop_step(dx=-1)
+        for _ in range(40):
+            if self.lib.gp_shop_state() != 4:
+                break
+            self.shop_step()
+        self.assertIn(self.lib.gp_shop_cursor(), (4, 5))
+
+    def test_shop_held_direction_repeats_after_accumulating(self):
+        """EnOssan_UpdateJoystickInputState: one move on the push, then every
+        update once the accumulated stick passes 500."""
+        self.shop(99)
+        self.to_shelf(-1)                                        # left shelf, slot 4
+        self.assertEqual(self.lib.gp_shop_cursor(), 4)
+        self.shop_step(dx=-1)                                    # push: 6
+        self.assertEqual(self.lib.gp_shop_cursor(), 6)
+        moved = []
+        for _ in range(12):                                      # keep holding
+            self.shop_step(dx=-1)
+            moved.append(self.lib.gp_shop_cursor())
+        self.assertEqual(moved[0], 6)                            # no instant repeat
+        self.assertEqual(moved[-1], 6)                           # outer edge holds
+        self.shop_step()
+        # Holding toward the shopkeeper walks back and turns at the inner edge.
+        states = []
+        for _ in range(20):
+            self.shop_step(dx=1)
+            states.append(self.lib.gp_shop_state())
+        self.assertIn(4, states)                                 # GP_SHOP_TURN
+
+    def test_shop_refusals_follow_en_girla(self):
+        self.shop(99)
+        self.to_shelf(-1)                                        # seeds
+        self.lib.gp_menu_dx(0)
+        if self.lib.gp_shop_cursor() != 4:
+            self.shop_step(menu_step=1)
+        self.assertEqual(self.lib.gp_rule_text_id(), 0x00DF)
+        self.shop_step(interact=1)
+        self.assertEqual(self.shop_step(interact=1), 0x0086)     # no bullet bag
+        self.assertEqual(self.lib.gp_rupees(), 99)
+        self.assertEqual(self.shop_step(interact=1), 0x00DF)     # back to item
+
+    def test_shop_nuts_first_buy_fanfare_then_quick_buy(self):
+        self.shop(99)
+        self.to_shelf(1)
+        self.assertEqual(self.shop_step(menu_step=-1), 0x00B2)   # nuts 5, 15 R
+        self.shop_step(interact=1)
+        self.assertEqual(self.shop_step(interact=1), 0x0034)     # first get
+        self.assertEqual(self.lib.gp_rupees(), 84)
+        self.assertEqual(self.shop_step(interact=1), 0x006B)
+        self.assertEqual(self.shop_step(interact=1), 0x0083)     # continue
+        self.shop_step(dx=1)
+        for _ in range(40):
+            if self.lib.gp_shop_state() != 4:
+                break
+            self.shop_step()
+        self.assertEqual(self.lib.gp_rule_text_id(), 0x00B2)     # row kept
+        self.shop_step(interact=1)
+        self.assertEqual(self.shop_step(interact=1), 0x0084)     # quick buy
+        self.assertEqual(self.lib.gp_rupees(), 69)
+
+    def test_shop_heart_needs_missing_health(self):
+        self.shop(99)
+        self.to_shelf(-1)
+        self.shop_step(menu_step=-1)
+        for _ in range(3):
+            self.shop_step(dx=-1)
+        self.assertEqual(self.lib.gp_rule_text_id(), 0x00AC)     # heart (7)
+        self.shop_step(interact=1)
+        self.assertEqual(self.shop_step(interact=1), 0x0086)     # full health
+        self.shop_step(interact=1)
+        self.lib.gp_set_health(32)
+        self.shop_step(interact=1)
+        self.assertEqual(self.shop_step(interact=1), 0x0084)
+        self.assertEqual(self.lib.gp_health_now(), 48)
+        self.assertEqual(self.lib.gp_rupees(), 89)
+
+    def test_b_ends_the_exchange_while_browsing(self):
+        self.shop(50)
+        self.to_shelf(1)
+        self.assertIsNone(self.shop_step(cancel=1))
+        self.assertEqual(self.lib.gp_shop_state(), 0)
+
     def test_shop_purchase_survives_save_and_reload(self):
-        SAVE_FILE_BYTES = 305  # v3
+        SAVE_FILE_BYTES = 311  # v5
         self.shop(45)
         self.to_choice()
         self.shop_step(interact=1)
@@ -1606,9 +1983,10 @@ class Gameplay(unittest.TestCase):
         self.lib.gp_room(0)
         self.assertEqual(self.lib.gp_rupees(), purse)
         self.to_choice()
-        self.shop_step(interact=1)
-        while self.lib.gp_talking():
-            self.shop_step(interact=1)
+        self.shop_step(interact=1)                         # buy: 0x4C
+        self.shop_step(interact=1)                         # 0x6B continue?
+        self.shop_step(cancel=1)                           # B ends
+        self.assertFalse(self.lib.gp_talking())
         self.assertEqual(self.lib.gp_rupees(), purse - 40)
         self.assertEqual(self.lib.gp_owned(), GP_SWORD | GP_SHIELD)
         self.lib.gp_scene(self.SAVE_SCENE_KOKIRI_FOREST)
@@ -2050,6 +2428,61 @@ class Gameplay(unittest.TestCase):
         for _ in range(10):
             self.step(0, 0, 0)
         self.assertLess(self.nut_at()[1], y0)
+
+    def test_dynamic_action_labels_all_presets_and_both_pad_modes(self):
+        buf = ctypes.create_string_buffer(512)
+        def expand(text):
+            self.lib.ui_text_expand(text.encode(), buf, len(buf))
+            return buf.value.decode()
+        for preset, attack in enumerate(['X', 'X', 'B', 'B', 'Square']):
+            for analog in (False, True):
+                self.lib.ui_text_set_analog(analog)
+                value = expand('[A] [B] [Jump] [Z] [R] [C-Up] [C] [Start]')
+                self.assertIn('[' + attack + ']', value)
+                self.assertNotIn('[]', value)
+                self.assertNotIn('[Start]', value) if preset in (1, 4) else None
+                self.assertNotIn('[C-Up]', value) if preset != 2 or not analog else None
+            self.lib.ui_preferences_cycle(False)
+        # Binding a jump to A removes its gameplay interaction; say so rather
+        # than teaching a button that cannot perform the action.
+        self.lib.ui_preferences_cycle(True)
+        self.assertEqual(expand('[A] [Jump]'), '[unbound] [A]')
+        self.assertEqual(expand('[Confirm]'), '[A]')
+        self.assertNotIn('unbound', expand('[MenuPrev] [MenuNext] [AssignModifier]'))
+
+    def test_custom_jump_labels_never_empty_in_any_preset(self):
+        out = ctypes.create_string_buffer(64)
+        for preset in range(5):
+            for analog in (False, True):
+                self.lib.ui_text_set_analog(analog)
+                for binding in range(8):
+                    self.lib.ui_text_expand(b'[Jump]', out, len(out))
+                    self.assertNotIn(out.value, (b'[]', b'[Jump]', b'[unbound]'))
+                    self.lib.ui_preferences_cycle(True)
+            self.lib.ui_preferences_cycle(False)
+
+    def test_every_source_page_survives_label_expansion_and_wrapping(self):
+        text = (self.generated / 'kokiri_dialogue.c').read_text()
+        pages = text.split('const dialogue_page_t dialogue_pages', 1)[1].split('};', 1)[0]
+        pages = [(int(a), int(b)) for a,b in re.findall(r'{\s*(\d+),\s*(\d+)\s*}', pages)]
+        self.lib.dialogue_line.restype = ctypes.c_char_p
+        self.lib.dialogue_row.restype = ctypes.c_char_p
+        expanded = ctypes.create_string_buffer(512)
+        for preset in range(5):
+            for analog in (False, True):
+                self.lib.ui_text_set_analog(analog)
+                for first,count in pages:
+                    expected = []
+                    for index in range(first, first + count):
+                        self.lib.ui_text_expand(self.lib.dialogue_line(index), expanded, len(expanded))
+                        expected.append(expanded.value.decode())
+                    rows = self.lib.dialogue_prepare(first, count, 0)
+                    lines = [self.lib.dialogue_row(i).decode() for i in range(rows)]
+                    self.assertTrue(all(len(line) <= 38 for line in lines))
+                    self.assertTrue(all(line.count('[') == line.count(']') for line in lines))
+                    self.assertEqual(' '.join(' '.join(lines).split()),
+                                     ' '.join(' '.join(expected).split()), (preset, analog, first))
+            self.lib.ui_preferences_cycle(False)
 
 if __name__ == '__main__':
     unittest.main()

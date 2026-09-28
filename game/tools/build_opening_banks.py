@@ -77,7 +77,7 @@ def forest_bank(rooms, track):
     return vertices, faces, tiles
 
 
-def house_panorama(oot):
+def house_panorama(oot, asset="LHVR", sides=4, rot_y=0.0):
     """z_vr_box.c: SKYBOX_HOUSE_LINK, sSkybox256FaceParams and 63x31 tiles.
 
     Four pre-rendered CI8 side images, each with its own RGBA16 palette.
@@ -85,14 +85,14 @@ def house_panorama(oot):
     """
     from build_hybrid_scene import quantize
     root = oot / 'extracted/ntsc-1.2/baserom'
-    pixels = (root / 'vr_LHVR_static').read_bytes()
-    palette = (root / 'vr_LHVR_pal_static').read_bytes()
-    if len(pixels) != 4 * 256 * 256 or len(palette) != 4 * 256 * 2:
+    pixels = (root / ('vr_' + asset + '_static')).read_bytes()
+    palette = (root / ('vr_' + asset + '_pal_static')).read_bytes()
+    if len(pixels) != sides * 256 * 256 or len(palette) != sides * 256 * 2:
         raise ValueError('Unexpected Link house panorama dimensions')
     vertices, faces, tiles = [], [], collections.OrderedDict()
     starts = [(-126, -126, 63), (126, -126, 63),
               (126, 126, -63), (-126, 126, -63)]
-    for side, (x, z, step) in enumerate(starts):
+    for side, (x, z, step) in enumerate(starts[:sides]):
         colours = struct.unpack_from('>256H', palette, side * 512)
         rgba = [(((c >> 11) & 31) * 255 // 31,
                  ((c >> 6) & 31) * 255 // 31,
@@ -111,7 +111,11 @@ def house_panorama(oot):
                              (col + 1, row + 1), (col, row + 1)):
                     p = (x + step * u, 124 - 31 * v, z) if side % 2 == 0 else (
                          x, 124 - 31 * v, z + step * u)
-                    vertices.append(tuple(k * 16 for k in p))
+                    if rot_y:
+                        # skyboxCtx->rot.y (z_vr_box.c), Matrix_RotateY.
+                        c, s_ = math.cos(rot_y), math.sin(rot_y)
+                        p = (p[0] * c + p[2] * s_, p[1], -p[0] * s_ + p[2] * c)
+                    vertices.append(tuple(round(k * 16) for k in p))
                 faces.append(dict(idx=tuple(range(first, first + 4)),
                                   tex_off=tile, cull=False, mesh=False))
     return vertices, faces, tiles

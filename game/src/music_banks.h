@@ -9,11 +9,16 @@
 
 #include "music.h"
 
-extern const music_bank_t music_bank_title;
-extern const music_bank_t music_bank_kokiri;
+extern music_bank_t music_bank_title;
+extern music_bank_t music_bank_kokiri;
+extern music_bank_t music_bank_house;
+extern music_bank_t music_bank_shop;
 /* The opening cutscenes' original sequence banks, including Ganon percussion. */
-extern const music_bank_t music_bank_nightmare;
-extern const music_bank_t music_bank_navi;
-extern const music_bank_t music_bank_deku_tree;
+extern music_bank_t music_bank_nightmare;
+extern music_bank_t music_bank_navi;
+extern music_bank_t music_bank_deku_tree;
+
+/* Bind MUSICTRG.BIN (cart carve) to every bank's triggers. */
+bool music_banks_bind(const uint8_t *blob, uint32_t bytes);
 
 #endif

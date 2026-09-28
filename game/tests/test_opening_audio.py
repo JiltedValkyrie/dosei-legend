@@ -89,7 +89,7 @@ int fade(int level,int slot) { active[0]=true; voice_levels[0]=12;
         data = json.loads((ROOT/'build/generated/opening_audio.json').read_text())
         pcm = (ROOT/'build/generated/OPENING.PCM').read_bytes()
         self.assertEqual(len(pcm),data['bytes'])
-        self.assertGreaterEqual(data['base'],0x3C000)
+        self.assertGreaterEqual(data['base'],0x50000)
         self.assertLessEqual(data['base']+len(pcm),0x80000)
         self.assertEqual([s['name'] for s in data['samples']],
                          ['cut','thunder','bridge','bridge_stop','hooves','neigh','dust','dash','rain'])

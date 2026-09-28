@@ -20,6 +20,9 @@
 /* Bit positions in `owned` and `equipped`. */
 #define GP_SWORD            (1u << 0)
 #define GP_SHIELD           (1u << 1)
+#define GP_GET_NUT         4u
+#define GP_GET_STICK       8u
+#define GP_GET_HEART       16u
 
 /* Feedback raised during one step. demo.c turns these into sound; nothing in
 ** here plays audio, so a test can assert the event without a sound driver. */
@@ -193,6 +196,15 @@
 /* Kokiri Shop. EnOssan's talk reach is the slice's (counter between them);
 ** the Deku Shield's price is EnGirlA's basePrice (z_en_girla.c). */
 #define GP_SHOP_TALK_RANGE   150
+/* EnOssan stateFlag subset for the Kokiri Shop. */
+typedef enum {
+    GP_SHOP_NONE, GP_SHOP_HELLO, GP_SHOP_FACING, GP_SHOP_OWNER, GP_SHOP_TURN,
+    GP_SHOP_BROWSE, GP_SHOP_SELECTED, GP_SHOP_RESULT, GP_SHOP_QUICK,
+    GP_SHOP_GET, GP_SHOP_CONTINUE
+}   gp_shop_state_t;
+/* The pivot (browsing) view: the whole exchange except an item held up. */
+#define GP_SHOP_BROWSING(s) ((s) != GP_SHOP_NONE && (s) != GP_SHOP_GET && \
+                             (s) != GP_SHOP_CONTINUE)
 #define GP_SHIELD_PRICE      40
 /* En_Goroiwa, maze boulder (z_en_goroiwa.c), converted from 20 Hz frames to
 ** 30 Hz steps: speeds x2/3, accelerations x4/9, timers x3/2. Q16 where noted.
@@ -241,6 +253,7 @@ typedef struct
     bool        pause;          /* Start pressed this step */
     int8_t      menu_dx, menu_dy, menu_page;
     int8_t      menu_step;      /* D-pad: -1 up/left, +1 down/right, 0 none */
+    int8_t      menu_hold_x, menu_hold_y;   /* player_input_t, stick scale */
     /* controlStickDirections relative to Link's facing: -1 none, 0 forward,
     ** 1 left, 2 back, 3 right. `moving` = stick outside its dead zone. */
     int8_t      stick_dir;
@@ -248,6 +261,7 @@ typedef struct
     bool        grounded;
     uint8_t     room;
     int32_t     focus[3];       /* Link focus.pos (head point), world */
+    uint8_t     c_assign;       /* 1=down, 2=left, 3=right; pause only */
     bool        c_up;           /* C-Up pressed this step (talk to Navi) */
 }               gameplay_input_t;
 
@@ -264,6 +278,7 @@ typedef struct
     uint32_t    arrow;          /* arrow-hover actor handle (Navi), 0 none */
     /* Second event word (the first is full): GP2_EVENT_*. */
     uint32_t    events2;
+    uint32_t    baba_events; /* Events from this gameplay step only. */
     uint16_t    navi_text;      /* player->naviTextId: pending quest hint */
     bool        navi_calling;   /* interfaceCtx->naviCalling latch */
     bool        navi_read;      /* En_Elf fairyFlags 0x80: hint was read */
@@ -288,7 +303,7 @@ typedef struct
     bool        blade_bounced;  /* AT_BOUNCED on the blade this pass */
     bool        guard_pending;  /* shield AC_BOUNCED, read next step */
     uint8_t     wall_material;  /* SurfaceType material of the last wall hit */
-    /* En_Nutsball (standard-build test emitter only; see gameplay.c).
+    /* En_Nutsball projectile state; automatic debug emitter removed in M3d.
     ** nut_state 0 none, 1 flying; nut_reflected: AT_TYPE_PLAYER now. */
     uint8_t     nut_state, nut_reflected;
     int16_t     nut_timer;
@@ -304,6 +319,7 @@ typedef struct
     uint8_t     wonder_drop[16], wonder_age[16];   /* mode 3 ground rupee */
     uint8_t     room;           /* last room stepped, for room reloads */
     int16_t     chest_prompt;   /* kokiri_chests index A would open, -1 */
+    uint16_t    get_item_age;
     uint8_t     get_item;       /* GP_* held up while its text shows, 0 none */
     /* Mido (EnMd). state: 0 blocking, 1 walking path 1, 2 moved. */
     uint8_t     mido_state;
@@ -326,7 +342,11 @@ typedef struct
     ** (Player_UpdateDamage reads the previous frame's cylinder AC_HIT). */
     uint8_t     hurt_pending, hurt_damage;
     uint16_t    hurt_yaw;
-    uint8_t     shop_state;
+    uint8_t     shop_state;     /* gp_shop_state_t (EnOssan stateFlag) */
+    uint8_t     shop_cursor;    /* shelf slot 0-7 */
+    int8_t      shop_face, shop_target;  /* cameraFaceAngle, degrees */
+    int16_t     shop_accum_x, shop_accum_y;  /* stickAccumX/Y */
+    bool        shop_move_x;    /* moveHorizontal */
     uint8_t     choice;
     bool        shop_prompt;    /* A would talk to the shopkeeper */
     uint32_t    events;         /* raised this step only */
@@ -343,7 +363,8 @@ typedef struct
     ** is the line they actually say, exactly as the original's text-id
     ** function works. See build_dialogue.py. */
     int16_t     rule;
-    uint8_t     page;           /* page within that conversation */
+    uint8_t     page;           /* source page within that conversation */
+    uint8_t     page_part;      /* expanded-label continuation within page */
     bool        talking;
     /* Pause inventory. */
     pause_window_state_t pause_window;
@@ -352,6 +373,7 @@ typedef struct
 }               gameplay_t;
 
 extern gameplay_t   gameplay;
+void gameplay_drop_message(unsigned int item);
 
 /* Heading of a delta in the movement basis, atan2(dx, dz). Supplied by the
 ** platform: the Saturn build routes it to SGL's slAtan, the host tests to
@@ -363,6 +385,7 @@ uint16_t            gameplay_facing(int32_t dx, int32_t dz);
 bool                gameplay_is_talking(void);
 /* Current page's line count and one line, for the box renderer. */
 unsigned int        gameplay_page_lines(void);
+bool gameplay_page_more(void);
 const char         *gameplay_page_line(unsigned int line);
 const char         *gameplay_speaker_name(void);
 
@@ -415,8 +438,15 @@ void                gameplay_sincos(uint16_t yaw, int32_t *sine, int32_t *cosine
 /* Runtime position of a speaker: Mido moves, everyone else is placement. */
 /* Kokiri Forest NPCs exist only in that scene. */
 bool                gameplay_npcs_present(void);
+/* Placement `npc` exists in the current scene under its source spawn rule. */
+bool                gameplay_npc_present(unsigned int npc);
 int32_t             gameplay_npc_x(unsigned int npc);
 int32_t             gameplay_npc_z(unsigned int npc);
+uint16_t            gameplay_npc_yaw(unsigned int npc);
+/* Source NPC_TRACKING_FULL_BODY body turn (npc_draw); reset on scene load. */
+void                gameplay_npc_turn(unsigned int npc, uint16_t yaw);
+void                gameplay_npc_turns_reset(void);
+void                gameplay_npc_focus(unsigned int npc, const int32_t offset[3]);
 /* Mido's OC cylinder centre while he stands in `room`; false when gone. */
 bool                gameplay_mido_body(unsigned int room, int32_t *x, int32_t *z);
 /* Boulder sphere centre (whole units) while in `room`; false elsewhere. */

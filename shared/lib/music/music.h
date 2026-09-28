@@ -18,7 +18,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 /* Tail reserved for resident action PCM; music never writes beyond this. */
-#define MUSIC_SAMPLE_LIMIT 0x3C000   /* banks ~240 KB at 0x1000 (half rate) */
+#define MUSIC_SAMPLE_LIMIT 0x50000   /* banks ~319 KB at 0x1000 (+33% music budget) */
 
 /* Layouts the generated score headers already use, so their tables can be
  * pointed at directly rather than copied. */

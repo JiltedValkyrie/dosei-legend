@@ -4,18 +4,17 @@
 ** Derivation of the constants in the header, from Camera_Normal1() and
 ** sSetNormal0ModeNormalData:
 **
-**   playerHeight            62      (OUR baked Link, in world units)
+**   playerHeight            44      (Player_GetHeight, child)
 **   CAM_YOFFSET_NORM        -0.1
-**   yNormal = 1 + (-0.1) - (-0.1 * (68/62))            = 1.00968
-**   scale   = yNormal * (62 * 0.01)                    = 0.62600
+**   yNormal = 1 + (-0.1) - (-0.1 * (68/44))            = 1.05455
+**   scale   = yNormal * (44 * 0.01)                    = 0.46400
 **
-**   yOffset  -20 * 0.626 = -12.52  -> -12
-**   distMin  200 * 0.626 = 125.20  -> 125
-**   distMax  300 * 0.626 = 187.80  -> 188
+**   yOffset  -20 * 0.464 =  -9.28  -> -9
+**   distMin  200 * 0.464 =  92.80  -> 93
+**   distMax  300 * 0.464 = 139.20  -> 139
 **
-** Scaling to 44 (OoT's child height in ITS units) was wrong: Camera_Normal1
-** scales to whatever the player actually measures, and it framed Link with his
-** feet below the bottom of the screen.
+** 44 is Player_GetHeight (child). An earlier 62 matched a Link baked at
+** 1.45x the source scale; BUG-009 put the model back at 0.01.
 **
 ** The previous viewer camera sat 260 units back with no pitch, so this is a
 ** substantially closer and slightly downward-looking view. That is what the
@@ -155,6 +154,107 @@ static void     aim_target(const oot_follow_t *camera,
         out[k] = (int32_t)(((int64_t)v[k] * scale_q16) >> 8);
 }
 
+/*
+** Camera_KeepOn1 / Camera_Battle1 lock framing (z_camera.c), integer port.
+** The camera does NOT sit straight behind Link: it keeps the target
+** swingAngle degrees off the view centre (25..45 friendly, 10..80 hostile,
+** wider as the target gets closer), so Link never hides it.
+**
+**   swingAngle = init + (final - init) * (1.1 - distRatio)
+**   |off| > swingAngle: view turns toward it by off^2 / t1 degrees, t1 the
+**                       source's curve through (t2, 1 degree);
+**   otherwise:          view drifts so the target settles AT swingAngle,
+**                       by (swing - off) * 0.02 (0.05 hostile) while still.
+**   pitch = lerp(pitchInit, pitchFinal, distRatio)
+**         - headToTarget.pitch * (0.5 + 0.5 distRatio)
+**         + atToTarget.pitch * swingPitchAdj, clamped.
+** Rates are the 20 Hz source's, scaled x2/3 for this 30 Hz step. The
+** animTimer eye blend on lock start stays the Parallel1 recenter swing.
+** sSetNormal0ModeZTargetFriendlyData (KEEP1) -20,120,140, yaw 25/45,
+** pitch -5/15, adj 15%; ZTargetUnfriendly (BATT1) -20,180, yaw 10/80,
+** pitch 0/10, adj 25%.
+*/
+typedef struct {
+    int32_t dist_min, dist_max, yaw_init, yaw_final, pitch_init, pitch_final;
+    int32_t adj_percent, drift_per_150, pitch_limit;
+} lock_frame_t;
+static const lock_frame_t lock_friendly = {120, 140, 25, 45, -5, 15, 15, 2, 0x3200};
+static const lock_frame_t lock_hostile  = {180, 180, 10, 80, 0, 10, 25, 5, 0x2AA8};
+
+__attribute__((optimize("Os")))  /* once a step: size over speed */
+static uint16_t geo_pitch(int32_t dx, int32_t dy, int32_t dz)
+{
+    dx = clamp_axis(dx); dz = clamp_axis(dz);
+    return kokiri_camera_facing(dy, (int32_t)isqrt_u32((uint32_t)(dx * dx) + (uint32_t)(dz * dz)));
+}
+
+__attribute__((optimize("Os")))
+static void     lock_frame(oot_follow_t *camera, const camera_position_t *player,
+                           bool moving)
+{
+    const lock_frame_t *m = camera->aim_distance >= OOT_CAM_LOCK_DIST_UNFRIENDLY ?
+                            &lock_hostile : &lock_friendly;
+    int32_t at[3], v[3], k, ratio, swing, want, ring;
+    int32_t off, ec, t2, temp, t1, f;                                /* Q8 degrees */
+    uint32_t r_head, r_at;
+    int16_t x;
+    int32_t head_y = player->y - OOT_CAM_PLAYER_ORIGIN + OOT_CAM_PLAYER_HEIGHT;
+
+    at[0] = player->x + camera->aim_q8[0] / 256;
+    at[1] = head_y + camera->aim_q8[1] / 256;
+    at[2] = player->z + camera->aim_q8[2] / 256;
+    /* distRatio: player head -> target over the mode distance. */
+    for (k = 0; k < 3; ++k)
+        v[k] = clamp_axis(camera->aim_focus[k] - (k == 1 ? head_y : k ? player->z : player->x));
+    r_head = isqrt_u32((uint32_t)(v[0]*v[0]) + (uint32_t)(v[1]*v[1]) + (uint32_t)(v[2]*v[2]));
+    ratio = (int32_t)r_head >= m->dist_min ? 65536 :
+            (int32_t)((r_head << 16) / (uint32_t)m->dist_min);
+    swing = (int32_t)(m->yaw_final - m->yaw_init);
+    ec = m->yaw_init * 256 + (swing * (72090 - ratio)) / 256;
+
+    /* Distance: KeepOn1 clamps into [eyeDist, eyeDistNext]; Battle1 fixed. */
+    want = camera->distance < m->dist_min ? m->dist_min :
+           camera->distance > m->dist_max ? m->dist_max : camera->distance;
+    camera->distance = approach(camera->distance, want, 25);  /* CAM_GLOBAL_11 */
+
+    for (k = 0; k < 3; ++k) v[k] = clamp_axis(camera->aim_focus[k] - at[k]);
+    r_at = isqrt_u32((uint32_t)(v[0]*v[0]) + (uint32_t)(v[1]*v[1]) + (uint32_t)(v[2]*v[2]));
+    x = (int16_t)(kokiri_camera_facing(v[0], v[2]) - camera->yaw);
+    off = (int32_t)x * 360 / 256;
+    if ((off < 0 ? -off : off) > ec) {
+        /* atToTarget.r = dist - min(r, dist) * 0.5, ClampMaxDist'd by dist. */
+        int32_t d = camera->distance > 0 ? camera->distance : 1;
+        int32_t rr = d - (int32_t)(r_at < (uint32_t)d ? r_at : (uint32_t)d) / 2;
+        t2 = ec + 10 * 256 * rr / d;                                 /* CAM_GLOBAL_13 */
+        temp = ((t2 * t2 / 256) - 2 * 256) * 256 / (t2 - 360 * 256);
+        t1 = temp * off / 256 + 2 * 256 - 360 * temp;
+        if (t1 < 16) t1 = 16;
+        f = (off / 16) * (off / 16);                                 /* off^2, Q8 */
+        f = (f * 16) / (t1 / 16) * 2 / 3;
+        ring = f * 256 / 360;                                        /* binang */
+        camera->yaw = (uint16_t)(camera->yaw + (x >= 0 ? ring : -ring));
+    } else if (!moving) {
+        int32_t edge = ec * 256 / 360;                               /* binang */
+        int32_t diff = (x >= 0 ? edge : -edge) - x;
+        camera->yaw = (uint16_t)(camera->yaw - diff * m->drift_per_150 * 2 / 150);
+    }
+
+    /* Pitch, at -> eye, positive above. */
+    {
+        int32_t base = (m->pitch_init * 65536 +
+                        (m->pitch_final - m->pitch_init) * ratio) / 360;  /* binang */
+        int16_t p_head = (int16_t)geo_pitch(camera->aim_focus[0] - player->x,
+                                            camera->aim_focus[1] - head_y,
+                                            camera->aim_focus[2] - player->z);
+        int16_t p_at = (int16_t)geo_pitch(v[0], v[1], v[2]);
+        int32_t target = base - (p_head * ((32768 + ratio / 2) >> 4)) / 4096
+                       + p_at * m->adj_percent / 100;
+        if (target < -m->pitch_limit) target = -m->pitch_limit;
+        if (target > m->pitch_limit) target = m->pitch_limit;
+        camera->pitch = approach(camera->pitch, target, 15);          /* CAM_GLOBAL_12 */
+    }
+}
+
 static void     place(const oot_follow_t *camera,
                       const camera_position_t *player,
                       camera_position_t *eye_out, int32_t y_offset)
@@ -279,7 +379,7 @@ void            oot_follow_update_profile(oot_follow_t *camera,
         if (profile->yaw_policy == 1)
             camera->yaw = angle_approach(camera->yaw, player_facing, 3);
     }
-    else if (camera->swing_timer > 0)
+    else if (camera->swing_timer > 0 && !(camera->targeting && camera->aim_active))
     {
         /*
         ** Camera_Parallel1's turn, z_camera.c:2277:
@@ -308,11 +408,14 @@ void            oot_follow_update_profile(oot_follow_t *camera,
             camera->yaw = (uint16_t)(camera->yaw + (int16_t)step);
         --camera->swing_timer;
     }
+    else if (camera->targeting && camera->aim_active) {
+        /* KeepOn1 / Battle1 two-actor framing: see lock_frame. It starts from
+         * the current eye (source animTimer blend), not a behind-Link swing. */
+        camera->swing_timer = 0;
+        lock_frame(camera, player, moving);
+    }
     else if (camera->targeting) {
-        /* Link already faces the target. Keep the eye on that same axis even
-         * while idle, strafing, or backing up. Normal1's rear-half suppression
-         * and move-only yaw tracking must never apply to an active lock.
-         * This is a behind-Link adaptation, not full KeepOn1 two-actor framing. */
+        /* Parallel lock without a target: hold Link's facing. */
         camera->yaw = player_facing;
     }
     else if (moving) {
@@ -328,10 +431,12 @@ void            oot_follow_update_profile(oot_follow_t *camera,
     /* Distance eases between distMin and distMax rather than being fixed: the
     ** camera trails out to distMax while he runs and draws back in to distMin
     ** as he slows. */
-    camera->distance = approach(camera->distance,
-                                moving ? OOT_CAM_DIST_MAX : OOT_CAM_DIST_MIN,
-                                XZ_RATE);
-    camera->pitch = approach(camera->pitch, profile->pitch_target, profile->pitch_rate);
+    if (!(camera->targeting && camera->aim_active && !profile->yaw_policy)) {
+        camera->distance = approach(camera->distance,
+                                    moving ? OOT_CAM_DIST_MAX : OOT_CAM_DIST_MIN,
+                                    XZ_RATE);
+        camera->pitch = approach(camera->pitch, profile->pitch_target, profile->pitch_rate);
+    }
     {
         /* Battle1 xyz offset rate 0.6 a 20 Hz update ~ 0.45 a 30 Hz step. */
         int32_t want[3], k;

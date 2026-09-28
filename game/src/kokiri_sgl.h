@@ -63,6 +63,8 @@ int             kokiri_warp_probe(unsigned int field);
 void            kokiri_fairies_draw(unsigned int tick);
 /* Gear pickup billboards, drawn only while the item is still uncollected. */
 void            kokiri_items_draw(unsigned int tick);
+void kokiri_drop_draw(unsigned int item, int x, int y, int z, unsigned int tick);
+
 void            kokiri_boulder_draw(void);
 void            kokiri_nut_draw(void);
 /* En_Karebaba (karebaba_draw.c). Load is not fatal: no file, no babas drawn. */
@@ -84,6 +86,8 @@ void            kokiri_rupee_hud_draw(void);
 #define KOKIRI_TILE_NONE 0xFFFFFFFFu
 /* Upload a 4bpp tile into the resident bank's VDP1 space, above the resident
 ** meshes, and return its sprite slot. Reclaimed by the next bank load. */
+unsigned int    kokiri_bank_rgb_upload(const void *pixels, unsigned int width,
+                                       unsigned int height);
 unsigned int    kokiri_bank_tile_upload(const void *pixels, const void *clut,
                                         unsigned int width,
                                         unsigned int height,
@@ -121,6 +125,9 @@ unsigned int    kokiri_order_error(void);
 void kokiri_cutscene_effects_draw(void);
 /* Release only transient nightmare textures; resident Link/UI remain. */
 void kokiri_cutscene_tiles_reset(void);
+/* NPC tiles live after the current room, never over its texture bank. */
+unsigned int kokiri_actor_bank_generation(void);
+void kokiri_actor_tiles_reset(void);
 #endif /* !__KOKIRI_SGL_H__ */
 
 /*

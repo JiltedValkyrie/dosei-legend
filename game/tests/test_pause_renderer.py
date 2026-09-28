@@ -38,7 +38,7 @@ static unsigned short regs[6];
 static unsigned now,reads,fail_reads;
 static int zx,zy,sx,sy,wl,wt,wr,wb;
 static struct {pause_window_state_t pause_window;unsigned owned,equipped;} gameplay;
-static struct {unsigned stick_owned,slingshot,quest_items;} save_state;
+static struct {unsigned stick_owned,slingshot,quest_items; unsigned char c_items[3];} save_state;
 #define QUEST_KOKIRI_EMERALD 0
 #define GP_SWORD 1
 #define GP_SHIELD 2

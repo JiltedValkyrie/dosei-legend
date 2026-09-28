@@ -19,10 +19,11 @@ import unittest
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 GCC = pathlib.Path('C:/msys64/mingw64/bin/gcc.exe')
 
-SAVE_FILE_PAYLOAD_BYTES = 295
+SAVE_FILE_PAYLOAD_BYTES = 301
+SAVE_FILE_V4_PAYLOAD_BYTES = 298
 SAVE_FILE_V2_PAYLOAD_BYTES = 290
 SAVE_FILE_BYTES = 8 + SAVE_FILE_PAYLOAD_BYTES + 2
-SAVE_FILE_VERSION = 3
+SAVE_FILE_VERSION = 6
 
 SAVE_FILE_OK = 0
 SAVE_FILE_EMPTY = 1
@@ -129,6 +130,48 @@ class SaveFile(unittest.TestCase):
 
     def test_packed_block_is_exactly_the_declared_size(self):
         self.assertEqual(SAVE_FILE_BYTES, len(self.pack()))
+
+    def test_c_assignments_roundtrip_and_older_save_defaults(self):
+        self.lib.sf_set_c_item(0, 1)
+        self.lib.sf_set_c_item(2, 2)
+        block = self.pack()
+        self.lib.save_new_game()
+        self.assertEqual(self.unpack(block), SAVE_FILE_OK)
+        self.assertEqual(self.lib.sf_c_item(0), 1)
+        self.assertEqual(self.lib.sf_c_item(2), 2)
+        old = bytearray(block[:8+295])
+        old[5] = 3
+        checksum = self.lib.sf_checksum(bytes(old[8:]), 295)
+        old.extend((checksum >> 8, checksum & 255))
+        self.assertEqual(self.unpack(old), SAVE_FILE_OK)
+        self.assertEqual([self.lib.sf_c_item(i) for i in range(3)], [0, 0, 0])
+
+    def test_nuts_round_trip_and_v4_save_starts_without_nuts(self):
+        self.lib.sf_set_nuts(1, 17, 1)
+        block = self.pack()
+        self.lib.save_new_game()
+        self.assertEqual(self.unpack(block), SAVE_FILE_OK)
+        self.assertEqual(self.lib.sf_nut_ammo(), 1171)
+        old = bytearray(block[:8 + SAVE_FILE_V4_PAYLOAD_BYTES])
+        old[5] = 4
+        checksum = self.lib.sf_checksum(bytes(old[8:]), SAVE_FILE_V4_PAYLOAD_BYTES)
+        old.extend((checksum >> 8, checksum & 255))
+        self.lib.sf_set_nuts(1, 5, 1)
+        self.assertEqual(self.unpack(old), SAVE_FILE_OK)
+        self.assertEqual(self.lib.sf_nut_ammo(), 0)
+
+    def test_v5_rupee_indices_migrate_to_source_flags(self):
+        self.lib.save_set_collectible(0, 0) # temporary green, must respawn
+        self.lib.save_set_collectible(0, 4) # persistent blue 0x12
+        self.lib.save_set_collectible(0, 7) # persistent blue 0x0E
+        block=self.pack();block[5]=5 # same payload; version excluded from checksum
+        self.assertEqual(SAVE_FILE_OK,self.unpack(block))
+        for flag in (0,4,7):self.assertFalse(self.lib.save_get_collectible(0,flag))
+        for flag in (0x12,0x0E):self.assertTrue(self.lib.save_get_collectible(0,flag))
+        self.assertFalse(self.lib.save_get_collectible(0,0x11))
+        fresh=self.pack()
+        self.assertEqual(SAVE_FILE_OK,self.unpack(fresh))
+        self.assertTrue(self.lib.save_get_collectible(0,0x12))
 
     def test_header_carries_magic_and_version(self):
         block = self.pack()

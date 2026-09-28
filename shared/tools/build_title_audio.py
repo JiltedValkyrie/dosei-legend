@@ -21,7 +21,7 @@ ROOT = Path(__file__).resolve().parents[1]
 FPS = 60
 VOICES = 24
 SAMPLE_BASE = 0x1000
-MUSIC_SAMPLE_BUDGET = 120000   # 16-bit samples per bank (was 240000)
+MUSIC_SAMPLE_BUDGET = 159600   # +33% over the 120000-sample music budget
 # Opcodes with no counterpart in the SCSP player, recorded per score rather
 # than silently dropped. `panweight` blends a note's own pan with its channel's;
 # this player takes pan from the channel alone, so the blend has nothing to
@@ -292,9 +292,8 @@ def load_font(source, font_id=6):
         p = source / f'samples/SampleBank_0/Sample{int(name.split("_")[-1]):03}.wav'
         original.append(wav_source(p))
         hashes[p.name] = hashlib.sha256(p.read_bytes()).hexdigest()
-    # 16-bit samples. 2026-09-27 (human choice): half the old 240,000-sample
-    # budget, so each bank is ~240 KB and the SFX region above it (M2 Navi,
-    # lock-on, Deku Baba, hurt/death) gets the other half of sound RAM.
+    # 16-bit samples. Human approved +33% on 2026-09-28: 159600 samples.
+    # Music occupies roughly 319 KB; SFX begin at 0x50000.
     ratio = min(1.0, MUSIC_SAMPLE_BUDGET / sum(len(pcm) for pcm, *_ in original))
     samples, blob = [], bytearray()
     for name, (pcm, rate, unity, loop) in zip(names, original):

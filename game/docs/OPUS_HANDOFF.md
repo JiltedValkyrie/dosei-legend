@@ -1,4 +1,636 @@
+## Pre-regression commit checkpoint (2026-09-28)
+
+Human authorized committing accumulated work before Sonnet starts the M3 regression
+fixes. This checkpoint includes existing M3 implementation, camera/dialogue work,
+audio quality changes, RAM moves and earlier visual fixes. It is not M3 acceptance.
+Last Clean build: 6,064 B below SGL; 339 focused gameplay tests and five asset tests
+passed in their respective runs. No new build or runtime verification for commit.
+
+Known remaining regressions: giant pale plant-textured triangle in the forest,
+upside-down field hearts, frozen legs while carrying a rock, and missing contextual
+Check/Grab/Drop/Throw HUD actions. Sonnet's reviewed regression plan follows this
+checkpoint. Preserve flat-colour shop items and dynamic controller labels. Also
+verify shop browsing counter occlusion and field actor visibility in Kronos.
+Earlier entries below are historical; their "nothing committed" notes predate this
+checkpoint. No push authorized or performed.
+
+> Latest Clean disc rebuilt (2026-09-28): `game/build/game-clean.cue`.
+> BSS end 0x06082850; **6,064 B free below SGL**. Five asset tests pass.
+> Includes Link draw priority, sign material setup, flat shop items and browsing
+> counter mesh. Kronos verification pending. Nothing committed.
+
+## Shop visuals follow-up (2026-09-28)
+
+Human explicitly requested flat colours for every shop item. Exporter now uses
+solid-colour face tiles for all seven item models; runtime no longer loads or
+updates nut/heart scroll tracks. Four asset tests pass, including all flat items.
+Browsing lacked the counter because fixed-camera masks are disabled in panorama
+view. Export COUNTER.BIN from the original room depth mesh's counter region,
+projecting its original backdrop material onto subdivided triangles. Draw only
+while browsing; fixed view keeps its existing masks. Verify counter, owner legs,
+shelf turns and sprite/VRAM/performance in Kronos; this is not runtime-proven.
+
+## Field visibility / sign regression follow-up (2026-09-28)
+
+Human reports Link often missing and multicolored sign faces in the new Clean disc.
+Source fix: EnKanban material display list 0x000C30 now runs before each fragment
+export, matching EnKanban_Draw. Gameplay Link now submits after terrain but before
+props/NPCs/grass, so newly added actors cannot exhaust SGL work space before him.
+Depth sorting is unchanged; this is budget priority, not an always-on-top overlay.
+Exporter tests: 3 pass. Runtime cause of Link loss still needs Kronos confirmation.
+Not rebuilt: Kronos is open on the existing disc; waiting for human to close it.
+
+## Clean build update (2026-09-28)
+
+Human authorized the Clean build. Assets and target code rebuilt into the existing
+`game/build/game-clean.cue`. Verified map: BSS ends at 0x06082800, leaving
+**6,144 bytes below SGL at 0x06084000**. The first link exceeded SGL by 4,752 B.
+Moved forest vertex depth, tile depth/fog and mesh flags (10,763 B of arrays)
+from high BSS into guarded Low Work RAM carves at offsets 0x5000..0x97FF.
+Heap, sprite and polygon limits unchanged. Low RAM performance needs Kronos checks.
+No commit or Kronos run. Earlier no-build checkpoints below are historical.
+
+Additional renderer checks exposed an outdated forest host adapter (missing SGL
+members/constants) and three room-bank assertions expecting 0x67 instead of the
+exported 0x66 sort mode. These checks are not green; no renderer behavior was
+changed to satisfy them. PowerShell reports NativeCommandError for compiler stderr,
+but the build reached disc creation and the final successful map boundary check.
+
+# Astra to Claude: M3c/M3d source checkpoint (2026-09-28)
+
+Human confirmed you finished and assigned remaining M3c/M3d to Astra. **No build**
+was run; existing disc untouched; nothing committed. Shared-file edits are finished
+for this checkpoint. See [implementation, gaps and checks](M3CD_IMPLEMENTATION.md).
+
+- Added source grass/rock/pot drops, placed hearts, carry/put/throw, prop bodies,
+  readable/cuttable signs, decorative props/gossip reaction, five animated chests
+  with source flags/rewards and Link get-item clip.
+- Save v6 migrates old forest pickup bits; v2-v5 compatibility retained.
+- Preserved your shop cursor/spin/repeat; added heart/nut primary-texture scroll
+  tracks and safe VDP1 updates. About 205 KB cart data added; runtime budget unknown.
+- Fado dialogue now exported; Kokiri/Saria close flags and house Mido rules wired.
+  Greeting camera is still M3b work; 0x1001 close currently sets greeting flag.
+- Removed automatic nutsball emitter. Fixed old Navi timer failure from the
+  source talking/idle branch split; passes both standalone and in suite.
+- Changed shared files: gameplay/save/demo/main, actor mesh loader, npc_draw,
+  kokiri_sgl; actor/dialogue/Link/shop/prop exporters, makefile/build asset list.
+  New world_props/world_signs/item_drop modules and tests. Last built gap remains
+  **7,424 B before this work**. Do not call it current; no link/map measured.
+- Verification: 339 focused host tests pass; SH-2 syntax-only checks pass for
+  twelve changed C files. No target objects/link/map or Kronos verification.
+- Next authorized build must regenerate all assets/headers together using the
+  existing disc name. Check RAM/VRAM/sprite budget and Kronos checklist before
+  declaring M3 accepted. Source-parity visual/physics gaps are listed explicitly.
+
+# Claude: shop cursor, spin, hold repeat (2026-09-28, uncommitted)
+
+- Cursor: EnOssan_DrawCursor port. gSelectionCursorTex IA4 mirrored to
+  32x32, blue (0,80,255), 4 baked pulse steps (UpdateCursorAnim, faded by
+  VDP1 half-transparency, hidden near alpha 0), x1.5, at the cursor item's
+  projected focus (pos+5). CURSOR.RGB in cart carve 0x8800/0x2000.
+- Item spin/slide: EnGirlA yRotation +0x1F4 while cursor/selected/refused,
+  SmoothStepToS back; shopItemSelectedTween 0.15 to sSelectedItemPosition.
+- Hold repeat: EnOssan_UpdateJoystickInputState port (push moves, accum
+  past 500 repeats; reverse/release resets; zeroed while turning). New
+  player_input menu_hold_x/y: D-pad +-70, analog stick scaled to N64 +-80.
+- Navi test test_c_up_reads_the_hint: fails identically on HEAD 46edf80
+  (worktree build) -> predates shop work. Not fixed.
+- GAP (logged): heart/nut GetItem texture scroll (segment 8 TwoTexScroll)
+  still static: VDP1 has no UV offset; needs per-frame tile rewrite.
+- Clean gap 7,424 B. Gameplay+controls 234 run, only that Navi fail.
+  main.o is newer than main.c: Astra's 4 px speaker gap is in the build.
+
+# Claude: Kokiri Shop complete flow (2026-09-28, uncommitted)
+
+- Shopkeeper model NPC15 (km1 + masterkokirihead + masterkokiri anim).
+- Occlusion masks (build_interior_masks.py, interior_mask.c): room depth
+  mesh -> per-surface 16px backdrop tiles, sort at farthest pixel + 16.
+  Offline check: 0 in-front points hidden. Shop only; fixed view only.
+- En_Tana shelves + 8 En_GirlA items (build_shop_props.py), source offsets.
+- Browse view: talk -> Play_SetShopBrowsingViewpoint: SKYBOX_KOKIRI_SHOP
+  (KSVR, 2 faces, rot.y 0.8) as panorama bank S4R2, Camera_Data4 eye
+  (0,60,40) yaw 0x8000 + cameraFaceAngle, Link hidden (PLAYER_STATE2_29).
+- EnOssan flow in gameplay.c: 0x9E hello -> 0x83 talk/quit, D-pad L/R turns
+  30 deg to a shelf, cursor per EnOssan_CursorLeft/Right/UpDown, item text,
+  A -> buy prompt (Buy/Don't), EnGirlA_CanBuy via save_item_buy: fanfare
+  -> get text (locked view) -> 0x6B continue/quit; quick buy 0x84; 0x85/0x86
+  refusals. Seeds/arrows refuse (no bag/bow). B ends (TestEndInteraction).
+- Clean gap 9,056 B. test_gameplay 170: 1 fail test_c_up_reads_the_hint
+  (navi timer 3001 vs 3002, code not touched by shop; check baseline).
+- Not done: item spin when selected, analog stick hold-repeat, cursor
+  sprite, item scroll textures. Kronos: whole flow, VRAM, frame rate.
+
+# Astra: speaker gap reduced to 4 pixels (2026-09-28)
+
+Human found the 8-pixel separator too large. main.c now shifts the bold name
+four pixels down using two reserved font cells per distinct character; body
+and marker stay put. Panel top moves down four pixels to preserve outer
+padding. Retained rows still update only when changed. Reserved cells are
+reused per name, with blank checks before first ownership. No global text/HUD
+scroll. Kronos is open, so no rebuild; current disc still has the 8-pixel gap.
+Build and visual verification pending. Same disc name; nothing committed.
+
+# Astra: dialogue polish after human acceptance (2026-09-28)
+
+Human confirms no text flicker, dynamic labels good, interior C-Up good.
+Bible now records that limited acceptance and regression rules. Follow-up in
+main.c only: fix bold speaker fallback (destination must be blank, not inked),
+force white name glyphs, add 4 px top/bottom panel padding, and one blank
+8-pixel row between speaker and body (human follow-up). Panel and page marker
+grow/move with the body; gap cleared only on open, preserving retained text. Verified cause with
+read-only live Kronos font inspection. No changes to npc_draw.c/build_actors.py;
+Claude retains shop ownership. Clean build completed after Kronos closed;
+same game/build/game-clean.cue. Current shared-tree boundary: .bss ends
+0x060813b0, 11,344 B below SGL (not an isolated measurement of this UI edit).
+Log: game/build/dialogue-polish-build.log. New spacing/bold still needs visual
+Kronos verification; earlier human acceptance predates this polish.
+
+# Astra to Claude: camera/text plan implemented (2026-09-28, uncommitted)
+
+main.c is done. Final Clean build passes, including your ram_low.h equipment
+move. Real final boundary: .bss ends 0x06080930, **14,032 B below SGL**.
+Log: game/build/camera-clean-build.log (use the final boundary, not the
+pre-link check of the previous ELF). Same game/build/game-clean.cue.
+
+- Five houses start in original CI8 panorama; C-Up toggles original overhead
+  JPEG. Shop remains fixed by source rule. Bank 4 room suffix = scene index.
+  Collision remains the actual scene. Renderer cannot stream forest over it.
+- Outdoor C-Up first-person: Navi first, grounded/free-action entry, full yaw,
+  stick-relative pitch, 45-degree FOV, hidden Link, head-focus eye + collision.
+  Exit actions consumed; pause/text/damage/death/doors restore valid view.
+  C-Up edges latch until simulation; digital modifier cannot tilt view on entry.
+- Hold-L free look retired; L toggles minimap. Both digital and analog routed.
+- Dialogue writes changed rows only; glyph probes offscreen. Runtime tokens
+  resolve before wrapping, preserve overflow pages and keep choices together.
+  Menu vs gameplay tokens differ, including assignment's required modifier.
+  1248 B cached text uses old cart slot 0x8000, guarded within 0x500 B carve.
+- Clean target checked; new camera object has no software float imports.
+  Host tests: gameplay/text 165, controls 63, camera 9, follow 36, room 4,
+  interior assets 2, message parser 28. Label preference checks also run.
+
+No Kronos acceptance claimed. Human checks: five houses both views and doors,
+Brother long pages/choices, both pads/presets/custom jump, outdoor C-Up/Navi/
+exit/pause/damage, sword/shield after Low Work RAM move. Source camera-entry
+blend and separate interior talk framing remain omitted. Full audit and
+limitations: CAMERA_TEXT_PLAN.md. Nothing committed; preserve shared changes.
+
+# Claude: lock-on camera KeepOn1/Battle1 framing (2026-09-28, uncommitted)
+
+oot_follow.c lock_frame: integer port of Camera_KeepOn1 (friendly) and
+Camera_Battle1 (hostile) yaw swing + pitch + distance. Target is held
+swingAngle off view centre (friendly 25..45 deg, hostile 10..80, by
+distRatio), view turns by the source off^2/t1 curve when outside it, drifts
+(0.02/0.05 x2/3 per 30 Hz step) when still. Pitch lerp init/final, head and
+at pitch terms, clamp 0x3200/0x2AA8. Distance 120..140 / 180. Lock with a
+target no longer runs the behind-Link Parallel swing. Not ported: animTimer
+eye blend, BG collision pull-in, roll, fov, speedRatio (moving = 1).
+Tests: 3 new (30.3 deg friendly, 17 deg hostile, turn-toward); oot_follow
+36 OK. Clean build OK. RAM WARNING: gap 1,648 B. Another agent edited
+cutscene.c/main.c/npc_draw.c/build_actors.py in the same window; cutscene.o
+now pulls __divdi3 (596 B). Lock code is -Os. Kronos pending: lock on a
+Kokiri and a Deku Baba, target visible beside Link, no jitter/spin.
+
+# Astra: Navi flythrough Kokiri restored (2026-09-28)
+
+Cause: main.c excluded all NPC drawing during cutscenes, and the flythrough
+loaded scenery directly without NPC models. Gameplay placements are not the
+correct substitute: SPOT04 layer 7 has seven EnKo (types 0..6) plus Mido,
+with different positions/yaws (notably punching child at -641,120,454).
+
+- build_actors now exports navi_npcs.h from actual room alternate headers,
+  layer 7 selecting gKokiriForestIntroNaviFlyingCs. No Saria/Fado in this cast.
+- Cutscene start releases prior NPC models; Navi loads just its eight models.
+  Main draws the cast only during visible CUTSCENE_NAVI_FLY frames.
+- Visibility uses source camera-eye distance / 4, instead of Link in house;
+  conservative view-sphere culling avoids submitting offscreen NPC vertices.
+- Source camera tracking uses +40 offset, preset 2 head+torso (type 0 exempt).
+  Existing source idle/work clips and shared pose math retained. No gameplay
+  registry, dialogue, target or save-state side effects.
+- Source fade interpolation and NPC companion fairies still not implemented
+  for this pass; do not claim full N64 cutscene parity.
+- Actor/model tests 10 pass, new cast/bounds checks 2 pass. Camera-track
+  offline sweep peak: three NPCs, 1284 polygons / 759 vertices at frame 553;
+  plus full 2106-poly/1511-vertex scenery fits 3750/3200 SGL limits.
+  Offline sweep is not target performance proof.
+Clean build passes: 1344 B below SGL, log navi-npc-build.log.
+Same game-clean.cue; Kronos flythrough visual/performance checks pending.
+Nothing committed. Preserve Claude's parallel gameplay/camera work.
+
+# Claude: BUG-009 Link scale fixed to source 0.01 (2026-09-28, uncommitted)
+
+Link recipe 0.0145 -> 0.01 (44 units, matches Kokiri). Camera rescaled to
+Player_GetHeight 44 (oot_follow.h dist 93/139, y -9; player_camera hang -37,
+climb -14/-5). kokiri_collision head sphere 36. Tests updated to 44.
+Clean build OK, gap 4,416 B. Full suite: 931 run; only failures are the 4
+old host-compile errors + test_room_bank_policy sort 0x66 vs 0x67 (not from
+this change; room bank code untouched). Kronos pending (see BUG-009).
+
+# Astra: castle torch flames and chain cutouts (2026-09-28)
+
+Human requested the N64 castle lantern flames in the Hyrule nightmare,
+and removal of black rectangles behind drawbridge chains.
+- Chains: source texture alpha already bakes zero-index holes. The opaque
+  display-list flag made runtime enable SPdis, drawing those holes black.
+  build_cutscene_props now sets chain transparency explicitly; dark metal
+  stays intact. No whole-chain checker required.
+- Flames: BgSpot00Hanebasi_DrawTorches + gEffFire1DL are the reference.
+  Two billboards at (+/-260,128,690), source .008 scale (64x128 world).
+  Original I4 scrolling noise and I8 silhouette combine with yellow/red
+  primitive/environment colours. 32 prebaked scroll phases, 16x32 tiles;
+  ordered alpha coverage replaces N64 blending. GATEFIRE.BIN is 9944 B,
+  texture data 9216 B, 32 sprite slots; two extra quads per frame.
+- Runtime loads/free/uploads with existing nightmare actor bank; draws only
+  in visible nightmare world. No new permanent forest texture allocation.
+  Original dynamic torch lighting/sound not added by this visual task.
+- Six focused prop/room checks pass; generated-room tests now check the
+  restored far-sort ground tags rather than requiring centre sort on all.
+- Clean build passes: 4416 B below SGL; log castle-fire-build.log.
+  Same game-clean.cue. Kronos visual check pending:
+  flames stay at lanterns as camera/bridge move, animate, no black quad;
+  chain gaps reveal background, chain links still readable.
+No commits; preserve Claude's concurrent dialogue/camera work.
+
+# Claude: dialogue names/bold/width + music rebake (2026-09-28, uncommitted)
+
+- Music: all 7 banks rebaked for +33% budget (0x50000). Title/Kokiri/3
+  cutscene RAW regenerated; house/shop bake in build. All <= 327,680 B.
+- Text width: build_dialogue MAX_COLUMNS 34 -> 38 (box prints 38). Fixes
+  clipped "I'm the one" line (0x100A). Choice rows still 36 after cursor.
+- Speaker names: Fado (type 12), Know-It-All Brother (7/8/11), else Kokiri
+  Girl/Boy by kw1/km1 body. OoT itself shows no names (human request).
+- Bold name: main.c print_bold copies 1px-smeared Latin glyphs into unused
+  SGL kana cells 0xA1..0xDF, found via slPrint map entries. Self-checks
+  (space blank, one-ink glyphs, kana cell != ASCII alias) else plain text.
+  Kronos check: name bold, no kana shown, pause/menus text unharmed.
+- Clean gap 4,784 B. Gameplay/model tests 165 pass.
+- Open P1: lock-on camera Link blocks target; OoT Battle1/KeepOn1 swing
+  camera aside (our oot_follow.c is behind-Link only). Awaiting go.
+
+# Astra: ground-over-actors streamed-room fix (2026-09-28)
+
+Human supplied three angles at same spot: floor visibly covers Link/NPC bodies.
+Texture warp is explicitly acceptable; this task is occlusion/order only.
+Read-only live snapshot in build/ground-order-evidence: NPC type 4 at
+(669,0,521); floor faces 25,337,362,444,478 are horizontal upward ground
+(normal 0,-65536,0), large spans, but runtime attributes all have sort 0x67.
+The resident exporter marks such ground SORT_MAX; pack_room hardcoded 0x67
+for every face, so streamed rooms lost the mark consumed by forest_face_flags.
+
+Fix: shared floor_uses_far_sort helper used by both exporters; streamed
+textured and flat floor faces now carry 0x66. Existing runtime above-eye
+centre-sort guard remains. Walls, small faces and downward faces keep 0x67.
+No clipping, geometry, materials, texture density or actor-placement changes.
+Room/exporter tests: 12 run, one skipped, remaining pass. Existing forest
+partition host harness fails compilation from stale missing scene/ATTR stubs;
+not counted as a pass. Build waits for human to close mounted Kronos.
+Need human replay same angles and walk/turn/jump, plus walls/overhead checks.
+Not visually verified, not committed. Use same game-clean.cue only.
+
+# Astra: title freeze cause found and fixed (2026-09-28)
+
+Reproduced the unchanged Clean disc in Kronos. Master SH-2 repeatedly stuck
+at 0x0602fa74/0x0602fa80 in dosei_allocator_malloc, behaviour 2, request 12 B
+(20 B with header). Stack returns through action_audio_init (0x060222fc).
+Work zone begin 0x0606a078, high=end 0x06076878: all 51200 B claimed.
+Cart zones still have room. SDK SAME_BLOCK_SIZE mode rescans the full first
+zone forever because its append-failure branch only advances for TRY_REUSE.
+This prevents the sound callback registration from finishing, before draw
+registration. VBlank music continues; no VDP1 scene frames are submitted.
+
+Fix: heap_profile.c routes exact-size allocations through a bounded scan,
+preserves exact-hole reuse, and advances to the next zone when full. Shared
+SDK unchanged. Five heap tests pass, including full-zone spill, total
+exhaustion and exact-hole reuse. Clean rebuild passes: 5568 B gap (160 B cost). Runtime retest pending.
+After-fix background Kronos attempts stalled before emulated CPU initialization;
+no after-fix runtime pass claimed. Test processes stopped. Human cold boot needed.
+No commit. Same game-clean.cue name.
+
+# Astra: fresh-boot title rendering blocker (2026-09-28)
+
+Human screenshot: title logo/copyright and background visible, music playing,
+VDP2 58/60 FPS but VDP1 00 FPS; no title 3D scene. Human confirms fresh boot.
+Observed game-clean.iso timestamp 08:43:05; Kronos PID 42768 start 08:51:02.
+This does not match BUG-053's mounted-image rewrite evidence.
+Latest m3b-audio.log reports successful Clean build, 5728 B gap.
+Generated ACTION_PCM_BASE is 0x50000; later build picked up audio changes.
+Astra has not rebuilt or changed runtime code; human build hold remains.
+
+Diagnostic leads, NOT proven causes: music uses VBlank, so it can continue
+without main-loop progress. Boot order: scene/demo init -> music init ->
+action_audio_init -> viewer_draw registration -> jo_core_run. Check action
+upload completion and callback registration, then first viewer_draw,
+demo_update/room update and SGL sync. Draw callback registration result is
+unchecked. Need live execution evidence before choosing a fix.
+
+# Claude: M3b NPC head/torso/body tracking (2026-09-28, uncommitted)
+
+Ported Npc_TrackPoint + Npc_TrackPointWithLimits (z_actor.c) with all 13
+sNpcTrackingPresets and Math_SmoothStepToS, 20 Hz (npc_pose.c, pure C).
+- Modes per source: EnKo ChildStart/ChildStone table by type (D68/E18/034/
+  F70/EB0/F20), preset 2 or 5, func_80A97BC0 yOffset, lookDist 180/240+20;
+  EnMd_UpdateTalking (Walk NONE, Watch/talk FULL, <170 in-front HT);
+  EnSa forest FULL. trackPos = Link feet.
+- FULL_BODY turns shape.rot.y: gameplay_npc_turn/gameplay_npc_yaw. Live
+  copies (gate Mido, type-3 ring) keep own facing. Reset on scene load.
+- NTR2 tracking file: flags bit0 head, bit1 torso subtree; per frame adds
+  torso-parent basis/origin (54 B/frame). Torso override per source axis
+  order: EnKo Rx(-y)Rz(x) limb 8, EnMd Rx(x)Ry(y) TORSO, EnSa Ry(y)Rx(x)
+  limb 9. Head then torso applied; focus follows both.
+- RAM: npc_draw + cold pose code built -Os. Clean gap 5,728 B (was 7,152).
+Verify: Clean build OK; 218 focused tests pass (new track/limit test).
+Not ported (logged here): fidget tables, AUTO_TURN (no slice user), dialogue
+animation swaps, blink/fade. Kronos pending: NPC turn/head/torso look right
+from several angles, talking Kokiri turns to face Link, no torso tearing.
+
+# Astra: M3b integrated checkpoint (2026-09-27, uncommitted)
+
+Human assigned M3b to Astra. This supersedes the stopped Claude note below.
+Use normal Clean disc name only: `game/build/game-clean.cue`. Human rejected
+the separate review-disc name; those review image files were removed.
+
+Implemented/reviewed:
+- Existing four new interiors build. Stable scene-first NPC ordering preserves
+  forest identities. Fixed EnKo type-7 rotZ filtering: Know-It-All has THREE
+  child brothers, not five. Seventeen placements including hidden house Md/Sa.
+- `build_npc_models.py`: 15 ROM models, original initial animation clips,
+  per-vertex flex ownership, source head-parent tracking bases and face-only
+  textures. Corrected EnKo ENV cloth/boot tint handling after offline preview.
+- `actor_mesh.h` shares the existing KFR1/CVA1 loader in cutscene_actor.c.
+  `npc_draw.c` owns scene allocations and uploads visible model types after
+  the room's textures; room generation invalidates the NPC bank. Interiors
+  draw their NPCs too. `npc_pose.c` applies integer source head-pivot math;
+  focus updates the existing actor/attention identity. No second registry.
+- EnKo type 3 follows its source 80-unit home ring; Mido uses live facing.
+- House/shop sequences 31/85 baked at approved sample budget. Seven-bank
+  MUSICTRG is 24,444 B at cart 0x76000/0x6000; fixed carve now 0x7C000.
+  Dialogue stays 0x71000/0x5000, title paths 0x6F800. Fast door changes retry
+  their desired music after an in-flight fade instead of losing the request.
+- BUG-006: valid ledge climb claims A before talk; existing text/menu retains A.
+
+Verification: Clean build/map gap 7,152 B (.bss end 0x06082410).
+Host gameplay 162, actors 7, pool 42, character materials 7, model/pose 2,
+area audio 2, ledge priority 1, text recoil 1 pass. Opening-audio harness
+still fails compiling its pre-existing missing camera/menu-duck stubs.
+Logs in game/build/m3b-*.log. Offline model preview is not a Kronos check.
+
+Still open: full per-type torso/auto-turn modes, dialogue-triggered animation
+changes, blink/fade parity and post-Emerald path/pose behavior (M5/M6).
+Shopkeeper/shelves/full stock remain M3d. NPC body collision coverage needs
+source review; the existing Mido gate collision remains. Do not call M3b
+fully source-complete from this checkpoint.
+Kronos pending: every interior enter/return/reload; visible models, head turns
+and focus from multiple angles; forest room-bank changes; source music and
+fast doors; three-choice tutorial; ledge beside NPC on both pads. Standard
+peak RAM/sprite readings remain deferred by human. No commits/approval asked.
+
+# Claude: M3b WORK IN PROGRESS - stopped mid-task (2026-09-27, tokens out)
+
+State: uncommitted, NOT BUILT, NOT TESTED since these M3b edits. Resume here.
+Done in code:
+- build_scene_table.py: 4 interiors added (kokiri_home/3/4/5, save ids
+  6-9); doors both ways generated; backdrops S3..S6 R0.RGB built. Clean
+  built OK after this step (13,008 B).
+- build_actors.py: interior people added with new `scene` field in
+  kokiri_npc_t; En_Ko child types per EnKo_CanSpawn (forest <7 + Fado 12,
+  shop 10, Know-It-All 7/8/11, Twins 9, Mido/Saria houses none). 19 people.
+- gameplay.c: gameplay_npc_present() (scene + EnMd_ShouldSpawn/EnSa_GetType
+  child rules), gate_mido() (only forest Mido runs the gate), presence used
+  in sync_npc_actors, find_speaker, gameplay_npcs_present, close_talk Mido
+  check; kokiri_sgl.c fairy draw loop filters. save_state.h adds
+  EVENTCHKINF_OBTAINED_ZELDAS_LETTER 0x40.
+Next steps:
+1. Clean build; fix compile errors. Run test_gameplay (fixture may need
+   scene field / save_state.scene_id), test_actors, test_dialogue tests.
+2. Check other in_forest() NPC paths (Navi attention, minimap, 2349 area).
+3. Verify dialogue convos exist for ENKO types 7-11 (Know-It-All/Twins/
+   shop kid); house Mido texts (EnMd_GetTextIdMidosHouse) not exported yet
+   (house Mido hidden until EVENTCHKINF_1C, M5).
+4. Interior music still forest theme (PENDING note in enter_world).
+5. Then real NPC models (M3b main), BUG-006 near ledges.
+Pending human: three-choice runtime, Astra code review, all Kronos checks.
+
+# Claude: pool count clarified + required-spawn retry (2026-09-27)
+
+57 INCLUDES the existing 10 forest NPCs (room 0 Ko 8/Md/Sa) and 5 Babas
+(room 1). Reserve 39 of 96. Required spawns: NPCs already retried every
+step (sync_npc_actors). Bug fixed: karebaba_sync returned early once any
+Baba lived, so a pool-full miss lost that Baba (and its stick drop) for the
+room visit. Now missing placements retry each sync, no duplicates; a failed
+spawn clears its stale handle; dead Babas stay pooled (no respawn/reward).
+Rewards (chest/rupees/wonder/grass) are static tables, not pool. New test:
+full pool -> 2 Babas, retry no dupes, free -> all 5. Clean 13,472 B.
+
+# Claude: pre-M3b dialogue carve + actor pool budget (2026-09-27)
+
+Dialogue carve moved 0x8000/0x3000 -> 0x71000/0x5000 (20 KB; 8,896 B free
+for M3 text). Fixed carve 0x71000 -> 0x76000. 0x8000..0xAFFF now unused.
+ram_cart.c has compile-time guards: all 15 carves in order, no overlap,
+inside RAM_CART_FIXED_BYTES. main.c static-asserts pool fits its carve.
+
+M3 pool budget (docs/M3A_ACTOR_MANIFEST.md; child night = main header in
+spot04, same counts). Owners:
+- gameplay.c static tables, NOT pool (unchanged, one owner each): En_Kusa
+  16, En_Kanban 10, En_Item00 rupees, En_Wonder_Item 12, En_Box, grass drops.
+- Pool today: forest NPCs 10 (scene-wide), Karebaba 5, push block (Deku Tree).
+- Pool candidates to port, child day: room 0: Ko 8, Md, Sa, A_Obj 8, Ishi 4,
+  Gs 1, Sw 1, Wonder_Talk2 4, Bean, Hana 5, Makekinsuta, Mure2, Door_Ana,
+  River_Sound, Kankyo = 39; room 1: Treemouth, Gs 2, Karebaba 5, Kankyo = 9;
+  room 2: Goroiwa 1. All three rooms at once = 49.
+- Runtime: Obj_Mure2 params 0x0202 -> 8 children. 49 + 8 = 57 worst.
+- Reserve for drops (Item00 from rock/pot/Baba), Navi, effects: 39 slots.
+ACTOR_POOL_MAX 64 -> 96 (72 B SH-2 actor_t: 6,912 B, same 0x2000 carve,
+no move). actor_spawn full-pool misses now counted
+(actor_sys_spawn_failures), never silent. Existing tests cover stale
+handles, deferred reap, room unload keeping scene-wide actors; new check
+on counted failure. Clean .bss 0x06080B20, 13,536 B below SGL. No Kronos.
+Interiors (<=8 actors each) far below budget.
+
+# Claude: M3a contracts landed (2026-09-27, uncommitted)
+
+1. Manifest: tools/build_actor_manifest.py -> docs/M3A_ACTOR_MANIFEST.md.
+   Forest + 6 interiors, all layers (child night/adult fall back as source),
+   params decoded (GI/ITEM00 enums), objects, transition actors, and a table
+   of 30 child-day kinds NOT ported (interior NPCs, Tsubo, Ishi, Mure2, Gs,
+   Hana, Tana, Cow, Wonder_Talk2, heart Item00 x7, Mido's 4 chests...).
+   Budget: forest room 0 = 78 actors vs ACTOR_POOL_MAX 64; static-table kinds
+   (grass/sign/item/wonder) must stay out of the pool or pool must grow (M3b).
+2. One grant path in save_state.c: save_item_give (Item_Give subset: rupees,
+   heart, stick 1/5/10, nut 1/5/10, sword, Deku shield), save_item_can_buy /
+   save_item_buy (EnGirlA_CanBuy order: owned/full, then rupees, fanfare on
+   first get; refusal changes nothing, success charges once). Chest, shop,
+   rupees, Karebaba stick now call it.
+3. Save v5: nut_owned/ammo/upgrade appended (301 B payload); v2-v4 load
+   with no nuts. Save format change: old v4 files migrate.
+4. Choices: build_dialogue THREE_CHOICE + dialogue_branch[] (En_Ko 0x1035,
+   0x1038, 0x103E per EnKo_UpdateTalkState). Cursor vertical, clamped; NPC
+   choice A/B/C-Up confirm cursor (Message_ShouldAdvance); shop keeps B =
+   cancel (EnOssan_TestCancelOption). Shop cursor now clamps, no toggle.
+Clean .bss 0x06080AD0, 13,616 B below SGL. DIALOG.TXT 11,584/12,288 B.
+Focused host tests pass (+10 item_give, +1 save, +3 choice). No Kronos.
+Human: shop buy/deny/cancel both pads, old save loads, chest/rupee/stick.
+Next: M3b interiors + NPCs.
+
+# Claude: proceed M3a; defer BUG-035 measurement (2026-09-27)
+
+Human chooses feature work now and batch testing later. BUG-035 stays P2,
+open/deferred; new peak readings are NOT a prerequisite for M3a. Proceed with
+M3a under the existing authorization. Keep capacity/allocation guards and cart
+placement for large buffers. Do not report the old peak as a current reading.
+
+Cart-table change reported by Claude: Clean SGL gap 14,656 B, Standard 11,360 B;
+not independently runtime-verified. Title camera and title/forest/cutscene music
+checks remain pending for fresh-boot batch playtests. No Git publication.
+
+The open Kronos corruption was traced to its mounted ISO being rebuilt during
+play (BUG-053), with exact +2-sector page/font reads. That older session cannot
+validate the newly moved tables. Cold boot the completed image; never rebuild
+mounted disc files during a test. Preserve separate BUG-048/049/052 recovery
+acceptance checks; this peak-reading deferral does not close death/save bugs.
+
+# Claude: do not rebuild mounted test ISO (2026-09-27)
+
+BUG-053 investigated live in open Kronos, read-only. After Continue in Link's
+room the System page/font are corrupt. BOTH live buffers match current ISO
+exactly two sectors late: PAUSE50 2813 instead of 2811; PAUSEFNT 2888 instead
+of 2886. Session started 22:13:01, ISO rewritten 22:15:58. Running binary still
+has old cart layout. Mounted media replacement invalidated cached file positions.
+No renderer fix made; no fresh-boot Continue pass claimed. Preserve current
+session until human cold boots finished image. Stop rebuilding mounted media;
+close emulator first or use immutable test disc copy including audio tracks.
+Details: CONTINUE_MENU_CORRUPTION_2026-09-27.md. BUG-049/052 still need their
+own runtime checks. Do not infer their resolution from this diagnosis.
+
+# Claude: BUG-043 RAM freed, cart tables (2026-09-27)
+
+Astra option 1. New tools/build_cart_tables.py (build.sh after title paths)
+writes MUSICTRG.BIN (5 banks' triggers, 9,792 B) and TITLEPTH.BIN (8x65
+points, 5,208 B). main.c text_file_load puts them in new fixed carves
+0x6D000 (0x2800) / 0x6F800 (0x1800); RAM_CART_FIXED_BYTES 0x70000->0x71000.
+Bind checks magic, per-bank counts, exact size; missing/stale = boot error
+like DIALOG.TXT. Music banks now non-const; triggers pointer set by bind.
+Sprite limit stays 2400. Clean .bss 0x060806C0, 14,656 B below SGL (was
+~240-288 B); Standard 11,360 B. Boot reads file via temp heap then frees.
+BUG-049 fallback: failed other-scene load reloads resident scene (collision
+may be half-replaced, BUG-002), spawn 0, mode PLAY.
+Focused tests OK. 8 host tests (title_flights etc.) fail with or without
+this change (host gcc DLL compile), pre-existing. No Kronos.
+Human: Standard build row 27 heap `w<live>/<peak>` in forest, maze, shop,
+house, after death+Continue; title camera moves; title/forest/cutscene music.
+
+# Claude: Game Over save reloads into death (2026-09-27)
+
+Human reports saving on Game Over, then loading that save starts Link dying.
+Logged BUG-052, P0, M2e save/load recovery blocker; prioritize before further
+M3 expansion. Cause unverified. Inspect saved health, load restoration and
+transient death-state reset; do not assume save corruption. Separate from
+BUG-049 Continue freeze. See bug log for acceptance checks. Logged only;
+no implementation changes or agent runtime verification this turn.
+
+# Human priority update: BUG-050 deferred (2026-09-27)
+
+Death voice downgraded to P3 / audio polish at human request. Keep open;
+no blocker for RAM work or M3. Human identifies adult Link's voice; built
+sample/playback cause remains unresolved despite source mapping checks.
+Keep half-rate policy. Revisit at M8 audio polish or next death-audio work.
+
+# Item assignment hint correction (2026-09-27)
+
+Human says controller labels and item assignment look good. Do not infer that
+all pad combinations or save/reload were tested. Screenshot shows missing
+modifier in analog pause: gameplay UI_KEY_C intentionally returns empty there.
+Pause now uses its own physical-modifier label: C / Xbox LB / PlayStation L1;
+N64/GameCube show Sat C because no native modifier mapping is defined. Hint
+shows bracketed modifier + D-Pad on either pad; gameplay mapping unchanged.
+Five preference tests pass; all five modifier strings checked nonempty and
+hints fit 30 columns. Clean log reports ISO/CUE built, .bss 0x06083F10
+(240 B below SGL with concurrent changes). PowerShell wrapper returned 1
+despite completed build log. Visual check pending. Preserve other agents' work.
+
+# Claude: death-flow fixes + RAM report (2026-09-27)
+
+Uncommitted, demo.c only. BUG-048 Save No: dialogue flag now stays set
+while dead (was reset each step, D-pad edges dropped). BUG-049 Continue:
+new respawn_after_game_over() respawns in resident scene without disc
+reload; failed load never sticks in LOADING; stale step abandoned. Cause
+probable, not reproduced. BUG-050: source mapping verified; likely 5.5 kHz
+bandwidth, human decision. BUG-016/032/047 closed; BUG-051 boulder no roll.
+Clean: .bss 0x06083EE0, 288 B below SGL. 253 focused checks pass. No Kronos.
+Human: die in forest + interior, Save No/Yes, Continue Yes/No, both pads.
+RAM candidates for M3 (Astra pick): title paths 5.2 KB + triggers 9.3 KB
+.data -> disc/cart; JO_MAX_SPRITE 2400 cut needs human `sp` peak reading.
+Heap arena 51,200 B; last peak 50,692 B (BUG-035), unchanged.
+
+# Claude: child death voice report (2026-09-27)
+
+Human reports child Link sounds like adult Link when dying (BUG-050, P2).
+Check age-specific sample selection and playback pitch/rate; cause unverified.
+Keep half-rate samples at correct pitch. Check with M2e death-flow repairs;
+BUG-049 Continue freeze remains the priority. Logged only, no code change.
+
+# Claude: human-reported death-flow blockers (2026-09-27)
+
+Human asks to log two runtime bugs: BUG-048 (P1), death Save Yes/No only allows
+Yes; BUG-049 (P0), Continue Yes loads Link into sky/nowhere then freezes.
+See BUG_FEATURE_LOG.md for evidence and acceptance checks. No diagnosis,
+agent reproduction or fix yet. M2e owner Claude: prioritize the Continue blocker
+before further M3 expansion; this is not BUG-045's cosmetic follow-up.
+This turn records bugs only; no runtime code changed.
+
+# Human directive to Claude: start M3 (2026-09-27)
+
+Claude: the human now asks you to start M3, Kokiri Forest fully alive.
+Use M3_KOKIRI_PLAN.md; preserve the working sword chest, shield shop purchase,
+Mido gate, M2 combat and concurrent pause/item fixes. This authorizes starting
+M3 despite the earlier sequencing note; it does not declare M2 review complete.
+Keep outstanding M2 runtime checks visible and fix severe blockers first.
+
+Inspect current dev diff before editing; shared work is uncommitted. Extend
+remaining interiors, NPC dialogue, props/rewards, chests and full shop from the
+M3 plan. Check original actor/drop behavior in each actor task. C-item HUD and
+stick/nut/slingshot use remain M4, not this start request.
+
+Last shared Clean build: .bss 0x06083E40, only 448 B below SGL; retain capacity
+guards and account for memory before adding resident data. Build Clean; run
+focused checks and report actual runtime verification separately. Read the
+updated root README for current controls/options. No commit, merge or push
+without the human's explicit approval after review.
+
+## Item counts, assignment and text recoil (2026-09-27)
+
+Items shows live stick/seed counts and Down/Left/Right bindings. Plain D-pad
+navigates; hold Saturn C + Down/Left/Right assigns an owned item on either pad.
+Gold marks assigned items; blue marks cursor. Save v4 appends bindings; v2/v3
+migrate with empty slots. Live stick/slingshot weapon actions remain pending.
+Baba events are per-step and consumed once: first-stick fanfare no longer
+restarts during text. Text/menu blocks knockback and weapon recoil, clearing
+residual push. 265 focused host checks pass; Clean build passes, .bss ends
+0x06083E40 (448 B below SGL with concurrent UI changes). No Kronos run or commit.
+Human review: first-stick sound, text after hurt/rebound, counts, all assignment
+directions on digital/analog pads, save/reload. Preserve concurrent UI edits.
+
 # Codex: full-colour pause carousel - 2026-09-27
+
+Map marker follow-up: larger white/gold current-region marker, with a slow
+two-second gold brightness pulse on the live UI clock. White ring and dark
+outline stay visible. Drawn into VDP2 page cells; no extra VDP1 sprite or asset
+allocation. This marks Kokiri Forest, not Link's exact position. Also supplied
+the missing local `analog` in the concurrent Items-page label block to compile.
+Human Kronos review pending; no commit, merge or push.
+Pulse validation: 6 renderer tests pass. Clean log reports ISO built and
+.bss end 0x06083e40 (448 B below SGL with concurrent gameplay edits).
+PowerShell wrapper returned 1 despite the completed build log.
+
+Uncommitted map-frame follow-up: the enlarged map now has an eight-pixel
+rim made from the original page's stone border. Frame sits outside the
+288x171 map; terrain, aspect ratio and VRAM allocation are unchanged.
+
+Uncommitted readability fix after human screenshot: replace thresholded,
+downsampled OoT glyphs with Jo's native 8x8 bitmap (same 1024-byte font asset).
+System has opaque dark text beds; pad row moved 21->20 and controls 23->22,
+with shorter OK wording to fit PlayStation labels. All page text uses the
+native font, still rasterized into RGB so the carousel carries it. Preview:
+build/generated/system-readable-preview.png. Human Kronos check pending.
+Do not commit, merge or push this follow-up before human check/approval.
 
 Clean build passes; .bss end 0x060836B0, 2,384 B below SGL. 29 focused checks
 pass (12 pause/health assets/state, 6 actual renderer, 11 minimap). Packed

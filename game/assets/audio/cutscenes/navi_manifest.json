@@ -7,7 +7,7 @@
   "triggers": 200,
   "frames": 973,
   "voices": 24,
-  "pcm_bytes": 240132,
+  "pcm_bytes": 319320,
   "levels_bytes": 23352,
   "total_seconds": 16.215716486903286,
   "omitted_opcodes": [
@@ -18,6 +18,7 @@
     "notepri",
     "reverb"
   ],
+  "loop_frame": 0,
   "limitations": [
     "Loops from the top: a cutscene cue has no musical loop point",
     "No N64 reverb or vibrato",

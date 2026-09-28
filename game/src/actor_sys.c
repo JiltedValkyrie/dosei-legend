@@ -7,6 +7,7 @@ static bool         updating;
 /* Never reset by scene clear or pool re-init. Exhaustion refuses a spawn
  * rather than allowing an ancient contact to resolve to a new actor. */
 static actor_handle_t next_identity;
+static unsigned int   spawn_failures;
 
 unsigned int    actor_sys_bytes(void)
 {
@@ -27,6 +28,7 @@ bool            actor_sys_init(void *storage, unsigned int bytes)
 
     if (!storage || bytes < actor_sys_bytes())
         return (false);
+    spawn_failures = 0;
     pool = (actor_t *)storage;
     for (i = 0; i < ACTOR_POOL_MAX; ++i)
         wipe(&pool[i]);
@@ -66,8 +68,10 @@ actor_t        *actor_spawn(const actor_profile_t *profile, unsigned int scene,
     for (i = 0; i < ACTOR_POOL_MAX; ++i)
         if (!pool[i].profile)
             break;
-    if (i == ACTOR_POOL_MAX)
-        return ((actor_t *)0);      /* pool full: caller records the miss */
+    if (i == ACTOR_POOL_MAX) {
+        ++spawn_failures;           /* pool full: counted, never silent */
+        return ((actor_t *)0);
+    }
     a = &pool[i];
     wipe(a);
     a->identity = ++next_identity;
@@ -274,3 +278,8 @@ bool    actor_get_clear(const actor_t *a, unsigned int f)   { return a && save_g
 void    actor_set_clear(const actor_t *a, unsigned int f)   { if (a) save_set_clear(a->scene, f); }
 bool    actor_get_collect(const actor_t *a, unsigned int f) { return a && save_get_collectible(a->scene, f); }
 void    actor_set_collect(const actor_t *a, unsigned int f) { if (a) save_set_collectible(a->scene, f); }
+
+unsigned int    actor_sys_spawn_failures(void)
+{
+    return (spawn_failures);
+}

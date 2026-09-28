@@ -649,6 +649,7 @@ CLIPS = (
     ('carry_wait','gPlayerAnim_link_normal_carryB_wait',        0,    0, 1),
     ('carry_throw','gPlayerAnim_link_normal_throw',             0,    0, 1),
     ('carry_put', 'gPlayerAnim_link_normal_put',                0,    0, 1),
+    ('get_item', 'gPlayerAnim_link_demo_get_itemA',              0,    0, 1),
     ('slide_down','gPlayerAnim_link_normal_down_slope_slip',    0,    0, 1),
     ('slide_up',  'gPlayerAnim_link_normal_up_slope_slip',      0,    0, 1),
     ('slide_down_end','gPlayerAnim_link_normal_down_slope_slip_end',0,0,1),

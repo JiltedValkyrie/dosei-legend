@@ -80,15 +80,15 @@ void player_camera_update(player_camera_t *camera, oot_follow_t *follow,
     }
     if (mode != camera->mode) {
         if (mode == PLAYER_CAMERA_CLIMB)
-            camera->climb_offset = player->y > camera->previous_y ? -19 : -6;
+            camera->climb_offset = player->y > camera->previous_y ? -14 : -5;
         if (mode == PLAYER_CAMERA_NORMAL) camera->returning = true;
         oot_follow_look_exit(follow);
     }
     /* sSetNormal0ModeLedgeHangData / Unique1: yOffset -80, pitch 40.
      * Jump2 offsets (-20 +/-10) depend on climb direction on entry.
-     * All offsets use the existing model-height scale .626, as Normal1 does. */
+     * All offsets use the Normal1 player-height scale .464 (child 44, BUG-009). */
     if (mode == PLAYER_CAMERA_HANG) {
-        profile.y_offset = -50;
+        profile.y_offset = -37;
         profile.pitch_target = 7282;
         profile.pitch_rate = 150;
         profile.yaw_policy = 2;
@@ -112,4 +112,30 @@ void player_camera_update(player_camera_t *camera, oot_follow_t *follow,
     }
     camera->mode = mode;
     camera->previous_y = player->y;
+}
+
+
+void player_camera_first_person(oot_follow_t *state, const bg_vec_t *focus,
+    uint16_t facing, int yaw_input, int pitch_input,
+    camera_position_t *eye, uint16_t *yaw, int32_t *pitch)
+{
+    int32_t sy, cy, sp, cp;
+    int target = pitch_input * 14400 / 280;
+    int delta = target - state->look_pitch;
+    int step = delta / 21; /* source SmoothStep /14, adapted 20 -> 30 Hz */
+    if (step > 2666) step = 2666;
+    if (step < -2666) step = -2666;
+    if (step >= 0 && step < 20) step = delta > 20 ? 20 : delta;
+    if (step < 0 && step > -20) step = delta < -20 ? -20 : delta;
+    state->look_pitch += step;
+    state->look_yaw = (int16_t)(state->look_yaw + yaw_input * 640 / 420);
+    *yaw = facing + state->look_yaw;
+    *pitch = state->look_pitch;
+    kokiri_camera_sincos(*yaw, &sy, &cy);
+    kokiri_camera_sincos((uint16_t)*pitch, &sp, &cp);
+    *eye = *focus;
+    eye->x -= (sy / 256) * (cp / 256) * 5 / 65536;
+    eye->z -= (cy / 256) * (cp / 256) * 5 / 65536;
+    eye->y -= sp * 5 / 65536;
+    clip_eye(focus, eye);
 }

@@ -6,6 +6,27 @@
 #include <jo/jo.h>
 #include "ram_cart.h"
 
+/* Compile-time layout guard: every fixed carve in address order, no
+** overlap, all inside RAM_CART_FIXED_BYTES. Add new carves here. */
+#define CARVE_END(n) (n##_OFFSET + n##_BYTES)
+typedef char carve_dyna_before_cuttext[CARVE_END(RAM_CART_DYNA) <= RAM_CART_CUTTEXT_OFFSET ? 1 : -1];
+typedef char carve_cuttext_before_layout[CARVE_END(RAM_CART_CUTTEXT) <= RAM_CART_TEXT_LAYOUT_OFFSET ? 1 : -1];
+typedef char carve_layout_before_cursor[CARVE_END(RAM_CART_TEXT_LAYOUT) <= RAM_CART_CURSOR_OFFSET ? 1 : -1];
+typedef char carve_cursor_before_contact[CARVE_END(RAM_CART_CURSOR) <= RAM_CART_CONTACT_OFFSET ? 1 : -1];
+typedef char carve_contact_before_minimap[CARVE_END(RAM_CART_CONTACT) <= RAM_CART_MINIMAP_OFFSET ? 1 : -1];
+typedef char carve_minimap_before_fairy[CARVE_END(RAM_CART_MINIMAP) <= RAM_CART_FAIRY_OFFSET ? 1 : -1];
+typedef char carve_fairy_before_linkmesh[CARVE_END(RAM_CART_FAIRY) <= RAM_CART_LINKMESH_OFFSET ? 1 : -1];
+typedef char carve_linkmesh_before_naviglow[CARVE_END(RAM_CART_LINKMESH) <= RAM_CART_NAVIGLOW_OFFSET ? 1 : -1];
+typedef char carve_naviglow_before_dekubaba[CARVE_END(RAM_CART_NAVIGLOW) <= RAM_CART_DEKUBABA_OFFSET ? 1 : -1];
+typedef char carve_dekubaba_before_karebaba[CARVE_END(RAM_CART_DEKUBABA) <= RAM_CART_KAREBABA_OFFSET ? 1 : -1];
+typedef char carve_karebaba_before_linktex[CARVE_END(RAM_CART_KAREBABA) <= RAM_CART_LINKTEX_OFFSET ? 1 : -1];
+typedef char carve_linktex_before_pause[CARVE_END(RAM_CART_LINKTEX) <= RAM_CART_PAUSE_OFFSET ? 1 : -1];
+typedef char carve_pause_before_pause_backup[CARVE_END(RAM_CART_PAUSE) <= RAM_CART_PAUSE_BACKUP_OFFSET ? 1 : -1];
+typedef char carve_pause_backup_before_titlepth[CARVE_END(RAM_CART_PAUSE_BACKUP) <= RAM_CART_TITLEPTH_OFFSET ? 1 : -1];
+typedef char carve_dialogue_before_musictrg[CARVE_END(RAM_CART_DIALOGUE) <= RAM_CART_MUSICTRG_OFFSET ? 1 : -1];
+typedef char carve_titlepth_before_dialogue[CARVE_END(RAM_CART_TITLEPTH) <= RAM_CART_DIALOGUE_OFFSET ? 1 : -1];
+typedef char carve_musictrg_inside[CARVE_END(RAM_CART_MUSICTRG) <= RAM_CART_FIXED_BYTES ? 1 : -1];
+
 /* One-shot guard: jo_add_memory_zone() has no way to retract a zone, so adding
 ** the same bank twice would hand out the same addresses from two free lists. */
 static bool     second_bank_claimed = false;

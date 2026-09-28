@@ -1,9 +1,30 @@
+> Latest Clean disc rebuilt (2026-09-28): `game/build/game-clean.cue`.
+> BSS end 0x06082850; **6,064 B free below SGL**. Five asset tests pass.
+> Includes Link draw priority, sign material setup, flat shop items and browsing
+> counter mesh. Kronos verification pending. Nothing committed.
+
+> Visual regression follow-up: Link submission moved ahead of optional actors;
+> signs now run their source material setup. Shop items use flat face colours by
+> human request; a source-mesh counter restores browsing-view occlusion.
+> Five asset tests pass. Kronos confirmation pending for all three visual fixes.
+
+> 2026-09-28: Human authorized Clean build. M3c/M3d assets, code and disc rebuilt.
+> `build/game-clean.cue`: **6,144 B free below SGL** (BSS end 0x06082800).
+> Renderer scratch moved to Low Work RAM after the first link exceeded the limit.
+> Nothing committed. Kronos and milestone runtime acceptance remain open.
+> See [M3c/M3d implementation and checks](M3CD_IMPLEMENTATION.md).
+
 # Dosei Legend — public demo plan: Kokiri Forest → Deku Tree → Hyrule Field
 
 Status: approved by the human 2026-09-25. **Current work plan for Claude, Astra
 (Codex) and the human.** Supersedes the "return to title" endpoint of
 `KOKIRI_VERTICAL_SLICE_PLAN.md` and the scope of `VERTICALSLICE.md`. Keeps the
 architecture, verified gate table and flag research of `OOT_PROGRESSION_PLAN.md`.
+
+Status refresh: **2026-09-28**. Claude finished the shop handoff; human assigned
+remaining M3c/M3d work to Astra and released the shared files. Astra integrated
+props, drops, chests, dialogue closure and shop texture scrolling. Clean build is now generated; Kronos acceptance is still pending. BUG-035 peak measurement remains deferred P2. This does not
+close outstanding M2 death/save regressions or claim full milestone acceptance.
 
 ## Co-coding rules
 
@@ -14,25 +35,130 @@ architecture, verified gate table and flag research of `OOT_PROGRESSION_PLAN.md`
 - Each checkpoint: new top entry in `game/docs/OPUS_HANDOFF.md` with what
   changed, changed files, verification (host / build / Kronos, stated
   separately), and remaining gaps. Update `VSLICEPROGRESS.md`.
-- Code work stays an uncommitted diff until the other agent reviews it
-  (Astra-review rule), unless the human says commit.
+- Code review does not authorize publication. No commit, merge or push until
+  the human checks the changes and explicitly approves those Git actions.
 - Human relays messages between agents; address handoff notes to the other agent.
 - Every new actor: check real OoT drop code + spawn tables in the same task
   (Bible rule). Record gaps; never silently drop rewards.
 
-| Milestone | Owner | Status |
+| Milestone | Owner | Status at 2026-09-28 |
 |---|---|---|
-| M0 scope, face-only textures, naming, actor pool, SFX banks | Claude | code review approved 2026-09-25; uncommitted; remaining runtime checks pending |
-| M1 traversal | Claude | M1a approved 2026-09-26; M1b (gravity, auto-jump) done, uncommitted, awaiting Astra review |
-| M2 combat core, hearts, death | unassigned | not started |
-| M3 Kokiri Forest alive (NPCs, interiors, shop, chests) | unassigned | not started |
-| M4 items, C buttons, pause subscreens | unassigned | not started |
-| M5 Deku Tree + Gohma + Emerald | unassigned | not started |
-| M6 post-Emerald Kokiri + Lost Woods | unassigned | not started |
-| M6b grottos, gold skulltulas, scrub shops | unassigned | not started |
-| M7 Hyrule Field (explore, owl, music, ocarina free play) | unassigned | not started |
-| M8 demo polish | unassigned | not started |
-| M9 release checks + package | unassigned | not started |
+| M0 scope, face-only textures, naming, actor pool, SFX banks | Claude | Foundations implemented; review approved 09-25. Cart-table boot/camera/music verification pending after latest RAM move |
+| M1 traversal | Claude; Astra water/camera work and reviews | Core through M1l implemented, with reviewed checkpoints. Water, camera and actor/dungeon integration checks remain; not blanket-complete |
+| M2 combat core, hearts, death | Claude; Astra review/UI fixes | M2a-e implemented; starter route and boulder gameplay passed. Death/save regressions and runtime checks remain; not closed |
+| M3 Kokiri Forest alive (NPCs, interiors, shop, chests) | Astra: remaining M3c/M3d; Claude: completed shop handoff | M3a/b foundations and shop built previously. Props, source drop tables, signs, five animated chests, save v6, dialogue flags and shop scrolling now integrated in unbuilt source. M3b source-parity gaps and M3 runtime acceptance remain open |
+| M4 items, C buttons, pause subscreens | Astra: delivered UI/assignment subset; remaining item actions unassigned | Pause pages, counts, saved assignment and preferences pulled forward. C-item HUD and stick/nut/slingshot use still pending |
+| M5 Deku Tree + Gohma + Emerald | unassigned | Not started |
+| M6 post-Emerald Kokiri + Lost Woods | unassigned | Not started |
+| M6b grottos, gold skulltulas, scrub shops | unassigned | Not started |
+| M7 Hyrule Field (explore, owl, music, ocarina free play) | unassigned | Not started |
+| M8 demo polish | unassigned | Main pass not started; deferred bugs recorded |
+| M9 release checks + package | unassigned | Not started |
+
+### Active order
+
+0. RAM relocation implemented: title paths and music triggers now load into cart;
+   fresh-boot validation remains pending. Preserve allocation/budget guards.
+1. **M3a implemented:** actor manifest, shared grant/charge path, save v5 nuts,
+   two/three-choice messages. Three-choice runtime check remains pending.
+2. **M3b active (Astra):** four remaining interiors added beside the existing
+   shop and Link home. Original NPC models/clips, head tracking, scene filtering
+   and house/shop music integrated. Know-It-All has **three** child brothers:
+   two extra type-7 records are adult variants selected by rotZ. Seventeen
+   NPC placements total, including conditionally hidden house Mido/Saria.
+   BUG-006 ledge-before-talk preflight fixed and host-tested. Full source
+   tracking modes/torso motion, dialogue animation changes, fade/blink polish
+   and Kronos acceptance remain; do not label M3b fully complete.
+3. **M3c implemented in source, unbuilt:** original pots/rocks, source rock ring,
+   decorative rocks/bush, gossip-stone hit reaction, readable/cuttable signs,
+   placed hearts, inventory-aware random drops, five animated/persistent chests,
+   and Link get-item pose. Lift/put/throw uses the existing player action.
+   Save v6 migrates old forest collectible bits. Exact visual/physics differences
+   and acceptance cases are recorded in `M3CD_IMPLEMENTATION.md`.
+4. **M3d integrated, unbuilt:** preserve Claude's full shop, cursor, spin and hold
+   repeat; add heart/nut primary-texture scrolling. Fado now has source dialogue;
+   Kokiri/Saria closing flags and house Mido rules are wired. Removed automatic
+   nutsball debug emitter. Saria greeting camera remains M3b work; its text closes
+   the greeting flag as an explicit interim adaptation.
+
+Human wants feature progress and later batch testing. Do not wait for a new
+BUG-035 heap peak reading. Actual crashes/allocation failures still require
+severity-first triage; BUG-052 remains an open save/load recovery blocker.
+
+### Latest shop checkpoint and forwarded work (2026-09-28)
+
+Claude reports source-based EnOssan shop flow implemented, not runtime-verified:
+
+- Shopkeeper model, En_Tana shelves and eight En_GirlA items. Fixed-view
+  counter masks sort 16 units behind their farthest pixel to cover Link's head.
+  Offline check found no in-front standing points wrongly hidden; this is not
+  proof of correctness during movement. Shopkeeper remains behind the counter.
+- Talk switches to the shop panorama browsing camera and hides Link. Left/right
+  turns 30 degrees toward shelves; directional selection follows source shelf
+  layout, returning to the shopkeeper across the inner edge. Exit restores the
+  fixed view. Masks currently apply only to the shop fixed view.
+- Hello -> talk/quit -> item descriptions -> A Buy/Don't buy. B or Don't buy
+  returns from the buy prompt; elsewhere B ends the exchange.
+- First shield/nut/stick purchase uses get-item text with Link in the fixed
+  view, then continue shopping/quit. Repeat buys use quick thanks and resume
+  browsing. Insufficient funds/capacity/ownership refusals charge nothing;
+  seeds/arrows refuse without bag/bow, and recovery heart refuses at full health.
+
+Forwarded to Claude, still pending:
+
+1. Cursor, selected-item spin and held-stick repeat are in Claude's last build.
+   Heart/nut primary-texture scroll is now in Astra's unbuilt source. N64 two-layer
+   material blending remains an approximation; check the result in Kronos.
+2. The old Navi timer failure was reproduced alone. Fixed source branch ordering:
+   accepting a hint skips the idle timer tick, leaving 3001; reset fractional phase
+   when recreating Navi. The test now passes alone and in the gameplay suite.
+3. Kronos on both pads: all shop choices, shelves, purchases/refusals, view restoration,
+   counter occlusion, scrolling, VRAM and frame rate. No new run claimed.
+4. Claude confirmed the latest built `main.o` contains the **4-pixel speaker gap**.
+   Its visual acceptance is still pending.
+
+Camera/text delivered: five houses use original panorama/overhead views;
+C-Up toggles the interior view or enters outdoor first person; L toggles the
+minimap. Human reports no dialogue flicker, correct dynamic labels, and good
+interior C-Up behavior in the tested session. Bible now requires dynamic action
+labels for all player-facing controls text, resolved before wrapping, with
+retained text rows to prevent flicker. Bold names and 4-pixel outer padding are
+implemented; the reduced speaker gap remains a separate visual check.
+Outdoor view/exit cases, broad pad/preset coverage, three-choice lessons, and
+Link drawing with/without sword and shield after the Low Work RAM move remain
+pending. No frame-rate regression has been accepted for that move yet.
+
+### Human review: passed versus pending
+
+Passed in human review: BUG-016 ceiling, BUG-032 boulder movement/damage/
+knockdown/escape, BUG-047 audio, cutscene Navi, pause carousel/menus, save v4,
+and first-stick fanfare. These passes do not close later regressions or all
+source-parity follow-ups. Boulder mesh rolling remains BUG-051 (P2).
+
+Controller labels and item assignment also received positive human feedback.
+Do not infer every preset/pad/slot/save-reload combination was tested. The
+missing assignment-modifier hint was fixed afterward; its visual recheck is pending.
+
+| Pending check / issue | Current disposition |
+|---|---|
+| BUG-033 longest NPC text | Open longest text; no crash or garbled text |
+| Knockback with text open | Fix in code; verify hurt then open text produces no residual push |
+| Labels and item assignment matrix | Every preset on both pads; assign Down/Left/Right on digital/analog, save/reload |
+| BUG-048 Save No | Fixed in code; death-menu Yes/No runtime check pending |
+| BUG-049 Continue sky/freeze | Resident-scene respawn/fallback changed; original cause probable, runtime check pending |
+| BUG-052 Game Over save reloads into death | Open P0; fix/verify save on death then reload as living, controllable Link |
+| BUG-053 corrupted pause after Continue | Live page/font reads exactly two sectors late after mounted ISO rebuild; cold-boot unchanged-image retest pending |
+| BUG-043 moved cart tables | Build gap improved; fresh boot must load tables, move title camera and play title/forest/cutscene music |
+| M3b interiors/NPCs/music | Enter/leave all six interiors, reload inside, talk/target from multiple angles, cross forest room banks, hear house/shop/forest transitions |
+| BUG-006 climb versus talk | Host fix passes; check A while walking into a climbable ledge beside an NPC, then normal talk and open-text advance |
+| BUG-035 heap peak | P2, measurement deferred to batch playtest; historical reading is not a new measurement |
+| BUG-050 child death voice sounds adult | P3, deferred audio polish; cause unresolved, half-rate policy retained |
+
+Fresh batch: die in forest/house, Save Yes/No, Continue Yes/No, load a Game Over
+save, both pads. **Cold boot a completed image; never rebuild its mounted ISO
+or audio tracks during play.** The old running session cannot validate new
+cart layouts. See [corruption evidence](CONTINUE_MENU_CORRUPTION_2026-09-27.md)
+and [bug log](BUG_FEATURE_LOG.md). No blanket M2 or M4 acceptance claimed.
 
 ## Context
 
@@ -53,39 +179,63 @@ Supersedes: `KOKIRI_VERTICAL_SLICE_PLAN.md` "no dungeon, return to title" endpoi
 and `VERTICALSLICE.md` "no bosses/dungeons". Merges with `OOT_PROGRESSION_PLAN.md`
 (approved 09-21) — keep its architecture, gate table, and verified flags.
 
-**Character rule (human, repeated):** NO texture on any character (Link, NPCs,
-enemies, boss, owl) EXCEPT face. Hair goes flat too — current code keeps reduced
-hair textures (commit 8fb5b5d, `game/tools/character_textures.py`); change policy
-to face-only. Eyes/mouth on enemies/Gohma count as face.
+**Character rule:** face textures only, including enemy/boss eyes and mouths.
+Body, clothing, equipment and hair are flat colours. Shared offline policy is
+implemented in `game/tools/character_textures.py`; new imports must mark facial
+materials and preserve per-vertex bone ownership. See the project Bible.
 
-## Current standing (reviewed 2026-09-25, branch `dev`, clean)
+## Current standing (2026-09-28, branch `dev`, shared uncommitted work)
 
-Works: title → file select (3 slots, backup RAM, checksum) → full opening
-cutscene chain (sleep/nightmare/Navi flight/wake-up) → Link's house + Kokiri
-Forest (3 rooms, En_Holl streaming). Walk/run/Y-jump/fall/land/roll, single
-sword swing, hold shield, Z strafe + NPC-only targeting, L look. NPC dialogue
-with save-state-evaluated text rules (`build_dialogue.py`), Navi follow
-(`navi.c`), grass cut (rupee-only drops), rupee pickups + HUD, pause
-(sword/shield/save), save_state with OoT flag arrays (`save_state.c`),
-game_mode machine incl. unused GAME_OVER, integer cutscene baker/player.
+Implemented: title/file-select/opening flow; Link's house, three-room Kokiri
+Forest and Kokiri Shop; starter sword chest, 40-rupee shield purchase, pre-sword
+rupee route and equipped-both Mido gate. Shared actor/contact pools, traversal
+core through water/camera, sword combos/spin/evasion, shield/recoil, attention
+for NPCs/enemies, Navi hints, withered Deku Baba and stick grant, boulder damage,
+hearts/hurt/death/Game Over code are present. Remaining regressions and source
+approximations stay explicit in the bug log.
 
-Missing (everything else): other 5 interiors, Lost Woods, Deku Tree, boss room,
-Hyrule Field gameplay scene; NPC models (people are fairy markers); actor pool;
-enemies; chest/pot/sign/boulder; damage/hearts/death; choice boxes; shop;
-items (slingshot/nuts/sticks/ocarina); ledge/climb/crawl/push/lift/sidehop/
-backflip/jump slash/combos/spin; C buttons; A-label HUD; pause subscreens;
-scene-transition fades; per-area music; all story cutscenes after opening.
+Pause now has full-colour VDP2 Items/Map/Quest/Equipment/System pages with
+scale/slide carousel, frozen world, music ducking, item counts, equipment and
+three saved C-item bindings. Save v5 adds nut ownership/ammo/upgrade and loads v2-v4 saves; older saves
+receive no nuts, and pre-v4 saves receive empty C bindings.
+Saved controller labels/custom jump are separate preferences; enemy-map cheat
+is session-only. Live C-item icons/ammo HUD and stick/nut/slingshot use remain
+M4. Current controls and options: [README](../../README.md).
 
-Hard limits that drive design:
-- VDP1 VRAM 512 KB, worst forest room ~5 KB spare → character flat shading is
-  mandatory, textures stream per room.
-- Sound RAM 104 B spare → **SFX must become per-area banks** before any new sound.
-- `.bss` gap 2–8 KB → all new runtime state goes to cart (`jo_malloc` zones).
-- SGL ~2600 polys, 2048-command Kronos cap (project-local Kronos fixes it; demo
-  README must tell testers which emulator/version works).
-- No FPU: integer/fixed only in runtime (CLAUDE.md rule). Offline Python may float.
-- Open renderer bugs: near-camera warp, floor-over-Link sort, intermittent opening
-  crash. Not rewritten here; each gets a bounded "release blocker check" in M9.
+Interiors and NPC models/population are integrated; their full runtime/source
+acceptance remains pending. Shop flow is in code with the follow-ups above.
+Still pending: broad prop/drop/chest integration; full item actions; Deku Tree,
+Gohma, Lost Woods, Hyrule Field gameplay and later story cutscenes. An existing
+stand-in or core module does not satisfy its full milestone acceptance.
+
+### Current budgets and checks
+
+- Required 4 MB cart. Sprite limit remains **2400**; do not lower without evidence.
+- Latest Claude-reported shop Clean build: **9,056 B below SGL**. Earlier
+  7,152/14,032/11,344 B checkpoints are superseded for the shared tree. Link
+  sword/shield copies moved to Low Work RAM, saving about 16.6 KB; runtime
+  equipment visibility/FPS checks remain. Standard has no new reported number.
+  Build/map evidence is not a runtime peak reading.
+- `MUSICTRG.BIN`: **24,444 B**, seven banks including original house/shop
+  sequences; `TITLEPTH.BIN`: **5,208 B**. Music triggers moved to offset
+  **0x76000**, capacity **0x6000**; fixed cart carve ends **0x7C000**.
+  Title paths remain **0x6F800**; dialogue occupies **0x71000/0x5000**.
+  Header/count/size guards reject stale or missing files at boot.
+  Temporary boot heap buffers are freed; runtime camera/music check pending.
+- Work-RAM heap remains **51,200 B**; historical peak **50,692 B** on 09-26,
+  cart peak about **719 KB**. BUG-035 stays P2; no new peak reading claimed.
+- VDP1 assets retain capacity guards and forest headroom policy. Sound uses
+  core/area SFX banks and half-rate samples, including voices; music banks also
+  use the approved reduced budget. Measure actual generated budgets per build;
+  the old 104-byte sound-RAM margin is not current.
+- Runtime uses integer/fixed math (SH-2 has no FPU). Keep SGL/VRAM/cart guards.
+- Latest shop gameplay checks: **169 pass, 1 fail**; Navi timer baseline
+  comparison pending. Earlier camera/text focused checks passed at their
+  checkpoint; do not treat them as a fresh shop regression run. Claude reports
+  eight pre-existing host compile failures, including title_flights, reproduced
+  with/without table relocation; do not describe the entire suite as green.
+- Clean is the default build; Standard only for needed developer checks,
+  Hi-res on request. Latest relocation has no fresh-boot Kronos acceptance yet.
 
 ## Source facts (decomp `D:/Workspace-Claude/game-decomps/n64/oot`, ntsc-1.2)
 
@@ -167,7 +317,8 @@ matrix ownership, KFR1 meshes), `cutscene_actor.c` cart-resident actor meshes,
 `character_textures.py` texture policy, `vdp1_budget.py`, `build_sgl_area.py
 --verify --map`, `capture-kronos.ps1`.
 
-New modules (all integer, host-tested where logic-only):
+Module responsibilities (some already implemented; extend existing code rather
+than creating duplicates; all runtime math integer):
 1. `game/src/actor_sys.c/.h` — fixed pool in cart RAM, per-type
    init/update/draw/destroy table (OoT ActorProfile shape), room ownership
    (kill on room unload unless persistent), per-scene flag hooks
@@ -195,7 +346,7 @@ Runtime data per scene: `S<id>R<n>.MSH/.TEX/.COL/.ACT` + scene table (exits,
 spawns, BGM, SFX bank, layer rules). Check asset naming limits for > 9 scenes /
 > 9 rooms (ydan has 12, spot10 has 10) — fix naming first.
 
-## Milestones (each = playable disc checkpoint, reviewed before next)
+## Milestone scope (acceptance targets; status and sequencing above take precedence)
 
 Each milestone: host tests for rules, build the Clean image only for Kronos
 tests (Astra 09-25; other images on request), short Kronos check of what changed (background capture only, no
@@ -405,3 +556,12 @@ state machine → drops → host test → Kronos check.
 - Runtime: `game/run-kronos.bat` with Cartridge/Type=7; background capture
   `game/tools/capture-kronos.ps1`; state exactly what was seen vs not.
 - Disassembly check changed hot paths for software-float helpers.
+
+
+## Requested camera/text follow-up (2026-09-28)
+
+Human requests C-Up outdoor first-person and source-supported alternate
+interior views to replace temporary free look. Brother control lessons must
+match implemented behavior and saved controller labels. Long-page text
+blinking is a separate current bug; address it first. See
+[implementation plan](CAMERA_TEXT_PLAN.md). Planned, not implemented/accepted.

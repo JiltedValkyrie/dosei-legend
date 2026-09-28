@@ -51,6 +51,7 @@
 #define EVENTCHKINF_MIDO_STOOD_ASIDE_LOST_WOODS     0x0A  /* EVENTCHKINF_0A */
 #define EVENTCHKINF_MET_DEKU_TREE                   0x0C  /* EVENTCHKINF_0C */
 #define EVENTCHKINF_MIDO_LEFT_FOR_HIS_HOUSE         0x1C  /* EVENTCHKINF_1C */
+#define EVENTCHKINF_OBTAINED_ZELDAS_LETTER          0x40
 #define EVENTCHKINF_BEGAN_GOHMA_BATTLE              0x70
 #define EVENTCHKINF_DEKU_TREE_INTRO_CS_SEEN         0xA8
 
@@ -151,10 +152,50 @@ typedef struct
     ** CUR_UPG_VALUE(UPG_DEKU_STICKS): capacity {0, 10, 20, 30}. */
     uint8_t             stick_owned;
     uint8_t             stick_ammo;
+    uint8_t             c_items[3];         /* down, left, right: 0 empty, 1 stick, 2 slingshot */
     uint8_t             stick_upgrade;
+    /* v5 (M3a): INV_CONTENT(ITEM_DEKU_NUT), AMMO(ITEM_DEKU_NUT),
+    ** CUR_UPG_VALUE(UPG_DEKU_NUTS): capacity {0, 20, 30, 40}. */
+    uint8_t             nut_owned;
+    uint8_t             nut_ammo;
+    uint8_t             nut_upgrade;
 }                       save_state_t;
 
 extern save_state_t     save_state;
+
+/* ---- Item_Give (z_parameter.c) subset: the one grant path (M3a) --------
+** Chests, shop, drops and enemies all give through here so capacity, first-
+** owned upgrade and wallet rules cannot drift between callers. */
+typedef enum
+{
+    SAVE_ITEM_RUPEE_GREEN, SAVE_ITEM_RUPEE_BLUE, SAVE_ITEM_RUPEE_RED,
+    SAVE_ITEM_RECOVERY_HEART,
+    SAVE_ITEM_DEKU_STICK, SAVE_ITEM_DEKU_STICKS_5, SAVE_ITEM_DEKU_STICKS_10,
+    SAVE_ITEM_DEKU_NUT, SAVE_ITEM_DEKU_NUTS_5, SAVE_ITEM_DEKU_NUTS_10,
+    SAVE_ITEM_SWORD_KOKIRI, SAVE_ITEM_SHIELD_DEKU,
+    SAVE_ITEM_SEEDS_5,
+    SAVE_ITEM_COUNT
+}                       save_item_t;
+
+#define SAVE_WALLET_CAPACITY    99      /* gUpgradeCapacities[UPG_WALLET][0] */
+
+/* EnGirlA_CanBuy_* results (z_en_girla.c), same check order as source. */
+typedef enum
+{
+    SAVE_CANBUY_SUCCESS, SAVE_CANBUY_SUCCESS_FANFARE,
+    SAVE_CANBUY_NEED_RUPEES, SAVE_CANBUY_CANT_GET_NOW
+}                       save_canbuy_t;
+
+/* Item_Give. False for an unknown item (nothing changes). Rupees clamp at
+** the wallet; ammo clamps at CUR_CAPACITY once owned. */
+bool            save_item_give(save_item_t item);
+/* Item_CheckObtainability == ITEM_NONE: true when this is a FIRST get. */
+bool            save_item_first_get(save_item_t item);
+/* Shop check, no side effects. */
+save_canbuy_t   save_item_can_buy(save_item_t item, unsigned int price);
+/* Check, then give + charge once. Anything but SUCCESS* changes nothing,
+** so a refused purchase preserves money. */
+save_canbuy_t   save_item_buy(save_item_t item, unsigned int price);
 
 /* ---- flag accessors ----------------------------------------------------
 ** Named after the originals. Out-of-range flags return false / are ignored

@@ -30,15 +30,18 @@
 #define SAVE_FILE_MAGIC_2       'S'
 #define SAVE_FILE_MAGIC_3       'V'
 
-/* Bump whenever the packed layout changes. Older versions are REJECTED, not
-** guessed at: a half-understood save is worse than starting a new file. */
-#define SAVE_FILE_VERSION       3
+/* v6 keeps v5 layout; migrates old forest pickup index bits to source flags.
+** Versions 2-5 migrate explicitly; unknown versions are rejected. */
+#define SAVE_FILE_VERSION       6
 /* v2 (M2d): v3 appends Deku Stick slot/ammo/upgrade and naviTimer. A v2
 ** block still loads; the new fields start at their new-file values. */
 #define SAVE_FILE_V2_PAYLOAD_BYTES 290
 
 /* magic(4) + version(2) + reserved(2) + payload + checksum(2). */
-#define SAVE_FILE_PAYLOAD_BYTES 295
+#define SAVE_FILE_V3_PAYLOAD_BYTES 295
+#define SAVE_FILE_V4_PAYLOAD_BYTES 298
+/* v5 (M3a) appends Deku Nut owned/ammo/upgrade. */
+#define SAVE_FILE_PAYLOAD_BYTES 301
 #define SAVE_FILE_BYTES         (8 + SAVE_FILE_PAYLOAD_BYTES + 2)
 
 /* Why a load was refused, so the file select can say something true rather

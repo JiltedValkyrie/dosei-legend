@@ -71,7 +71,7 @@ class AudioEvents(unittest.TestCase):
 #include "action_audio.h"
 #include "karebaba.h"
 #include "game_over.h"
-#define MUSIC_SAMPLE_LIMIT 0x3C000
+#define MUSIC_SAMPLE_LIMIT 0x50000
 static uint32_t baba_ev;
 uint32_t karebaba_events(void) { return baba_ev; }
 typedef struct { unsigned int size; } jo_file;
@@ -94,7 +94,7 @@ unsigned int reg(unsigned int s, unsigned int o) { return SLOT(s,o); }
 void set_busy(bool b) { busy = b; }
 void tick(void) { rupee_vblank(); }
 void refresh(unsigned int hz) { sound_refresh = hz; }
-void set_baba(unsigned int e) { baba_ev = e; }
+void set_baba(unsigned int e) { baba_ev = e; gameplay.baba_events = e; }
 void set_events2(unsigned int e) { gameplay.events2 = e; }
 '''
         env = dict(os.environ, PATH=str(GCC.parent)+os.pathsep+os.environ.get('PATH',''))
@@ -132,6 +132,14 @@ void set_events2(unsigned int e) { gameplay.events2 = e; }
         self.lib.set_events2(2)
         self.lib.action_audio_events(0)
         self.assertTrue(self.keyed(31) and self.keyed(30))
+
+    def test_pickup_sound_is_consumed_once_even_if_actor_events_are_stale(self):
+        self.lib.set_baba(64)
+        self.lib.action_audio_events(0)
+        self.assertTrue(self.keyed(27))
+        self.lib.reset()
+        self.lib.action_audio_events(0)
+        self.assertFalse(self.keyed(27))
 
     def test_deku_baba_sounds_play_from_the_area_bank(self):
         self.lib.set_baba(4 | 8)                         # DEAD + LAST_DAMAGE
@@ -249,7 +257,7 @@ void set_events2(unsigned int e) { gameplay.events2 = e; }
         self.assertEqual(self.lib.reg(24,16),13 << 11)
         self.assertEqual(self.lib.reg(24,0) & 0x1830,0x1830)
         address = ((self.lib.reg(24,0)&15)<<16) | self.lib.reg(24,2)
-        self.assertGreaterEqual(address,0x3C000)
+        self.assertGreaterEqual(address,0x50000)
         self.assertLessEqual(address+self.lib.reg(24,6),0x80000)
         self.lib.action_audio_opening_stop(0)
         self.assertEqual(self.lib.reg(24,12),255)

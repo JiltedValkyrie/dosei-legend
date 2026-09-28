@@ -1,4 +1,57 @@
+## Clean build update (2026-09-28)
+
+Human authorized the Clean build. Assets and target code rebuilt into the existing
+`game/build/game-clean.cue`. Verified map: BSS ends at 0x06082800, leaving
+**6,144 bytes below SGL at 0x06084000**. The first link exceeded SGL by 4,752 B.
+Moved forest vertex depth, tile depth/fog and mesh flags (10,763 B of arrays)
+from high BSS into guarded Low Work RAM carves at offsets 0x5000..0x97FF.
+Heap, sprite and polygon limits unchanged. Low RAM performance needs Kronos checks.
+No commit or Kronos run. Earlier no-build checkpoints below are historical.
+
+Additional renderer checks exposed an outdated forest host adapter (missing SGL
+members/constants) and three room-bank assertions expecting 0x67 instead of the
+exported 0x66 sort mode. These checks are not green; no renderer behavior was
+changed to satisfy them. PowerShell reports NativeCommandError for compiler stderr,
+but the build reached disc creation and the final successful map boundary check.
+
 # Vertical slice progress
+
+## M3c/M3d Astra source checkpoint (2026-09-28, unbuilt)
+
+- Human released shared files after Claude finished; requested no build.
+- Source drop tables/filtering, pots/rocks/carry/throw, signs, placed hearts,
+  decorative props/gossip hit reaction, five animated chests and get-item pose.
+- Save v6 migrates forest collectible bits; prior saves remain readable.
+- Claude shop preserved; primary-texture heart/nut scrolling added. Fado and
+  conversation flags wired; old Navi timer branch bug fixed.
+- Last built Clean gap 7,424 B predates these changes. Current RAM/VRAM unknown.
+- No disc regeneration, Kronos test or commit. Exact coverage, tests and remaining
+  source-parity work: [M3c/M3d checkpoint](game/docs/M3CD_IMPLEMENTATION.md).
+
+
+## M3b Astra integration checkpoint (2026-09-27, uncommitted)
+
+- Four remaining Kokiri interiors wired; six interiors total with Link home/shop.
+- Scene-aware NPCs: 17 placements, including three child Know-It-All brothers.
+  Fixed the rotZ adult-variant filter and preserved original forest identities.
+- ROM meshes and initial source clips for Mido, Saria and all 13 Kokiri types;
+  per-vertex flex ownership, flat body/hair, textured faces. Room-safe transient
+  VDP1 bank, source head pivots and animated attention focus. Exit guard follows
+  its source 80-unit ring. Full tracking/talk-animation/fade/blink parity pending.
+- Original house/shop sequences, seven cart trigger banks; fixed carve 0x7C000.
+- BUG-006 ledge-before-talk fixed in code. Clean RAM gap 7,152 B.
+- Host checks pass for gameplay, actors, model tracks/head math, actor pool,
+  character materials, area music and ledge priority. Opening-audio harness still
+  has pre-existing missing camera/menu-duck stubs. No Kronos acceptance claimed.
+- Disc keeps the normal `game/build/game-clean.cue` name. Nothing committed.
+
+## M3a contracts (2026-09-27, uncommitted)
+
+- Full child-day actor manifest for forest + 6 interiors (docs/M3A_ACTOR_MANIFEST.md);
+  30 unported kinds listed, none hidden.
+- One Item_Give/shop-buy path; save v5 adds Deku Nuts (older saves migrate).
+- Generic 2/3-choice text with En_Ko branches. Death Save No / Continue fixed
+  in code; RAM freed (SGL gap 13,616 B). Kronos checks pending.
 
 ## M2b.1 starter route (2026-09-26, uncommitted)
 
@@ -471,3 +524,16 @@ Do not turn this into a benchmark checklist.
   `CLAUDE.md` points there. Conditional landing-roll behavior located in the
   original player source for Claude to verify. Implementation not started by
   this handoff; no Claude invocation tool/CLI was available to launch it here.
+
+## Item counts, assignment and text recoil (2026-09-27)
+
+Items shows live stick/seed counts and Down/Left/Right bindings. Plain D-pad
+navigates; hold Saturn C + Down/Left/Right assigns an owned item on either pad.
+Gold marks assigned items; blue marks cursor. Save v4 appends bindings; v2/v3
+migrate with empty slots. Live stick/slingshot weapon actions remain pending.
+Baba events are per-step and consumed once: first-stick fanfare no longer
+restarts during text. Text/menu blocks knockback and weapon recoil, clearing
+residual push. 265 focused host checks pass; Clean build passes, .bss ends
+0x06083E40 (448 B below SGL with concurrent UI changes). No Kronos run or commit.
+Human review: first-stick sound, text after hurt/rebound, counts, all assignment
+directions on digital/analog pads, save/reload. Preserve concurrent UI edits.

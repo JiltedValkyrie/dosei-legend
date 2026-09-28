@@ -26,6 +26,22 @@ class RoomFormatTests(unittest.TestCase):
         self.assertEqual(len(blob),32+48+32+44+4+24)
         self.assertEqual(pixels,bytes(range(8)))
 
+    def test_streamed_floor_sort_tag_matches_resident_rule(self):
+        cases = [
+            ([(0,0,0),(0,0,128),(128,0,128),(128,0,0)], 0x66),
+            ([(0,0,0),(32,0,0),(32,0,32),(0,0,32)], 0x67),
+            ([(0,0,0),(128,0,0),(128,128,0),(0,128,0)], 0x67),
+            ([(0,0,0),(128,0,0),(128,0,128),(0,0,128)], 0x67),
+        ]
+        for vertices, expected in cases:
+            for flat in (False, True):
+                face=dict(idx=(0,1,2,3),tex_off=0,cull=True,mesh=False)
+                if flat: face['colour']=0x8123
+                tiles={0:dict(index=0,width=8,height=2,pixels=bytes(8),clut=(0,)*16)}
+                blob,_,_=rooms.pack_room(vertices,[face],tiles,
+                    [dict(object=0,indices=[0,1,2,3])],scene.face_normal)
+                self.assertEqual(blob[32+48+20+1],expected,(vertices,flat))
+
     def test_triangle_to_quads_preserves_area_winding_and_source_mapping(self):
         points = [(0,0,0,0,0,127,0,0,255),(180,0,0,36,0,127,0,0,255),
                   (0,0,240,0,48,127,0,0,255)]
@@ -69,7 +85,11 @@ class GeneratedRoomsTests(unittest.TestCase):
                 self.assertLess(max(indices),nv)
                 attr = struct.unpack_from('>BB5H',blob,32+nv*12+np*20+i*12)
                 self.assertLess(attr[2],nt)
-                self.assertEqual(attr[1],0x67)
+                baked = [tuple(v//65536 for v in struct.unpack_from('>3i',blob,32+j*12))
+                         for j in indices]
+                normal = struct.unpack_from('>3i',blob,32+nv*12+i*20)
+                expected = 0x66 if scene.floor_uses_far_sort(baked,range(4),normal) else 0x67
+                self.assertEqual(attr[1],expected)
                 self.assertEqual(bool(attr[3]&0x100),detail['faces'][i]['mesh'])
         self.assertEqual(set.union(*coverage),set(range(2060)))
         self.assertEqual(sum(map(len,coverage)),2060)

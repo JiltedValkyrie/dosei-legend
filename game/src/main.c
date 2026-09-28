@@ -10,6 +10,7 @@
 */
 
 #include <jo/jo.h>
+#include <string.h>
 
 #include "kokiri_scene.h"
 #include "kokiri_sgl.h"
@@ -34,6 +35,7 @@
 #include "ram_cart.h"
 #include "heap_profile.h"
 #include "actor_sys.h"
+#include "npc_draw.h"
 #include "save_device.h"
 #include "file_select.h"
 #include "scene_flow.h"
@@ -94,6 +96,7 @@ static bool     text_file_load(const char *name, unsigned int offset, unsigned i
     return (ok);
 }
 
+typedef char actor_pool_fits[ACTOR_POOL_MAX * sizeof(actor_t) <= RAM_CART_ACTOR_POOL_BYTES ? 1 : -1];
 typedef char minimap_file_fits[MINIMAP_FILE_BYTES <= RAM_CART_MINIMAP_BYTES ? 1 : -1];
 static bool     dialogue_text_load(void)
 {
@@ -102,7 +105,11 @@ static bool     dialogue_text_load(void)
             text_file_load("CUTTEXT.TXT", RAM_CART_CUTTEXT_OFFSET,
                            RAM_CART_CUTTEXT_BYTES, cutscene_text_bind) &&
             text_file_load("MINIMAP.BIN", RAM_CART_MINIMAP_OFFSET,
-                           RAM_CART_MINIMAP_BYTES, minimap_bind));
+                           RAM_CART_MINIMAP_BYTES, minimap_bind) &&
+            text_file_load("MUSICTRG.BIN", RAM_CART_MUSICTRG_OFFSET,
+                           RAM_CART_MUSICTRG_BYTES, music_banks_bind) &&
+            text_file_load("TITLEPTH.BIN", RAM_CART_TITLEPTH_OFFSET,
+                           RAM_CART_TITLEPTH_BYTES, demo_title_paths_bind));
 }
 
 #ifdef DOSEI_TEXTURE_PROBE
@@ -143,6 +150,8 @@ int32_t             demo_screen_distance(void)
         return (int32_t)cutscene_screen_distance();
     if (kokiri_scene_backdrop_active() && scene_flow_entry()->cam_dist > 0)
         return (int32_t)scene_flow_entry()->cam_dist;
+    if (demo_view_first_person()) return 290; /* Subj3: 45 degree FOV. */
+    if (scene_flow_pivot()) return 208; /* Camera_Unique7: 60 degree FOV. */
     return demo_title_is_visible() ? 180 : SCREEN_DISTANCE;
 }
 
@@ -288,18 +297,6 @@ static void         viewer_draw(void)
      * hidden. */
     if (!kokiri_scene_backdrop_active() && !cutscene_hides_scene()) {
         kokiri_scene_draw();
-        /* The forest's own actors belong to gameplay, not to a cutscene
-         * playing in the same scene: Navi's flight must not have Kokiri
-         * fairies bobbing along beside it. */
-        if (!cutscene_is_playing()) {
-            kokiri_grass_draw();
-            kokiri_rupees_draw(demo_world_clock());
-            kokiri_fairies_draw(demo_world_clock());
-            kokiri_items_draw(demo_world_clock());
-            kokiri_boulder_draw();
-            kokiri_nut_draw();
-            kokiri_babas_draw();
-        }
     }
     /* Equipment now belongs to the VDP2 pause window. */
 #endif
@@ -311,6 +308,8 @@ static void         viewer_draw(void)
         unsigned int channel;
 
         cutscene_actors_prepare();
+        if (cutscene_id() == CUTSCENE_NAVI_FLY && !cutscene_hides_scene())
+            npc_draw_navi(cutscene_frame());
         if (cutscene_id() == CUTSCENE_NIGHTMARE && !cutscene_hides_scene()) {
             int32_t sine, cosine;
             int y, z;
@@ -320,6 +319,7 @@ static void         viewer_draw(void)
             cutscene_actor_draw(CUTSCENE_ACTOR_BRIDGE, 0, -10, 670, 0);
             cutscene_actor_draw(CUTSCENE_ACTOR_CHAINS, 158, y, z, 0);
             cutscene_actor_draw(CUTSCENE_ACTOR_CHAINS, -158, y, z, 0);
+            cutscene_gate_fire_draw();
         }
         /* All five En_Viewer actors share their channel's world origin.
          * Riding offsets belong to the original animation, not the mount. */
@@ -353,10 +353,16 @@ static void         viewer_draw(void)
                              cutscene_link_z(), cutscene_link_yaw());
             frame_timer_end(FRAME_PHASE_LINK);
         }
-    } else if (demo_link_active && !demo_title_is_visible() && !demo_first_person()) {
+    } else if (demo_link_active && !demo_title_is_visible() && !demo_first_person() &&
+               !demo_shop_browsing()) {
         frame_timer_begin(FRAME_PHASE_LINK);
         /* shape.yOffset: a ledge step-up draws him from where he stood
          * while the actor is already on the ledge. */
+        if (gameplay.get_item) {
+            unsigned int frame = gameplay.get_item_age * 2u / 3u;
+            if (frame >= LINK_FRAMES_GET_ITEM) frame = LINK_FRAMES_GET_ITEM - 1;
+            link_anim_pose(LINK_CLIP_GET_ITEM, frame, 0);
+        }
         kokiri_link_draw(demo_link.x, demo_link.y - DEMO_LINK_EYE_HEIGHT +
                          link_anim_y_offset_q8() / 256,
                          demo_link.z, demo_link_yaw);
@@ -367,6 +373,23 @@ static void         viewer_draw(void)
         if (navi_active())
             kokiri_navi_draw(navi_x(), navi_y(), navi_z());
     }
+#if !defined(DOSEI_PERF_PROBE) || DOSEI_PERF_PROBE != 3
+    /* Link has priority over optional actors in SGL's finite work area.
+     * Depth sorting still controls occlusion, independent of submission order. */
+    if (!kokiri_scene_backdrop_active() && !cutscene_hides_scene() &&
+        !cutscene_is_playing() && !scene_flow_is_interior()) {
+        kokiri_grass_draw();
+        kokiri_rupees_draw(demo_world_clock());
+        kokiri_boulder_draw();
+        kokiri_nut_draw();
+        kokiri_babas_draw();
+    }
+    if (demo_link_active && !demo_title_is_visible() && !cutscene_is_playing()) {
+        npc_draw(demo_world_clock());
+        kokiri_items_draw(demo_world_clock());
+        kokiri_fairies_draw(demo_world_clock());
+    }
+#endif
     if (!cutscene_is_playing() && (!demo_link_active || demo_title_is_visible()))
         action_audio_navi_flight(0, false);
     if (cutscene_is_playing() && !cutscene_hides_scene())
@@ -637,12 +660,128 @@ static void         cutscene_text(void)
 ** rows on the frame they stop being shown, or the last page stays on screen.
 */
 #define DIALOGUE_ROW    20
-#define DIALOGUE_ROWS   (DIALOGUE_MAX_LINES + 2)
+#define DIALOGUE_BODY_ROW (DIALOGUE_ROW + 2) /* Name extends 4 pixels into the intervening row. */
+#define DIALOGUE_ROWS   (DIALOGUE_MAX_LINES + 3)
+#define DIALOGUE_PAD_PX 4
+#define DIALOGUE_NAME_OFFSET_PX 4
+
+/* Bold speaker names. The SGL text font's half-width kana cells (0xA1..)
+** are never printed by this game; the first time a name is shown, each Latin
+** letter it needs gets a 1-pixel right-smeared copy across two cells,
+** shifted down four pixels to leave a four-pixel gap before the body.
+** Cells are located through the map entries slPrint just wrote (256-colour,
+** 1-word, 32-byte units from the B1 cell base pause_windows restores), and
+** the scheme self-checks: the source must contain ink and the unused kana
+** destination must be blank. An occupied destination falls back to plain. */
+#define BOLD_CELLS  ((volatile uint8_t *)0x25E60000u)
+#define BOLD_FIRST  0xA1u
+#define BOLD_LAST   0xDFu
+static uint8_t      bold_code[128];     /* ASCII -> kana slot, 0 = none yet */
+static unsigned int bold_next = BOLD_FIRST;
+static unsigned int bold_used_end = BOLD_FIRST;
+static bool         bold_failed;
+
+static volatile uint8_t *text_cell(unsigned int x, unsigned int y)
+{
+    volatile uint16_t *map = (volatile uint16_t *)slLocate(x, y);
+    return BOLD_CELLS + (unsigned int)(*map & 0x3FFu) * 32u;
+}
+
+static bool         cell_blank(volatile const uint8_t *c)
+{
+    unsigned int i;
+    for (i = 0; i < 64; ++i) if (c[i]) return false;
+    return true;
+}
+
+/* A font glyph: some ink, and one ink colour only. Anything else means the
+** cell arithmetic does not point at the font; never write then. */
+static bool         cell_glyph(volatile const uint8_t *c)
+{
+    unsigned int i, ink = 0;
+    for (i = 0; i < 64; ++i) {
+        if (!c[i]) continue;
+        if (ink && c[i] != ink) return false;
+        ink = c[i];
+    }
+    return ink != 0;
+}
+
+static volatile uint8_t *probe_cell(unsigned int x, unsigned int y, unsigned int code)
+{
+    char probe[2] = { (char)code, 0 };
+    jo_printf((int)x, (int)y, "%s", probe);
+    return text_cell(x, y);
+}
+
+static void         print_bold(unsigned int x, unsigned int y, const char *name)
+{
+    char out[40], lower[40];
+    unsigned int i;
+    /* Reuse our cells per name: two cells per distinct character give a
+     * four-pixel vertical offset without scrolling the HUD/text layer. */
+    for (i = 0; i < sizeof(bold_code); ++i) bold_code[i] = 0;
+    bold_next = BOLD_FIRST;
+    jo_set_printf_color_index(JO_COLOR_INDEX_White);
+    for (i = 0; name[i] && i + 1 < sizeof(out); ++i) {
+        unsigned char c = (unsigned char)name[i];
+        out[i] = (char)c;
+        lower[i] = ' ';
+        if (bold_failed || c < 0x21 || c > 0x7E) continue;
+        if (!bold_code[c]) {
+            volatile const uint8_t *src;
+            volatile uint8_t *dst, *bottom;
+            unsigned int k;
+            if (bold_next + 1 > BOLD_LAST) continue;
+            src = probe_cell(0, 31, c);
+            dst = probe_cell(0, 31, bold_next);
+            bottom = probe_cell(0, 31, bold_next + 1);
+            if (!cell_blank(probe_cell(0, 31, ' ')) || !cell_glyph(src) ||
+                (bold_next >= bold_used_end &&
+                 (!cell_blank(dst) || !cell_blank(bottom))) ||
+                src == dst || src == bottom || dst == bottom ||
+                dst == probe_cell(0, 31, bold_next & 0x7Fu) ||
+                bottom == probe_cell(0, 31, (bold_next + 1) & 0x7Fu)) {
+                bold_failed = true;
+                continue;
+            }
+            for (k = 0; k < 64; ++k) {
+                dst[k] = 0;
+                bottom[k] = 0;
+            }
+            for (k = 0; k < 64; ++k) {
+                unsigned int shifted = k + DIALOGUE_NAME_OFFSET_PX * 8;
+                uint8_t ink = src[k] ? src[k] : ((k & 7) ? src[k - 1] : 0);
+                if (shifted < 64) dst[shifted] = ink;
+                else bottom[shifted - 64] = ink;
+            }
+            bold_code[c] = (uint8_t)bold_next;
+            bold_next += 2;
+            if (bold_next > bold_used_end) bold_used_end = bold_next;
+        }
+        out[i] = (char)bold_code[c];
+        lower[i] = (char)(bold_code[c] + 1);
+    }
+    out[i] = lower[i] = 0;
+    jo_printf((int)x, (int)y, "%-38s", out);
+    jo_printf((int)x, (int)y + 1, "%-38s", lower);
+}
+
+/* Only changed retained rows touch the VDP2 map. In particular, holding a
+ * long page must not blank and repaint it during active scanout. */
+static uint32_t dialogue_row_hash(const char *text, unsigned marker)
+{
+    uint32_t hash = 2166136261u ^ marker;
+    if (text) while (*text) hash = (hash ^ (unsigned char)*text++) * 16777619u;
+    return hash;
+}
 
 static void         dialogue_box(void)
 {
     static bool was_talking;
+    static uint32_t row_hash[DIALOGUE_MAX_LINES + 1];
     unsigned int i;
+    bool repaint = !was_talking;
 
     /* Title flythrough and the file select have no interaction. Clear retained
      * VDP2 text too, so returning here cannot leave an old prompt or page on
@@ -666,31 +805,41 @@ static void         dialogue_box(void)
         return;
     }
     was_talking = true;
-    /* Clear the full previous page, then use the exact cutscene panel behind
-     * the VDP2 text. NPC and shop conversations share this presentation. */
-    for (i = 0; i < DIALOGUE_ROWS; ++i)
-        jo_printf_with_color(0, DIALOGUE_ROW + i, JO_COLOR_INDEX_White, "%-40s", "");
-    kokiri_message_box_draw(160, DIALOGUE_ROW * 8 + DIALOGUE_ROWS * 4,
-                            320, DIALOGUE_ROWS * 8);
-    jo_printf(1, DIALOGUE_ROW, "%-38s", gameplay_speaker_name());
+    /* VDP2 retains rows. Do not blank a visible page before repainting it:
+     * scanout can expose the empty lower rows. Padded line writes below
+     * replace previous content; close/ownership transitions clear once. */
+    kokiri_message_box_draw(160, DIALOGUE_ROW * 8 + DIALOGUE_ROWS * 4 + DIALOGUE_NAME_OFFSET_PX / 2,
+                            320, DIALOGUE_ROWS * 8 + DIALOGUE_PAD_PX * 2 - DIALOGUE_NAME_OFFSET_PX);
+    if (repaint) jo_printf(0, DIALOGUE_ROW + 1, "%-40s", "");
+    const char *speaker = gameplay_speaker_name();
+    uint32_t hash = dialogue_row_hash(speaker, 0);
+    if (repaint || row_hash[0] != hash) {
+        print_bold(1, DIALOGUE_ROW, speaker);
+        row_hash[0] = hash;
+    }
     {
         /* TWO_CHOICE rows (the shop's Buy / Don't buy) carry a cursor. */
         unsigned int lines = gameplay_page_lines();
         unsigned int choices = gameplay_choice_lines();
         for (i = 0; i < DIALOGUE_MAX_LINES; ++i) {
             const char *line = i < lines ? gameplay_page_line(i) : "";
+            char cursor = choices && i < lines && i >= lines - choices &&
+                i - (lines - choices) == gameplay.choice ? '>' : ' ';
+            hash = dialogue_row_hash(line, choices ? cursor : 0);
+            if (!repaint && row_hash[i + 1] == hash) continue;
+            row_hash[i + 1] = hash;
             if (choices && i < lines && i >= lines - choices)
-                jo_printf(1, DIALOGUE_ROW + 1 + i, "%c %-36s",
+                jo_printf(1, DIALOGUE_BODY_ROW + i, "%c %-36s",
                           i - (lines - choices) == gameplay.choice ? '>' : ' ',
                           line ? line : "");
             else
-                jo_printf(1, DIALOGUE_ROW + 1 + i, "%-38s", line ? line : "");
+                jo_printf(1, DIALOGUE_BODY_ROW + i, "%-38s", line ? line : "");
         }
         if (!choices) {
-            bool last = gameplay.rule < 0 ||
-                gameplay.page + 1u >= dialogue_rules[gameplay.rule].pages;
+            bool last = !gameplay_page_more() && (gameplay.rule < 0 ||
+                gameplay.page + 1u >= dialogue_rules[gameplay.rule].pages);
             kokiri_message_mark_draw(160,
-                (DIALOGUE_ROW + 1 + DIALOGUE_MAX_LINES) * 8 + 4, last);
+                (DIALOGUE_BODY_ROW + DIALOGUE_MAX_LINES) * 8 + 4, last);
         }
     }
 }
@@ -794,8 +943,8 @@ static void         inventory_menu(void)
             pause_windows_printf(8, 16, "%c Jump: %-10s (%c)  ", selected == 4 ? '>' : ' ',
                       *jump ? jump : "Unmapped", "YABXCZLR"[ui_jump_binding()]);
             pause_windows_printf(8, 18, "%c Reset defaults          ", selected == 5 ? '>' : ' ');
-            pause_windows_printf(7, 21, "Pad 1: %-23s", pad);
-            pause_windows_printf(7, 23, "%s: Choose  %s: Close     ",
+            pause_windows_printf(7, 20, "Pad 1: %-23s", pad);
+            pause_windows_printf(7, 22, "%s: OK  %s: Close     ",
                       ui_button_label(UI_KEY_A, analog), ui_button_label(UI_KEY_START, analog));
             pause_windows_printf(8, 25, "%-24s", minimap_enemy_dots() ? "Enemy map: ON" : "");
             pause_windows_printf(7, 27, "%-27s", report == 0 ? "Settings NOT saved" :
@@ -820,6 +969,16 @@ static void         inventory_menu(void)
             else if (save_check_quest_item(QUEST_KOKIRI_EMERALD)) name = "Kokiri Emerald";
         }
         pause_windows_printf(11, 25, "%-18s", name);
+        if (p->page == PAUSE_ITEMS && !p->save_prompt) {
+            if (save_state.stick_owned) pause_windows_printf(9, 10, "%2u", (unsigned)save_state.stick_ammo);
+            if (save_state.slingshot) pause_windows_printf(9, 14, "%2u", (unsigned)save_state.ammo_seeds);
+            pause_windows_printf(5, 27, "Hold [%s]+[%s]: Assign", ui_assign_modifier_label(),
+                                 ui_button_label(UI_KEY_DPAD, false));
+            pause_windows_printf(6, 23, "D:%-5s L:%-5s R:%-5s",
+                save_state.c_items[0] == 1 ? "Stick" : save_state.c_items[0] == 2 ? "Seeds" : "--",
+                save_state.c_items[1] == 1 ? "Stick" : save_state.c_items[1] == 2 ? "Seeds" : "--",
+                save_state.c_items[2] == 1 ? "Stick" : save_state.c_items[2] == 2 ? "Seeds" : "--");
+        }
     }
     /* Backup writes remain the real demo/save-device path. */
     if (gameplay.pause_window.save_prompt) {
@@ -1020,7 +1179,7 @@ static void         viewer_hud(void)
                   (int)(demo_link.y - DEMO_LINK_EYE_HEIGHT), (int)demo_link.z,
                   (int)demo_link_yaw);
     else
-        jo_printf(0, 8, "link: press START      ");
+        jo_printf(0, 8, "link: press %-10s", ui_button_label(UI_KEY_START, false));
     /* jo_3d_get_polygon_count() reports SGL's TotalPolygons, i.e. polygons
     ** submitted this frame, not DispPolygons actually drawn -- so it is a
     ** submission count, not a coverage measurement. "rej" is the number of
@@ -1204,7 +1363,7 @@ void                jo_main(void)
 
     /* Dialogue line text: disc file into a fixed cart carve (BUG-033). */
     if (!dialogue_text_load()) {
-        jo_core_error("DIALOG.TXT/CUTTEXT.TXT/MINIMAP.BIN missing or stale");
+        jo_core_error("DIALOG/CUTTEXT/MINIMAP/MUSICTRG/TITLEPTH missing or stale");
         return;
     }
 

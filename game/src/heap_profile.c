@@ -35,9 +35,43 @@ void jo_add_memory_zone(unsigned char *ptr, const unsigned int size)
     }
 }
 
+/* The SDK's SAME_BLOCK_SIZE path retries a full zone forever instead of
+ * advancing to the next zone. Lists use that mode, including boot callbacks.
+ * Preserve exact-size reuse, but bound each scan and spill into cart RAM. */
+static void *allocate_same_size(unsigned int n)
+{
+    int zone;
+    unsigned int size;
+    if (!n || n > ~0u - sizeof(jo_memory_block) - 3u) return JO_NULL;
+    size = (n + sizeof(jo_memory_block) + 3u) & ~3u;
+    for (zone = 0; zone < __jo_memory_zone_index; ++zone) {
+        unsigned char *ptr = memory_zones[zone].begin;
+        while (ptr < memory_zones[zone].high) {
+            jo_memory_block *block = (jo_memory_block *)ptr;
+            unsigned int remaining = memory_zones[zone].high - ptr;
+            if (remaining < sizeof(*block) || block->size < sizeof(*block) ||
+                (block->size & 3u) || block->size > remaining) return JO_NULL;
+            if (block->zone == JO_BLOCK_FREE && block->size == size) {
+                block->zone = zone;
+                return block + 1;
+            }
+            ptr += block->size;
+        }
+        if (size <= (unsigned int)(memory_zones[zone].end - ptr)) {
+            jo_memory_block *block = (jo_memory_block *)ptr;
+            block->zone = zone;
+            block->size = size;
+            memory_zones[zone].high += size;
+            return block + 1;
+        }
+    }
+    return JO_NULL;
+}
+
 void *jo_malloc_with_behaviour(unsigned int n, const jo_malloc_behaviour behaviour)
 {
-    void *result = dosei_allocator_malloc(n, behaviour);
+    void *result = behaviour == JO_MALLOC_TRY_REUSE_SAME_BLOCK_SIZE
+        ? allocate_same_size(n) : dosei_allocator_malloc(n, behaviour);
     if (result) {
         jo_memory_block *block = ((jo_memory_block *)result) - 1;
         heap_zone_profile_t *p = &dosei_heap_profile.zone[block->zone];

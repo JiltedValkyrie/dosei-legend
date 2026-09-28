@@ -34,7 +34,8 @@ bool    minimap_bind(const uint8_t *blob, uint32_t bytes);
 bool    minimap_init(void);
 /* Scene load: upload that scene's map, or switch the map off. */
 void    minimap_scene(unsigned int save_scene);
-/* Hide toggle (future pause-menu option); rules still apply when shown. */
+/* L toggles the map; HUD buttons remain visible. */
+void minimap_toggle(void);
 void    minimap_set_hidden(bool hidden);
 /* Refresh independent map/button visibility; NBG2ON if either is visible. */
 uint32_t minimap_layer_flags(void);

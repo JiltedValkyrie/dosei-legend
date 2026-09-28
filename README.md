@@ -1,8 +1,15 @@
-# Dosei Legend — Kokiri Forest on Sega Saturn
+# Dosei Legend ? Kokiri Forest on Sega Saturn
 
-The active game uses **Jo Engine / SGL**. Work on the playable vertical slice,
-not the archived libyaul experiments. See [scope](VERTICALSLICE.md) and
-[current progress](VSLICEPROGRESS.md).
+A work-in-progress Zelda adaptation using **Jo Engine / SGL**, developed on
+`dev`. **Requires the 4 MB RAM expansion cartridge.** The current playable
+route includes Link's house, Kokiri Forest, the sword chest, Kokiri Shop,
+NPC dialogue, traversal, combat, hearts, saves and pause pages.
+
+The [approved demo plan](game/docs/DEMO_PLAN.md) extends through the Deku Tree,
+Gohma, Lost Woods and Hyrule Field; that is planned scope, not a claim those
+areas are finished. See [current handoff](game/docs/OPUS_HANDOFF.md),
+[progress](VSLICEPROGRESS.md) and [known gaps](game/docs/BUG_FEATURE_LOG.md).
+The older [vertical-slice scope](VERTICALSLICE.md) is historical where superseded.
 
 ## Layout
 
@@ -25,7 +32,7 @@ shared/
   tools/                       Shared extraction, mesh and audio export helpers
   build/                       Ignored extraction/source caches
 tools/
-  launcher/                    Windows GUI: standard or hi-res Jo game
+  launcher/                    Windows GUI: Clean, Standard and hi-res builds
   mesh-workshop/               Non-destructive triangle/quad OBJ exchange
   tests/                       Tool checks
 workspace/meshes/               Ignored mesh editing revisions
@@ -38,71 +45,150 @@ legacy/libyaul/                 Archived reference only; not an active build tar
 
 ## Build and play
 
-First use **launch-game.bat > Config > Paths...** to select your own tools and
-save `config.ini`. See [developer setup](tools/launcher/SETUP.md) for dependencies,
-the exact OoT decomp/US 1.2 ROM and ROM placement. Windows builds can then use
-`game\build.bat` or `game\build.bat -Variant hires`.
+Open **[launch-game.bat](launch-game.bat) > Config > Paths...** first. Select
+your tools, validate paths/ROM, and save the local `config.ini`.
+[Developer setup](tools/launcher/SETUP.md) explains the Jo Engine SDK, MSYS2,
+Python/Pillow, Kronos, BIOS and required US 1.2 ROM/decomp inputs.
+Enable a **4 MB RAM expansion cartridge** in Kronos.
 
-From MSYS2 bash:
+| Build option | Purpose | Windows command from repository root | Image |
+| --- | --- | --- | --- |
+| **Clean player test** | Default for play and review: 320x240, no game debug overlays; safety checks remain enabled | `game\build.bat -Variant clean` | `game/build/game-clean.cue` |
+| Standard (`normal`) | 320x240 with developer overlays and camera comparison controls; build only when a test needs them | `game\build.bat -Variant normal` | `game/build/game.cue` |
+| Hi-res (`hires`) | Experimental 320x480 interlaced output; build only when requested | `game\build.bat -Variant hires` | `game/build/game-hires.cue` |
 
-```bash
-cd game
-./build.sh
-./build.sh --hires
-```
+Clean means a player-facing variant, not deletion of build files. It does not
+turn off safety checks or Kronos's own FPS display. Build sequentially: variants
+have separate objects/images but share generated assets and disc staging.
 
-Build sequentially. The modes have separate objects/images but share asset staging.
-Images are `game/build/game.cue` and `game/build/game-hires.cue`.
+| Launcher option | What it does |
+| --- | --- |
+| **Run selected** | Opens the selected existing image in Kronos; does not rebuild it |
+| **Rebuild...** | Opens build selection; select Clean for normal player review |
+| **Refresh** | Refreshes image availability and timestamps |
+| **Config > Paths...** | Changes local SDK, Python, emulator, BIOS and source-data paths |
+| **Config > Developer setup guide** | Opens the dependency/setup guide |
 
-Double-click **[launch-game.bat](launch-game.bat)** to choose standard 320x240 or
-experimental 320x480i. It runs existing builds, validates image availability,
-and does not build or kill an existing Kronos instance.
-Direct shortcuts: `game/run-kronos.bat` and `game/run-kronos-hires.bat`.
-
-Model tool: `tools/mesh-workshop/open-mesh-workshop.bat`.
-Imported tri/quad candidates are **not yet runtime-ready**.
-
-The build requires a configured Jo Engine SDK, MSYS2, Python/Pillow
-and the verified US 1.2 ROM/decomp used by the converters. Do not modify
-the shared SDK. Legacy experiments are not imported into active Jo runtime code.
+Close Kronos before switching builds **or rebuilding its mounted image**.
+Replacing a mounted ISO can leave cached file positions pointing at wrong
+assets; cold boot the completed image after a rebuild. Direct launch shortcuts are
+`game/run-kronos-clean.bat`, `game/run-kronos.bat` and
+`game/run-kronos-hires.bat`. Use the `.cue` to retain the disc's audio tracks.
+From a configured MSYS2 shell, `cd game` then `./build.sh --clean` builds Clean;
+`./build.sh` builds Standard and `./build.sh --hires` builds Hi-res.
+See [game build notes](game/README.md) for diagnostic options.
 
 ## Controls (current build)
 
-Standard digital Saturn pad; no 3D pad needed. These are Saturn buttons,
-not keyboard keys; keyboard bindings depend on Kronos settings. The in-game
-pause screen (Start) lists the same mapping.
+These are **Saturn input names**, not PC keyboard keys. Bind your controller in
+Kronos. The System page's label presets change displayed names; they do not
+configure Kronos or remap gameplay inputs. The table assumes default Y jump.
 
-| Button | What works now |
+| Input | Gameplay action |
 | --- | --- |
-| D-pad | Move relative to camera at the selected walk/run speed; steer while airborne |
-| B | Toggle walk/run. Gameplay starts in run; one toggle per press |
-| Y | Jump from ground; release and press again for another jump. No double-jump |
-| X | Swing the collected sword; cuts grass while the blade is live |
-| Hold R | Guard with the collected shield; never rotates the camera |
-| A | Talk to a nearby fairy and advance the text box one page |
-| B (text box open) | Close the dialogue. That press does not also toggle walk/run |
-| Hold Z | Lock onto the nearest valid target; releasing drops it. A tap recenters |
-| D-pad while holding Z | Strafe and back up; Link holds his facing, locked or not |
-| A (nothing to talk to) | Roll forward. The roll commits and carries him itself |
-| Hold L + D-pad | Look camera: aim the view, bounded. No movement, no shield |
-| Start | Open/close the item menu during gameplay; leaves the title screen |
-| Start during cutscene | Show skip prompt; press again within 2 seconds to skip the current camera shot |
-| Menu: D-pad / A / B | Pick a slot, equip the selected item, close the menu |
-| Hold C + D-pad | C-Up/Down/Left/Right. Routed and consumed, but no item system exists yet |
-| L + R + Down | Switch diagnostic overlay views; compiled out of the clean player-test image |
-| L + R + Up | Developer camera comparison: current follow / old camera |
+| Digital D-pad | Camera-relative movement; steer in the air |
+| 3D pad stick (analog mode) | Proportional movement; B selects walk/run speed ceiling |
+| B | Toggle walk/run; start in run |
+| Y | Manual jump; no double-jump |
+| X | Attack with equipped sword; cuts grass and damages enemies |
+| Hold R | Guard with equipped shield |
+| A | Context action: talk, advance text, interact; roll when no interaction claims it |
+| B during dialogue | Cancel/close when the conversation allows it; does not toggle walk/run |
+| Hold Z | Lock onto a valid attention target, including NPCs/enemies; release to unlock |
+| Tap Z | Recenter when the press did not acquire a lock |
+| Move while holding Z | Strafe/back up while keeping facing |
+| Tap L | Show/hide minimap |
+| Hold C + D-pad (digital) | N64 C directions; C-Up accepts Navi first, otherwise changes view |
+| D-pad (analog gameplay) | N64 C directions without holding C |
+| Start | Title/menu flow; open or close pause during gameplay |
+| Start during a cutscene | Show skip prompt; press again within two seconds to skip that camera shot |
 
-Camera follows automatically. Landing still rolls on its own after a fall; A
-now also rolls on demand when no talk, pickup or menu claims the press.
-Pickups auto-equip when collected. Targeting is hold-style against nearby NPCs
-only, not yet full OoT Z-targeting over every attention actor. The C buttons reach the input
-layer and show in the diagnostic overlay, but the item system they should
-drive does not exist yet.
+Camera follows automatically. C-Up enters first-person outdoors when grounded
+and free to act. D-pad/stick looks; another action button exits without firing
+that action. Navi calls take priority. Houses start in their original panorama;
+C-Up toggles the overhead picture and back. The shop keeps its fixed view.
+L now toggles the minimap, replacing the temporary hold-L free look.
+These camera/text changes build and pass host checks; Kronos acceptance is pending.
+Landing rolls depend on landing conditions.
+Find the sword in the maze chest; buy the Deku Shield for 40 rupees in Kokiri
+Shop. **Equip both on the Equipment page** to pass Mido's gear check.
+Acquisition alone does not equip them.
+
+## Pause pages and item assignment
+
+Press **Start**, use **L/R** to change pages, and **D-pad** to move the cursor
+on either controller type. **Start closes pause**. Blue marks the cursor;
+gold marks equipped gear or assigned items. Pause freezes the visible world
+and lowers music by 6 dB; SFX volume is unchanged.
+
+| Page | Available options |
+| --- | --- |
+| **Items** | Owned items, stick/seed counts and C-slot bindings. Assign with the chord below |
+| **Map** | World map with clouded unvisited regions; the pulsing marker identifies Kokiri Forest, not Link's exact position |
+| **Quest Status** | Quest display, including the Emerald when owned; song/quest interactions remain pending |
+| **Equipment** | Select an owned sword/shield and press A to equip it |
+| **System** | Save, Load, Title, button-label preset, jump binding and Reset defaults |
+
+To assign an item: highlight it on **Items**, then **hold Saturn C and press
+Down, Left or Right**. This chord is required in pause on **both digital and
+analog pads**; plain D-pad moves the cursor. C-Up remains reserved for Navi/view. Only owned
+items can be assigned. Assigning an item elsewhere removes its previous
+binding. Bindings persist when you save the adventure. The pause hint names
+the modifier as C (Saturn), LB (Xbox), or L1 (PlayStation). N64/GameCube
+presets show Sat C: bind that Saturn input in the emulator; those presets
+do not define a native modifier.
+
+**Assignment is implemented; live Deku Stick attacks and slingshot aiming/firing
+remain pending.** An assigned slot does not yet make those weapon actions work.
+
+B opens the save prompt from the four adventure pages. In a prompt, D-pad
+changes the choice, A confirms and B cancels. On System, B returns to Equipment.
+
+## System options and saves
+
+| Option | Behavior |
+| --- | --- |
+| **Save** | Opens confirmation and writes the current adventure slot to backup RAM; reports success/failure |
+| **Load** | Confirms leaving unsaved progress, then opens file select; does not automatically save |
+| **Title** | Confirms leaving unsaved progress, then returns to title; does not automatically save |
+| **Labels** | A cycles Saturn (Auto), Xbox, N64, GameCube and PlayStation PS4/5 names. These describe emulator wiring, not input remapping |
+| **Jump** | A cycles Y, A, B, X, C, Z, L, R. Chosen button replaces its former gameplay action; menu confirm/back stay unchanged |
+| **Reset defaults** | Restores Saturn automatic labels and Y jump; does not erase adventure saves |
+
+N64 labels hide the manual-jump prompt, but default Y jump still works.
+Saturn Auto reflects detected controller mode; a 3D pad switched to digital
+mode identifies as digital. Selecting a different label preset does not change
+this detection. Avoid binding jump to an action you still need in gameplay.
+
+Preferences save separately from adventure slots; System reports a settings
+save failure. Current source writes adventure save v6: v4 added C-slot bindings,
+v5 added nuts, and v6 migrates forest pickup flags. Saves v2-v5 still load;
+missing older fields receive defaults. Save v6 is included in the 2026-09-28 Clean build; Kronos validation is pending. Use working Saturn backup RAM for persistent saves.
+
+## Optional diagnostics
+
+Standard-only **L + R + Down** switches debug overlay views;
+**L + R + Up** switches the developer camera comparison. Clean removes both.
+
+The enemy-map cheat is **Up Up Down Down Left Right Left Right A Start**;
+repeat to turn it off. It shows active hostile enemies/bosses on the current
+mapped scene. Its status appears on System only while enabled. It survives
+room changes and normal respawn, but clears on new/load game or ending the
+session and is never saved. Release the completing Start before pressing
+Start again to pause.
+
+Model tool: `tools/mesh-workshop/open-mesh-workshop.bat`. Imported tri/quad
+candidates are editing assets, not automatically runtime-ready meshes.
 
 ## Focused checks
+
+Run tests relevant to the changed feature. Available suite entry points:
 
 ```powershell
 python -m unittest discover -s game/tests
 python -m unittest discover -s tools/tests
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/launcher/kronos-launcher.ps1 -Check
 ```
+
+A build or host test does not prove controller feel, audio or rendering in
+Kronos. Latest item/pause fixes still need player review; see the handoff.

@@ -12,17 +12,34 @@
 #include "navi_score.h"
 #include "deku_tree_score.h"
 #include "nightmare_score.h"
+#include "house_score.h"
+#include "shop_score.h"
 
-const music_bank_t music_bank_title = {
+/* Trigger tables live on the cart (MUSICTRG.BIN, BUG-043); these copies in
+** the headers are unreferenced and dropped. */
+#pragma GCC diagnostic ignored "-Wunused-const-variable"
+typedef char music_trigger_is_8_bytes[sizeof(music_trigger_t) == 8 ? 1 : -1];
+
+static music_bank_t *const banks[] = {
+    &music_bank_title, &music_bank_kokiri, &music_bank_navi,
+    &music_bank_deku_tree, &music_bank_nightmare, &music_bank_house, &music_bank_shop
+};
+static const unsigned int counts[] = {
+    TITLE_TRIGGER_COUNT, KOKIRI_TRIGGER_COUNT, NAVI_TRIGGER_COUNT,
+    DEKU_TREE_TRIGGER_COUNT, NIGHTMARE_TRIGGER_COUNT, HOUSE_TRIGGER_COUNT, SHOP_TRIGGER_COUNT
+};
+#define BANK_COUNT (sizeof(banks) / sizeof(banks[0]))
+
+music_bank_t music_bank_title = {
     "TITLE.PCM", "TITLE.LVL",
-    (const music_pcm_t *)title_pcm, (const music_trigger_t *)title_triggers,
+    (const music_pcm_t *)title_pcm, 0,
     TITLE_TRIGGER_COUNT, TITLE_FRAMES, TITLE_LOOP_FRAME, TITLE_VOICES,
     TITLE_SAMPLE_BASE, TITLE_PCM_BYTES, TITLE_FRAMES * TITLE_VOICES
 };
 
-const music_bank_t music_bank_kokiri = {
+music_bank_t music_bank_kokiri = {
     "FOREST.PCM", "FOREST.LVL",
-    (const music_pcm_t *)kokiri_pcm, (const music_trigger_t *)kokiri_triggers,
+    (const music_pcm_t *)kokiri_pcm, 0,
     KOKIRI_TRIGGER_COUNT, KOKIRI_FRAMES, KOKIRI_LOOP_FRAME, KOKIRI_VOICES,
     KOKIRI_SAMPLE_BASE, KOKIRI_PCM_BYTES, KOKIRI_LEVEL_BYTES
 };
@@ -33,25 +50,63 @@ const music_bank_t music_bank_kokiri = {
 ** the top: a beat that outlives its cue repeats instead of falling silent.
 **
 */
-const music_bank_t music_bank_navi = {
+music_bank_t music_bank_navi = {
     "CSNAVI.PCM", "CSNAVI.LVL",
-    (const music_pcm_t *)navi_pcm, (const music_trigger_t *)navi_triggers,
+    (const music_pcm_t *)navi_pcm, 0,
     NAVI_TRIGGER_COUNT, NAVI_FRAMES, NAVI_LOOP_FRAME, NAVI_VOICES,
     NAVI_SAMPLE_BASE, NAVI_PCM_BYTES, NAVI_LEVEL_BYTES
 };
 
-const music_bank_t music_bank_deku_tree = {
+music_bank_t music_bank_deku_tree = {
     "CSDEKU.PCM", "CSDEKU.LVL",
     (const music_pcm_t *)deku_tree_pcm,
-    (const music_trigger_t *)deku_tree_triggers,
+    0,
     DEKU_TREE_TRIGGER_COUNT, DEKU_TREE_FRAMES, DEKU_TREE_LOOP_FRAME,
     DEKU_TREE_VOICES, DEKU_TREE_SAMPLE_BASE, DEKU_TREE_PCM_BYTES,
     DEKU_TREE_LEVEL_BYTES
 };
 
-const music_bank_t music_bank_nightmare = {
+music_bank_t music_bank_nightmare = {
     "CSGANON.PCM", "CSGANON.LVL",
-    (const music_pcm_t *)nightmare_pcm, (const music_trigger_t *)nightmare_triggers,
+    (const music_pcm_t *)nightmare_pcm, 0,
     NIGHTMARE_TRIGGER_COUNT, NIGHTMARE_FRAMES, NIGHTMARE_LOOP_FRAME,
     NIGHTMARE_VOICES, NIGHTMARE_SAMPLE_BASE, NIGHTMARE_PCM_BYTES, NIGHTMARE_LEVEL_BYTES
 };
+
+music_bank_t music_bank_house = {
+    "HOUSE.PCM", "HOUSE.LVL", (const music_pcm_t *)house_pcm, 0,
+    HOUSE_TRIGGER_COUNT, HOUSE_FRAMES, HOUSE_LOOP_FRAME, HOUSE_VOICES,
+    HOUSE_SAMPLE_BASE, HOUSE_PCM_BYTES, HOUSE_LEVEL_BYTES
+};
+music_bank_t music_bank_shop = {
+    "SHOP.PCM", "SHOP.LVL", (const music_pcm_t *)shop_pcm, 0,
+    SHOP_TRIGGER_COUNT, SHOP_FRAMES, SHOP_LOOP_FRAME, SHOP_VOICES,
+    SHOP_SAMPLE_BASE, SHOP_PCM_BYTES, SHOP_LEVEL_BYTES
+};
+
+/* MUSICTRG.BIN (tools/build_cart_tables.py): 'KTRG', u16 bank count, u16
+** count per bank, then the triggers in music_trigger_t layout. Any mismatch
+** leaves every bank with no triggers: silent music, never a bad read. */
+bool music_banks_bind(const uint8_t *blob, uint32_t bytes)
+{
+    unsigned int i, offset = 6 + 2 * BANK_COUNT;
+    for (i = 0; i < BANK_COUNT; ++i) { banks[i]->triggers = 0; banks[i]->trigger_count = 0; }
+    if (!blob || bytes < offset || blob[0] != 'K' || blob[1] != 'T' ||
+        blob[2] != 'R' || blob[3] != 'G' ||
+        ((blob[4] << 8) | blob[5]) != BANK_COUNT)
+        return false;
+    for (i = 0; i < BANK_COUNT; ++i)
+        if (((unsigned int)(blob[6 + 2 * i] << 8) | blob[7 + 2 * i]) != counts[i])
+            return false;
+    {
+        unsigned int total = offset;
+        for (i = 0; i < BANK_COUNT; ++i) total += counts[i] * 8;
+        if (total != bytes) return false;
+    }
+    for (i = 0; i < BANK_COUNT; ++i) {
+        banks[i]->triggers = (const music_trigger_t *)(blob + offset);
+        banks[i]->trigger_count = counts[i];
+        offset += counts[i] * 8;
+    }
+    return true;
+}

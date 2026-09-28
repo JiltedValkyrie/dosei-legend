@@ -10,6 +10,9 @@
 #include "kokiri_sgl.h"
 #include "vdp1_layout.h"
 #include "demo.h"
+#include "actor_mesh.h"
+#include "npc_pose.h"
+#include "vdp1_draw_wait.h"
 
 /* KFR1 v2, as tools/build_link_model.py writes it:
 **
@@ -32,14 +35,17 @@
 #define KFR1_RECORD_BYTES   20
 
 static const char *const ACTOR_FILES[CUTSCENE_ACTOR_COUNT] = {
-    "GANON.BIN", "ZELDA.BIN", "IMPA.BIN", "HZELDA.BIN", "HGANON.BIN", "BRIDGE.BIN", "CHAINS.BIN"
+    "GANON.BIN", "ZELDA.BIN", "IMPA.BIN", "HZELDA.BIN", "HGANON.BIN", "BRIDGE.BIN", "CHAINS.BIN", "GATEFIRE.BIN"
 };
 
-typedef struct
+typedef struct actor_mesh
 {
     bool     loaded;
     unsigned char *animation;
     unsigned char *model_data;
+    unsigned char *tracking;
+    unsigned char *scroll;
+    unsigned int scroll_frame;
     unsigned int ticks;
     unsigned int poses;
     PDATA    pdata;
@@ -66,6 +72,10 @@ static uint16_t read_be16(const unsigned char *p)
 
 static void free_actor(cutscene_actor_t *actor)
 {
+    if (actor->tracking) jo_free(actor->tracking);
+    if (actor->scroll) jo_free(actor->scroll);
+    actor->scroll = 0;
+    actor->tracking = 0;
     if (actor->model_data) jo_free(actor->model_data);
     actor->model_data = 0;
     if (actor->animation) jo_free(actor->animation);
@@ -240,6 +250,11 @@ bool cutscene_actors_load(void)
             return (false);
         }
     }
+    if (actors[CUTSCENE_ACTOR_GATE_FIRE].pdata.nbPoint != 4 ||
+        actors[CUTSCENE_ACTOR_GATE_FIRE].pdata.nbPolygon != 32) {
+        cutscene_actors_free();
+        return false;
+    }
     actors_ready = true;
     return (true);
 }
@@ -316,6 +331,7 @@ static void pose_actor(cutscene_actor_t *actor)
 
 static bool upload_actor(cutscene_actor_t *actor)
 {
+    actor->scroll_frame = ~0u;
     const unsigned char *data = actor->model_data;
     unsigned int i, texture_off = read_be32(data + 0x18);
     const unsigned char *records = data + read_be32(data + 0x14);
@@ -327,13 +343,13 @@ static bool upload_actor(cutscene_actor_t *actor)
         /* Reuse the converter's tiles, including their CLUTs. */
         {
             unsigned int previous;
-            for (previous = 0; previous < i; ++previous) {
+            for (previous = 0; !actor->scroll && previous < i; ++previous) {
                 const unsigned char *old = records + previous * KFR1_RECORD_BYTES;
                 if (read_be32(old + 8) == pixel && read_be32(old + 12) == clut &&
                     read_be16(old + 16) == size)
                     break;
             }
-            if (previous < i) {
+            if (!actor->scroll && previous < i) {
                 slot = actor->attributes[previous].texno;
                 colno = actor->attributes[previous].colno;
             } else {
@@ -349,6 +365,161 @@ static bool upload_actor(cutscene_actor_t *actor)
         actor->attributes[i].colno = (Uint16)colno;
     }
     return true;
+}
+
+/* KTS1: 32 original UV-offset frames, one 16x16 CLUT tile per face. */
+bool actor_mesh_load_scroll(actor_mesh_t *mesh,const char *file)
+{
+    int bytes;unsigned int faces,i;
+    if(!mesh) return false;
+    if(mesh->scroll) jo_free(mesh->scroll);
+    mesh->scroll=(unsigned char *)jo_fs_read_file(file,&bytes);
+    faces=mesh->scroll && bytes>=12 ? read_be32(mesh->scroll+8) : 0;
+    if(!mesh->scroll || bytes<12 || read_be32(mesh->scroll)!=0x4B545331u ||
+       read_be32(mesh->scroll+4)!=32 || !faces || faces>(unsigned int)mesh->pdata.nbPolygon ||
+       (unsigned int)bytes!=12+faces*4+32*faces*160) {
+        if(mesh->scroll) jo_free(mesh->scroll);
+        mesh->scroll=0;return false;
+    }
+    for(i=0;i<faces;++i) {
+        unsigned int face=read_be32(mesh->scroll+12+i*4);
+        unsigned int records=read_be32(mesh->model_data+0x14);
+        if(face>=(unsigned int)mesh->pdata.nbPolygon ||
+           read_be16(mesh->model_data+records+face*KFR1_RECORD_BYTES+16)!=0x0210) {
+            jo_free(mesh->scroll);mesh->scroll=0;return false;
+        }
+    }
+    mesh->scroll_frame=~0u;return true;
+}
+void actor_mesh_scroll(actor_mesh_t *mesh,unsigned int frame)
+{
+    unsigned int i,k,faces;
+    const unsigned char *data;
+    if(!mesh || !mesh->scroll || mesh->scroll_frame==(frame&31)) return;
+    if(!vdp1_wait_for_draw_end()) return; /* retain old frame until safe */
+    frame &=31;
+    faces=read_be32(mesh->scroll+8);
+    data=mesh->scroll+12+faces*4+frame*faces*160;
+    for(i=0;i<faces;++i,data+=160) {
+        unsigned int face=read_be32(mesh->scroll+12+i*4);
+        volatile uint16_t *palette_out=(volatile uint16_t *)((unsigned char *)JO_VDP1_VRAM+mesh->attributes[face].colno*8);
+        volatile uint16_t *pixels=(volatile uint16_t *)((unsigned char *)JO_VDP1_VRAM+
+            __jo_sprite_def[mesh->attributes[face].texno].adr*8);
+        for(k=0;k<16;++k) palette_out[k]=read_be16(data+k*2);
+        for(k=0;k<64;++k) pixels[k]=read_be16(data+32+k*2);
+    }
+    mesh->scroll_frame=frame;
+}
+
+actor_mesh_t *actor_mesh_load(const char *file)
+{
+    char name[] = "NPC00.TRK";
+    int bytes;
+    unsigned int flags, i;
+    actor_mesh_t *mesh = jo_malloc(sizeof(*mesh));
+    if (!mesh) return 0;
+    *mesh = (actor_mesh_t){0};
+    if (!load_actor(mesh, file, true)) { jo_free(mesh); return 0; }
+    name[3] = file[3]; name[4] = file[4];
+    mesh->tracking = (unsigned char *)jo_fs_read_file(name, &bytes);
+    flags = ((unsigned int)mesh->pdata.nbPoint + 3) & ~3u;
+    if (!mesh->tracking || bytes < 16 || read_be32(mesh->tracking) != 0x4e545232u ||
+        read_be32(mesh->tracking + 4) != (unsigned int)mesh->pdata.nbPoint ||
+        read_be32(mesh->tracking + 8) != mesh->ticks ||
+        (read_be32(mesh->tracking + 12) != 576 && read_be32(mesh->tracking + 12) != 768) ||
+        (unsigned int)bytes != 16 + flags + mesh->ticks * 54) {
+        actor_mesh_free(mesh); return 0;
+    }
+    for (i = 0; i < (unsigned int)mesh->pdata.nbPoint; ++i)
+        if (mesh->tracking[16+i] > 3) { actor_mesh_free(mesh); return 0; }
+    return mesh;
+}
+
+/* Animated prop: original baked clip, no NPC head/torso tracking. */
+actor_mesh_t *actor_mesh_load_animated(const char *file)
+{
+    actor_mesh_t *mesh = jo_malloc(sizeof(*mesh));
+    if (!mesh) return 0;
+    *mesh = (actor_mesh_t){0};
+    if (!load_actor(mesh, file, true)) { jo_free(mesh); return 0; }
+    return mesh;
+}
+
+/* A static KFR1 prop (no clip, no tracking): tools/build_shop_props.py. */
+actor_mesh_t *actor_mesh_load_static(const char *file)
+{
+    actor_mesh_t *mesh = jo_malloc(sizeof(*mesh));
+    if (!mesh) return 0;
+    *mesh = (actor_mesh_t){0};
+    if (!load_actor(mesh, file, false)) { jo_free(mesh); return 0; }
+    return mesh;
+}
+
+void actor_mesh_draw_static(actor_mesh_t *mesh, int32_t x, int32_t y, int32_t z,
+                            uint16_t yaw)
+{
+    if (!mesh || !mesh->loaded) return;
+    jo_3d_push_matrix();
+    jo_3d_translate_matrix(x, -y, z);
+    slRotY((ANGLE)yaw);
+    kokiri_submit_pdata(&mesh->pdata);
+    jo_3d_pop_matrix();
+}
+
+void actor_mesh_free(actor_mesh_t *mesh)
+{
+    if (mesh) { free_actor(mesh); jo_free(mesh); }
+}
+
+bool actor_mesh_upload(actor_mesh_t *mesh)
+{
+    return mesh && upload_actor(mesh);
+}
+
+void actor_mesh_draw(actor_mesh_t *mesh, unsigned int frame,
+                     int32_t x, int32_t y, int32_t z, uint16_t yaw,
+                     const int16_t head_rot[9], const int16_t torso_rot[9],
+                     int32_t focus[3])
+{
+    unsigned int i, pose;
+    int16_t basis[9], origin[3], torso_basis[9], torso_origin[3];
+    int32_t pivot;
+    const unsigned char *p;
+    if (!mesh || !mesh->loaded) return;
+    frame %= mesh->ticks;
+    if (mesh->tracking) {
+    p = mesh->tracking + 16 + (((unsigned int)mesh->pdata.nbPoint + 3) & ~3u) + frame * 54;
+    for (i = 0; i < 9; ++i) {
+        basis[i] = (int16_t)read_be16(p + i*2);
+        torso_basis[i] = (int16_t)read_be16(p + 30 + i*2);
+    }
+    for (i = 0; i < 3; ++i) {
+        origin[i] = (int16_t)read_be16(p + 18 + i*2);
+        focus[i] = (int16_t)read_be16(p + 24 + i*2);
+        torso_origin[i] = (int16_t)read_be16(p + 48 + i*2);
+    }
+    pivot = read_be32(mesh->tracking + 12);
+    /* Head override first (inner limb), then the torso subtree's. */
+    if (head_rot) npc_limb_transform(focus, basis, origin, pivot, head_rot);
+    if (torso_rot) npc_limb_transform(focus, torso_basis, torso_origin, 0, torso_rot);
+    }
+    pose = read_be16(mesh->animation + 16 + frame * 2);
+    p = mesh->animation + 16 + mesh->ticks * 2 + pose * mesh->pdata.nbPoint * 6;
+    for (i = 0; i < (unsigned int)mesh->pdata.nbPoint; ++i, p += 6) {
+        int32_t v[3] = { (int16_t)read_be16(p), (int16_t)read_be16(p+2), (int16_t)read_be16(p+4) };
+        if (head_rot && mesh->tracking && (mesh->tracking[16+i] & 1))
+            npc_limb_transform(v, basis, origin, pivot, head_rot);
+        if (torso_rot && (mesh->tracking[16+i] & 2))
+            npc_limb_transform(v, torso_basis, torso_origin, 0, torso_rot);
+        mesh->points[i][X] = v[0] * 1024;
+        mesh->points[i][Y] = -v[1] * 1024;
+        mesh->points[i][Z] = v[2] * 1024;
+    }
+    jo_3d_push_matrix();
+    jo_3d_translate_matrix(x, -y, z);
+    slRotY((ANGLE)yaw);
+    kokiri_submit_pdata(&mesh->pdata);
+    jo_3d_pop_matrix();
 }
 
 /* All CD reads happen at scene load. Only visible actors occupy VDP1; a
@@ -417,3 +588,27 @@ void cutscene_actor_draw(cutscene_actor_id id, int32_t x, int32_t y, int32_t z,
 /*
 ** END OF FILE
 */
+
+/* Original BgSpot00Hanebasi_DrawTorches: both fire bases are fixed in world
+ * space, scale .008, billboard yaw camera+0x8000. Only nightmare calls this.
+ * Prebaked phases select the two scrolling source textures at 20 Hz. */
+void cutscene_gate_fire_draw(void)
+{
+    cutscene_actor_t *fire = &actors[CUTSCENE_ACTOR_GATE_FIRE];
+    unsigned int i;
+    if (!fire->loaded || !(resident_mask & (1u << CUTSCENE_ACTOR_GATE_FIRE))) return;
+    for (i = 0; i < 2; ++i) {
+        unsigned int phase = (((cutscene_frame() + i) * 5u) & 127u) / 4u;
+        static PDATA frames[2];
+        PDATA *frame = &frames[i];
+        *frame = fire->pdata;
+        frame->pltbl = fire->polygons + phase;
+        frame->attbl = fire->attributes + phase;
+        frame->nbPolygon = 1;
+        jo_3d_push_matrix();
+        jo_3d_translate_matrix(i ? -260 : 260, -128, 690);
+        slRotY((ANGLE)(demo_yaw + 0x8000u));
+        kokiri_submit_pdata(frame);
+        jo_3d_pop_matrix();
+    }
+}

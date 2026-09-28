@@ -15,7 +15,8 @@
 **
 ** The N64 reference is the manual at game/docs/refs: C is FOUR C BUTTONS, not
 ** an analog stick. Holding the Saturn C button turns the D-pad into that
-** cluster. L holds the look camera; Z targets. Chord priority is L, then C, then movement,
+** cluster. C-Up requests a view; its active look mode owns axes. L toggles
+** the map; Z targets. C directions otherwise outrank digital movement,
 ** and a direction consumed by a modifier never leaks into locomotion.
 */
 
@@ -50,7 +51,7 @@ typedef struct
     /* Look camera. yaw/pitch deltas are binang per fixed step, zero unless
     ** look_mode is set. */
     bool                look_mode;
-    bool                look_exited;        /* L released this step */
+    bool                look_exited;        /* exit action or mode ended */
     int32_t             look_yaw_delta;
     int32_t             look_pitch_delta;
     /* C interface. `c_held` is the direction currently held (for future aiming);
@@ -69,6 +70,10 @@ typedef struct
     /* Pending: no system implemented yet. */
     bool                cancel_pending;     /* B press, before walk/run uses it */
     int8_t              menu_dx, menu_dy, menu_page;
+    /* Held direction while a box owns the pad, as an N64-scale stick value
+    ** (right/up positive): D-pad = +-70, analog = its stick. Shops read it
+    ** like EnOssan_UpdateJoystickInputState (first push, then hold). */
+    int8_t              menu_hold_x, menu_hold_y;
     int8_t              menu_step;          /* D-pad while a menu/box owns it */
     bool                interact_pending;   /* A */
     bool                attack_pending;     /* X */
@@ -80,6 +85,7 @@ typedef struct
     bool                interact_held;
     bool                diagnostics_toggled;
     bool                camera_swap_toggled;
+    bool                map_toggled;          /* L edge outside menus/view */
 }                       player_input_t;
 
 /* Look-camera aim rates, per 30 Hz step. These are deltas only: the bounds are
@@ -91,6 +97,8 @@ typedef struct
 #define PLAYER_LOOK_PITCH_SPEED 280
 
 void    player_input_reset(void);
+/* C-Up camera owns axes until an exit action; L no longer enables free look. */
+void player_input_set_view_look(bool active);
 /* Binding steals its original action only in gameplay; menu controls stay fixed. */
 void player_input_set_jump_button(uint16_t mask);
 /* Sample from VBlank: `held` is the normalized CAMERA_* snapshot. Maintains the

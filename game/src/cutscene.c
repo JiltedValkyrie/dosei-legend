@@ -11,6 +11,7 @@
 #include "scene_flow.h"
 #include "kokiri_sgl.h"
 #include "cutscene_actor.h"
+#include "npc_draw.h"
 #include "action_audio.h"
 #include "vdp1_draw_wait.h"
 #include "kokiri_camera.h"
@@ -163,6 +164,7 @@ bool cutscene_start(unsigned int id)
     }
     message_stop();
     kokiri_opening_cache_free();
+    npc_draw_free();
     cs = &cutscenes[id];
     state.active = false;
     state.finished = false;
@@ -215,6 +217,8 @@ bool cutscene_start(unsigned int id)
         cutscene_actors_free();
         if (!kokiri_opening_cache_load()) return false;
         state.scene_loaded = kokiri_scene_load_bank(2, 0);
+        if (state.scene_loaded && id == CUTSCENE_NAVI_FLY)
+            state.scene_loaded = npc_draw_load_navi();
     } else if (cs->scene == CUTSCENE_SCENE_LINK_HOME) {
         cutscene_actors_free();
         /* Moving house cameras use SKYBOX_HOUSE_LINK, not the fixed JPEG. */

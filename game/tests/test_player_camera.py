@@ -70,7 +70,7 @@ class TraversalCamera(unittest.TestCase):
         self.step()
         original=self.yaw.value
         for _ in range(1800):self.step(2,facing=32768)
-        self.assertEqual(self.camera.at_y,12)
+        self.assertEqual(self.camera.at_y,44-37)
         self.assertEqual(self.follow.pitch,7282)
         self.assertEqual(self.yaw.value,original)
         self.assertGreater(self.eye.y,self.camera.at_y)
@@ -79,8 +79,8 @@ class TraversalCamera(unittest.TestCase):
         self.step()
         self.player.y+=20
         for _ in range(600):self.step(1,facing=16384)
-        self.assertEqual(self.camera.climb_offset,-19)
-        self.assertEqual(self.camera.at_y,20+62-19)
+        self.assertEqual(self.camera.climb_offset,-14)
+        self.assertEqual(self.camera.at_y,20+44-14)
         self.assertEqual(self.follow.pitch,500)
         self.assertEqual(self.yaw.value,16384)
     def test_exit_hang_eases_target_back_without_cut(self):
@@ -88,9 +88,9 @@ class TraversalCamera(unittest.TestCase):
         before=self.camera.at_y
         self.step(0)
         self.assertGreater(self.camera.at_y,before)
-        self.assertLess(self.camera.at_y,50)
+        self.assertLess(self.camera.at_y,44-9)
         for _ in range(180):self.step(0)
-        self.assertEqual(self.camera.at_y,50)
+        self.assertEqual(self.camera.at_y,44-9)
         self.assertFalse(self.camera.returning)
     def test_camera_wall_and_camera_ignore_flag(self):
         wall=bg.quad((-200,-200,-60),(200,-200,-60),(200,300,-60),(-200,300,-60))
@@ -127,5 +127,26 @@ class TraversalCamera(unittest.TestCase):
         self.assertTrue(self.lib.player_camera_crawl_line(C.byref(mesh),9,C.byref(point),direction))
         self.assertEqual((point.x,point.y,point.z),(-784,132,1037))
         self.assertEqual(tuple(direction),(0,0,364))
+
+    def view_step(self, x=0, y=0, facing=0):
+        focus=bg.Vec(0, 44, 0)
+        self.lib.player_camera_first_person(C.byref(self.follow), C.byref(focus),
+            facing, x, y, C.byref(self.eye), C.byref(self.yaw), C.byref(self.pitch))
+
+    def test_first_person_turns_full_circle_and_pitch_returns_to_level(self):
+        for i in range(180): self.view_step(420, 280)
+        self.assertGreater(self.pitch.value, 13000)
+        self.assertEqual(self.yaw.value, (180*640) & 65535)
+        for i in range(200): self.view_step()
+        self.assertEqual(self.pitch.value, 0)
+        self.assertLessEqual(abs(self.eye.x)+abs(self.eye.z), 7)
+        self.assertEqual(self.eye.y, 44)
+
+    def test_first_person_eye_does_not_cross_nearby_wall(self):
+        # Reuse the collision fixture helper: vertical wall behind the focus.
+        self.world([bg.tri(((-20,0,-3),(20,0,-3),(20,100,-3))),
+                    bg.tri(((-20,0,-3),(20,100,-3),(-20,100,-3)))])
+        self.view_step()
+        self.assertGreater(self.eye.z, -3)
 
 if __name__=='__main__':unittest.main()

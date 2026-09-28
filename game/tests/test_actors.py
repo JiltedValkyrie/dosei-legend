@@ -25,7 +25,7 @@ EXPECTED_PEOPLE = {
 }
 
 ROW = re.compile(r'\{\s*(-?\d+),\s*(-?\d+),\s*(-?\d+),\s*(\d+),\s*0x([0-9A-F]{4}),'
-                 r'\s*KOKIRI_NPC_(\w+),\s*(\d+)\s*\}')
+                 r'\s*KOKIRI_NPC_(\w+),\s*(\d+),\s*(\d+)\s*\}')
 
 
 def table():
@@ -38,7 +38,7 @@ def table():
 class ActorTable(unittest.TestCase):
     def test_every_person_is_an_original_placement(self):
         rows = ROW.findall(table())
-        found = {(int(x), int(y), int(z)): kind for x, y, z, _, _, kind, _ in rows}
+        found = {(int(x), int(y), int(z)): kind for x, y, z, _, _, kind, _, scene in rows if int(scene) == 0}
         self.assertEqual(found, EXPECTED_PEOPLE)
 
     def test_rupees_preserve_source_spawn_words_and_positions(self):
@@ -63,7 +63,7 @@ class ActorTable(unittest.TestCase):
 
     def test_facing_is_kept_as_binang(self):
         rows = ROW.findall(table())
-        yaws = {(int(x), int(z)): int(yaw) for x, _, z, yaw, _, _, _ in rows}
+        yaws = {(int(x), int(z)): int(yaw) for x, _, z, yaw, _, _, _, scene in rows if int(scene) == 0}
         # rotY -17476 for Mido and -7282 for Saria, read as unsigned binang.
         self.assertEqual(yaws[(1522, 105)], 48060)
         self.assertEqual(yaws[(18, 873)], 58254)
@@ -71,10 +71,17 @@ class ActorTable(unittest.TestCase):
             self.assertTrue(0 <= yaw < 65536)
 
     def test_named_characters_come_first(self):
-        kinds = [row[5] for row in ROW.findall(table())]
+        kinds = [row[5] for row in ROW.findall(table()) if int(row[7]) == 0]
         self.assertEqual(kinds[:2], ['MIDO', 'SARIA'])
         self.assertNotIn('MIDO', kinds[2:])
         self.assertNotIn('SARIA', kinds[2:])
+
+    def test_interior_child_types_match_source_spawn_rules(self):
+        rows = ROW.findall(table())
+        by_scene = {scene: sorted(int(row[4],16) & 255 for row in rows
+                    if row[5] == 'CHILD' and int(row[7]) == scene)
+                    for scene in (4,6,7,8,9)}
+        self.assertEqual(by_scene, {4:[10],6:[7,8,11],7:[9],8:[],9:[]})
 
     def test_counts_agree_with_the_header(self):
         header = (GENERATED / 'kokiri_actors.h').read_text()

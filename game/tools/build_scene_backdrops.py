@@ -102,6 +102,24 @@ def main():
 
     args.cd.mkdir(parents=True, exist_ok=True)
     args.out.mkdir(parents=True, exist_ok=True)
+    # z_vr_box.c: the five toggle-view houses. Bank 4 is the existing
+    # panorama renderer; room identifies the gameplay interior, not collision.
+    from build_opening_banks import house_panorama
+    from build_room_scene import pack_room
+    from build_sgl_scene import face_normal as normal
+    # 2: SKYBOX_KOKIRI_SHOP (KSVR): two faces (Skybox_Calculate256 shop
+    # range) turned by skyboxCtx->rot.y 0.8: the shop's browsing view
+    # (Play_SetShopBrowsingViewpoint), never the player toggle.
+    panoramas = {0: ('LHVR', 4), 2: ('KSVR', 2, 0.8), 3: ('KHVR', 4), 4: ('K3VR', 3),
+                 5: ('K4VR', 3), 6: ('K5VR', 3)}
+    for index, spec in panoramas.items():
+        vertices, faces, tiles = house_panorama(args.oot, *spec)
+        records = [dict(object=0, indices=list(f['idx'])) for f in faces]
+        mesh, pixels, _ = pack_room(vertices, faces, tiles, records, normal)
+        if len(pixels) + len(tiles) * 32 > 140000:
+            raise ValueError('Interior panorama exceeds reserved texture budget')
+        for ext, blob in [('MSH', mesh), ('TEX', pixels)]:
+            (args.cd / asset_names.room_asset(4, index, ext)).write_bytes(blob)
     staged = 0
     for index, entry in enumerate(SCENES):
         if entry['shape'] != 'image':

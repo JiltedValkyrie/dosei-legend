@@ -147,7 +147,7 @@ class CollisionGravityTest(unittest.TestCase):
         for _ in range(60):
             old_velocity = velocity.value
             grounded = self.lib.kokiri_collision_fall(*args)
-            self.assertLessEqual(link.y-90+62, 80, 'head passed ceiling')
+            self.assertLessEqual(link.y-90+44, 80, "head passed ceiling")
             if old_velocity > 0 and velocity.value == 0:
                 hit = True
             if grounded:

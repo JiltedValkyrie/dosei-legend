@@ -65,6 +65,14 @@ def read_scene(path):
     return data, head, verts, faces
 
 
+def floor_uses_far_sort(baked, indices, normal):
+    """Mark large upward ground faces; runtime retains the above-eye guard."""
+    corners = [baked[i] for i in indices]
+    extent = max(max(c[k] for c in corners) - min(c[k] for c in corners)
+                 for k in (0, 2))
+    return normal[1] <= -int(.85 * 65536) and extent > 64
+
+
 def face_normal(verts, idx):
     """Unit face normal, as SGL 16.16 FIXED, from the stored winding order.
 
@@ -240,12 +248,7 @@ def emit(head, verts, faces, tiles, out_dir, name='kokiri'):
             atrb += ' | MESHon'
         sort = 'SORT_CEN'
         if name != 'link':
-            corners = [baked[i] for i in face['idx']]
-            extent = max(max(c[k] for c in corners) - min(c[k] for c in corners)
-                         for k in (0, 2))
-            # Baked Y is negated, so an up-facing world normal reads negative.
-            if face_normal(baked, face['idx'])[1] <= -int(.85 * 65536) \
-                    and extent > FLOOR_SORT_SPAN:
+            if floor_uses_far_sort(baked, face['idx'], face_normal(baked, face['idx'])):
                 sort = 'SORT_MAX'
                 floor_sorted += 1
         lines.append('    ATTRIBUTE(%s, %s | UsePalette | UseNearClip, %d, '

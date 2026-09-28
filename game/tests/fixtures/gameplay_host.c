@@ -14,6 +14,9 @@
 #include "../../src/actor_sys.h"
 #include "../../src/attention.h"
 #include "../../src/karebaba.h"
+#include "../../src/item_drop.h"
+#include "../../src/world_props.h"
+#include "../../src/world_signs.h"
 #include "../../src/game_over.h"
 #include <limits.h>
 
@@ -288,6 +291,15 @@ void gp_death_anim_done(void) { gameplay_death_anim_done(); }
 
 static int test_c_up;
 void gp_c_up(int on) { test_c_up = on; }
+static int test_menu_dx;
+void gp_menu_dx(int dx) { test_menu_dx = dx; }
+int  gp_shop_state(void) { return gameplay.shop_state; }
+int  gp_shop_cursor(void) { return gameplay.shop_cursor; }
+int  gp_shop_face(void) { return gameplay.shop_face; }
+void gp_nuts(int ammo, int upgrade) { save_state.nut_ammo = (uint8_t)ammo; save_state.nut_upgrade = (uint8_t)upgrade; }
+int  gp_nut_ammo(void) { return save_state.nut_ammo; }
+void gp_set_health(int h) { save_state.health = (uint16_t)h; }
+int  gp_health_now(void) { return save_state.health; }
 void gp_navi_timer_set(int t) { save_state.navi_timer = (uint16_t)t; }
 int  gp_navi_timer(void) { return save_state.navi_timer; }
 int  gp_navi_text(void) { return gameplay.navi_text; }
@@ -307,8 +319,33 @@ static unsigned int test_room;
 void gp_room(unsigned int room) { test_room = room; }
 int gp_rupees(void) { return gameplay.rupees; }
 void gp_wallet(unsigned int amount) { gameplay.rupees = amount; }
-int gp_drop(unsigned int i) { return gameplay.grass_rupee[i]; }
-int gp_drop_age(unsigned int i) { return gameplay.grass_age[i]; }
+static actor_t *grass_drop(unsigned int i)
+{
+    actor_t *a=0;
+    if (i>=KOKIRI_GRASS_COUNT) return 0;
+    while ((a=actor_sys_find(DROP_ACTOR_ID,a)))
+        if(a->x==kokiri_grass[i].x && a->z==kokiri_grass[i].z) return a;
+    return 0;
+}
+int gp_drop(unsigned int i) { actor_t *a=grass_drop(i); return a ? (a->params==0 ? 1 : a->params==1 ? 5 : -1) : 0; }
+int gp_drop_age(unsigned int i) { actor_t *a=grass_drop(i); return a ? a->data[1] : 0; }
+int gp_rupee_flag(unsigned int i) { return (kokiri_rupees[i].param>>8)&63; }
+int gp_drop_count(void) { actor_t *a=0; int n=0; while((a=actor_sys_find(DROP_ACTOR_ID,a)))++n; return n; }
+int gp_world_prop_count(void) { return KOKIRI_WORLD_PROP_COUNT; }
+void gp_world_prop_at(unsigned i,int *x,int *y,int *z,int *id,int *scene,int *param)
+{ const kokiri_world_prop_t *p=&kokiri_world_props[i];*x=p->x;*y=p->y;*z=p->z;*id=p->id;*scene=p->scene;*param=p->param; }
+int gp_world_prop_room(unsigned i) { return kokiri_world_props[i].room; }
+unsigned gp_prop_handle(unsigned i) { actor_t *a=0;while((a=actor_sys_find(WORLD_PROP_ID,a))) if(a->data[0]==(int)i)return actor_handle(a);return 0; }
+int gp_prop_data(unsigned h,unsigned i) { actor_t *a=actor_resolve(h);return a && i<8 ? a->data[i] : -999; }
+void gp_lift_sync(unsigned events,int speed,int vy,int yaw,int x,int y,int z) { int32_t hand[3]={x,y,z};world_props_lift_sync(events,speed,vy,(uint16_t)yaw,hand); }
+int gp_sign_count(void) { return KOKIRI_SIGN_COUNT; }
+void gp_sign_at(unsigned i,int *x,int *y,int *z,int *yaw,int *room,int *text) { const kokiri_prop_t *s=&kokiri_signs[i];*x=s->x;*y=s->y;*z=s->z;*yaw=kokiri_sign_yaws[i];*room=s->room;*text=kokiri_sign_params[i]|0x300; }
+int gp_sign_parts(unsigned i) { return world_signs_parts(i); }
+int gp_piece_count(void) { actor_t *a=0;int n=0;while((a=actor_sys_find(SIGN_PIECE_ID,a)))++n;return n; }
+int gp_chest_scene(unsigned i) { return kokiri_chests[i].scene; }
+int gp_world_carrying(void) { return world_props_carrying(); }
+int gp_chest_flag(unsigned i) { return save_get_treasure(kokiri_chests[i].scene,kokiri_chests[i].param&31); }
+
 void gp_seed(unsigned int seed) { gameplay.drop_rng = seed; }
 void gp_rupee_at(int i, int *x, int *y, int *z, int *value, int *room)
 {
@@ -353,6 +390,9 @@ void gp_step_full(int x, int y, int z, int yaw, int attack, int shield,
     /* Link's focus.pos: about 56 above the feet at idle. */
     in.focus[0] = x; in.focus[1] = y + 56; in.focus[2] = z;
     in.c_up = test_c_up != 0;
+    in.menu_dx = (int8_t)test_menu_dx;
+    in.menu_hold_x = (int8_t)(test_menu_dx * 70);
+    in.menu_hold_y = (int8_t)(-menu_step * 70);
     gameplay_step(&in);
 }
 
@@ -412,3 +452,53 @@ int  gp_boulder_hit(void) { return gameplay.boulder_hit; }
 int  gp_knock_yaw(void) { return gameplay.knock_yaw; }
 
 int  gp_lunge(void) { return gameplay.lunge_q16; }
+
+void gp_assign_item(int cursor, int button) {
+    gameplay_input_t in = {0};
+    gameplay.paused = true;
+    gameplay.pause_window.page = PAUSE_ITEMS;
+    gameplay.pause_window.cursor[PAUSE_ITEMS] = cursor;
+    in.c_assign = button;
+    gameplay_step(&in);
+}
+int gp_c_item(int slot) { return save_state.c_items[slot]; }
+unsigned gp_step_baba_events(void) { return gameplay.baba_events; }
+
+/* M3a choice tests: put a talk on the last page of system text `id`, as a
+** speaker would reach it (speaker kept). */
+int gp_open_choice(unsigned int id, int speaker)
+{
+    unsigned int i;
+    for (i = 0; i < DIALOGUE_SYSTEM_COUNT; ++i)
+        if (dialogue_system[i].text_id == id) {
+            gameplay.rule = (int16_t)dialogue_system[i].rule;
+            gameplay.page = (uint8_t)(dialogue_rules[gameplay.rule].pages - 1);
+            gameplay.talking = true;
+            gameplay.speaker = (int16_t)speaker;
+            gameplay.choice = 0;
+            return 1;
+        }
+    return 0;
+}
+
+/* Pool-full retry test: fill until `left` slots stay free; free the fillers. */
+static unsigned filler[ACTOR_POOL_MAX];
+static unsigned fillers;
+void gp_fill_pool(int left)
+{
+    fillers = 0;
+    while (actor_sys_live() + (unsigned)left < ACTOR_POOL_MAX)
+        filler[fillers++] = gp_spawn_enemy(0, -9000, 0, 0, 0, 0, 0, 0);
+}
+void gp_free_fillers(void)
+{
+    unsigned i;
+    for (i = 0; i < fillers; ++i) actor_kill(actor_resolve(filler[i]));
+    actor_sys_update();                  /* reaps the killed fillers */
+    fillers = 0;
+}
+void gp_baba_sync(int room) { karebaba_sync(true, (unsigned)room); }
+int gp_baba_spawn(int i) { const karebaba_t *b = karebaba_at(i); return b ? b->spawn : -1; }
+
+int gp_npc_scene(int i) { return kokiri_npcs[i].scene; }
+int gp_npc_present(int i) { return gameplay_npc_present(i); }

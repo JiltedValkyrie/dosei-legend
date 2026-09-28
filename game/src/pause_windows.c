@@ -106,6 +106,20 @@ static void pixel(int x,int y,unsigned colour)
     if (x<0 || x>=320 || y<0 || y>=240) return;
     cell((y/8)*40+x/8)[(y&7)*8+(x&7)]=colour;
 }
+static void pulse_map_marker(unsigned now)
+{
+    /* Two-second UI-clock breath. Keep the white ring and dark outline
+     * steady so the current region remains readable at minimum brightness. */
+    unsigned t=now%120u, level, colour;
+    int x,y;
+    if (t>60u) t=120u-t;
+    level=t*t*(180u-2u*t)/7200u; /* smoothstep, 0..30 */
+    colour=0x8000u | (20u+11u*level/30u) |
+           ((12u+16u*level/30u)<<5) | ((level/10u)<<10);
+    for (y=-5;y<=5;++y)
+        for (x=-5;x<=5;++x)
+            if (x*x+y*y<=25) pixel(264+x,131+y,colour);
+}
 static void frame(int x, int y, int size, unsigned colour)
 {
     int side, xx, yy, dx, dy;
@@ -181,6 +195,7 @@ bool pause_windows_update(void)
     int cursor=s->save_prompt ? s->save_choice : s->cursor[s->page];
     int stamp=cursor+(gameplay.equipped<<8)+(s->system_confirm<<16);
     unsigned now=demo_clock(),t;
+    if (page==PAUSE_ITEMS) stamp += (save_state.c_items[0] + 3*save_state.c_items[1] + 9*save_state.c_items[2]) << 18;
     if (failed) return false;
     if (!active && !begin()) { failed=true; return false; }
     if (loaded<0) { if (!load_page(key)) goto fail; }
@@ -204,7 +219,14 @@ bool pause_windows_update(void)
     if (failed) return false;
     if (stamp!=drawn) {
         paint();
-        if (page==PAUSE_ITEMS) frame(64+(cursor%6)*32,62+(cursor/6)*32,31,0xFF50);
+        if (page==PAUSE_ITEMS) {
+            unsigned i;
+            for (i=0;i<3;++i) {
+                unsigned item=save_state.c_items[i];
+                if (item==1 || item==2) frame(65,63+(item==2 ? 32 : 0),29,0x83FF);
+            }
+            frame(64+(cursor%6)*32,62+(cursor/6)*32,31,0xFF50);
+        }
         else if (page==PAUSE_EQUIPMENT) {
             static const short columns[4]={46,172,204,236};
             if (gameplay.equipped&GP_SWORD) frame(173,63,29,0x83FF);
@@ -214,6 +236,7 @@ bool pause_windows_update(void)
         else if (page==PAUSE_QUEST && variant) frame(179,165,25,0xFF50);
         drawn=stamp;
     }
+    if (page==PAUSE_MAP) pulse_map_marker(now);
     transform(phase ? t : 0);
     return true;
 fail:
