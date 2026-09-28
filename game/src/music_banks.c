@@ -13,10 +13,6 @@
 #include "deku_tree_score.h"
 #include "nightmare_score.h"
 
-/* The title score's generated header does not export its sample-bank size;
-** this is the figure its loader has always validated against. */
-#define TITLE_PCM_BYTES 480046
-
 const music_bank_t music_bank_title = {
     "TITLE.PCM", "TITLE.LVL",
     (const music_pcm_t *)title_pcm, (const music_trigger_t *)title_triggers,

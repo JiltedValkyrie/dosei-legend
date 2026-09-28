@@ -7,7 +7,7 @@
   "triggers": 149,
   "frames": 960,
   "voices": 24,
-  "pcm_bytes": 480136,
+  "pcm_bytes": 240132,
   "levels_bytes": 23040,
   "total_seconds": 15.999999999999636,
   "omitted_opcodes": [

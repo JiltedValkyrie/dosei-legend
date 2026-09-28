@@ -15,7 +15,7 @@
 **
 ** The N64 reference is the manual at game/docs/refs: C is FOUR C BUTTONS, not
 ** an analog stick. Holding the Saturn C button turns the D-pad into that
-** cluster. Z holds the look camera. Chord priority is Z, then C, then movement,
+** cluster. L holds the look camera; Z targets. Chord priority is L, then C, then movement,
 ** and a direction consumed by a modifier never leaks into locomotion.
 */
 
@@ -45,10 +45,12 @@ typedef struct
     ** are already removed. */
     uint16_t            move_buttons;
     player_move_mode_t  move_mode;
+    bool                analog;
+    int16_t             stick_x, stick_y; /* right/up positive, deadzone removed */
     /* Look camera. yaw/pitch deltas are binang per fixed step, zero unless
     ** look_mode is set. */
     bool                look_mode;
-    bool                look_exited;        /* Z released this step */
+    bool                look_exited;        /* L released this step */
     int32_t             look_yaw_delta;
     int32_t             look_pitch_delta;
     /* C interface. `c_held` is the direction currently held (for future aiming);
@@ -58,18 +60,24 @@ typedef struct
     player_c_button_t   c_released;
     /* Wired behavior. */
     bool                jump;               /* Y */
-    bool                recenter;           /* L press edge, unless consumed by a chord */
-    /* L HELD, unless consumed by a chord. Hold targeting needs the button's
+    bool                recenter;           /* Z press edge, unless consumed by a chord */
+    /* Z HELD, unless consumed by a chord. Hold targeting needs the button's
     ** state every step, not just its press edge: the lock lasts exactly as
-    ** long as L is down. Whether a press recentres is decided in gameplay.c,
+    ** long as Z is down. Whether a press recentres is decided in gameplay.c,
     ** because it depends on whether the hold became a lock-on. */
     bool                target_held;
     /* Pending: no system implemented yet. */
     bool                cancel_pending;     /* B press, before walk/run uses it */
+    int8_t              menu_dx, menu_dy, menu_page;
     int8_t              menu_step;          /* D-pad while a menu/box owns it */
     bool                interact_pending;   /* A */
     bool                attack_pending;     /* X */
+    bool                attack_held;        /* raw physical X, even while UI owns pad */
+    bool                attack_released;    /* consumed release edge, gameplay only */
     bool                shield_held;        /* R */
+    /* A HELD: letting go of a ledge (Player_Action_8084BBE4 reads the button
+    ** state, not a press). */
+    bool                interact_held;
     bool                diagnostics_toggled;
     bool                camera_swap_toggled;
 }                       player_input_t;
@@ -83,9 +91,24 @@ typedef struct
 #define PLAYER_LOOK_PITCH_SPEED 280
 
 void    player_input_reset(void);
+/* Binding steals its original action only in gameplay; menu controls stay fixed. */
+void player_input_set_jump_button(uint16_t mask);
 /* Sample from VBlank: `held` is the normalized CAMERA_* snapshot. Maintains the
 ** press edges for B, Y, A, X and the four C directions. */
 void    player_input_sample(uint16_t held);
+/* 3D Pad axes: unsigned 0..255, centre 128, Y grows downward. */
+void    player_input_sample_pad(uint16_t held, bool analog, uint8_t x, uint8_t y);
+/* 3D Pad triggers: zero/centred rest deadzone, press >=176, release <=144. */
+void    player_input_sample_3d(uint16_t held, bool analog, uint8_t x, uint8_t y,
+                              uint8_t right_trigger, uint8_t left_trigger);
+/* Camera-relative heading and proportional speed, including digital fallback.
+** A light analog tilt (strength 1..42) returns a heading with zero speed for
+** turning in place. False means no direction, not merely zero translation. */
+bool    player_input_motion(const player_input_t *input, uint16_t yaw,
+                            uint16_t *heading, int32_t *speed_q8);
+/* controlStickSpinAngles >= 0: the stick is pushed at least 55 of 60
+** (Player_ProcessControlStick). A digital direction is always full throw. */
+bool    player_input_stick_pushed(const player_input_t *input);
 /* Consume one fixed step's worth of decisions. `in_gameplay` false discards
 ** queued actions so title input never leaks into the world. */
 void    player_input_step(bool in_gameplay, player_input_t *out);

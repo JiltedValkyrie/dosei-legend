@@ -38,10 +38,11 @@ static const unsigned int   allowed[GAME_MODE_COUNT] =
     [GAME_MODE_PLAY]        = M(GAME_MODE_PAUSE) | M(GAME_MODE_DIALOGUE) |
                               M(GAME_MODE_CUTSCENE) | M(GAME_MODE_LOADING) |
                               M(GAME_MODE_GAME_OVER),
-    [GAME_MODE_PAUSE]       = M(GAME_MODE_PLAY),
+    [GAME_MODE_PAUSE]       = M(GAME_MODE_PLAY) | M(GAME_MODE_TITLE) | M(GAME_MODE_FILE_SELECT),
     [GAME_MODE_DIALOGUE]    = M(GAME_MODE_PLAY),
     [GAME_MODE_CUTSCENE]    = M(GAME_MODE_PLAY) | M(GAME_MODE_LOADING),
-    [GAME_MODE_GAME_OVER]   = M(GAME_MODE_FILE_SELECT) | M(GAME_MODE_TITLE)
+    [GAME_MODE_GAME_OVER]   = M(GAME_MODE_FILE_SELECT) | M(GAME_MODE_TITLE) |
+                              M(GAME_MODE_LOADING)   /* Continue: respawn */
 };
 
 static const char *const    names[GAME_MODE_COUNT] =

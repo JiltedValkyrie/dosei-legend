@@ -125,17 +125,19 @@ Current checks: `game/tests/test_link_geometry_precision.py` and
 without the option before shipping. Other model formats need their own adapter,
 not a claim that Link's segment-D scheme fits every model.
 
-## Character textures: hair and face only
+## Character textures: face only
 
-Permanent user rule, updated 2026-09-22 after another reported crash. This
-supersedes the earlier quarter-resolution body-texture rule.
+Permanent user rule, updated 2026-09-25 (demo plan): hair is flat too. The
+2026-09-22 hair-and-face rule and the earlier quarter-resolution rule are
+superseded.
 
 - All characters, including Link, NPCs, enemies, riders and horses: remove
   body, clothes, headwear, equipment and weapon artwork; use flat colours.
-- Keep hair and face artwork. Faces keep their existing imported detail;
-  hair retains the reduced resolution from the previous budget policy.
+- Keep face artwork only (eyes, mouth, nose; enemy/boss eyes count as
+  face). Faces keep their imported detail. Hair, manes and sideburns are
+  flat colours.
 - Enforce in the shared offline writer regardless of an importer's
-  `full_texture` setting. New importers must mark hair and facial materials
+  `full_texture` setting. New importers must mark facial materials (hair still tagged, not kept)
   from source XML, head limbs and expression bindings before writing.
 - Unknown head materials conservatively keep facial detail. Named hats,
   hoods, veils and neck materials do not receive the exemption.
@@ -145,3 +147,92 @@ Implementation: `game/tools/character_textures.py` and `build_link_model.py`.
 The existing KFR1/SGL path represents flat colours with deduplicated constant
 8x2 tiles (40 bytes including palette), not body artwork. Hair widths below
 VDP1's eight-pixel minimum use repeated columns. No runtime resampling.
+
+## VDP1 texture storage: bake small, share duplicates
+
+Frogbull advice, relayed by the user on 2026-09-27: pre-cook textures to
+4bpp, use widths divisible by eight, avoid unnecessary power-of-two heights,
+and detect exact and mirrored clones to save VRAM.
+
+- Bake VDP1 mesh textures offline to 4bpp with 16-entry CLUTs. This rule
+  concerns the mesh texture pipeline; other display paths keep their own formats.
+- Width must be a multiple of eight (8..504 pixels). Height may be any integer
+  from 1..255; do not round it to a power of two solely for hardware compliance.
+  Preserve required detail and account for eight-byte storage alignment.
+- Share exact duplicate tiles using dimensions, palette and pixel data.
+  Detect horizontal, vertical and combined mirrored duplicates too, preserving
+  each face's texture orientation when reusing storage. Palette compatibility
+  and transparency must be preserved; matching index bytes alone is insufficient.
+- Measure savings including pixels, CLUTs and alignment. Check affected faces
+  visually before treating a storage change as complete. The character face-only
+  rule above still applies.
+- User priority (2026-09-27): lower texture detail is acceptable to prevent
+  load failures. Forest baking reserves all resident sprites and a further
+  32 KiB of VRAM headroom (`FOREST_VRAM_MARGIN` in `vdp1_budget.py`). Do not
+  spend that margin on denser forest tiles or bypass runtime capacity guards.
+  Count new resident effects in both byte and sprite-slot budgets.
+
+Status at this audit: the active hybrid mesh baker already emits 4bpp, aligns
+widths and deduplicates exact `(width, height, clut, pixels)` matches.
+The SGL writer accepts non-power-of-two heights, but baked tile sizing mostly
+still uses powers of two. Mirrored-clone reuse and tighter baked heights remain
+follow-ups, not implemented savings. References: `game/tools/build_hybrid_scene.py`,
+`game/tools/build_sgl_scene.py`, `game/tools/build_room_scene.py` and
+`game/tools/vdp1_budget.py`.
+
+## Sound effects: half sample rate by default
+
+Permanent user rule (2026-09-27): all sound effects use half-rate samples to
+save sound RAM, unless the human identifies a specific SFX as sounding too bad.
+
+- Apply to existing and new SFX, including voices. For the current 11 kHz
+  SFX baseline, store approximately 5.5 kHz samples. Already half-rate sounds
+  stay at that rate; do not halve them again on each rebuild.
+- Resample offline and set playback rate to match. Preserve original pitch
+  and duration; this is not half-speed playback.
+- Only raise an individual effect's sample rate when the human requests a
+  quality exception for that effect. Record the exception and its RAM cost.
+- Music banks: the human chose half rate too (2026-09-27, M2 sound RAM):
+  build_title_audio MUSIC_SAMPLE_BUDGET 120,000 samples, banks ~240 KB,
+  SFX region from 0x3C000. CD-DA renders keep the old 240,000 budget.
+- Include resampled bytes, alignment and playback buffers in sound-RAM
+  budgets. Keep capacity guards enabled; half-rate storage is not proof that
+  the complete active bank fits.
+
+## Red Book (CD-DA) audio: only while the world is frozen
+
+Human rule (2026-09-27). Playing a CD track moves the drive off the data
+track; any file read (room bank, actor asset, save device) must seek back,
+which stops the song and stalls the read -- a hitch in live play.
+
+- Play CD-DA only when the world is frozen and no disc read can be pending:
+  cutscenes, the chest/get-item show, the death + Game Over screens.
+- Never in live gameplay or combat (lock-on, hits, pickups while moving).
+- Before a CD track: finish any bank/room load. While it plays: no streaming.
+- New CD-DA uses must name their freeze in code (src/cdda.h lists them).
+
+This section records policy, not completion of audio conversion. Human handles
+listening checks with the gameplay review.
+
+## Enemy-map cheat lifetime (human directive, 2026-09-27)
+
+Enemy-map cheat applies across the game, not only the forest test actors.
+Keep the toggle in transient game-session state across room/map changes.
+Never serialize it in save data. Clear it for console boot/reset, a new game,
+loading a saved game or ending/restarting the session. Normal in-session
+respawn preserves it. Display active hostile enemies/bosses for the current
+mapped scene. Selection boxes: current highlight light blue, equipped gold.
+
+## Pause presentation and controller preferences (2026-09-27)
+
+Freeze the visible 3D world under VDP2 pause pages; use a grey transparent
+checkerboard backdrop. Duck music by 6 dB while paused and restore on exit;
+do not change SFX volume. Hide the enemy-map status unless the cheat is on.
+Offer saved Saturn automatic, Xbox, N64, GameCube and PlayStation PS4/5 labels.
+Labels describe emulator wiring; selecting a label preset does not remap input.
+N64 hides the manual-jump label, but keeps the existing Y input working.
+Offer a saved custom jump button and Reset defaults. Binding jump consumes that
+button's former gameplay action; menu confirm/back remain unchanged. Store
+preferences separately from adventure saves, never serialize the session cheat.
+Keep map proportions and sufficient colour/detail for legibility. Unvisited
+regions remain clouded. Page-button art must contain no stale baked labels.

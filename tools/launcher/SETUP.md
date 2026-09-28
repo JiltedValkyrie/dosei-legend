@@ -91,3 +91,19 @@ Close Kronos before switching variants or rebuilding its mounted image.
 Build output remains under `game/build/`. If only running an already-built
 image, only Kronos, its runtime libraries, and the BIOS are needed; the SDK,
 Python, decomp and ROM are build-time inputs.
+
+## Xbox-style controller triggers (3D Control Pad) need a Kronos patch
+
+Emulating the 3D Control Pad with an Xbox-style controller: stock Kronos
+never passes LT/RT through. Its SDL joystick code treats a trigger resting
+at -32768 as dead zone, so both trigger axes stay at 128 and R (shield) and
+L (look) never press. Kronos also has no plain R/L button entry for the 3D
+pad; triggers are axes only.
+
+Fix: apply `tools/launcher/kronos-sdl-trigger.patch` to Kronos source
+(`git apply` from the Kronos repo root), rebuild Kronos, then in the 3D
+Control Pad setup bind LT to **Axis L Trigger** and RT to **Axis R
+Trigger**. Keep bumpers on real buttons (for example Z and C). The
+standard-build debug row `pad ... R### L###` shows 0 at rest and 176 or
+more on a pull. Without the patch, use the pad's digital mode or a
+Standard Pad, where R is shield as usual.

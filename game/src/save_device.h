@@ -35,6 +35,9 @@ bool                save_device_init(void);
 
 /* True when save_device_init() found a device. */
 bool                save_device_ready(void);
+/* Global UI configuration, separate from the three adventure save slots. */
+bool save_device_write_preferences(void);
+int save_device_preferences_report(void);
 
 /* Write the live save_state to a slot. False on any device failure. */
 bool                save_device_write(unsigned int slot);

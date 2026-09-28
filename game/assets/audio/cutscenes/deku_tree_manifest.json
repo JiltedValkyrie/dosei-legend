@@ -7,7 +7,7 @@
   "triggers": 57,
   "frames": 1557,
   "voices": 24,
-  "pcm_bytes": 480078,
+  "pcm_bytes": 240072,
   "levels_bytes": 37368,
   "total_seconds": 25.945945945945308,
   "omitted_opcodes": [
@@ -24,6 +24,7 @@
     "No N64 reverb or vibrato",
     "PCM resampled to fit SCSP RAM",
     "60 Hz envelopes and quantized SCSP pitch/pan",
+    "24 SCSP voices; quietest releasing voice reclaimed at saturation",
     "Host bake, not target playback verification"
   ]
 }

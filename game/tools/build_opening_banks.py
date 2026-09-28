@@ -9,6 +9,7 @@ import math
 import struct
 
 from PIL import Image
+import asset_names
 
 FOG_FAR = 1310
 DRAW_FAR = 2620
@@ -120,8 +121,8 @@ def emit_flight_cache(out):
     """Share identical tiles across flight banks; keep original VRAM layouts."""
     pool, offsets = bytearray(), {}
     for bank in range(10):
-        mesh = (out / ('S2R%d.MSH' % bank)).read_bytes()
-        pixels = (out / ('S2R%d.TEX' % bank)).read_bytes()
+        mesh = (out / asset_names.room_asset(2, bank, 'MSH')).read_bytes()
+        pixels = (out / asset_names.room_asset(2, bank, 'TEX')).read_bytes()
         header = struct.unpack_from('>8I', mesh)
         refs = bytearray()
         for tile in range(header[3]):
@@ -135,7 +136,7 @@ def emit_flight_cache(out):
                 pool.extend(blob)
                 pool.extend(bytes((-len(pool)) % 8))
             refs.extend(struct.pack('>I', offsets[blob]))
-        (out / ('S2R%d.MAP' % bank)).write_bytes(refs)
+        (out / asset_names.room_asset(2, bank, 'MAP')).write_bytes(refs)
     (out / 'NAVIPOOL.TEX').write_bytes(pool)
     print('Opening shared texture cache: %d bytes' % len(pool))
 
@@ -157,8 +158,8 @@ def emit_opening_banks(oot, out, rooms, normal):
                              (scene, room, used))
         if len(vertices) > 3200 or len(faces) + 564 > 3750:
             raise ValueError('Opening bank exceeds SGL geometry capacity')
-        (out / ('S%dR%d.MSH' % (scene, room))).write_bytes(mesh)
-        (out / ('S%dR%d.TEX' % (scene, room))).write_bytes(pixels)
+        (out / asset_names.room_asset(scene, room, 'MSH')).write_bytes(mesh)
+        (out / asset_names.room_asset(scene, room, 'TEX')).write_bytes(pixels)
         summaries.append(dict(scene=scene, id=room, vertices=len(vertices),
                               polygons=len(faces), tiles=len(tiles),
                               pixel_bytes=len(pixels), objects=len(bounds)))

@@ -101,9 +101,14 @@ static void     pack_payload(const save_state_t *state, cursor *c)
     put8(c, state->ammo_seeds);
     put8(c, state->scene_id);
     put8(c, state->entrance);
+    /* v3 */
+    put8(c, state->stick_owned);
+    put8(c, state->stick_ammo);
+    put8(c, state->stick_upgrade);
+    put16(c, state->navi_timer);
 }
 
-static void     unpack_payload(save_state_t *state, cursor *c)
+static void     unpack_payload(save_state_t *state, cursor *c, uint16_t version)
 {
     unsigned int    i;
 
@@ -131,6 +136,20 @@ static void     unpack_payload(save_state_t *state, cursor *c)
     state->ammo_seeds = get8(c);
     state->scene_id = get8(c);
     state->entrance = get8(c);
+    if (version < 3) {
+        state->stick_owned = state->stick_ammo = state->stick_upgrade = 0;
+        state->navi_timer = 0;
+        return;
+    }
+    state->stick_owned = get8(c);
+    state->stick_ammo = get8(c);
+    state->stick_upgrade = get8(c);
+    state->navi_timer = get16(c);
+}
+
+static unsigned int payload_bytes(uint16_t version)
+{
+    return version == 2 ? SAVE_FILE_V2_PAYLOAD_BYTES : SAVE_FILE_PAYLOAD_BYTES;
 }
 
 /* ---- public ------------------------------------------------------------ */
@@ -157,8 +176,11 @@ void            save_file_pack(const save_state_t *state, uint8_t *out)
 static save_file_status validate(const uint8_t *in, unsigned int bytes)
 {
     uint16_t    version, stored;
+    unsigned int payload;
 
-    if (!in || bytes < SAVE_FILE_BYTES)
+    /* Header first: an older layout is also a different size, and must be
+    ** reported as an old version, not as a truncated block. */
+    if (!in || bytes < 8)
         return (bytes == 0 ? SAVE_FILE_EMPTY : SAVE_FILE_BAD_SIZE);
     if (in[0] != SAVE_FILE_MAGIC_0 || in[1] != SAVE_FILE_MAGIC_1 ||
         in[2] != SAVE_FILE_MAGIC_2 || in[3] != SAVE_FILE_MAGIC_3) {
@@ -174,11 +196,13 @@ static save_file_status validate(const uint8_t *in, unsigned int bytes)
         return (SAVE_FILE_BAD_MAGIC);
     }
     version = (uint16_t)((in[4] << 8) | in[5]);
-    if (version != SAVE_FILE_VERSION)
+    if (version != SAVE_FILE_VERSION && version != 2)
         return (SAVE_FILE_BAD_VERSION);
-    stored = (uint16_t)((in[8 + SAVE_FILE_PAYLOAD_BYTES] << 8) |
-                        in[8 + SAVE_FILE_PAYLOAD_BYTES + 1]);
-    if (stored != save_file_checksum(in + 8, SAVE_FILE_PAYLOAD_BYTES))
+    payload = payload_bytes(version);
+    if (bytes < 8 + payload + 2)
+        return (SAVE_FILE_BAD_SIZE);
+    stored = (uint16_t)((in[8 + payload] << 8) | in[8 + payload + 1]);
+    if (stored != save_file_checksum(in + 8, payload))
         return (SAVE_FILE_BAD_CHECKSUM);
     return (SAVE_FILE_OK);
 }
@@ -196,7 +220,7 @@ save_file_status    save_file_unpack(save_state_t *state, const uint8_t *in,
     c.write = 0;
     c.read = in;
     c.at = 8;
-    unpack_payload(state, &c);
+    unpack_payload(state, &c, (uint16_t)((in[4] << 8) | in[5]));
     return (SAVE_FILE_OK);
 }
 

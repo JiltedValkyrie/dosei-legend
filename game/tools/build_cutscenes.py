@@ -377,6 +377,7 @@ def read_cutscene(entry):
     # Preserve source order: the last active cue in file order wins.
 
     out['frames'] = cutscene_length(out, eye_shots, at_shots)
+    out['shots'] = sorted({0} | {s['start'] for s in eye_shots if 0 <= s['start'] < out['frames']})
     out['track'] = bake_camera(eye_shots, at_shots, out['frames'], out['scene'])
     return out
 
@@ -558,8 +559,9 @@ def emit_messages(messages, h, c):
     h += ['    CUTSCENE_POS_%s = %d,' % (name.replace('TEXTBOX_POS_', ''), i)
           for i, name in enumerate(positions)]
     h += ['} cutscene_position_t;', '',
-          'typedef struct { const char *text; unsigned char colour; }'
-          ' cutscene_run_t;',
+          '/* A run' + "'" + 's text is line (run index) of CUTTEXT.TXT, loaded to the',
+          '** cart (BUG-037): see message.h cutscene_text_bind. */',
+          'typedef struct { unsigned char colour; } cutscene_run_t;',
           '/* `indent` is the original\'s SHIFT, halved to character cells:',
           '** the narration is centred with it. */',
           'typedef struct { unsigned short first_run; unsigned char runs,'
@@ -590,6 +592,7 @@ def emit_messages(messages, h, c):
           '#define CUTSCENE_LINE_COUNT    %d' % len(lines),
           '#define CUTSCENE_PAGE_COUNT    %d' % len(pages),
           '#define CUTSCENE_MESSAGE_COUNT %d' % len(entries),
+          '#define CUTSCENE_TEXT_BYTES    %d' % len(text_blob(runs)),
           '#define CUTSCENE_MESSAGE_COLUMNS %d' % MESSAGE_COLUMNS,
           '#define CUTSCENE_MESSAGE_LINES   %d' % MESSAGE_LINES, '',
           'extern const cutscene_run_t     cutscene_runs[CUTSCENE_RUN_COUNT];',
@@ -599,8 +602,8 @@ def emit_messages(messages, h, c):
           '']
 
     c.append('const cutscene_run_t cutscene_runs[CUTSCENE_RUN_COUNT] = {')
-    c += ['    {"%s",CUTSCENE_COLOUR_%s},' % (escape(text), colour)
-          for text, colour in runs]
+    c += ['    {CUTSCENE_COLOUR_%s},' % colour for text, colour in runs]
+    emitted_runs[:] = runs
     c += ['};', '',
           'const cutscene_line_t cutscene_text_lines[CUTSCENE_LINE_COUNT] = {']
     c += ['    {%d,%d,%d},' % line for line in lines]
@@ -613,8 +616,22 @@ def emit_messages(messages, h, c):
     return len(runs), len(lines), len(pages)
 
 
-def escape(text):
-    return text.replace('\\', '\\\\').replace('"', '\\"')
+emitted_runs = []
+
+
+def text_blob(runs):
+    """CUTTEXT.TXT: 'KCST', u16 BE run count, u16 BE offsets into the string
+    area, then NUL-terminated strings. Must match src/text_pool.c."""
+    strings = bytearray()
+    offsets = []
+    for text, _ in runs:
+        offsets.append(len(strings))
+        strings += text.encode('latin-1') + bytes(1)
+    blob = bytearray(b'KCST') + len(runs).to_bytes(2, 'big')
+    for offset in offsets:
+        blob += offset.to_bytes(2, 'big')
+    return bytes(blob + strings)
+
 
 
 def emit(cutscenes, header_path, source_path, cd_dir, messages):
@@ -710,6 +727,7 @@ def emit(cutscenes, header_path, source_path, cd_dir, messages):
           '    ** one actor on screen -- the dream has two. */',
           '    const cutscene_cue_t   *actor_cues;',
           '    unsigned char           actor_cue_count;',
+          '    const unsigned short *shots; unsigned char shot_count;',
           '} cutscene_t;', '',
           'extern const cutscene_t cutscenes[CUTSCENE_COUNT];', '']
 
@@ -728,6 +746,8 @@ def emit(cutscenes, header_path, source_path, cd_dir, messages):
     c += ['};', '']
     h += ['#endif']
     for index, cs in enumerate(cutscenes):
+        c.append('static const unsigned short shots_%d[] = {%s};' %
+                 (index, ','.join(map(str, cs['shots']))))
         c.append('static const cutscene_text_t text_%d[] = {' % index)
         for item in cs['text']:
             c.append('    {0x%04X,%d,%d},' % (item['id'] if item['id'] else 0,
@@ -774,15 +794,16 @@ def emit(cutscenes, header_path, source_path, cd_dir, messages):
             destination_frame = cs['destination']['start']
         c.append('    { "CS%d.BIN", %d, CUTSCENE_SCENE_%s, %d, %d, %d,'
                  ' text_%d, %d, cues_%d, %d, fades_%d, %d, music_%d, %d,'
-                 ' actor_cues_%d, %d },' %
+                 ' actor_cues_%d, %d, shots_%d, %d },' %
                  (index, len(cs['track']), cs['scene'],
                   cs['stop_frame'] if cs['stop_frame'] is not None else -1,
                   destination, destination_frame,
                   index, len(cs['text']), index, len(cs['player_cues']),
                   index, len(cs['transitions']), index, len(cs['music']),
-                  index, len(cs['actor_cues'])))
+                  index, len(cs['actor_cues']), index, len(cs['shots'])))
     c += ['};', '']
 
+    (cd_dir / 'CUTTEXT.TXT').write_bytes(text_blob(emitted_runs))
     header_path.write_text('\n'.join(h) + '\n')
     source_path.write_text('\n'.join(c) + '\n')
     for index, cs in enumerate(cutscenes):
@@ -813,6 +834,7 @@ def build():
         digest.update(entry['path'].read_bytes())
     signature = '/* ' + digest.hexdigest() + ' */'
     if header.exists() and header.read_text().startswith(signature) and \
+            (cd_dir / 'CUTTEXT.TXT').is_file() and \
             all((cd_dir / ('CS%d.BIN' % i)).is_file()
                 for i in range(len(CUTSCENES))):
         print('Cutscenes: cached')

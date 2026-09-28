@@ -29,9 +29,17 @@ bool            ram_cart_claim_second_bank(void)
     ** jo_set_a_bus_register() during its own detection, so the bank is
     ** addressable by the time we get here; only the zone is missing. */
     jo_add_memory_zone((unsigned char *)RAM_CART_BANK2_ADDRESS,
-                       RAM_CART_BANK2_BYTES);
+                       RAM_CART_BANK2_BYTES - RAM_CART_FIXED_BYTES);
     second_bank_claimed = true;
     return (true);
+}
+
+void           *ram_cart_fixed(unsigned int offset, unsigned int bytes)
+{
+    if (!second_bank_claimed || offset > RAM_CART_FIXED_BYTES ||
+        bytes > RAM_CART_FIXED_BYTES - offset)
+        return ((void *)0);
+    return ((void *)(RAM_CART_FIXED_ADDRESS + offset));
 }
 
 unsigned int    ram_cart_total_bytes(void)

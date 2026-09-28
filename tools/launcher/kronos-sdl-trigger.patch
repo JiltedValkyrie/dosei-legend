@@ -1,0 +1,17 @@
+diff --git a/yabause/src/core/peripheral/sdl/persdljoy.c b/yabause/src/core/peripheral/sdl/persdljoy.c
+index cedbe26e4..1bc7acb65 100755
+--- a/yabause/src/core/peripheral/sdl/persdljoy.c
++++ b/yabause/src/core/peripheral/sdl/persdljoy.c
+@@ -196,7 +196,11 @@ int PERSDLJoyHandleEvents(void) {
+ 		for ( i = 0; i < SDL_JoystickNumAxes( joy ); i++ )
+ 		{
+ 			cur = SDL_JoystickGetAxis( joy, i );
+-      if (abs(cur) <= abs(SDL_PERCORE_JOYSTICKS[ joyId ].mInitValue[ i ])) curAxis = 0;
++      /* dosei-legend patch: a trigger axis rests at -32768 (XInput LT/RT
++       * through SDL). The dead-zone test below then zeroed every value, so
++       * 3D pad triggers never left 128. Map a trigger to 0 (rest)..255. */
++      if (SDL_PERCORE_JOYSTICKS[ joyId ].mInitValue[ i ] < -16384) curAxis = cur;
++      else if (abs(cur) <= abs(SDL_PERCORE_JOYSTICKS[ joyId ].mInitValue[ i ])) curAxis = 0;
+       else curAxis = cur;
+ 
+       cur -= SDL_PERCORE_JOYSTICKS[ joyId ].mInitValue[ i ];

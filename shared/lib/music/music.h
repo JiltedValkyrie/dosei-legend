@@ -7,7 +7,7 @@
 ** this module knows which tracks exist.
 **
 ** Only one bank can be resident at a time. A Saturn has 512 KB of sound RAM
-** and these banks are ~480 KB each at the same sample base, so switching means
+** and these banks are ~240 KB each at the same sample base, so switching means
 ** fading out, stopping the voices and overwriting sound RAM in place. That is
 ** what music_fade_to() starts and music_service() finishes.
 */
@@ -18,7 +18,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 /* Tail reserved for resident action PCM; music never writes beyond this. */
-#define MUSIC_SAMPLE_LIMIT 0x76400
+#define MUSIC_SAMPLE_LIMIT 0x3C000   /* banks ~240 KB at 0x1000 (half rate) */
 
 /* Layouts the generated score headers already use, so their tables can be
  * pointed at directly rather than copied. */
@@ -63,6 +63,8 @@ bool music_silence(unsigned int fade_frames);
  *  RAM a few chunks per frame. Call once per rendered frame. Never call from a
  *  vblank callback -- it reads the CD and allocates. */
 void music_service(void);
+/* Pause ducking: half amplitude (-6 dB), composed with fades; SFX unchanged. */
+void music_menu_duck(bool enabled);
 
 /** @brief The bank currently playing, or NULL before music_init(). */
 const music_bank_t *music_current(void);

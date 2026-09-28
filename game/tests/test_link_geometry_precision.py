@@ -68,12 +68,11 @@ class ModelIdentity(unittest.TestCase):
         self.assertEqual(locals_, face['local'])
         self.assertEqual(limbs, [0, 0, 0])
 
-    def test_marked_head_hair_is_not_flattened(self):
+    def test_marked_head_hair_is_flattened(self):
         texture = dict(width=2, height=2, colors=[(200,100,50,255)]*4)
         face = dict(limb=model.HEAD_LIMB, texture=texture, texture_segment=4,
                     hair_detail=True)
-        self.assertEqual(model.flatten_faces([face]), 0)
-        self.assertIs(face['texture'], texture)
+        self.assertEqual(model.flatten_faces([face]), 1)
 
 
 @unittest.skipUnless(GCC.is_file() and (GEN/'link_clips.c').is_file(), 'build assets and host GCC required')
@@ -130,12 +129,29 @@ int32_t link_points[LINK_SKIN_VERTICES][3];
         hierarchy = [dict(pos=(l.pos.x,l.pos.y,l.pos.z),child=l.child,sibling=l.sibling,far=1,near=1) for l in limbs]
         scale = type(self).define('LINK_ANIM_SCALE_Q16')/65536
         shift = [type(self).define('LINK_ANIM_SHIFT_'+a) for a in 'XYZ']
+        pinned_flags = (ctypes.c_uint8*len(clips)).in_dll(self.lib,'link_clip_pinned')
+        # AnimMovement clips draw their root at baseTransl as a child draws it.
+        pinned_root = [type(self).define('LINK_PINNED_ROOT_'+a) for a in 'XYZ']
         for clip_id, clip in enumerate(clips):
             for frame in (0, clip.count//2, clip.count-1):
                 self.lib.link_anim_pose(clip_id,frame,0)
                 absolute = clip.first+frame
                 rot = [rotations[absolute][i:i+3] for i in range(0,63,3)]
-                placed = {i:(m,o) for i,m,o,_ in model.walk_skeleton(hierarchy,rot,roots[absolute])}
+                root = list(roots[absolute])
+                if pinned_flags[clip_id]:
+                    root[0], root[2] = pinned_root[0], pinned_root[2]
+                    if pinned_flags[clip_id] == 1:
+                        root[1] = pinned_root[1]
+                placed = {i:(m,o) for i,m,o,_ in model.walk_skeleton(hierarchy,rot,root)}
+                blade = ((ctypes.c_int32 * 3) * 2)()
+                self.lib.link_anim_blade(blade)
+                matrix, origin = placed[15]  # PLAYER_LIMB_L_HAND minus one
+                for end, local in enumerate(((0,400,0), (3000,400,0))):
+                    expected = model.transform(matrix, origin, local)
+                    for axis in range(3):
+                        self.assertAlmostEqual(blade[end][axis] / 65536,
+                            expected[axis] * scale + shift[axis], delta=.2,
+                            msg=f'blade clip {clip_id} frame {frame} end {end}')
                 self.assertTrue(any(p[0] % 65536 for p in points), 'world fractions lost')
                 for i, loc in enumerate(locals_):
                     matrix, origin = placed[owners[i]]

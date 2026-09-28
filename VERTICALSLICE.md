@@ -1,5 +1,9 @@
 # Dosei Legend — vertical slice scope
 
+> **Superseded again, 2026-09-25.** Scope is now the public demo in
+> [game/docs/DEMO_PLAN.md](game/docs/DEMO_PLAN.md): through Gohma, the Kokiri
+> Emerald, Lost Woods and Hyrule Field (explore, owl, music only).
+
 > **Superseded for gameplay scope, 2026-09-21.** The human approved the full OoT
 > opening progression: Kokiri Forest, Lost Woods, the Great Deku Tree and Gohma,
 > through to the Kokiri Emerald, with real quest flags, backup-RAM saves, full

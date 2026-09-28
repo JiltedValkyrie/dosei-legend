@@ -21,6 +21,7 @@ ROOT = Path(__file__).resolve().parents[1]
 FPS = 60
 VOICES = 24
 SAMPLE_BASE = 0x1000
+MUSIC_SAMPLE_BUDGET = 120000   # 16-bit samples per bank (was 240000)
 # Opcodes with no counterpart in the SCSP player, recorded per score rather
 # than silently dropped. `panweight` blends a note's own pan with its channel's;
 # this player takes pan from the channel alone, so the blend has nothing to
@@ -278,6 +279,12 @@ def load_font(source, font_id=6):
                  points=[(int(p.attrib['Delay']), int(p.attrib['Arg'])) for p in e])
                  for e in font.find('Envelopes')}
     instruments = {int(e.attrib['ProgramNumber']): dict(e.attrib) for e in font.find('Instruments')}
+    # FONTANY_INSTR_DRUM: the note picks a drum; each drum plays at a fixed
+    # pitch (its BaseNote tuning, native rate when absent). CD fanfares only;
+    # no music bank sequence uses drums.
+    drums = font.find('Drums')
+    if drums is not None:
+        instruments['FONTANY_INSTR_DRUM'] = [dict(d.attrib) for d in drums]
     names = sorted({e.attrib['Name'] for e in font.find('Samples')})
     original = []
     hashes = {}
@@ -285,8 +292,10 @@ def load_font(source, font_id=6):
         p = source / f'samples/SampleBank_0/Sample{int(name.split("_")[-1]):03}.wav'
         original.append(wav_source(p))
         hashes[p.name] = hashlib.sha256(p.read_bytes()).hexdigest()
-    # Keep all samples at 16 bits within 512 KiB; leave room for guards and boot code.
-    ratio = min(1.0, 240000 / sum(len(pcm) for pcm, *_ in original))
+    # 16-bit samples. 2026-09-27 (human choice): half the old 240,000-sample
+    # budget, so each bank is ~240 KB and the SFX region above it (M2 Navi,
+    # lock-on, Deku Baba, hurt/death) gets the other half of sound RAM.
+    ratio = min(1.0, MUSIC_SAMPLE_BUDGET / sum(len(pcm) for pcm, *_ in original))
     samples, blob = [], bytearray()
     for name, (pcm, rate, unity, loop) in zip(names, original):
         out_rate = int(rate * ratio)
@@ -357,6 +366,12 @@ def bake(notes, times, changes, seq_volume, envelopes, instruments, samples, end
     triggers, cooked = [], []
     for n in sorted(notes, key=lambda n: n['tick']):
         instrument = instruments[n['program']]
+        if n['program'] == 'FONTANY_INSTR_DRUM':
+            drum = next(d for d in instrument
+                        if pitch(d['NoteStart']) <= n['key'] <= pitch(d['NoteEnd']))
+            instrument = dict(Envelope=drum['Envelope'], Sample=drum['Sample'],
+                              BaseNote=drum.get('BaseNote', 'C4'))
+            n = dict(n, key=pitch('C4'))
         env = envelopes[instrument['Envelope']]
         variant = ('Lo' if n['key'] < pitch(instrument.get('RangeLo', 'C0')) else
                    'Hi' if n['key'] > pitch(instrument.get('RangeHi', 'B9')) else '')
@@ -474,6 +489,7 @@ def main():
               '#ifndef TITLE_SCORE_H', '#define TITLE_SCORE_H', '#include <stdint.h>',
               f'#define TITLE_VOICES {VOICES}', f'#define TITLE_FRAMES {frames}',
               f'#define TITLE_LOOP_FRAME {loop_frame}', f'#define TITLE_SAMPLE_BASE {SAMPLE_BASE}',
+              f'#define TITLE_PCM_BYTES {len(pcm)}',
               f'#define TITLE_TRIGGER_COUNT {len(triggers)}',
               'typedef struct { uint32_t offset; uint16_t loop_start, loop_end; } title_pcm_t;',
               'typedef struct { uint16_t frame; uint8_t slot, sample; uint16_t pitch; uint8_t pan; } title_trigger_t;',

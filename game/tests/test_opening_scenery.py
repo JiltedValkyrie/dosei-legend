@@ -95,7 +95,8 @@ int music_step(int is_busy) {
         env = dict(os.environ, PATH=str(GCC.parent) + os.pathsep + os.environ.get('PATH', ''))
         subprocess.run([str(GCC), '-shared', '-O2', '-I' + str(GEN),
                         '-I' + str(ROOT / 'src'), str(path / 'test.c'),
-                        str(ROOT / 'src/message.c'), str(GEN / 'cutscenes.c'),
+                        str(ROOT / 'src/message.c'), str(ROOT / 'src/text_pool.c'),
+                        str(GEN / 'cutscenes.c'),
                         '-o', str(path / 'test.dll')], check=True, env=env)
         cls.lib = ctypes.CDLL(str(path / 'test.dll'))
         cls.lib.message_is_active.restype = ctypes.c_bool

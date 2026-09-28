@@ -81,7 +81,11 @@ int control_interact(void) { return mapped.interact_pending; }
 int control_cancel(void)   { return mapped.cancel_pending; }
 int control_menu_step(void){ return mapped.menu_step; }
 int control_attack(void) { return mapped.attack_pending; }
+int control_attack_held(void) { return mapped.attack_held; }
+int control_attack_released(void) { return mapped.attack_released; }
 int control_shield(void) { return mapped.shield_held; }
+int control_interact_held(void) { return mapped.interact_held; }
+int control_stick_pushed(void) { return player_input_stick_pushed(&mapped); }
 int control_target_held(void) { return mapped.target_held; }
 
 /* Follow-camera look aim, so the bounds and the clean exit are checked against
@@ -115,4 +119,13 @@ void look_eye(camera_position_t *player, camera_position_t *eye_out,
               uint16_t *yaw_out, int32_t *pitch_out)
 {
     oot_follow_update(&follow, player, 0, false, eye_out, yaw_out, pitch_out);
+}
+
+int control_motion_heading(int yaw) {
+    uint16_t heading = 0; int32_t speed;
+    return player_input_motion(&mapped, yaw, &heading, &speed) ? heading : -1;
+}
+int control_motion_speed(void) {
+    uint16_t heading; int32_t speed;
+    return player_input_motion(&mapped, 0, &heading, &speed) ? speed : 0;
 }

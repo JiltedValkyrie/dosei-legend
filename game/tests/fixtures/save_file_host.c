@@ -36,6 +36,19 @@ void sf_set_scene(int scene, int entrance)
     save_state.entrance = (uint8_t)entrance;
 }
 
+void sf_set_sticks(int owned, int ammo, int upgrade, int timer)
+{
+    save_state.stick_owned = (uint8_t)owned;
+    save_state.stick_ammo = (uint8_t)ammo;
+    save_state.stick_upgrade = (uint8_t)upgrade;
+    save_state.navi_timer = (uint16_t)timer;
+}
+
+int sf_stick_ammo(void) { return save_state.stick_ammo; }
+int sf_stick_upgrade(void) { return save_state.stick_upgrade; }
+int sf_navi_timer(void) { return save_state.navi_timer; }
+unsigned int sf_checksum(const unsigned char *p, unsigned int n) { return save_file_checksum(p, n); }
+
 unsigned int sf_quest_items(void)
 {
     return save_state.quest_items;

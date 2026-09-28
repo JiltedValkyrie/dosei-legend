@@ -71,7 +71,48 @@ class PlayerControls(unittest.TestCase):
         cls.tmp.cleanup()
 
     def setUp(self):
+        self.lib.player_input_set_jump_button(Y)
         self.lib.control_reset()
+
+    def test_custom_jump_replaces_gameplay_button_but_not_menu_confirm(self):
+        self.lib.player_input_set_jump_button(A)
+        self.tap(A)
+        self.assertTrue(self.lib.control_jump())
+        self.assertFalse(self.lib.control_interact())
+        self.lib.player_input_set_dialogue(True)
+        self.tap(A)
+        self.assertFalse(self.lib.control_jump())
+        self.assertTrue(self.lib.control_interact())
+
+    def test_custom_jump_and_reset_default_do_not_change_target_hold(self):
+        self.lib.player_input_set_jump_button(C)
+        self.hold(Z | C)
+        self.assertTrue(self.lib.control_jump())
+        self.assertTrue(self.lib.control_target_held())
+        self.lib.player_input_set_jump_button(Y)
+        self.hold(0)
+        self.tap(Y)
+        self.assertTrue(self.lib.control_jump())
+
+    def test_attack_tap_retains_release_edge(self):
+        self.lib.control_sample(X)
+        self.lib.control_sample(0)
+        self.lib.control_step(True)
+        self.assertEqual(self.lib.control_attack(), 1)
+        self.assertEqual(self.lib.control_attack_held(), 0)
+        self.assertEqual(self.lib.control_attack_released(), 1)
+        self.lib.control_step(True)
+        self.assertEqual(self.lib.control_attack_released(), 0)
+
+    def test_title_consumes_attack_edges_but_exposes_physical_hold(self):
+        self.hold(X, in_gameplay=False)
+        self.assertEqual(self.lib.control_attack(), 0)
+        self.assertEqual(self.lib.control_attack_held(), 1)
+        self.hold(0, in_gameplay=False)
+        self.assertEqual(self.lib.control_attack_released(), 0)
+        self.lib.control_step(True)
+        self.assertEqual(self.lib.control_attack(), 0)
+        self.assertEqual(self.lib.control_attack_released(), 0)
 
     def hold(self, bits, steps=1, in_gameplay=True):
         """Hold `bits` across `steps` fixed steps, sampling once per step."""
@@ -83,6 +124,133 @@ class PlayerControls(unittest.TestCase):
         """Press and release across `vblanks` VBlanks, then run one step."""
         self.lib.control_tap(bits, vblanks)
         self.lib.control_step(in_gameplay)
+
+    def analog(self, bits=0, x=128, y=128):
+        self.lib.player_input_sample_pad(bits, True, x, y)
+        self.lib.control_step(True)
+
+    def test_3d_trigger_axes_act_as_shoulders_and_release(self):
+        sample = self.lib.player_input_sample_3d
+        sample.argtypes = [ctypes.c_uint16, ctypes.c_bool] + [ctypes.c_uint8] * 4
+        for right, left in ((255, 0), (0, 255), (255, 255), (128, 128),
+                            (0, 0), (127, 127), (144, 144)):
+            sample(0, True, 128, 128, right, left)
+            self.lib.control_step(True)
+            self.assertEqual(self.lib.control_shield(), right >= 176 and left < 176)
+            self.assertEqual(self.lib.control_look_mode(), left >= 176)
+        sample(0, False, 128, 128, 255, 255)
+        self.lib.control_step(True)
+        self.assertFalse(self.lib.control_shield())
+        self.assertFalse(self.lib.control_look_mode())
+        sample(L | R, True, 128, 128, 0, 0)
+        self.lib.control_step(True)
+        self.assertFalse(self.lib.control_shield())  # L look retains its priority
+        self.assertTrue(self.lib.control_look_mode())
+
+    def test_trigger_deadzone_and_hysteresis_release_camera(self):
+        sample = self.lib.player_input_sample_3d
+        sample.argtypes = [ctypes.c_uint16, ctypes.c_bool] + [ctypes.c_uint8] * 4
+        for value, pressed in ((128, False), (136, False), (175, False),
+                               (176, True), (160, True), (145, True),
+                               (144, False), (150, False), (128, False)):
+            sample(0, True, 128, 128, 0, value)
+            self.lib.control_step(True)
+            self.assertEqual(self.lib.control_look_mode(), pressed)
+
+    def test_light_tilt_turns_without_translation(self):
+        self.analog(x=180)  # mapped strength 41: turn only
+        self.assertEqual(self.lib.control_motion_speed(), 0)
+        self.assertEqual(self.lib.control_motion_heading(0), 49152)
+        self.analog(x=181)  # last turn-only strength: 42
+        self.assertEqual(self.lib.control_motion_speed(), 0)
+        self.analog(x=182)  # mapped strength 43: movement
+        self.assertGreater(self.lib.control_motion_speed(), 0)
+        self.lib.link_anim_turn.argtypes = [ctypes.c_bool, ctypes.c_uint16,
+                                          ctypes.POINTER(ctypes.c_uint16)]
+        self.lib.link_anim_reset_state()
+        facing = ctypes.c_uint16(0)
+        self.lib.link_anim_turn(True, 49152, ctypes.byref(facing))
+        self.assertEqual(facing.value, 65536 - 800)
+        self.assertEqual(self.lib.link_anim_state(), 14)
+        for _ in range(30):
+            self.lib.link_anim_turn(True, 49152, ctypes.byref(facing))
+        self.assertEqual(facing.value, 49152)
+        self.assertEqual(self.lib.link_anim_state(), 0)
+        self.lib.link_anim_turn(True, 50000, ctypes.byref(facing))
+        self.lib.link_anim_turn(False, 0, ctypes.byref(facing))
+        self.assertEqual(self.lib.link_anim_state(), 0)
+
+    def test_analog_deadzone_and_proportional_speed(self):
+        for x, y in ((128, 128), (140, 138), (128, 112)):
+            self.analog(x=x, y=y)
+            self.assertEqual(self.lib.control_motion_speed(), 0)
+        self.analog(y=64)
+        half = self.lib.control_motion_speed()
+        self.assertGreater(half, 0)
+        self.analog(y=0)
+        self.assertEqual(self.lib.control_motion_speed(), 1408)
+        self.assertLess(half, 1408)
+        self.analog(x=255, y=0)
+        self.assertLessEqual(self.lib.control_motion_speed(), 1408)
+        self.assertGreater(self.lib.control_motion_speed(), 1380)
+
+    def test_analog_handedness_and_continuous_heading(self):
+        for x, y, heading in ((128, 0, 0), (255, 128, 49152),
+                               (0, 128, 16384), (128, 255, 32768)):
+            self.analog(x=x, y=y)
+            self.assertEqual(self.lib.control_motion_heading(0), heading)
+            self.assertEqual(self.lib.control_motion_heading(16384), (heading + 16384) & 65535)
+        self.analog(x=160, y=0)
+        heading = self.lib.control_motion_heading(0)
+        self.assertGreater(heading, 57344)
+        self.assertLess(heading, 65536)
+
+    def test_analog_c_and_stick_together_then_menu(self):
+        self.analog(LEFT | Y | Z, y=0)
+        self.assertEqual(self.lib.control_c_pressed(), C_LEFT)
+        self.assertEqual(self.lib.control_move_buttons(), UP)
+        self.assertTrue(self.lib.control_jump())
+        self.assertTrue(self.lib.control_target_held())
+        self.lib.player_input_set_dialogue(True)
+        self.analog()
+        self.analog(DOWN, y=0)
+        self.assertEqual(self.lib.control_menu_step(), 1)
+        self.assertEqual(self.lib.control_c_pressed(), C_NONE)
+        self.assertEqual(self.lib.control_motion_speed(), 0)
+        self.lib.player_input_set_dialogue(False)
+        self.analog(DOWN)
+        self.assertEqual(self.lib.control_c_pressed(), C_NONE)
+        self.assertEqual(self.lib.control_motion_speed(), 0)
+
+    def test_analog_look_and_digital_reconnect(self):
+        self.analog(L, x=255)
+        self.assertEqual(self.lib.control_look_yaw(), -420)
+        self.assertEqual(self.lib.control_motion_speed(), 0)
+        self.hold(0)
+        self.assertEqual(self.lib.control_motion_speed(), 0)
+        self.hold(RIGHT)
+        self.assertEqual(self.lib.control_c_pressed(), C_NONE)
+        self.assertEqual(self.lib.control_motion_heading(0), 49152)
+
+    def test_analog_c_tap_survives_slow_frame_and_disconnect(self):
+        self.lib.player_input_sample_pad(RIGHT, True, 128, 128)
+        self.lib.player_input_sample_pad(0, True, 128, 128)
+        self.lib.control_step(True)
+        self.assertEqual(self.lib.control_c_pressed(), C_RIGHT)
+        self.assertEqual(self.lib.control_c_released(), C_RIGHT)
+        self.analog(UP, y=0)
+        self.hold(0)
+        self.assertEqual(self.lib.control_motion_speed(), 0)
+        self.assertEqual(self.lib.control_c_released(), C_UP)
+
+    def test_analog_walk_cap_and_menu_owns_debug_chord(self):
+        self.analog(B, y=0)
+        self.assertEqual(self.lib.control_motion_speed(), 768)
+        self.lib.player_input_set_dialogue(True)
+        self.analog(L | R | UP)
+        self.assertEqual(self.lib.control_menu_step(), -1)
+        self.assertEqual(self.lib.control_c_pressed(), C_NONE)
+        self.assertEqual(self.lib.control_motion_speed(), 0)
 
     # --- button mapping ---------------------------------------------------
 
@@ -111,6 +279,23 @@ class PlayerControls(unittest.TestCase):
         self.assertTrue(self.lib.control_attack())
         self.assertFalse(self.lib.control_jump())
         self.assertFalse(self.lib.control_interact())
+
+    def test_a_held_and_stick_pushed_for_the_ledge_hang(self):
+        """Player_Action_8084BBE4 reads A held (let go) and a stick pushed
+        55 of 60 (pull up); digital directions are full throw."""
+        self.hold(A, steps=3)
+        self.assertTrue(self.lib.control_interact_held())
+        self.assertFalse(self.lib.control_stick_pushed())
+        self.hold(0)
+        self.assertFalse(self.lib.control_interact_held())
+        self.hold(UP)
+        self.assertTrue(self.lib.control_stick_pushed())
+        self.analog(y=64)                 # half throw
+        self.assertFalse(self.lib.control_stick_pushed())
+        self.analog(y=0)                  # full throw
+        self.assertTrue(self.lib.control_stick_pushed())
+        self.analog()
+        self.assertFalse(self.lib.control_stick_pushed())
 
     def test_r_is_shield_only(self):
         self.hold(R)
@@ -221,6 +406,15 @@ class PlayerControls(unittest.TestCase):
         self.hold(C | UP)
         self.assertEqual(self.lib.control_move_buttons(), 0)
         self.assertEqual(self.lib.control_c_held(), C_UP)
+
+    def test_digital_c_up_keeps_a_held_z_lock(self):
+        # Human report: on the digital pad, C + Up while holding Z dropped
+        # the lock, so C-Up on a locked enemy never reached Navi.
+        self.hold(Z)
+        self.hold(Z | C | UP)
+        self.assertTrue(self.lib.control_target_held())
+        self.assertEqual(self.lib.control_c_held(), C_UP)
+        self.assertEqual(self.lib.control_move_buttons(), 0)
 
     def test_look_consumes_the_dpad(self):
         self.hold(L | LEFT)
@@ -415,6 +609,40 @@ class PlayerControls(unittest.TestCase):
             moved = int(math.hypot(p.x - before[0], p.z - before[1]))
             self.lib.link_anim_update(moved, True, 0, False)
         self.assertEqual(self.lib.link_anim_state(), 2)   # LINK_STATE_RUN
+
+    def test_slow_travel_rounding_does_not_define_facing(self):
+        # At a shallow angle the fixed-point remainder emits different whole-
+        # unit deltas each step. Both digital walk and analog creep must retain
+        # their requested heading rather than feeding those deltas to the camera.
+        self.lib.kokiri_camera_move_heading.argtypes = [
+            ctypes.POINTER(Position), ctypes.c_uint16, ctypes.c_int32]
+        for analog in (False, True):
+            self.lib.control_reset()
+            self.lib.kokiri_camera_reset_actor_motion()
+            if analog:
+                self.analog(y=64)  # above the turn-only band
+            else:
+                self.tap(B)
+                self.hold(UP)
+            p = Position()
+            heading = self.lib.control_motion_heading(5000)
+            speed = self.lib.control_motion_speed()
+            rounded_headings = set()
+            for _ in range(120):
+                before = (p.x, p.z)
+                self.lib.kokiri_camera_move_heading(ctypes.byref(p), heading, speed)
+                dx, dz = p.x - before[0], p.z - before[1]
+                if dx or dz:
+                    rounded_headings.add(round(math.atan2(dx, dz) * 65536 / math.tau))
+                self.assertEqual(self.lib.control_motion_heading(5000), heading)
+            self.assertGreater(len(rounded_headings), 1)
+            self.assertGreater(max(rounded_headings) - min(rounded_headings), 3000)
+
+    def test_demo_faces_input_not_quantized_displacement(self):
+        text = (ROOT / 'src/demo.c').read_text()
+        self.assertNotIn('kokiri_camera_facing(demo_link.x - step_x', text)
+        self.assertIn('player_input_motion(&input, demo_yaw, &demo_link_yaw,', text)
+        self.assertIn('walk && roll_speed <= 0 &&', text)
 
     # --- shoulders never orbit -------------------------------------------
 

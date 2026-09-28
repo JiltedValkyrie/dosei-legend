@@ -7,6 +7,15 @@ Always use caveman talk. No waste human tokens. Bad. You caveman talking? Good g
 
 # Project handoff - 2026-09-16
 
+## Human rule: playable progress, severity-first bug/feature triage
+
+For future work: fix severe current blockers immediately; log small bugs,
+potential issues and optional features, then keep progressing the assigned game
+milestone. Do not block advancement on minor follow-ups or speculative cleanup.
+Use [BUG_FEATURE_LOG.md](game/docs/BUG_FEATURE_LOG.md) for priority, evidence,
+owner and revisit trigger. Required features stay required; optional additions
+need scope assignment. Existing M1a review/fix requirements remain unchanged.
+
 ## Human rule: actor drops belong in the same task
 
 Add grass, pots, enemies, props or items: always check real OoT drop code and
@@ -29,7 +38,11 @@ Human directive: after the manual-jump checkpoint, work on `dev` from now on.
 `main` keeps the pushed checkpoint; do not default new development to main.
 The new 2026-09-18 control directive supersedes that checkpoint: A interact,
 X attack, Y jump, B toggles walk/run, hold C+D-pad supplies the four N64 C
-directions, and hold Z+D-pad looks around. Read the authoritative requirements
+directions. The 2026-09-22 remap supersedes that look/target mapping:
+hold L+D-pad looks around; Z targets/recenters.
+3D Control Pad in analog mode: stick moves with proportional speed (B selects
+walk/run ceiling); L+stick looks. D-pad navigates menus while open, otherwise
+provides C directions without holding C. Digital mode keeps the standard layout. Read the authoritative requirements
 at the top of `game/docs/OPUS_HANDOFF.md` before changing input code.
 
 ## BIG RULE NUMBER 1
@@ -78,7 +91,10 @@ Generated files, disc staging and binaries go in ignored `game/build/`, never
 mixed with source assets. Do not resume archived `legacy/libyaul/` work.
 Use `launch-game.bat` for the standard/hi-res selector. See the root README for
 the complete layout and current build commands.
-Current next-task handoff: [OoT progression plan](game/docs/OOT_PROGRESSION_PLAN.md).
+Current next-task handoff: [Public demo plan](game/docs/DEMO_PLAN.md) (approved
+2026-09-25: Kokiri Forest, interiors, shop, Deku Tree + Gohma, Lost Woods,
+Hyrule Field explore/owl). Characters: NO texture except face. Builds on the
+[OoT progression plan](game/docs/OOT_PROGRESSION_PLAN.md).
 Approved 2026-09-21: game state, save, three areas and the full opening
 progression through the Kokiri Emerald. The game now REQUIRES the 4 MB RAM
 expansion cart. That plan supersedes `game/docs/GAMEPLAY_NEXT_STEP.md` and the
@@ -148,6 +164,7 @@ Do not invent new acceptance gates. Coordinate ownership and leave another
 agent's in-progress edits alone.
 
 Current build/run instructions: [game/README.md](game/README.md).
+Build rule: Clean only. Standard only when test needs developer-only features.
 Launch with `game/run-kronos.bat`, not the historical libyaul launcher below.
 
 ## Read first

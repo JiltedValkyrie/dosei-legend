@@ -36,6 +36,7 @@ import build_authored_scene as authored                         # noqa: E402
 import build_room_scene as rooms                                # noqa: E402
 from build_sgl_scene import face_normal                         # noqa: E402
 from PIL import Image                                           # noqa: E402
+import asset_names
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 
@@ -140,8 +141,8 @@ def main():
     mesh, pixels, bounds = rooms.pack_room(vertices, faces, tiles, records,
                                            face_normal)
 
-    (args.out / ('S%dR0.MSH' % args.scene)).write_bytes(mesh)
-    (args.out / ('S%dR0.TEX' % args.scene)).write_bytes(pixels)
+    (args.out / asset_names.room_asset(args.scene, 0, 'MSH')).write_bytes(mesh)
+    (args.out / asset_names.room_asset(args.scene, 0, 'TEX')).write_bytes(pixels)
 
     summary = dict(scene=args.scene, vertices=len(vertices),
                    polygons=len(faces), tiles=len(tiles),

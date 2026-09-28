@@ -19,6 +19,7 @@ typedef struct
 {
     bool              active;
     bool              finished;
+    bool              skip_finish;
     unsigned char     id;
     unsigned short    frame;
     unsigned char     text_cursor;
@@ -165,6 +166,7 @@ bool cutscene_start(unsigned int id)
     cs = &cutscenes[id];
     state.active = false;
     state.finished = false;
+    state.skip_finish = false;
     state.id = (unsigned char)id;
     state.frame = 0;
     state.applied_frame = 0;
@@ -427,6 +429,107 @@ static void step_events(const cutscene_t *cs, bool confirm)
 
 static void update_cues(const cutscene_t *cs);
 
+static void finish_cutscene(const cutscene_t *cs)
+{
+    unsigned int next = (unsigned int)cs->destination;
+    state.active = false;
+    state.finished = true;
+    message_stop();
+    if (cs->destination >= 0) {
+        if (!cutscene_start(next))
+            state.finished = true;
+    } else {
+        cutscene_actors_free();
+        asset_loading("ACTIONS.PCM");
+        if (!action_audio_set_opening(false))
+            jo_core_error("Action sound bank reload failed");
+        asset_loading_done();
+        save_set_event_chk_inf(EVENTCHKINF_DEKU_TREE_INTRO_CS_SEEN);
+    }
+}
+
+static void update_misc(const cutscene_t *cs)
+{
+    unsigned int i;
+    (void)cs;
+    if (state.flash > 10) state.flash -= 10; else state.flash = 0;
+    for (i = 0; i < CUTSCENE_MISC_COUNT; ++i) {
+        const cutscene_misc_t *event = &cutscene_misc[i];
+        if (event->scene != state.id || state.frame != event->start) continue;
+        if (event->kind == 0) state.rain = 20;
+        else if (event->kind == 1) state.flash = 100;
+        else if (event->kind == 2) state.bridge_start = state.frame;
+    }
+}
+
+unsigned int cutscene_shot_key(void)
+{
+    unsigned int i, start = 0;
+    const cutscene_t *cs;
+    if (!state.active) return ~0u;
+    cs = &cutscenes[state.id];
+    for (i = 0; i < cs->shot_count; ++i)
+        if (cs->shots[i] <= state.applied_frame) start = cs->shots[i];
+    return ((unsigned int)state.id << 16) | start;
+}
+
+void cutscene_skip_shot(void)
+{
+    const cutscene_t *cs;
+    unsigned int i, target;
+    bool last_shot = true;
+    if (!state.active) return;
+    cs = &cutscenes[state.id];
+    target = cs->frames - 1;
+    if (cs->stop_frame >= 0 && (unsigned int)cs->stop_frame < target)
+        target = cs->stop_frame;
+    if (cs->destination >= 0 && cs->destination_frame >= 0 &&
+        (unsigned int)cs->destination_frame < target)
+        target = cs->destination_frame;
+    for (i = 0; i < cs->shot_count; ++i)
+        if (cs->shots[i] > state.applied_frame && cs->shots[i] < target) {
+            target = cs->shots[i];
+            last_shot = false;
+            break;
+        }
+    message_stop();
+    /* Discard skipped dialogue, not dialogue starting at the destination. */
+    while (state.text_cursor < cs->text_count &&
+           cs->text[state.text_cursor].start < (short)target)
+        ++state.text_cursor;
+    /* Advance persistent actor/misc state without intermediate CD loads,
+     * sound bursts or dialogue. Navi's easing needs each source tick. */
+    while (state.frame < target) {
+        update_misc(cs);
+        update_cues(cs);
+        ++state.frame;
+    }
+    if (last_shot) {
+        /* Let pending score switches settle before chaining to a script
+         * without music commands (wake-up inherits Navi's opening theme). */
+        state.text_cursor = cs->text_count;
+        state.skip_finish = true;
+        cutscene_step(false);
+        return;
+    }
+    for (i = 0; i < 7; ++i) action_audio_opening_stop(i);
+    state.sound_hooves = false;
+    state.sound_eye_valid = false;
+    state.sound_frame = 65535;
+    if (state.id == CUTSCENE_NIGHTMARE) {
+        int angle;
+        state.applied_frame = state.frame;
+        angle = cutscene_bridge_angle();
+        state.sound_bridge_angle = (short)angle;
+        action_audio_opening_play(OPENING_RAIN, 0, true);
+        if (angle > -16384 && angle < 0)
+            action_audio_opening_play(OPENING_BRIDGE, 3, true);
+    }
+    /* Normal stepping applies the target camera, bank and remaining events,
+     * or follows the normal chain/cleanup when this was the last shot. */
+    cutscene_step(false);
+}
+
 bool cutscene_step(bool confirm)
 {
     const cutscene_t *cs;
@@ -444,18 +547,7 @@ bool cutscene_step(bool confirm)
     }
     if (state.frame < cs->frames)
         apply_camera(&state.track[state.frame]);
-    {
-        unsigned int i;
-        if (state.flash > 10) state.flash -= 10; else state.flash = 0;
-        for (i = 0; i < CUTSCENE_MISC_COUNT; ++i) {
-            const cutscene_misc_t *event = &cutscene_misc[i];
-            if (event->scene != state.id || state.frame != event->start) continue;
-            if (event->kind == 0) state.rain = 20;
-            else if (event->kind == 1) state.flash = 100;
-            else if (event->kind == 2) state.bridge_start = state.frame;
-            /* Locked viewpoint: the baked house camera already owns the view. */
-        }
-    }
+    update_misc(cs);
     state.applied_frame = state.frame;
     update_cues(cs);
     update_fade(cs);
@@ -473,24 +565,13 @@ bool cutscene_step(bool confirm)
     */
     if (message_is_active() && (short)state.frame >= state.text_hold_end)
         return (true);
+    if (state.skip_finish && state.music_cursor < cs->music_count &&
+        cs->music[state.music_cursor].start <= (short)state.frame)
+        return true;
     if ((cs->destination >= 0 && state.frame >= (unsigned short)cs->destination_frame) ||
         (cs->stop_frame >= 0 && state.frame >= (unsigned short)cs->stop_frame) ||
         state.frame + 1 >= cs->frames) {
-        unsigned int next = (unsigned int)cs->destination;
-        state.active = false;
-        state.finished = true;
-        message_stop();
-        if (cs->destination >= 0) {
-            if (!cutscene_start(next))
-                state.finished = true;
-        } else {
-            cutscene_actors_free();
-            asset_loading("ACTIONS.PCM");
-            if (!action_audio_set_opening(false))
-                jo_core_error("Action sound bank reload failed");
-            asset_loading_done();
-            save_set_event_chk_inf(EVENTCHKINF_DEKU_TREE_INTRO_CS_SEEN);
-        }
+        finish_cutscene(cs);
         return (state.active);
     }
     ++state.frame;

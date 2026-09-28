@@ -86,6 +86,7 @@ pause screen (Start) lists the same mapping.
 | A (nothing to talk to) | Roll forward. The roll commits and carries him itself |
 | Hold L + D-pad | Look camera: aim the view, bounded. No movement, no shield |
 | Start | Open/close the item menu during gameplay; leaves the title screen |
+| Start during cutscene | Show skip prompt; press again within 2 seconds to skip the current camera shot |
 | Menu: D-pad / A / B | Pick a slot, equip the selected item, close the menu |
 | Hold C + D-pad | C-Up/Down/Left/Right. Routed and consumed, but no item system exists yet |
 | L + R + Down | Switch diagnostic overlay views; compiled out of the clean player-test image |

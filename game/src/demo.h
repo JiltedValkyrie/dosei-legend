@@ -5,12 +5,20 @@
 bool demo_init(void);
 void demo_update(void);
 bool demo_title_is_visible(void);
+/* Live screen distance in pixels (main.c; slSetScreenDist uses it). */
+int32_t demo_screen_distance(void);
 /* True while the file select owns the pad. The world does not step and the
 ** gameplay HUD must stay off, same as the title. */
 bool demo_file_select_is_visible(void);
 /* Outcome of the last pause-menu save: -1 none yet, 0 failed, 1 succeeded. */
 int demo_save_report(void);
 unsigned int demo_clock(void);
+unsigned int demo_world_clock(void);
+bool demo_skip_prompt(void);
+/* The crawlspace "Enter" A prompt (PLAYER_STATE2_DO_ACTION_ENTER). */
+bool demo_enter_prompt(void);
+/* Camera_Subj4 in a crawlspace: first person, Link not drawn. */
+bool demo_first_person(void);
 extern camera_position_t demo_camera;
 extern uint16_t demo_yaw;
 extern int32_t demo_pitch;

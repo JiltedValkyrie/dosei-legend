@@ -12,7 +12,7 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 GCC = pathlib.Path('C:/msys64/mingw64/bin/gcc.exe')
 
 
-def posed_head_height():
+def posed_head_height(focus=False):
     """World height of Link's head joint over his feet, from the built model.
 
     Repeats link_anim.c's pose_skeleton() for the idle frame in floating
@@ -77,6 +77,11 @@ def posed_head_height():
                               for b in range(3)] for a in range(3)]
         done.add(index)
         queue += [i for i in parent if parent[i] == index and i not in done]
+    if focus:
+        # sPlayerFocusOffsetFromHead (1100, -700, 0) in the head's frame.
+        head = [origin[10][a] + matrix[10][a][0] * 1100 + matrix[10][a][1] * -700
+                for a in range(3)]
+        return head[1] * scale / 65536 + shift_y
     return origin[10][1] * scale / 65536 + shift_y
 
 
@@ -112,28 +117,30 @@ class Navi(unittest.TestCase):
         return max(abs(self.lib.navi_x() - x), abs(self.lib.navi_y() - y),
                    abs(self.lib.navi_z() - z))
 
-    def test_spawns_beside_links_head(self):
-        """At a real spawn she is beside his HEAD, not floating over it.
-
-        demo.c hands over his FEET. The whole model is 66 units tall
-        (LINK_CENTER_Y + LINK_RADIUS), so much more than that is the camera
-        eye height (90) creeping back in as the anchor."""
-        feet = (1000, 500, -200)
-        self.lib.navi_reset(*feet)
+    def test_spawns_over_the_focus_point(self):
+        """demo.c hands over Link's focus.pos (link_anim_focus); she hovers
+        lockOnArrowOffset 500 x 0.01 = 5 plus 1500 x 0.008 = 12 above it,
+        +-5 for the vertical orbit."""
+        focus = (1000, 560, -200)
+        self.lib.navi_reset(*focus)
         self.assertTrue(self.lib.navi_active())
-        above = self.lib.navi_y() - feet[1]
-        self.assertGreater(above, 40)
-        self.assertLess(above, 70)
-        self.assertLessEqual(max(abs(self.lib.navi_x() - feet[0]),
-                                 abs(self.lib.navi_z() - feet[2])), 10)
+        above = self.lib.navi_y() - focus[1]
+        self.assertGreaterEqual(above, 12)
+        self.assertLessEqual(above, 22)
+        self.assertLessEqual(max(abs(self.lib.navi_x() - focus[0]),
+                                 abs(self.lib.navi_z() - focus[2])), 10)
 
-    def test_head_anchor_matches_the_posed_model(self):
-        """LINK_HEAD is the model's own head joint, re-derived here."""
+    def test_focus_point_sits_above_the_head_joint(self):
+        """The posed focus point, (1100, -700, 0) in the head limb, is above
+        the head joint the old fixed anchor (46) used."""
         if not (ROOT / 'build/generated/link_clips.c').is_file():
             self.skipTest('generated clips required')
-        declared = int(re.search(r'#define LINK_HEAD\s+(\d+)',
-                                 (ROOT / 'src/navi.c').read_text()).group(1))
-        self.assertEqual(declared, round(posed_head_height()))
+        joint, focus = posed_head_height(), posed_head_height(focus=True)
+        self.assertGreater(focus, joint + 3)
+        self.assertLess(focus, joint + 15)
+        source = (ROOT / 'src/link_anim.c').read_text()
+        self.assertIn('INTEGER_FIXED(1100)', source)
+        self.assertIn('INTEGER_FIXED(-700)', source)
 
     def test_follows_a_running_link(self):
         """Source state 1 keeps her within the orbit while he runs away."""
@@ -142,7 +149,7 @@ class Navi(unittest.TestCase):
         for _ in range(300):
             x += 5          # a shade under the run speed, every fixed step
             self.lib.navi_step(x, y, z)
-        self.assertLessEqual(self.distance(x, y + 57, z), 40)
+        self.assertLessEqual(self.distance(x, y + 17, z), 40)
 
     def test_dash_cue_on_a_teleport(self):
         """Past 100 units she breaks into the source catch-up dash, once."""
@@ -157,7 +164,30 @@ class Navi(unittest.TestCase):
             self.lib.navi_step(4000, 0, 0)
             cues += self.lib.navi_dash_started()
         self.assertEqual(cues, 0)
-        self.assertLessEqual(self.distance(4000, 57, 0), 40)
+        self.assertLessEqual(self.distance(4000, 17, 0), 40)
+
+
+    def sparkles(self):
+        pos = (ctypes.c_int32 * 3)()
+        yaw, life = ctypes.c_uint16(), ctypes.c_uint()
+        out = []
+        for i in range(32):
+            if self.lib.navi_sparkle(i, pos, ctypes.byref(yaw), ctypes.byref(life)):
+                out.append((tuple(pos), life.value))
+        return out
+
+    def test_sparkle_pool_is_fixed_and_they_fall(self):
+        """One KiraKira per 20 Hz update, life 16: the pool of 16 fills and
+        never grows; each sparkle drifts down (vy -0.025..-0.05)."""
+        self.lib.navi_sparkle.restype = ctypes.c_bool
+        self.lib.navi_reset(0, 100, 0)
+        for _ in range(60):
+            self.lib.navi_step(0, 100, 0)
+        live = self.sparkles()
+        self.assertEqual(len(live), 16)
+        self.assertTrue(all(1 <= life <= 16 for _, life in live))
+        oldest = min(live, key=lambda s: s[1])
+        self.assertLess(oldest[0][1], 100 + 17 + 5 + 6)
 
 
 if __name__ == '__main__':

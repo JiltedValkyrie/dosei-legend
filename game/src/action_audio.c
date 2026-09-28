@@ -4,11 +4,15 @@
 #include "action_audio_data.h"
 #include "opening_audio_data.h"
 #include "gameplay.h"
+#include "karebaba.h"
+#include "game_over.h"
 #include "music.h"
 
 #define SLOT(s,o) (*(volatile unsigned short *)(0x25b00000UL + (s)*32 + (o)))
 static volatile bool ready;
 static bool opening_bank;
+static unsigned int area_bank;          /* SFX bank index, 0 = none */
+static bool area_ready;
 static unsigned int voice;
 static volatile bool rupee_active;
 static volatile unsigned int rupee_clock, rupee_note;
@@ -18,18 +22,18 @@ static volatile unsigned int navi_frequency;
 static unsigned int navi_note_clock, navi_env_clock, navi_env_tick;
 static bool navi_first_envelope;
 static void rupee_vblank(void);
+static bool load_area(void);
 static void navi_vblank(void);
 
-static bool load_pcm(const char *name, unsigned int bytes)
+/* Copy one PCM file into sound RAM at `base`. Bounds: never below the music
+** sample limit, never past the end of sound RAM. */
+static bool upload(const char *name, unsigned int base, unsigned int bytes)
 {
     jo_file file;
     unsigned short buffer[256];
     unsigned int offset = 0, i;
     volatile unsigned short *ram = (volatile unsigned short *)0x25a00000UL;
-    ready = false;
-    navi_flying = false;
-    if (ACTION_PCM_BASE < MUSIC_SAMPLE_LIMIT ||
-        ACTION_PCM_BASE + bytes > 0x80000 ||
+    if (base < MUSIC_SAMPLE_LIMIT || (base & 1) || base + bytes > 0x80000 ||
         !jo_fs_open(&file, name)) return false;
     if ((unsigned int)file.size != bytes) { jo_fs_close(&file); return false; }
     while (offset < bytes) {
@@ -39,10 +43,20 @@ static bool load_pcm(const char *name, unsigned int bytes)
             jo_fs_close(&file); return false;
         }
         for (i = 0; i < count/2; ++i)
-            ram[(ACTION_PCM_BASE + offset)/2+i] = buffer[i];
+            ram[(base + offset)/2+i] = buffer[i];
         offset += count;
     }
     jo_fs_close(&file);
+    return true;
+}
+
+static bool load_pcm(const char *name, unsigned int bytes)
+{
+    unsigned int i;
+    ready = false;
+    navi_flying = false;
+    area_ready = false;                 /* whole region overwritten */
+    if (!upload(name, ACTION_PCM_BASE, bytes)) return false;
     for (i = 24; i < 32; ++i) { SLOT(i,0) = 0; SLOT(i,12) = 255; }
     voice = 0;
     rupee_active = false;
@@ -54,10 +68,35 @@ bool action_audio_init(void)
 {
     opening_bank = false;
     if (!load_pcm("ACTIONS.PCM", ACTION_PCM_BYTES)) return false;
+    area_bank = 0;
+    if (!load_area()) return false;
     sound_refresh = (JO_VDP2_TVSTAT & 1) ? 50 : 60;
     if (!jo_core_add_vblank_callback(rupee_vblank)) return false;
     ready = true;
     return true;
+}
+
+/* Area bank sits after the core. Bank 0 has no file. While the opening bank
+** owns the region, only remember the choice; it loads when gameplay returns. */
+static bool load_area(void)
+{
+    area_ready = false;
+    if (opening_bank) return true;
+    SLOT(26,12) = 255; SLOT(26,0) = 0x1000;     /* area one-shot slot */
+    if (sfx_bank_file[area_bank] &&
+        (sfx_bank_bytes[area_bank] > SFX_AREA_LIMIT ||
+         !upload(sfx_bank_file[area_bank], SFX_AREA_BASE, sfx_bank_bytes[area_bank])))
+        return false;
+    area_ready = true;
+    return true;
+}
+
+bool action_audio_set_area(unsigned int bank)
+{
+    if (bank >= SFX_BANK_COUNT) return false;
+    if (bank == area_bank && (area_ready || opening_bank)) return true;
+    area_bank = bank;
+    return load_area();
 }
 
 bool action_audio_set_opening(bool opening)
@@ -70,7 +109,7 @@ bool action_audio_set_opening(bool opening)
     if (!load_pcm(opening ? "OPENING.PCM" : "ACTIONS.PCM",
                   opening ? OPENING_PCM_BYTES : ACTION_PCM_BYTES)) return false;
     opening_bank = opening;
-    return true;
+    return opening || load_area();
 }
 
 static void play_sample(unsigned int id, unsigned int slot, unsigned int pitch,
@@ -113,10 +152,64 @@ void action_audio_opening_stop(unsigned int channel)
     SLOT(24 + channel,0) = 0x1000;
 }
 
+/* One-shot at a note velocity: OoT mixes (velocity / 127)^2; SCSP TL is
+** 0.375 dB a step, so `extra` = TL steps of that attenuation. */
+static void play_level(unsigned int id, unsigned int slot, unsigned int extra)
+{
+    play_sample(id, slot, (unsigned int)action_pcm_octave[id < ACTION_PCM_COUNT ? id : 0] << 11,
+                12 + extra, false);
+}
+
 static void play(unsigned int id, unsigned int slot)
 {
-    unsigned int octave = (id >= ACTION_VOICE0 && id <= ACTION_VOICE3) ? 13 : 14;
-    play_sample(id, slot, octave << 11, 12, false);
+    /* OCT from the stored rate: half-rate samples (voices, climb, shield,
+    ** equip) play one octave down so they keep their pitch. */
+    play_sample(id, slot, (unsigned int)action_pcm_octave[id < ACTION_PCM_COUNT ? id : 0] << 11,
+                12, false);
+}
+
+/* Area one-shot: silent when the current area bank lacks the sound.
+** `shift` is added to the sample's pitch register (OCT/FNS). */
+static void play_area_pitch(unsigned int id, unsigned int slot, unsigned int shift);
+static void play_area(unsigned int id, unsigned int slot)
+{
+    play_area_pitch(id, slot, 0);
+}
+
+static void play_area_pitch(unsigned int id, unsigned int slot, unsigned int shift)
+{
+    const action_pcm_t *sample;
+    unsigned int address, key;
+    if (!ready || opening_bank || !area_ready || id >= AREA_SFX_COUNT) return;
+    sample = &sfx_bank_pcm[area_bank][id];
+    if (!sample->length) return;
+    address = SFX_AREA_BASE + sample->offset;
+    SLOT(slot,0) = 0x1000;
+    SLOT(slot,12) = 255;
+    key = 0x0010 | ((address >> 16) & 15);
+    SLOT(slot,0) = key;
+    SLOT(slot,2) = address & 65535;
+    SLOT(slot,4) = 0;
+    SLOT(slot,6) = sample->length;
+    SLOT(slot,8) = 31;
+    SLOT(slot,10) = 31;
+    SLOT(slot,14) = 0;
+    SLOT(slot,16) = (unsigned short)(((unsigned int)area_sfx_octave[id] << 11) + shift);
+    SLOT(slot,18) = 0;
+    SLOT(slot,20) = 0;
+    SLOT(slot,22) = 7 << 13;
+    SLOT(slot,12) = 12;
+    SLOT(slot,0) = key | 0x1800;
+}
+
+/* Kaleido Game Over prompts: PIECE_OF_HEART for Yes, DECIDE for No, CURSOR
+** on a move. */
+void action_audio_game_over(uint32_t ev)
+{
+    if (opening_bank) return;
+    if (ev & GAME_OVER_EV_YES) play(ACTION_HEART_PIECE, 27);
+    else if (ev & GAME_OVER_EV_DECIDE) play(ACTION_DECIDE, 27);
+    else if (ev & GAME_OVER_EV_MOVE) play(ACTION_CURSOR, 27);
 }
 
 void action_audio_navi_dash(void)
@@ -181,7 +274,7 @@ static void rupee_start(void)
     if (!ready || music_busy()) return;
     rupee_active = false; /* interrupt must not touch half-written slot setup */
     rupee_clock = rupee_note = 0;
-    play_sample(ACTION_RUPEE,29,14 << 11,RUPEE_BED_LEVEL,false);
+    play_sample(ACTION_RUPEE,29,(unsigned int)action_pcm_octave[ACTION_RUPEE] << 11,RUPEE_BED_LEVEL,false);
     play_sample(ACTION_RUPEE_WAVE,30,rupee_pitches[0],rupee_levels[0],true);
     rupee_active = true;
 }
@@ -221,15 +314,73 @@ static void rupee_vblank(void)
 
 void action_audio_events(uint32_t events)
 {
+    uint32_t events2 = gameplay.events2;
     if (opening_bank) return;
+    /* Attention_Update: NA_SE_SY_LOCK_ON for an attention+hostile lock,
+    ** NA_SE_SY_LOCK_ON_HUMAN otherwise. */
+    if (events & GP_EVENT_TARGET_ON)
+        play((events2 & GP2_EVENT_LOCK_HOSTILE) ? ACTION_LOCK_ON : ACTION_LOCK_ON_HUMAN, 29);
+    /* Navi, slot 31 (the opening's flight loop is not live in gameplay). */
+    if (events2 & GP2_EVENT_NAVI_HELLO) play(ACTION_NAVI_HELLO, 31);
+    if (events2 & GP2_EVENT_NAVI_CALL) {
+        /* CHAN_60F2: rand 3 over ARRAY_65A7, velocity 100/95/105 (TL 11,
+        ** 13, 9); layer 1's INST_69 glide at velocity 65 (TL 31). */
+        static const unsigned char tl[3] = { 11, 13, 9 };
+        unsigned int take = (voice++) % 3;
+        play_level(ACTION_NAVI_CALL0 + take, 31, tl[take]);
+        play_level(ACTION_NAVI_CHIME, 30, 31);
+    }
+    if (events2 & GP2_EVENT_NAVI_TALK) play(ACTION_NAVI_TALK, 31);
+    /* M2e: func_80837C0C NA_SE_PL_DAMAGE + NA_SE_VO_LI_DAMAGE_S_KID (rand 3);
+    ** knockdown NA_SE_VO_LI_FALL_L_KID; func_80843E64 landing voice (the
+    ** BODY_HIT channel is not rendered: PL_DAMAGE stands in, logged);
+    ** func_80836448 NA_SE_VO_LI_DOWN_KID; Health_IsCritical alarm. */
+    if (events & GP_EVENT_HURT) {
+        play(ACTION_PL_DAMAGE, 24);
+        play(ACTION_HURT0 + (voice++ % 3), 25);
+    }
+    if (events & GP_EVENT_KNOCKDOWN) play(ACTION_FALL_L0, 25);
+    if (events2 & GP2_EVENT_LAND_DAMAGE) {
+        play(ACTION_PL_DAMAGE, 24);
+        play(ACTION_LAND_HURT0, 25);
+    }
+    if (events2 & GP2_EVENT_DEATH) play(ACTION_DOWN, 25);
+    if (events2 & GP2_EVENT_ALARM) play(ACTION_ALARM, 30);
+    {
+        /* En_Karebaba (forest area bank) and its stick pickup. One baba
+        ** sound a step on slot 28; Enemy_StartFinishingBlow on 30. */
+        uint32_t baba = karebaba_events();
+        if (baba & KAREBABA_EV_DEAD) play_area(AREA_SFX_BABA_DEAD, 28);
+        else if (baba & KAREBABA_EV_GROUND) play_area(AREA_SFX_BABA_GROUND, 28);
+        else if (baba & KAREBABA_EV_AWAKEN) play_area(AREA_SFX_BABA_AWAKEN, 28);
+        else if (baba & KAREBABA_EV_MOUTH) play_area(AREA_SFX_BABA_MOUTH, 28);
+        if (baba & KAREBABA_EV_LAST_DAMAGE) play(ACTION_LAST_DAMAGE, 30);
+        /* func_8083E4C4: NA_SE_SY_GET_ITEM for a quiet (already owned) give. */
+        if (baba & KAREBABA_EV_STICK) play(ACTION_GET_ITEM, 27);
+    }
     if (events & GP_EVENT_SWING) {
         play(ACTION_SWING, 24);
         play(ACTION_VOICE0 + (voice++ & 3), 25);
     }
     if (events & GP_EVENT_RUPEE) rupee_start();
-    if (events & GP_EVENT_CUT) play(ACTION_CUT, 26);
+    if (events & GP_EVENT_CUT) play_area(AREA_SFX_CUT, 26);
+    /* M2c combat, forest bank, slot 28 (footsteps: Link is not walking while
+    ** swinging or guarding; 29/30 are the rupee). func_80842DF4: DIRT_SOFT (11) walls
+    ** play NA_SE_IT_WALL_HIT_SOFT (same instrument, A3 against E2: one
+    ** octave plus FNS for five semitones), others HARD. The shield bounce and
+    ** a sword bounce play NA_SE_IT_SHIELD_REFLECT_SW's first layer. */
+    if (events & GP_EVENT_WALL_HIT)
+        play_area_pitch(AREA_SFX_WALL_HIT, 28,
+                        gameplay.wall_material == 11 ? (1u << 11) + 343u : 0u);
+    else if (events & (GP_EVENT_GUARD | GP_EVENT_REBOUND))
+        play_area(AREA_SFX_REFLECT, 28);
+    if (events & GP_EVENT_NUT_BREAK) play_area(AREA_SFX_NUT_BREAK, 28);
     if (events & GP_EVENT_SHIELD_UP) play(ACTION_SHIELD, 24);
     if (events & GP_EVENT_JUMP) play(ACTION_JUMP, 25);
+    /* Ledge hop: NA_SE_VO_LI_SWORD_N_KID, the same four takes as a swing. */
+    if (events & GP_EVENT_HOP_VOICE) play(ACTION_VOICE0 + (voice++ & 3), 25);
+    /* CHAN_639A: rand 2 over ARRAY_63AB. */
+    if (events & GP_EVENT_CLIMB_END) play(ACTION_CLIMB0 + (voice++ & 1), 25);
     if (events & GP_EVENT_ROLL_VOICE) play(ACTION_VOICE0 + (voice++ & 3), 25);
     if (events & GP_EVENT_ROLL) play(ACTION_ROLL, 28);
     else if (events & GP_EVENT_FOOTSTEP) play(ACTION_FOOTSTEP, 28);

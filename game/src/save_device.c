@@ -5,10 +5,13 @@
 
 #include <jo/jo.h>
 #include "save_device.h"
+#include "ui_preferences.h"
 
 #define DEVICE      JoInternalMemoryBackup
 
 static bool         device_ready = false;
+static char prefs_name[] = "DOSEICFG", prefs_comment[] = "UI SETUP";
+static int prefs_report = -1;
 
 /* Slot file names. Built once rather than sprintf'd per call: the SDK takes a
 ** non-const char* and keeps no copy, so the storage has to outlive the call. */
@@ -19,9 +22,26 @@ static char         slot_comment[] = "DOSEI LEG";   /* 9 chars, limit is 10 */
 
 bool                save_device_init(void)
 {
+    unsigned int length;
+    uint8_t *data;
+    ui_preferences_reset();
     device_ready = jo_backup_mount(DEVICE);
+    if (device_ready && jo_backup_file_exists(DEVICE, prefs_name)) {
+        data = jo_backup_load_file_contents(DEVICE, prefs_name, &length);
+        if (data) { ui_preferences_unpack(data, length); jo_free(data); }
+    }
     return (device_ready);
 }
+
+bool save_device_write_preferences(void)
+{
+    uint8_t data[UI_PREF_BYTES];
+    ui_preferences_pack(data);
+    prefs_report = device_ready && jo_backup_save_file_contents(DEVICE, prefs_name,
+        prefs_comment, data, UI_PREF_BYTES);
+    return prefs_report != 0;
+}
+int save_device_preferences_report(void) { return prefs_report; }
 
 bool                save_device_ready(void)
 {

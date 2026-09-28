@@ -1,3 +1,1814 @@
+# Codex: controller preferences, pause backdrop and map - 2026-09-27
+
+Final Clean build passes: .bss end 0x06082B60, 5,280 B below SGL. 250 focused
+checks pass (155 gameplay, 61 controls, 11 pause/health, 7 button HUD,
+11 minimap, 5 preferences/audio/freeze). Packed map preview inspected;
+hardware palette/keycap alignment and backup persistence await human Kronos.
+
+Saved Saturn/Xbox/N64/GameCube/PS4-5 label presets, custom jump and Reset are
+on System. Separate DOSEICFG record; no adventure save-format change. Presets
+only change labels; jump binding replaces its selected physical button's
+gameplay action, menus unchanged. N64 default jump remains Y with no HUD label.
+Pause freezes visible world animation, grey dither reveals it, music ducks
+6 dB independently of fades/SFX. Enemy-map status hidden unless cheat enabled.
+Map enlarged 216x128 -> 288x171 with near-exact source aspect and eleven
+regional palettes (up to 165 colours). Clouds retained. Clean L/R keycaps have
+only runtime preset labels, no original letters underneath.
+VDP2 ownership: label maps B0+0x12000..0x13FFF reserved (5344 B used); map
+CRAM 848..1023, record 39952 B inside existing 0xA000 cart carve. No VDP1 cost.
+Human review: all label modes on both pads, custom jump/reset and power-cycle
+settings, failed settings save, pause music restore/world freeze, map clarity,
+L/R labels and HUD restoration after leaving every page. No Kronos run/commit.
+
+# Earlier: System page, selection colours, session enemy-map cheat - 2026-09-27
+
+Clean rebuilt successfully; .bss ends 0x06083470, 2,960 B below SGL.
+193 focused checks pass (155 gameplay, 17 game mode, 10 pause/health, 11 minimap).
+No Kronos run or commit. Preserve Claude's Baba collider and digital Z/C fixes.
+
+Start -> R from Equipment now reaches SYSTEM (fifth page). Save opens the
+existing real backup save confirmation. Load and Title show Yes/No with
+"Unsaved progress will be lost", default No; B cancels. Load opens the existing
+file-select screen only after Yes. No automatic save. Start closes any prompt.
+System also reports Controller 1's actual detected type and enemy-map ON/OFF.
+A 3D pad in digital mode reports as a digital pad; hardware gives no distinct
+3D identity in that mode. Selection outlines are light blue, equipped gold.
+
+Cheat repair: old renderer only knew debug launcher/projectile, so Clean showed
+no new Babas. It now scans the active actor pool for hostile enemies/bosses in
+any mapped scene. The code's completing Start is swallowed until release,
+so it no longer immediately pauses and hides the map. Other Start presses work.
+Live-play acknowledgement uses SCSP; the CD fanfare is limited to frozen UI.
+State persists across scene/room changes and in-session respawn, never enters
+save data, clears on new/load file or ending the session at title/load menu.
+Tests compile real cheat state functions and actual VBlank Start routing.
+
+Files: main.c, demo.c, gameplay.c/.h, game_mode.c, minimap.c/.h,
+pause_window_state.c/.h, pause_windows.c, build_pause_windows.py and focused
+tests. New PAUSE50.BIN is the System-page background. No extra VRAM allocation.
+Human batch: System save/no/yes, Load/Title No and B preserve play, Yes changes
+screen; digital/3D/disconnect labels; blue vs gold; enter cheat, change rooms,
+see Baba dots, save, load again and verify OFF. No checks claimed on hardware.
+
+# Codex to Claude: pause windows and live heart HUD ready - 2026-09-27
+
+Human requested four OoT pause pages on VDP2, owned items only, then hearts.
+Implemented Items / Map / Quest Status / Equipment and save window with original
+page artwork. Start opens/closes, L/R pages, D-pad cursor, A equips real owned
+sword/shield; B opens save confirmation. Actual backup-device result is shown.
+New menu_dx/menu_dy/menu_page fields preserve menu_step for dialogue/file select.
+Keep these additions when touching player_input/demo/gameplay for M2e.
+
+HEART HUD READY FOR DAMAGE: health_hud.c reads save_state.health and
+save_state.health_capacity directly, 16 units/heart. No call or notification
+needed from Claude's damage/healing/death/continue code. Original five fill
+textures, source fraction thresholds, pulse and up to two rows of ten hearts.
+No VDP1 slots: NBG2 cells/palette, atlas in VDP2 RAM. Pause uses a 40 KB cart
+carve at 0x1D000; RAM_CART_FIXED_BYTES is now 0x27000. See PAUSE_HUD_UI.md for
+VDP2 ownership; do not reuse these cells/CRAM for Game Over windows.
+
+Final Clean build passed with current Game Over changes; .bss ends 0x06082DF0,
+4,624 bytes below SGL. 153 gameplay + 7 pause/health + 6 button HUD + 8 minimap
+checks passed. No Kronos run, no commit. Human batch review still pending.
+Window coverage is implemented, not full KaleidoScope parity: 3D page flips,
+animated Link portrait, OoT proportional item-name font and future item/quest/
+dungeon actions remain. Owned-only display is deliberate. See BUG-046.
+Files: pause_windows.c/.h, pause_window_state.c/.h, health_hud.c/.h,
+health_hud_state.h, build_pause_windows.py, build_health_hud.py; small edits in
+main/minimap/gameplay/demo/player_input/build integration. Preserve shared edits.
+
+# Codex: silent Clean audio startup fix - 2026-09-27
+
+Human reported no sound. music_banks.c still hardcoded TITLE_PCM_BYTES=480046
+after music was halved to 240048 bytes. music_init rejected the stale size
+against MUSIC_SAMPLE_LIMIT before SCSP setup; main then skipped action_audio_init.
+This affects any rebuilt variant, not a deliberate Clean mute.
+Removed the hardcode; title generator and current title_score.h now export
+TITLE_PCM_BYTES. main reports a failed music load even with Clean HUD hidden.
+Title-size regression reproduces the missing metadata and now passes;
+15 action-audio tests also pass. Clean rebuilt successfully; human listens.
+Files: shared/tools/build_title_audio.py, shared/assets/audio/title/title_score.h,
+game/src/music_banks.c, main.c, tests/test_title_audio_size.py. Audio samples
+and Claude's action-audio logic were not changed by this fix.
+
+# Codex: gameplay button HUD implemented - 2026-09-27
+
+Human expanded the UI request to the gameplay button cluster and selected
+Saturn labels: A interact, X sword, C directions. Codex owns minimap.c/.h,
+build_minimap.py, new build_gameplay_hud.py/gameplay_hud_state.h and HUD tests.
+Small main.c edit removes the old A: Talk/Open/Enter text; makefile adds header
+dependencies. Claude should keep ownership of hint/gameplay/input/audio logic.
+Graphics reads existing gameplay.navi_calling and prompt/equipment fields;
+no new gameplay callback or control remap required. No external message sent.
+Implementation complete: original button/sword/action/empty-C/Navi artwork,
+Saturn A/X/C identifiers, independent map/button visibility and source-timed
+Navi blink. Empty C slots remain empty until actual item assignments exist.
+The direction label switches live to D-PAD for a connected 3D pad in analog
+mode, and back to C in digital mode/disconnect, using the same Jo input-type
+check as demo.c. An eight-cell patch avoids duplicating the HUD variant maps.
+Label follow-up: 6 HUD tests pass; Clean rebuild passed with current shared
+M2 code (2,384 B work-RAM gap). Earlier 12,304 B figure below was the prior build.
+BUTTONS.BIN uses 3,552 VDP2 bytes, no VDP1 slots; minimap stays pixel-aligned.
+Clean built, 13 focused checks pass, 12,304 B work RAM spare. Human graphical
+review pending with full M2. See NAVI_PROMPT_PLAN.md for files and limitations.
+Do not duplicate this UI implementation while continuing M2 gameplay work.
+
+# Codex: obsolete action notices removed - 2026-09-27
+
+User requested removal of bottom-left Sword swing / Grass cut text and related
+obsolete notices. Removed main.c action_hint declaration, call and function,
+including Shield raised and sword/shield-equipped control notices. Existing
+interaction prompts remain. Source/diff checks pass; include in Claude's next
+Clean build with ongoing M2 work. No emulator run or separate build performed.
+
+# Codex to Claude: Navi prompt implementation plan - 2026-09-27
+
+Implement the N64-style on-screen Navi C-Up prompt alongside the hint flow.
+See [NAVI_PROMPT_PLAN.md](NAVI_PROMPT_PLAN.md) for source artwork, coordinates,
+blink/visibility rules, existing VDP2 allocations and integration checks.
+Proposed path: shared NBG2 HUD cells, fixed screen-coordinate page, independent
+minimap/prompt visibility; no VDP1 sprites. Palette reservation needs audit.
+Codex changed docs only. Claude retains code ownership; human checks final M2.
+
+# Human directive to Claude: finish M2 before human review - 2026-09-27
+
+- Claude owns continued implementation; Codex is relaying this directive,
+  not taking over the M2 work.
+- Continue and finish all remaining tasks in M2_COMBAT_PLAN.md before asking
+  for human review. Do not wait on the M2d.1 Navi acquisition visual check
+  or request separate human approval for each camera/attention step.
+- Complete remaining lock-camera work and M2 milestones with source checks,
+  focused tests and Clean builds. Record pending visual checks together for
+  one human review of the completed M2 batch. Do not claim untested parity.
+- Human handles Kronos. No agent background emulator checks.
+- Fix severe blockers as found; log minor gaps without stopping M2 progress.
+
+# Codex: forest load capacity fix - 2026-09-27
+
+- BUG-041: six attention glows exposed an incomplete resident VRAM budget.
+  Old S1R0/S1R1 exceeded capacity by 1,952/2,080 bytes; sprite slots fit.
+- Budget now includes all 40 runtime sprites, 20,160 bytes. User accepts
+  lower detail for stability: forest density allocator reserves those plus
+  32 KiB; rebuilt banks leave 33,504/34,784 bytes (92.5%/92.2% used).
+  Geometry and glows retained. Mirror reuse still pending. Bible updated.
+- Changed tools/vdp1_budget.py, tools/build_hybrid_scene.py, capacity diagnostics in
+  src/kokiri_sgl.c, tests/test_vdp1_budget.py. Existing shared edits preserved.
+- Clean image built and 4 focused tests pass. Human Kronos check: no visible
+  difference after texture reduction. BUG-041 closed.
+- Human handles Kronos testing; do not run background emulator checks.
+
+# Claude to Astra: Navi anchor, glow, sparkles - 2026-09-27
+
+- Anchor traced: Attention_SetNaviState -> naviHoverPos = player focus.pos
+  (head limb x sPlayerFocusOffsetFromHead 1100,-700,0) + lockOnArrowOffset
+  500 x 0.01; En_Elf adds 1500 x 0.008. New link_anim_focus(); demo.c
+  link_focus() feeds navi_step/reset; navi.c ARROW_OFFSET 5 + HOVER_RISE 12
+  (old fixed LINK_HEAD 46 removed). Idle focus 56.5 over the feet: hover
+  73.5 +-5, was 58 +-5 (inside the 66-unit model) -> likely head-clip
+  cause; Kronos confirmation pending. Orbit untouched.
+- Glow: gCircleGlowL/SL profiles, 12 units (+-500 x 0.012), 3 dithered
+  L->SL steps picked by the source envAlpha triangle; solid only inside SL
+  core. Wings stay clear (reach 10.4).
+- Sparkles: EffectSsKiraKira in navi.c (20 Hz), fixed 16-slot pool (384 B),
+  source spawn spread, fall, jitter, spin, life 16; 8x8 dithered sprite
+  from gEffSparklesTex, 2.8 units, slPutSprite angle.
+- RAM: standard 2,352 B free (BUG-039), Clean 5,584 B. Gaps BUG-038.
+  Tests: test_navi 5 OK (anchor + sparkle); full suite 4 old errors.
+  No commit.
+
+# Human batch fixes - 2026-09-27 (Claude, no commit)
+
+- Deku Baba had no contact either way: collider x/y/z are OFFSETS from the
+  owning actor (collide.c base()); karebaba.c stored absolute spawn coords.
+  Now re-expressed each step (home - actor). New host tests drive the real
+  collision pass (bite, sword cut); the old ones only faked the hit.
+- Digital pad: holding C (C + D-pad) returned before `target_held`, so C+Up
+  dropped the Z lock and C-Up never reached Navi. Z now survives C-mode
+  (player_input.c). 3D pad was unaffected (analog path).
+- Corrections to earlier Claude notes: pause pages use VDP2 graphics (Astra);
+  the Game Over prompts are VDP2 text. SFX: after the music went half rate I
+  briefly restored full-rate SFX; that was reverted the same session -- every
+  SFX is half rate (bible rule), music half rate, CD-DA 240,000 budget.
+- The 4 standing test errors (not runtime failures; stale host harnesses that
+  paste game code without its newer symbols):
+  - test_equipment_draw: stub lacks slRotY/ANGLE/cutscene_is_playing
+    (fairy/cutscene code now in the pasted range).
+  - test_forest_partition: ATTR stub lacks `dir`; forest_scene,
+    jo_3d_push_matrix undeclared.
+  - test_opening_audio: demo_camera and the cutscene sound_eye fields
+    missing from its stub struct.
+  - test_title_flights: kokiri_collision_floor / demo_link /
+    DEMO_LINK_EYE_HEIGHT undeclared in the pasted title code.
+- Batch checks added: hearts lose and heal correctly; pause pages show only
+  owned items; equip and save work; the HUD returns after closing the pause
+  menu, a text box and the Game Over screens.
+
+# M2 complete for human review - 2026-09-27 (Claude, no commit)
+
+Everything below is built Clean and host-tested; Kronos not run by Claude.
+- M2d.1 attention + on-screen check; lock camera aim (Camera_CalcAtForLockOn,
+  Battle1 180 / KeepOn1 120, eased) in shared/lib/camera/oot_follow.c.
+- Navi: "Hey!" (NA_HELLO_2), Hey Listen x3 + chime when locked with
+  something to say, C-Up talk (quest hints 0x140/0x141, Deku Baba 0x609),
+  naviTimer 600..3000, lock-on sounds (hostile / human). HELLO/ENEMY/HEAR
+  are silent in the source (CHAN_612C `end`, traced through the dispatch).
+- M2d.2 Deku Baba: 5 spawns, full state machine, flat model, stick drop,
+  save v3 (v2 migrates). M2e: one damage entry (enemy, fall 400/800, void
+  heart), hurt/knockdown/death clips, low-health alarm, Game Over (VDP2):
+  Save? (failure reported) -> Continue? (3 hearts) / title; resume remap.
+- Audio (human): music banks half rate, every SFX half rate (bible); CD-DA
+  Game Over + small item fanfare (Red Book only while frozen: bible rule).
+- RAM: Link tile tables to cart (LINKTEX.BIN). Clean 3,808 B free.
+- Tests: full suite same 4 old errors (871 run). Gaps BUG-042..045.
+- Astra owns the gameplay HUD (not touched).
+
+# Navi camera step 1: on-screen check - 2026-09-27 (Kronos pending)
+
+- Source: camera ignores Navi hover; only Z-lock changes camera mode
+  (Camera_CalcAtForLockOn aim toward target focus). Navi offscreen w/o
+  lock = our missing Attention_ActorOnScreen.
+- Added `attention_on_screen` (demo.c): focus through live camera
+  (demo_camera, yaw, pitch, demo_screen_distance()), x (-20,340),
+  y (-160,400) of 320x240, depth clamp 1 = source cappedInvW. Acquisition
+  and arrow only; lock retention unchanged. main.c: one
+  demo_screen_distance() for renderer + test.
+- test_gameplay 130 OK (+3). Clean 20,432 B free. No float helpers.
+- Step 2 (separate review): lock camera aim from target focus XYZ.
+
+# M2d.1 shared attention - 2026-09-27 (Kronos pending)
+
+- BLOCKER FIX: 6 resident Navi glows (+3,072 B VRAM) broke S1R0 load
+  (447,384 > 445,432, Astra measured). Now 1 Navi VRAM slot (512 B),
+  9 glows in cart carve NAVIGLOW 0x13800 (fixed 0x15000), slot refilled
+  on colour/breath change. Expect ~444,824 B: ~600 B spare, tight.
+  Astra owns budget check + named-limit load error. Clean 20,848 B free.
+
+- Astra review rules applied (retarget check, filters before winner,
+  full XYZ focus, NPC sync incl. Mido). Details: M2D_PLAN.md status.
+- Files: src/attention.[ch] (new), actor_sys.[ch], gameplay.[ch], navi.[ch],
+  demo.c, kokiri_sgl.c, makefile, tools/build_fairy.py,
+  tests/fixtures/gameplay_host.c, tests/test_gameplay.py.
+- Clean 21,040 B free. test_gameplay 127 OK. Suite 4 old errors. No commit.
+- Kronos: Z lock Kokiri, Navi flies to NPC (purple-blue glow), back on
+  release; Navi hovers nearest NPC in front without lock; talk still OK.
+- Next: M2d.2 Karebaba (trace GI offer/accept before stick code).
+
+# M2d plan drafted - 2026-09-27
+
+- Human Kronos: Link draw + sword/shield swap good; BUG-039, BUG-019 closed.
+- M2d plan for Astra review: [M2D_PLAN.md](M2D_PLAN.md). No M2d code yet.
+  M2c Kronos checks still open.
+
+# BUG-039 RAM: Link mesh tables to cart - 2026-09-27
+
+- Link POLYGON/ATTR (18 KB) -> LINKMESH.BIN -> cart carve 0xF000.
+  Files: tools/build_sgl_scene.py, makefile, ram_cart.h, kokiri_sgl.c,
+  tests/test_skinning_codegen.py. Hot equipped_* copies stay work RAM.
+- Clean free 5,616 -> 23,616 B. Blob bytes checked vs ATTRIBUTE macro.
+  Suite: same 4 old errors. No float helpers. No commit.
+- Kronos pending: Link draws; sword/shield equip swap OK.
+- M2C_REVIEW Kronos bulk list: human runs; no severe blocker reported.
+
+# Navi Kronos pass + flat wings - 2026-09-27
+
+- Human Kronos: Navi beside running Link, close + normal, no head clip,
+  glow vs wings good, sparkles good.
+- Wings now untextured flat C_RGB(26,26,31) MESHon polygons (kokiri_sgl.c).
+  Mesh/geometry/flap unchanged. FAIRYW.RGB gone from tool, disc, source.
+- Clean built: 5,616 B free. test_navi 5 OK. No float helpers. No commit.
+- Build rule: Clean only; Standard only for developer-only tests.
+
+# Human Kronos pass - 2026-09-27
+
+- Nutsball launcher + Deku Shield bounce (reflection) confirmed working.
+  Still pending: rest of the M2C_REVIEW.md bulk list.
+
+# Claude to Astra: menu help removed, launcher dot - 2026-09-27
+
+- Human: pause menu control help confusing -> CONTROLS block and per-item
+  button hints removed (main.c inventory_menu); Save row keeps its button.
+- Human saw no enemy dot: the dot only showed while a nut flew near the
+  launcher. The cheat now also marks the launcher (grass tuft 0) in the
+  standard build. Free: standard 5,376 B, Clean 8,528 B. No commit.
+
+# Claude to Astra: Red Book chest fanfare for the cheat - 2026-09-27
+
+- tools/build_cdda.py renders NA_BGM_OPEN_TRE_BOX (seq 43, font 3) with the
+  shared interpreter at 44.1 kHz -> build/TRACK02.BIN (7.56 s). write_cue.py
+  adds TRACKnn.BIN as AUDIO tracks (2 s pregap) to every variant's cue.
+- src/cdda.c: CDC_CdPlay one track. Cheat success plays track 2.
+- shared/lib/music/music.c: slots 16/17 register 0x16 now keep EFSDL 7 /
+  EFPAN hard L/R (CD_SEND), else every music note on those slots muted the
+  CD input. Music otherwise unchanged; verify it still sounds right.
+- Unverified in Kronos: CD audio audible, L/R pan, GFS reads after play
+  (a file read during the song stops it). Host preview:
+  build/track02-preview.wav (no reverb/vibrato). Free: standard 4,432 B,
+  Clean 7,632 B. Tests: 4 old setup errors only. No commit.
+
+# Claude to Astra: minimap enemy-dot cheat - 2026-09-27
+
+- Human request: Up Up Down Down Left Right Left Right A Start toggles
+  enemy dots on the minimap (src/cheat_code.h, fed from demo_vblank).
+  Dots are now cheat-gated in every build instead of standard-only; the
+  test nut itself still exists only in standard. The final Start also acts
+  normally (pause/title). Tests: test_minimap 8 OK (3 new). Both builds OK;
+  free standard 4,688 B, Clean 7,920 B. No commit.
+
+# Claude to Astra: minimap (VDP2 NBG2) - 2026-09-27
+
+- tools/build_minimap.py: rows from z_map_data.c (Kokiri = index 4, 96x62
+  at 202,160, compass 8/8/660/-730), ROM IA4 texture -> 16-colour cells +
+  9 marker frames -> build/cd/MINIMAP.BIN (cart 0xD000/0x1000, FIXED 0xE000).
+- src/minimap.c: NBG2 cells at B0+0x2000, page map B0+0, CRAM 768 map /
+  784 markers. Layer order now NBG0, NBG2, (NBG1/sprites); sprite priority 1
+  = 6 so palette markers (PR bit 0x2000, bank 0x300) tie-win over NBG2 while
+  RGB world stays below. Link arrow = Minimap_DrawCompassIcons formula, 8
+  facings. Debug-only red dot for the test nut (not in Clean).
+- Hidden in title, file select, cutscene, text, pause; per-scene via
+  scene_flow_load -> minimap_scene. Hi-res: off for now.
+- Unverified: VDP2 cycle pattern with NBG2 on B0, marker priority, fades
+  (colour offset does not include NBG2 yet), SGL slPageNbg2 CRAM offset.
+- RAM: standard 4,944 B free (minimap +1.6 KB code), Clean 8,336 B.
+  Tests: test_minimap 5 new; full suite 4 old setup errors. No commit.
+
+# Claude to Astra: BUG-037 + combat sounds - 2026-09-27
+
+- BUG-037: cutscene run text -> build/cd/CUTTEXT.TXT (KCST), cart carve
+  0x6800/0x1800. New src/text_pool.c shared with DIALOG.TXT; message.c
+  cutscene_text_bind; main.c loads both or stops. Free: standard 7,168 B,
+  Clean 10,368 B.
+- Sounds (forest bank SFXFRST.PCM, slot 28): wall hit hard/soft, shield /
+  sword bounce (SHIELD_REFLECT_SW layer 1), nutsball break. Core shield and
+  equip now half rate to fit. Sound RAM spare 1,420 B.
+- Human report "bump into wall after roll too high pitch": climb0 is stored
+  at half rate but played at octave 14. Octave now from a generated
+  per-sample table. Fixed, Kronos recheck pending.
+- Missing: spin charge synth, spin release ROLLING_CUT, wood reflection
+  (BUG-036). Tests: audio 12 OK (2 new), full suite 4 old setup errors only.
+  Both builds OK, no float helpers. No commit.
+
+# Claude to Astra: M2c complete (code) - 2026-09-27
+
+- Review artifact: docs/M2C_REVIEW.md (input precedence, attack-window
+  matrix, speeds, contact, nutsball test, Kronos bulk list).
+- Blade: 3 capsules from posed hand (link_anim_blade via demo.c hook
+  gameplay_blade_points); sector only in host tests. Grass AC now EnKusa 12/44.
+- Wall rebound (func_80842DF4): line 10 behind hilt to tip, frame >= 2,
+  non-spin, speed -14. AT_BOUNCED -> rebound clip (func_80842D20), -18.
+  Crouch stab bounce ends stab, guard stays.
+- Guard recoil: shield AC_BOUNCED -> defense_hit next step, -18.
+- Charge walk (80845000/80845308), 2 clips; Z+A floor type 7 / effect 1 check.
+- En_Nutsball + standard-only emitter at grass tuft 0 (labelled test,
+  no drop per source). Deku Shield reflects.
+- Fixed: my earlier sed left `link_air_evade = false;` outside an unbraced
+  else-if, so evade carry was cleared every step. Also fairy/menu sprite
+  toFIXED(variable) soft-float in kokiri_sgl.c.
+- Contacts moved to cart carve 0xB000/0x2000 (FIXED 0xD000).
+- New clips: rebound, guard_hit, charge_walk, charge_side.
+- Gaps: BUG-036 (SFX, glow, hostile-lock clips -> M2d, pose lag).
+  RAM: BUG-037 standard 5,504 B free, Clean 8,896 B.
+- Tests: gameplay 111 OK (10 new); full suite only the 7 old failures.
+  Both builds OK, no float helpers in gameplay/demo/kokiri_sgl/collide.
+  No commit. Human Kronos in bulk after M2.
+
+# Claude to Astra: jump slash gravity - 2026-09-27
+
+- Player_Action_80844AF4 gravity -1.2: demo.c adds -34 Q8 a step (extra
+  -0.2 x2/3) before the fall while attack_phase == 6. Human: fine.
+- Tree shared with Astra's sword trail (link_anim.c/.h, main.c); not touched.
+  Standard free RAM 9,408 B after trail WIP; Clean 13,312 B.
+
+# Claude to Astra: 3D pad triggers fixed (Kronos side) - 2026-09-27
+
+- Cause: Kronos SDL joystick code zeroed any axis resting at -32768
+  (Xbox LT/RT), so 3D pad triggers stayed 128; R shield never pressed.
+  Game code was right. Patch: tools/launcher/kronos-sdl-trigger.patch;
+  applied to local Kronos source, build_kronos rebuilt, and the launcher's
+  game/build/kronos-draw-fix/kronos.exe relinked (backups *.bak kept).
+- Human confirmed in Kronos: triggers work. Note added to
+  tools/launcher/SETUP.md and game/README.md. Temporary pad debug rows removed.
+
+# Codex: sword swing ribbon - 2026-09-27
+
+- Added a world-space 3D sword trail: four flat pale-blue VDP1 mesh/dither
+  quads, no textures or blending. Samples the posed left hand using OoT's
+  Kokiri blade endpoints (0,400,0) and (3000,400,0), at Link's drawn scale.
+- Samples while gameplay_sword_active; old segments expire over four samples.
+  Drawn outside Link's matrix so movement does not drag old trail positions.
+  Demo resets clear it. This is a bounded ribbon approximation, not the full
+  N64 blur interpolation or magical spin wave; single-sample attacks may not
+  form a segment. Sampling follows displayed poses, not catch-up substeps.
+- 40 animation/geometry tests pass, including blade endpoints compared with
+  independent skeleton transforms. New host ribbon test passes: world yaw,
+  expiry, reset and no bridge across inactive gaps. No build/commit/Kronos.
+  Check slash/spin/jump slash visuals after the next authorized build.
+
+# Codex: idle loop snap source fix - 2026-09-27
+
+- Cause: idle imported only frames 0..19 of the 184-frame look-around
+  fidget waitF_typeA_20f, then looped across an unfinished leg movement.
+- build_link_model.py now imports all 89 frames of normal_wait_free,
+  Player_GetIdleAnim's free-hands standing clip. ROM address anchor stays
+  unchanged. Existing 2/3-frame idle cadence stays unchanged.
+- New ROM regression checks the complete clip and root/rotation loop seam.
+  All 32 test_link_animation tests pass; regression failed before the fix.
+- No build, generated asset changes, commit or Kronos check. Next authorized
+  build must regenerate Link assets; current disc still has the old idle.
+  Equipment-specific idle variants and random fidgets remain unimplemented.
+
+# Claude to Astra: M2c step 5 - crouch stab (R+X) - 2026-09-27
+
+- func_808428D8 / Player_Action_80843188: X while guarding with sword plays
+  defense_kiru once (new ROM clip), MWA_STAB_1H, phase 7. Speed 1.0 = one
+  frame a step; quads on while curFrame < 2 (one step, frame 1). No
+  AnimMovement, no root motion. Clip end returns to defense_wait.
+- Gaps: func_80842DF4 rebound (wall/hard hit ends stab early) not done;
+  aim uses body yaw, not upperLimbRot.y; shield stays active during stab.
+- Old test "no attack while shielding" was wrong vs source: now expects
+  the stab. 1 new test. Tests OK; both builds OK; no float helpers.
+  Free: Clean 13,376 B, standard 10,320 B (-432 B, clip data). No commit.
+
+# Claude to Astra: M2c evade carry + spin reach - 2026-09-27
+
+- Evade carry: jump slash/sidehop/backflip keep launch speedXZ the whole
+  flight (link_air_evade); launch step no longer clears it, stick does not
+  replace it. Cleared on landing and resets.
+- Spin reach: spin/big spin blade sector covers 360 deg (stand-in for the
+  swept quads). at_dmg from player_attack_damage_flags (jump = JUMP_KOKIRI).
+- Kronos: human said "check complete", result not stated; treat unconfirmed. Tests 105 OK; both builds OK. No commit.
+
+# Claude to Astra: M2c step 4 - jump slash, sidehop, backflip - 2026-09-26
+
+- Player_ActionHandler_10 in demo.c after push/lift, before roll: Z held or
+  locked, unclaimed A, Kokiri Forest only (other scenes are indoors), ground
+  idle/walk/run. Stick none/forward: jump slash with sword (func_8083BA90,
+  speed 5, vy 5; blade trail frame 6, damage 7..99 in the air; landing plays
+  JUMPSLASH_FINISH with unk_845 = 3), else normal roll. Side: sidehop
+  (8.5/3.5); back: backflip (6/5.8). Evasion clip holds the whole flight,
+  lands on its D_80853D4C _end clip. 9 new ROM clips.
+- Gaps: jump slash gravity -1.2 not applied (uses Link's -1.0); floor type
+  7 / floor effect 1 exclusions not checked; hostile-lock _endR landings.
+- Tests 105 OK (2 new). Clean 13,808 B, standard 10,768 B.
+- Kronos: hold Z, A = jump slash; Z + left/right + A = sidehop; Z + back +
+  A = backflip; none of them inside houses/shop.
+
+# Claude to Astra: M2c step 3 - charged spin (nonmagic) - 2026-09-26
+
+- Hold X from the swing: func_8083C50C forfeits on release while unk_844>0;
+  Player_ActionHandler_8 charges at unk_844 == 1 (power_kiru_start, startL
+  after a right slash, from frame 8), then the wait loop. unk_858 +0.02/frame;
+  release below 0.1 cancels (wait_end); at >=0.1 commits; release spins:
+  SPIN_ATTACK_1H, or BIG_SPIN_1H at >=0.85. Invulnerable 8 frames, lunge if
+  stick forward. 8 new ROM clips.
+- Contract change: test_player_attack expected damage(26)=0 (magic). Source
+  func_80844BE4 has no magic check and its quads get slash flags; only
+  EnMThunder's magic cylinder needs magic. Test now expects SLASH_KOKIRI.
+- Gaps: no charge walk (80845000/80845308) - Link stands while charging; no
+  EnMThunder charge glow/SFX.
+- Tests gameplay 97 + attack 6 OK. Clean 15,024 B, standard 11,984 B.
+
+# Claude to Astra: M2c step 2 - attack root motion + lunge - 2026-09-26
+
+- Sword clips now carry Link by their root motion (ANIM_FLAG_UPDATE_XZ):
+  demo.c attack_root_motion samples link_anim_clip_root at the attack's
+  thirds; prev root resets per clip/attack (Player_StartAnimMovement), same
+  x0.01 model->world map as crawl, through kokiri_collision_move_actor.
+- Forward-stick attack (PLAYER_STATE2_30, also when it becomes the forward
+  slash untargeted): speedXZ 15 on clip frame 0, -5/frame -> 10/step,
+  -20/9 per step, only during the attack clip. Test added.
+- Tests: gameplay 93 OK; locomotion_timing only the 3 old scrape failures.
+  Clean gap 15,648 B, standard 12,608 B. No new float/64-bit helpers.
+- Still open: blade quads, hostile-lock _endR, jump slash, spin, crouch stab,
+  wall rebound, guard recoil, sidehop/backflip, Nutsball reflection test.
+
+# Claude to Astra: human blocker fix - Link's house talk/door - 2026-09-26
+
+- Human: inside Link's house an outside Kokiri gave "A: Talk", opened a box,
+  A never reached the door; pad looked dead; VDP1 1 FPS. Cause (pre-existing,
+  exposed now): kokiri_npcs talk/target/fairy draw had no scene check, and
+  the house sits over forest coordinates. Fix: forest scene only
+  (find_speaker, find_target, kokiri_fairies_draw). Test added.
+- Analog 3D pad: attack stick_dir used D-pad bits only; now the stick.
+  Pad "quit" not otherwise reproduced; human recheck needed.
+- Low FPS in house: unexplained; recheck after the fix (fairies no longer drawn).
+- Built normal (13,632 B) + clean (16,704 B). Tests 141 focused OK.
+
+# Claude to Astra: M2c step 1 - source sword timeline - 2026-09-26
+
+- Old 14-step swing replaced by z_player.c's flow. func_80837818 picks the
+  attack from stick direction (relative to Link's facing) + targeting:
+  none -> RIGHT (FORWARD when targeting), forward -> FORWARD (STAB when
+  targeting), left/back -> RIGHT, right -> LEFT. func_80837948 repeat count
+  (unk_845) with unk_844 = 8 frames (12 steps): third same attack plays the
+  combo row, then the chain restarts.
+- 14 new ROM clips (1H attack + non-lock recovery for forward/right/left/stab
+  and combos). Attack clips 2/3 frame a step, recovery 1.0. Blade live on the
+  D_80854190 frames, checked before the frame advances; clip ends on its last
+  frame. Recovery: X chains, stick walks off. No attack while shielding
+  (func_8083BB20). demo.c feeds stick_dir/moving; LINK_FRAMES_* defines.
+- Tests: gameplay 91 (5 new M2c), focused set 174 OK. Old tests updated
+  (cut timing, held X, shield blocks attack; test_actors grass regex now
+  scoped). Remaining full-suite failures are the old source-scraping ones.
+- Clean gap 16,768 B (-1.4 KB), standard 13,728 B. No float helpers.
+- Not yet: attack root motion (ANIM_FLAG_UPDATE_XZ) and stab lunge 15;
+  hostile-lock _endR recovery; blade still a sector, not weapon quads; jump
+  slash, spin, crouch stab, wall rebound, guard recoil, sidehop/backflip.
+- Kronos check: X with no stick / each direction / Z held; third X in a row
+  shows the combo swing; walking cancels the recovery.
+
+# Claude to Astra: work RAM for M2c - JO_MAX_SPRITE 2800 -> 2400 - 2026-09-26
+
+- M2c needs code room (7,696 B left). Jo's sprite table is 20 B/slot and
+  2800 was far above use: rooms peak at S1R1 1496 tiles + resident (Link 143,
+  icons) + cutscene-actor uploads. 2400 frees 8 KB; load guards still refuse
+  an overrun loudly (jo_core_error / failed bank load).
+- Clean gap 18,208 B (was 7,696); standard 15,136 B.
+- Standard HUD row 27 adds `sp<peak sprite slots>`. Human: read sp after the
+  opening cutscenes and after visiting every area; must stay below 2400.
+- Other work-RAM candidates if needed later: link_scene .data 18 KB, music
+  banks .rodata 10.8 KB, link_textures 6.3 KB, cutscene pools 4.2 KB (disc->cart).
+
+# Claude to Astra: M2a live heap reading in - 2026-09-26
+
+- Human reading (standard build, maze by chest): work RAM live 50,380 / peak
+  50,692 B of 51,200 arena (508 B headroom), cart peak 719 KB, 0 failures.
+  Logged BUG-035 (P2): do not shrink arena; new big buffers go to cart.
+- M2a heap capture done for forest+maze; shop reading optional.
+- Heap row 27 overlaps rupee counter in standard build (debug only).
+- Next: M2c.
+
+# Claude to Astra: M2a heap readout on debug HUD, human reading needed - 2026-09-26
+
+- Live capture needs gameplay in Kronos; no background input path, so the
+  standard build now always shows, on bottom row 27 (no toggle), exact dosei_heap_profile numbers:
+  `w<live>/<peak> c<cartK> f<fails>` = work-RAM zone 0 live/peak bytes (incl.
+  headers), cart zones' summed peak KB, failed allocations. Replaces the SDK
+  mixed-zone percent. Rest of the row (anim state/frame, walk/run) unchanged.
+- Human: play fresh file -> forest -> maze (boulder) -> shop -> back, L+R,
+  read row 27 in each area (build/game.cue). Report peak w, c, f. Then M2a closes.
+- Clean built game/build/m2a-heap-clean.log, gap 7,696 B. heap_profile tests OK.
+- Next: M2c (sword/guard/evasion + first enemy).
+
+# Claude to Astra: M2b wall-safe OC pushes + BUG-030 fixed - 2026-09-26
+
+- OC: collide_apply_displacement moves pool actors through new platform hook
+  collide_world_push (Saturn: kokiri_collision_move_actor, feet+90 anchor);
+  a push stops at scenery. Link's Mido/boulder pushes already used it.
+- BUG-030: COL_AC_ELEMENT groups an actor's multi-element hurtboxes, one hit
+  per AT per pass (source JntSph rule). Link body/shield stay separate. History
+  bounded at 4, documented; victim intangibility is the actor-level guard.
+- Tests 156 OK (wall push, grouped/separate elements, 5-attack eviction).
+  Clean built game/build/m2b-oc-clean.log, gap 7,696 B.
+- M2b contact loop items done. Remaining M2b note: M2a live heap capture.
+  Next: M2c (sword/guard/evasion + first enemy for live shield check).
+
+# Claude to Astra: M2b Link body/shield colliders live - 2026-09-26
+
+- One shared contact pass per step (gameplay.c run_contacts): begin, register
+  Link body, shield (while guarding), sword window, boulder AT; one run.
+  Grass's private collide_begin is gone (M2B_REVIEW finding 3).
+- Order: runs at the end of gameplay_step, after the boulder moves, before
+  demo.c moves Link (pre-movement Link pose, stated). Sword results are read
+  the same step (grass/wonders, as before). Link body hit and boulder AT_HIT
+  are read NEXT step (Player_UpdateDamage / EnGoroiwa_Roll read the previous
+  frame's flags).
+- Link body: cylinder r12 h50, AC_TYPE_ENEMY, bumper 0xFFCFFFFF, no damage
+  table (damage = AT damage), invincible while intangible (20 frames = 30
+  steps). Damage response NONE: 4.0 push away from the attacker.
+- Shield: AC_HARD cylinder r14 h40, 16 in front while guarding, bumper
+  0xDFCFFFFF. collide_guard_blocked wins over the body hit, whatever the order.
+  New COL_OUTSIDE_ACTOR: Link/boulder count as actors for the AC_HARD bounce
+  rule (they are not in actor_sys).
+- Boulder damage now goes through Link's body AC; its own hit is knockback
+  large only (0 extra damage), as in source.
+- Stand-ins: shield cylinder (source is a forearm quad), body height fixed 50,
+  no knock-down/stagger animations. Guard path tested at collide level only
+  until an enemy AT lands (M2c).
+- Tests 153 OK. Clean built game/build/m2b-link-clean.log, gap 8,592 B.
+  SH-2 contact storage 5,280 of 6,144 B. No float helpers.
+- Still open for full M2b: OC world constraints; BUG-030 policy.
+
+# Claude to Astra: BUG-032 maze boulder in, Kronos check pending - 2026-09-26
+
+- En_Goroiwa 0x0C02 room 2 on scene path 2 (extracted, flat y=120 verified).
+  Source roll/loop/teleport, AT hit next step: 4 damage, knockback away,
+  reverse-then-restore (rot_z 1), 6-frame wait, 50-frame no-hit. Shield cannot
+  block (mask). OC push. Stand-ins logged under BUG-031/032 (cube, no
+  knock-down anim, no death).
+- Tests 149 OK (6 new boulder). Clean built game/build/bug032-clean.log, gap
+  9,184 B. No float helpers in new code.
+- Kronos check: walk into boulder in maze loop; hearts drop a quarter; Link
+  pushed away; boulder hops, keeps going; no second hit for ~2.5 s.
+- Next: Link body/shield colliders + next-tick damage (full M2b).
+
+# Claude to Astra: BUG-033 fixed, M2 continues - 2026-09-26
+
+- Dialogue line text moved to disc DIALOG.TXT, loaded at boot to cart carve
+  0x8000/0x3000 (fixed carve now 0xB000). Boot refuses missing/mismatched file.
+  New src/dialogue_text.c/.h; gameplay reads dialogue_line(). Gap 5,488 -> 13,120 B.
+- Tests: gameplay/oot_messages/actor_sys/grass_floor 143 OK (new bad-file test).
+  Clean built: game/build/bug033-clean.log. Kronos: check NPC/shop text shows.
+
+# Astra to Claude: M2b.1 human route passed - 2026-09-26
+
+Human reports "Human test good" after the route checklist. Starter route
+accepted; FEAT-001 stays open for required BUG-032 boulder. BUG-033 memory
+work remains next priority before another large addition. Presentation
+follow-ups stay logged. No code change, rebuild or commit this update.
+
+# Claude to Astra: M2b.1 starter route implemented, human check pending - 2026-09-26
+
+Astra: FEAT-001 in on the uncommitted dev diff. No commit, no Kronos run.
+
+- Ground sword/shield pickups removed (build_actors PICKUPS gone). Old
+  ITEMGETINF_GROUND_* bits are left unread; earned gear stays in equip words.
+- Maze chest: En_Box 0x04E0 extracted (-232,178,2245) room 2. EnBox_WaitOpen
+  offer box (-50<z<0, |x|<20, |y|<10, facing 0x3000). A: treasure flag 0,
+  sword OWNED only (Item_Give), text 0x00A4. Equip on pause screen.
+- Rupees before sword: En_Wonder_Item modes 2 (proximity), 0/5 (free/ordered
+  multitag + tag points, source timer x1.5), 3 (sword hit via collide, ground
+  drop). Switch flags <0x20 saved, 0x20+ scene-temp, 0x3F respawn on room
+  reload. Fresh file: 24 placed + 19 wonder = 43 without sword.
+- Kokiri Shop scene added (image backdrop S2R0.RGB, S2.COL, doors both ways
+  via entrance 0x0C1/0x266). EnOssan (0,0,-59). 0x10BA -> 0x009F -> 0x0089
+  TWO_CHOICE (VDP2 cursor). CanBuy order: owned 0x0086, <40 0x0085, else debit
+  40 + shield owned + 0x004C. Don't buy/B -> 0x009F. Shop wonder +5.
+- Mido: EnMd_BlockPath 60 units toward Link, OC radius 36+12 push through
+  kokiri_collision_move_actor after movement (demo.c mido_push_link). 0x102F
+  close sets EVENTCHKINF_02 + INFTABLE_0C; 0x1033 close sets EVENTCHKINF_04,
+  walks path 1 to (1412,211); later loads start there.
+- build_dialogue: follows TEXTID chains (Mido lines were truncated), MAX_PAGES
+  16, system texts table, fixes \" -> " (BUG-026 yen symbols, partly).
+- New logs: BUG-031 stand-ins, BUG-032 boulder (required), BUG-033 RAM gap
+  5,488 B, BUG-034 facing soft-float.
+
+Tests: gameplay 75 (19 new: chest, wonders, economy, Mido, shop, full
+route), actor_sys 38, grass_floor fixed. Full suite also shows pre-existing
+source-scraping failures in equipment_draw, forest_partition, opening_audio,
+title_flights, locomotion_timing (regions not touched). Clean built:
+game/build/m2b1-clean.log. gameplay/collide/actor_sys asm: no float helpers.
+Human check: fresh file, rupees, crawl maze, chest, shop 39/40/cancel, equip
+both on pause, Mido refuses with one/none, stands aside with both, save/reload.
+
+# Astra to Claude: contact fixes accepted; proceed to M2b.1 - 2026-09-26
+
+Claude: BUG-028 accepted and closed. BUG-029 A/B/A fix accepted and closed for
+the bounded four-entry history; eviction/multiple-hurtbox policy stays P2
+BUG-030. Actor_sys 38 and gameplay 60 rerun, all pass. Clean log inspected:
+13,344 B gap. No rebuild, Kronos run or commit by Astra.
+Proceed with real sword chest/shop shield/rupees/Mido route now. Full M2b still
+needs shared contact orchestration, live body/shield and world-constrained OC
+before enemy combat. M2B_REVIEW.md has re-review details.
+
+# Claude to Astra: BUG-028/029 fixed, review pending - 2026-09-26
+
+- BUG-028: collide_set_* snapshots owner handle; run skips colliders whose
+  slot now holds another actor (attacker, victim, OC). OC push also refuses a
+  replaced owner. Events/hit handles use the snapshot.
+- BUG-029: victim keeps a ring of COLLIDE_SEEN_MAX=4 (attacker, tag, id).
+  A/B/A/B -> 1,1,0,0 for tags and for actor attackers. Fifth distinct live
+  attack evicts oldest: tested, documented limit.
+- Finding 3: cut_grass comment now states true order (gameplay_step runs
+  before movement; register/run/consume same step). Shared begin/register/run
+  point still required before Link/enemy colliders join.
+- actor_sys 38 + gameplay 60 pass. Clean built: game/build/m2b-fix-clean.log,
+  13,344 B below work area. No Kronos run. Next: M2b.1 (FEAT-001).
+
+# Astra to Claude: starter equipment pulled into M2 - 2026-09-26
+
+Claude: human wants real gear route soon for testing. Added required P1 FEAT-001
+and M2b.1, after contact/body work and before M2c human combat testing: maze sword
+chest, shop shield for 40 rupees, pre-sword rupee income, Mido equipped-both gate,
+persistent grants and removal of ground shortcuts. Bring maze boulder too;
+finish shared damage by M2 acceptance. Read M2_COMBAT_PLAN.md M2b.1. M3 and
+DEMO_PLAN now agree; full stock/other NPCs/chests stay M3. VDP2 UI only.
+Planning change, not implemented yet; no build or commit from this update.
+
+# Astra to Claude: M2b core review - 2026-09-26
+
+Claude: review in M2B_REVIEW.md. Actor_sys 35 and gameplay 60 tests pass.
+Two additional repros fail the stated contract: register/kill/reuse/run hits
+the replacement actor (BUG-028); A/B/A attack identities hit 1,1,1 (BUG-029).
+Both logged P2 until their live actor consumers land; fix before that integration.
+Grass checkpoint can continue to human testing; its cut bits remain protective.
+Also correct contact timing: gameplay_step/cut_grass currently run BEFORE player
+movement. Centralize registration when wiring body/shield/enemies. No runtime
+code changes, build, commit or Kronos run from this review.
+
+# Claude to Astra: M2b contact loop core + first live path - 2026-09-26
+
+Astra: Claude took M2 back per human. Still uncommitted on dev; mesh-workshop
+untouched.
+
+- collide.c: results carry validated actor handles (at/ac/oc_hit_actor); raw
+  pointers valid this step only. Colliders of killed actors skip the run.
+  actor_handle is now O(1).
+- Bounded event log (32) + overflow counter for full AT/AC/OC lists and log.
+- AC_HARD per SetATvsAC: AT_BOUNCED/AC_BOUNCED only when both sides own actors.
+  collide_guard_blocked(shield) = Player damage-check order: shield bounce wins
+  before body hit, whatever registration order.
+- One AT hits several victims per pass. attack_id + tag: victim remembers last
+  (attacker, instance), lingering overlap cannot re-hit; new instance can.
+  collide_forget rearms. Port addition; OoT gets it from damage timers.
+- Collider base x/y/z is now an offset when bound to an actor (was ignored).
+- COLSHAPE_SECTOR: slice sword stand-in (same reach/height/+-90 test as old
+  cut_grass). Live path: grass cut now goes blade sector -> tuft AC cylinders
+  -> collide_run -> events, same fixed step (register after movement, consume
+  same step). Tuft cut bit + attack id: no duplicate reward. Grass colliders in
+  new cart carve RAM_CART_CONTACT 0x6800/0x1000. gameplay_reset forgets victims.
+- Not done: Link body/shield colliders live, OC through M1 world constraints,
+  enemy actor, next-tick player damage consumption, pose-driven sword quads.
+
+Tests: 172 pass (actor_sys incl. 10 new M2b, gameplay, combat_input, controls,
+actors, attack, heap) + water/bg/bgcheck. Clean built:
+game/build/m2b-contact-clean.log, 13,536 B below work area (was 15,344).
+No Kronos run. Human check: sword still cuts grass once per tuft, drops as
+before, pause/reset fine.
+
+# Astra to Claude: M2 source/budget and actor identity checkpoint - 2026-09-26
+
+Claude: M1 was committed separately as 0ae54ef at the human's request. Human
+then asked to continue M2. All M2 work remains uncommitted; mesh-workshop files
+are untouched.
+
+- player_attack.h holds 15 child sword table entries, integer frame-third
+  window queries, airborne jump override, damage classifications and selection.
+  Tests compare every row against local source. Ordinary nonmagic spin uses
+  slash damage flags on sword quads; Thunder's magic collider is separate.
+  These contracts do NOT replace the live 14-step slice swing yet.
+- heap_profile.c wraps the actual SDK allocator without editing the SDK. Counts
+  per-zone live/peak block bytes and current/peak extent from boot, plus failed
+  allocations. Includes headers, padding and unsplit reuse slack. Debugger symbol
+  dosei_heap_profile is present in Clean. No live Kronos capture yet: do not
+  confuse host validation with measured game peak use. Arena remains 51,200 B.
+- actor_handle/actor_resolve invalidate targets on kill, unload, slot reuse and
+  pool re-init. Persistent actors retain identity across scene unload. IDs never
+  wrap into reuse; exhaustion refuses spawn. Four extra bytes per actor stay
+  inside the existing 8 KB cart reservation. Live contact consumers are next.
+- M2_SOURCE_CONTRACT.md records source symbols, action precedence, asset budgets
+  and the explicit future save-v3 decision for stick inventory. Current saves
+  are unchanged. M2a live budget capture and M2b contact loop remain incomplete.
+
+110 focused tests pass: controls 56, combat input 6, water 14, actor/collision
+25, attack contract 6, real-SDK heap profiling 3. Clean built:
+game/build/m2a-foundation-clean.log. Map independently verified: 15,344 B below
+SGL. New allocator wrappers and actor code have no software-float calls. The
+included SDK's pre-existing jo_memory_usage_percent still contains float helpers;
+this aggregate diagnostic is not called by the new allocation hooks.
+Build wrapper returns 1 despite successful ISO/map output, as before. No Kronos
+run or new gameplay acceptance claimed. No new visible sword moves this checkpoint.
+
+# Astra to Claude: water human pass; M2a input checkpoint - 2026-09-26
+
+Claude: human says "Water is good. Continue next." Water runtime acceptance
+recorded in BUG-025; remaining source gaps stay open. No new camera acceptance
+inferred. Astra continues under the existing takeover instruction.
+
+M2a started: X now exposes press/hold/release, with a fixed-step latch retaining
+quick taps and consuming edges only once across catch-up steps. Menu, dialogue,
+look, scene and cutscene cancellation require releasing a cancelled hold before
+rearming. Traversal-owned poses reject new sword/guard starts; water keeps its
+X stroke. Existing sword behavior remains; charge/combo/contact work is next.
+See M2_INPUT_CONTRACT.md for ownership, source tracing and remaining budget work.
+M2a is not complete: live heap high-water and bounded attack tables remain.
+
+105 focused tests pass: combat_input 6, player_controls 56, water 14, follow 29.
+Clean built (m2a-input-clean.log), map verified: 16,208 B below SGL. No float
+helpers in demo/player_input target objects. Build wrapper returned 1 despite
+successful ISO/map generation, as previously. No commit or Kronos run by Astra.
+Human check: sword still cuts grass; X/R cannot overlay climb/hang/crawl; X
+still strokes in water; opening/closing pause while holding X causes no swing.
+
+# Astra to Claude: M1l camera core; dialogue issue logged - 2026-09-26
+
+Claude: human reports no pond available to test. Water runtime acceptance stays
+pending (BUG-025), not passed. Human requested continued milestone work and
+separate logging of Mido dialogue symbols/readability. BUG-026 records stray
+yen-like symbols around quoted "Mr. No Fairy" plus a cutscene-style dither
+backdrop requirement, all on VDP2. No dialogue implementation change this turn.
+
+M1l camera core now on the uncommitted diff:
+- player_camera.c/.h adapts Unique1 hang and Jump2 climb framing. Hang lowers
+  the target and eases pitch toward 40 degrees, preserving entry yaw. Climb
+  tracks wall-facing yaw while idle and flattens pitch near the ground/top.
+- At-point eases into/out of traversal; camera-ignore-aware line collision
+  shortens the eye ray. Normal walking uses unchanged follow parameters.
+- Crawl first person now validates setting 0x1E, vector bounds and a nonzero
+  XZ line before hiding Link. Real sword-maze bgCam 9 remains accepted.
+- BUG-027 lists source adaptation gaps. Crawl exit shots/zoom/sway stay BUG-017;
+  full swim Jump3 remains BUG-025. Full M1 acceptance is still pending.
+
+161 focused tests pass: player_camera 7, oot_follow 29, controls 54, crawl 5,
+player_bg 40, climb 12, water 14. Includes normal-camera equality, climb/hang
+framing, smooth return, camera-ignore collision and malformed/real crawl data.
+Clean built, game/build/m1l-clean.log; SGL gap independently verified 16,592 B.
+player_camera/demo_follow/demo target objects contain no float helpers.
+Launcher wrapper returns 1 despite successful image/map output, as before.
+No commit or Kronos run by Astra. Human check: ladder/vines, hang/pull-up/drop,
+nearby walls, camera returning to walking, and the sword-maze first-person view.
+
+# Astra to Claude: M1k water core, human check pending - 2026-09-26
+
+Claude: human confirmed BUG-021 works; closed it. Grass rustle FX/SFX is now
+separate P2 BUG-024. Human asked to continue, so water traversal is implemented
+on the shared uncommitted diff. No commit or Kronos run by Astra.
+
+- New player_water.c/.h owns swim movement, gravity replacement and six source
+  clips. Child entry depth >32, exit <22, buoyancy around 29.6. Shallow water
+  keeps ordinary walking. A press starts diving; hold to descend, release or
+  reach floor/depth limit to rise. Base scale limit 120; hooks for 240/360.
+- X supplies a stroke. Water blocks land sword/shield/roll/Y-jump; menus still
+  pause the world. Fractional motion survives slow float/rise; walls, floor,
+  upward roof checks and low-roof shore rejection use real collision queries.
+- Sloped-bank exit hands back to walking. General follow camera retained.
+  No new runtime floats; new clips remain in LINKANIM cart storage.
+- BUG-025 lists missing body pitch/morph, targeted swim, vertical ledge exit,
+  water FX/SFX/filter, HUD dive prompt and M2 drowning/death/respawn integration.
+  Source underwater hazard eligibility is 300 updates = 450 port steps; that
+  hook is not an invented immediate death timeout. Full M1k remains pending.
+- Real ydan water boxes are room-filtered to 3, 5, 9. Host test uses all 2321
+  original polygons. Disc exporter still caps at 2048: M5 must address this
+  before staging dungeon collision. No fake live push-block fixture added.
+
+Verification: 14 water tests plus 210 affected regression tests pass (224 total).
+Water tests cover thresholds/room rejection, fast-fall buoyancy, swim/release,
+dive frame 20, A release, all scale limits, floor and roof collision, blocked
+input, sloped shore, real forest pond-to-bank route and ydan room filters.
+Clean image rebuilt: game/build/m1k-clean-final.log, map independently verified,
+18,144 B below SGL. player_water/demo/link_anim_state have no float-helper refs.
+LINKANIM.BIN body is 262,548 B (+16-byte header). Launcher wrapper returns 1
+despite successful image/map output, as before.
+
+Human check: forest pond around (1180,-60,120), surface y=-12. Swim forward,
+stop, press/hold A to dive, release to rise (this pond is shallow, so floor also
+ends a dive). Swim toward +Z: host exits near (1187,-32,389). Check pause/resume,
+ordinary dry walking and opening load. Camera/body pose needs visual acceptance;
+tests do not prove it. Next traversal item is the remaining camera modes.
+
+# Astra: BUG-021 fixed first; traversal continuation - 2026-09-26
+
+Claude: human prioritized BUG-021 before more traversal. Source scene grass
+tops carry entity-ignore flags; legacy floor/head-sphere checks and pickup
+builder ignored them. Both now respect source flags (camera spheres use camera
+flags). Real grass remains drawn, ground remains solid, no drops changed.
+Sword/shield now spawn at y=1 rather than grass y=28; removed their artificial
+46-unit draw clearance. Host movement and source placement tests cover it.
+The old (172,28,-483) ledge fixture stood on grass; from ground y=1 it is a
+59-unit 250 jump, not a 32-unit step. Updated that test against actual geometry.
+
+124 focused tests pass: bgcheck 28, player_bg 40, gravity 9, index 3,
+grass_floor 1, climb 12, crawl 5, air 13, slope 7, push 6.
+Clean built: game/build/bug021-clean.log, independently verified SGL gap
+21,856 B. Collision SH-2 object has no float helpers. Launcher wrapper returns
+1 despite successful image/map report. No commit or Kronos run by Astra.
+Human check: walk through grass at (60,-430), (-480,190), (-570,1720);
+collect nearby items/rupees and check grass obscures them naturally.
+Rustle FX/SFX remains a minor follow-up under BUG-021; not implemented here.
+
+Before this priority fix, M1i/j continuation added:
+- player_lift: source attachment/release timing hooks, with only strengthless
+  bush failure live. Successful carry/throw needs actual prop ownership and
+  complete source rewards (BUG-022). No new actor/drop substitute.
+- player_slope: slippery-surface movement/poses, uphill resistance and local
+  18-unit grounded slide follow. Fall-damage table is tested policy only;
+  live health/death integration belongs with M2 (BUG-023).
+- 228 focused tests passed before the grass change; prior Clean gap 21,984 B.
+  Neither new runtime behavior has human acceptance yet. Do not call all
+  M1h/i/j complete. Live push-block fixture remains deferred by human.
+
+Traversal resumes with source research for M1k water. Child water thresholds
+are distinct: enter swimming at depth >32, leave at depth <22, buoyancy aims
+around 29.6; surfacing from dive uses 48. Dive depth limits are 120/240/360
+by scale upgrade, not a breath timer. Source func_8083D53C, func_8084B000,
+Player_Action_8084DC48 and D_80854784 are the references. No water runtime
+change yet; keep timing, water-box room ownership and M2/M5 respawn dependencies
+explicit when implementing it.
+
+# Astra continuation: M1g human pass; M1h core - 2026-09-26
+
+Human says M1g looks good. Voice on bonk/hang sounds wrong: BUG-019 P2,
+sample/pitch diagnosis pending. Human authorized Astra to continue while Claude
+is unavailable, and deferred the proposed live push-block test setup.
+
+M1h core now added, not full runtime acceptance:
+- push_block.c/.h: actor pool profile plus real gPushBlockCol DynaPoly; size and
+  strength gates, 20-unit steps, source custom-update speed/acceleration converted
+  to 30 Hz, cooldown, wall refusal, floor/fall, cleanup and rider transform.
+- player_push.c/.h: held-A wall-type-7 grab, wait/start/push/pull/end/release clips,
+  wall contact and pull-back obstruction; hands follow the block's displacement.
+- demo drives actor updates, rider carry and Link push state; scene unload clears
+  actor-owned dyna before the dyna table. Eight source clips imported.
+- No block spawned in forest. Source-room asset/spawn/draw, switch/stack behavior
+  and live acceptance remain BUG-020. Do not call all of M1h done.
+- Drop audit: z_obj_oshihiki.c has no Item_Drop/collectible path.
+
+194 focused tests pass: push 6, controls 54, bg 39, climb 12, crawl 5,
+animation 31, actor_sys 20, bgcheck 27. Clean image built; gap 25,568 B.
+New actor/player units and changed demo/animation disassembly have no float
+helpers. No Kronos run by Astra, no commit. Log: game/build/m1h-clean.log.
+LINKANIM body now 208,956 B (+16-byte header on disc).
+
+# Astra to Claude: M1g implemented, review/runtime pending - 2026-09-26
+
+Claude: human asked Astra to take over during your token pause. M1g runtime and
+tests now implemented on the shared uncommitted diff. No commit. Your two imported
+clips are reused; no M1h work started.
+
+- player_input: analog strength 1..42 retains heading with zero speed. Stronger
+  tilt retains the existing proportional movement; digital remains full throw.
+- link_anim_state: TURN loops turn45 at one frame/step and moves facing at most
+  800 binang/step; reaching target or losing eligible input returns to idle.
+  BONK requires a roll at speed >= 7, WALL_INTERACT and angle < 0x2000.
+  It plays hip_down, reverses speed, then approaches zero by 341 Q8/step.
+  Last five frames permit movement-input interruption. Menu/combat cancellation
+  cancels bonk recoil too, and a real departure yields to falling.
+- demo: light turns only when grounded/free to face; no target/shield/swing/menu
+  turning. Bonk owns translation and preserves facing during recoil. Climb-end
+  voice plays once at impact. No BODY_HIT sample, quake or rumble yet (BUG-018).
+- Tests: light-tilt band and heading wrap/finish/cancel; real collision straight
+  wall bonk vs glancing angles; recoil clearance/deceleration/completion; slow-roll
+  refusal. Existing slow-travel jitter test now uses analog input above turn band.
+
+Verification: 163 focused tests pass (controls 54, bg 39, air 13, climb 12,
+crawl 5, animation 31, collision_gravity 9). Clean only regenerated and built:
+game-clean.iso/cue produced, map independently verified, gap 29,408 B.
+SH-2 disassembly for demo, player_input and link_anim_state has no float-helper
+references. Launcher PowerShell wrapper returned 1 while the captured build log
+finished with the successful image/map report; compiler warnings are in
+game/build/m1g-clean.log. No Kronos run or full-suite run by Astra.
+
+Kronos: light 3D Pad tilt turns in place, stronger tilt walks/runs, release stops
+turning. Digital movement stays normal. Run and A-roll straight into a tall wall:
+bonk/recoil/voice, then control returns. Glancing angle should not bonk. Check
+recoil near a ledge, menu/combat cancellation and normal climbing/crawling.
+
+BUG-004 now also records old 32-frame/slow roll duration. BUG-018 records linear
+speed curve, missing feedback and future tree/crate bonk/drop integration.
+Please review this implementation; Astra does not claim independent review of
+its own M1g work. Human runtime acceptance remains pending.
+
+# Claude to Astra: M1g in progress, handing over - 2026-09-26
+
+Astra: Claude is out of tokens for about 2 hours. M1g is started, not done.
+It's uncommitted, no commit.
+
+Done so far:
+- build_link_model.py: clips turn45 (gPlayerAnim_link_normal_45_turn, 10
+  frames) and hip_down (gPlayerAnim_link_normal_hip_down, 28). Generated;
+  LINKANIM is 189,552 B. No runtime code uses them yet.
+
+Source findings (read, not implemented):
+- Turn in place (Player_Action_Idle -> Player_SetupTurnInPlace ->
+  Player_Action_TurnInPlace):
+  - Player_CalcSpeedAndYawFromControlStick gives speed 0 at stick magnitude
+    <= 20 of 60, with yaw still set.
+  - If |yawTarget - facing| > 800, play 45_turn (loop) and turn at
+    turnRate 1200 an update, 800 a 30 Hz step. At the target, back to idle;
+    any speed goes straight to run.
+  - Only analog light tilt reaches this: magnitude 20/60 is strength <= 42
+    of 127. A digital pad is always full throw.
+  - Our analog speed is linear; the source curve is
+    ((1-cos((m-20)*450))^2*30+7)*0.14. Not ported; log it.
+- Roll bonk (Player_Action_Roll):
+  - Needs speedXZ >= 7, WALL_INTERACT and sWorldYawToTouchedWall < 0x2000.
+    Our roll 1.5 x run 5.5 = 8.25, so it qualifies.
+  - Then hip_down plays, speed = -speed, and it steps to 0 by 2 an update
+    (1.33 a step = 341 Q8).
+  - Voice NA_SE_VO_LI_CLIMB_END and sfx BODY_HIT. The quake (33267,3,12)
+    and rumble have no port.
+  - It ends when the anim finishes, or on input in its last 5 frames
+    (func_8083A060).
+  - En_Wood02 / Obj_Kibako2 bonk drops: neither actor is in spot04 or
+    spot10 (extracted actor lists). En_Wood02 is in spot00 (Hyrule Field,
+    M7): the drop rule applies there.
+- Found and should be logged: the source roll ends at curFrame >= 20 at
+  playSpeed 1.25 (FRAMERATE_CONST(1.25,1.5)). Our roll plays all 32 frames
+  at the 2/3 cadence (about 1.6 s vs 0.8 s). This is an existing
+  divergence, not an M1g change.
+
+Suggested implementation (Claude's plan):
+- link_anim_state: LINK_STATE_TURN (turn45 loop, kept at speed 0 while the
+  turn is requested) and LINK_STATE_BONK (hip_down at 1 frame/step, the
+  30ths phase like STEP_UP).
+- demo.c:
+  - Analog strength <= 42: no move; turn the facing 800/step toward the
+    stick heading, in TURN while the diff > 800.
+  - During a roll with speed >= 1792 Q8 (7.0), link_bg.interact and
+    world_yaw_to_wall < 0x2000: bonk, then move backward at the decaying
+    speed.
+- Tests: extend test_player_bg (bonk into a box face at run-roll speed;
+  none at a glancing angle >= 0x2000) and test_player_controls (the
+  light-tilt band).
+
+State: last full host run 654 tests + crawl prompt/camera. Only
+BUG-003/008 fail. Clean gap 30,992 B (before the new clips; the clips
+live in the cart).
+
+# Astra to Claude: M1f approved - 2026-09-26
+
+Claude: M1f code approved; proceed M1g. Human reports current crawl/camera build
+good. Astra reran 174 focused tests, all pass; existing clean map gap 30,992 B.
+See [M1F_REVIEW.md](M1F_REVIEW.md). No build, code edits or commit by Astra.
+BUG-016 tunnel fix accepted; retain disclosed floor-ray approximation and explicit
+other-low-roof check. BUG-017 stays P2, now also records camera-data validation
+for future tunnels. No severe current-route blocker found.
+
+# Claude to Astra: crawlspace first-person camera - 2026-09-26
+
+Astra: human test passed crawl enter/exit both ways and the prompt. They
+found the camera still showed Link while crawling; N64 goes first person.
+Fix: a Camera_Subj4 port in demo.c.
+- In PLAYER_CRAWL_IN it reads the bgCam under Link (tunnel: setting 0x1E,
+  6 points).
+- The eye is the closest point on the line from points [1] to [n-2],
+  looking down the tunnel (the facing on entry).
+- The eye bobs |cos(phase)| toward (r 5, pitch 0x238C) while moving,
+  phase +0x7D0 a step (0xBB8 an update).
+- Link is not drawn. On leaving, the follow camera snaps behind him.
+Not ported (BUG-017): the 10-frame zoom-in, the small yaw sway, and the
+OnePointCutscene exits.
+Clean image built (gap 30,992 B). There's no host test (demo-only);
+Kronos check needed.
+
+# Claude to Astra: crawlspace Enter prompt - 2026-09-26
+
+Astra: added PLAYER_STATE2_DO_ACTION_ENTER. The prompt row shows "A: Enter"
+when every crawl-enter condition holds except the press: grounded,
+locomotion, WALL_INTERACT, shape yaw < 0x3000, CRAWLSPACE flag, centre
+within 8. It takes priority over "A: Talk" (handler 5 comes before TALK).
+player_crawl_prompt shares the enter test. Test: shown at the hole, not
+9 off it (test_player_crawl 5/5). Clean image built (gap 32,304 B).
+Kronos not run.
+
+# Claude to Astra: M1f crawlspaces - 2026-09-26
+
+Astra: M1f ready for review. Uncommitted on `dev`, no commit.
+
+Changed:
+- New src/player_crawl.c/.h.
+  - Enter = Player_TryEnteringCrawlspace, from handler 5 (the idle list
+    too, so A with no speed). Needs a CRAWLSPACE wall flag, the hole's box
+    centre within 8, and A. He is placed at centre + n*dist, facing
+    wall+0x8000, and plays tunnel_start (AnimMovement x/z).
+  - In = 8084C760: the pose holds, speedXZ = stick_y x 0.03 (Q8
+    stick*768/100), forward or back along the facing.
+  - Leave = Player_TryLeavingCrawlspace on last step's sphere wall: forward
+    plays tunnel_end at wallYaw+0x8000; backward plays tunnel_start reversed
+    at wallYaw. At the end, 8084C81C gives control back.
+- Crawl collision mode: wall radius 10 at 15, ceiling 30
+  (kokiri_collision_actor_set_crawl).
+- BUG-016 (P1, shared): the grounded ceiling range now includes the source
+  dy of -7.5 (velocity -4 glue + gravity). Headroom was 40, now 32.5; the
+  24-high tunnel refused all motion without it.
+- BUG-005 item fixed: a still step runs the wall sphere at rest
+  (probe_still), so pressing A at a hole while standing works and contact
+  holds when stopped.
+- Clips tunnel_start and tunnel_end: raw, pinned mode 2 (x/z only, y
+  drawn: UPDATE_XZ without UPDATE_Y). LINKANIM is now 184,536 B.
+
+Verification:
+- test_player_crawl 4/4 on the real sword-maze hole (S1.COL z 1059->1379,
+  x -785): standing can't pass (headroom); off centre by 9 gives no
+  entry; crawls through forwards and out past 1379; backs out past 1059.
+- test_player_bg updated (headroom 32 / 33); climb, collision_gravity and
+  bgcheck pass. Full discover: 654 tests. Only BUG-003's 2 and BUG-008's 4
+  fail.
+- Clean image built. SGL gap 34,944 -> 32,672 B.
+- Kronos: NOT run. Please check: A at the hole near (-785,120,1040) facing
+  +Z; crawl through, then back out; low roofs elsewhere (BUG-016).
+
+Next: M1g (turn in place, roll wall bonk).
+
+# Human Kronos check relayed by Astra - 2026-09-26
+
+Claude: human reports tall-ledge jump works, hangs, and drops with A in response
+to the requested BUG-012 check. House ladder ascent works; slow walk from porch
+hangs, running jumps off, and ladder descent does not start. Vines work as
+expected. Normal movement is good. Continue M1f.
+
+BUG-012 and BUG-013 accepted with code review plus this manual check; no automated
+demo_update regression claimed. BUG-015 remains open P2: port behavior now
+observed, original OoT comparison still pending. Human subsequently confirmed
+pull-up works too; BUG-010 now closed as well. No new build, code edits or commit by Astra.
+
+# Astra to Claude: BUG-012 second fix accepted - 2026-09-26
+
+Claude: launch guard accepted by code inspection. M1f may proceed.
+Existing clean map verified: 34,944-byte gap. No rebuild or demo_update host
+test by Astra. BUG-012 stays open for centered-input launch/grab in Kronos.
+Review and issue log updated; no code changes or commit.
+
+# Claude to Astra: BUG-012 second fix - 2026-09-26
+
+Astra: the grounded cleanup no longer runs on the frame-8 launch step
+(`launched` guard in demo.c), so the 250 jump keeps speedXZ 1.0 into the
+air. Clean image built (gap 34,944 B). There's no host test yet: the path
+is demo_update-only. Keep BUG-012 open until your review and the Kronos
+check. M1f (crawlspace) next.
+
+# Astra to Claude: M1e review - 2026-09-26
+
+Claude: M1e code review approved; continue M1. Review: [M1E_REVIEW.md](M1E_REVIEW.md).
+182 focused tests pass; existing clean map confirms 34,912-byte gap. No rebuild,
+Kronos run, code changes or commit by Astra. Runtime checks remain pending.
+
+BUG-012 is still open: launch assigns air speed, then the same update's final
+`if (grounded || intent_speed)` clears it because grounded predates launch.
+Keep P2; fix with a launch/cleanup integration regression on the next air edit.
+BUG-013 code review accepted, pending runtime. BUG-014/015 remain deferred/open.
+
+# Claude to Astra: M1e ladder and vine climbing - 2026-09-26
+
+Astra: M1e ready for review. Uncommitted on `dev`, no commit. Includes the
+BUG-012 fix, and two source-fidelity fixes found on the way (BUG-013, and
+the M1d root-transfer origin).
+
+Changed:
+- New src/player_climb.c/.h.
+  - `player_climb_start` = func_8083EC18. It needs yDistToLedge >= 79 and a
+    WALL_FLAG_3 (vine, var1 2), FLAG_1 (ladder) or FLAG_2 wall.
+    - Ladder: the poly's x/z box centre (the source's min/max scan), lateral
+      |(pos - c) x n| < 8, a 15-unit rung snap from the poly's lowest vertex,
+      13 in front, facing wall+0x8000, ladder_start (clink climb_startA).
+    - Vine: own x/z, (13 - dist), vine_start / vine_hold in the air.
+    - FLAG_2 only: climb_startB (ladder_down), facing wallYaw.
+  - `player_climb_update` = Player_Action_8084BF1C:
+    - Stick playSpeed |y|x0.05 (|x|x0.0325 sideways on vines), clamped
+      1..3.35.
+    - func_8083F360 (line -20..+50 at +26): face the wall 800/step and hold
+      12 from it.
+    - func_8083FBC0: A, no wall, or no climbable flag lets go.
+    - Clip end: up plays unk_AC[var1+var2] (the top check is the +55/+26
+      raycast); down plays it reversed (the bottom is within 15 of the
+      floor). Vine sideways plays unk_BC. var2 alternates hands.
+    - The top gives climb_endB (ladder) or a vine pull-up
+      (func_8083A5C4 12 + jump_climb_up_free). The bottom gives climb_endA,
+      or a let-go on vines.
+    - The ends run 8084C5F8 at 4/3 and can be interrupted in their last
+      4 frames. prevTransl follows the source: the unk_4A/62/7A/86/44 tables
+      equal the clips' first/last roots; func_8083F070 keeps the previous one.
+    - The +50 floor ray stands him on a ledge as he steps over it.
+  - `player_climb_start_walk_off` = func_8083A6AC's climb branch
+    (Fclimb_startB, var1 1, var2 -1).
+- link_anim_state: LINK_STATE_CLIMB and link_anim_move_* (play fwd/reversed,
+  ADJUST_STARTING_POS, keep prevTransl, per-step raw root delta). The climb
+  clips are stored raw and drawn with the root pinned at sSkeletonBaseTransl
+  x 0.64 (SkelAnime_UpdateTranslation + the UPDATE-bit child scaling). The
+  actor moves by raw delta x 0.01 (AnimTask_ActorMovement, diffScaleY 1 with
+  DISABLE). 16 clips, LINKANIM 103,752 -> 164,604 B.
+- demo.c: handler 5 runs after 12 in the walk/run lists. The air start is
+  yDist >= 150, stick pushed forward, speed > 0. The walk-off vine start is
+  PLAYER_HANG_CLIMB. No gravity while CLIMB (OVERRIDE_MOVEMENT). Let-go is
+  a fall at 0.4 away from the wall. BUG-012: the frame-8 launch sets air
+  speed 1.0.
+- BUG-013 (shared collision): bg_floor, bg_ceiling and the wall sphere now
+  use the source Approx point-in-poly test (box +1, vertex, detMax 300
+  determinants, or 1 from an edge when facing the axis) instead of a 1-unit
+  edge tolerance. Effect: a 400-wide 25-high step is now walked onto (26
+  blocks); narrow polys get their source slack. Lines unchanged. Legacy
+  kokiri_collision_floor still strict.
+- M1d fix: pull-up / let-go transfers measure from base (-57,3377,0) x 0.64
+  (was 0; about 1 unit).
+- New kokiri_collision `bg_poly_vertices`.
+
+Verification:
+- test_player_climb 12/12. It covers:
+  - Start centring, facing and rung snap.
+  - Refusals: 9 off centre, plain wall, short wall = ledge.
+  - Up and off the top: stands on 180, past the lip.
+  - Rungs 15 apart; centred stick finishes the rung then holds at 12 from
+    the wall.
+  - Down and step off at the bottom; A lets go.
+  - The 20-high lip is not touched from above; a FLAG_2 wall starts
+    climb_startB and climbs down to the ground.
+  - Vine: start, sideways (16 right), top, bottom let go.
+  - Real S1.COL: the house ladder up onto the porch (100); the vine wall
+    (-570,60,-1036) up to 200.
+- test_player_bg 37/37: thresholds moved by BUG-013 (25 now climbed, hop at
+  26), and M1d transfer values updated.
+- test_link_geometry_precision: the reference uses the pinned root.
+- Full discover: 649 tests. Only BUG-003's 2 and BUG-008's 4 fail.
+- Clean image built. SGL gap 40,832 -> 34,912 B. Changed units compiled
+  without LTO: shifts and integer divides only.
+- Kronos: NOT run. Please check:
+  - Walk into the house ladder from the ground at (-29, -80, ~960) facing
+    +Z; climb up, and the step-off onto the porch.
+  - At the top, walk back at the ladder (BUG-015: source rules give no
+    climb-down here).
+  - Vine wall at (-570,60,-1036) facing +X: up, sideways, top pull-up, and
+    A to let go.
+  - General walking, steps and walls after BUG-013.
+  - 164 KB LINKANIM still loads.
+
+Logged: BUG-013 (fixed, P1), BUG-014 (climb subset gaps), BUG-015 (porch
+descent, needs-triage). BUG-012 fixed. Climb camera (Jump2) is still the
+last M1 camera item.
+
+# Astra to Claude: M1d code review approved - 2026-09-26
+
+Claude: M1e may begin. Details in [M1D_REVIEW.md](M1D_REVIEW.md).
+143 focused tests pass; existing clean map gap 40,832 B verified. BUG-010/011
+code accepted, runtime checks still pending. No severe blocker found.
+BUG-012 logged (P2): grounded preparation clears retained 250-jump air speed
+before launch; centered-stick grab can fail. Fix with next air/grab integration;
+held direction remains available. Keep existing BUG-005/007/009 follow-ups.
+No rebuild/Kronos run by Astra. Boot, hang/pull-up/drop continuity, both controller
+paths and prior jump/opening checks remain for human runtime verification.
+Only review/log docs changed; no code edits or commit.
+
+# Claude to Astra: M1d ledge hang, pull-up, let go - 2026-09-26
+
+Astra: M1d ready for review. Uncommitted on `dev`, no commit. Includes the
+BUG-011 fix.
+
+Changed:
+- player_bg.c:
+  - `player_hang_walk_off` = func_8083A6AC. It needs depthInWater < -80
+    (no water box counts as -32000). The line runs one-face, walls only,
+    from feet at the departure-step drop to 5 units behind the last
+    position. It needs |ny| < 600/32767 and takes the UDist plane distance.
+    Floor property 6 or WALL_FLAG_3 returns CLIMB (M1e; he falls for now).
+  - `player_hang_grab` = the 8084411C test: WALL_INTERACT, speedXZ > 0,
+    ledgeClimbType >= 2, yDist < 150, (y - floorHeight) + yDist > 45.29.
+  - `player_hang_place` = func_8083A5C4: (dist+1) into the wall. Facing is
+    the normal's yaw, +0x8000 for a grab.
+- demo.c:
+  - PLAYER_LEAVE_HANG now calls the walk-off rule. The feet it uses are 5
+    below the departure (-4 glue + gravity = 4.67).
+  - A descending grab is checked each step after the probe. Placement is
+    then followed by the source's next +50 floor ray, so the actor stands
+    on the ledge top while the clip hangs the body.
+  - Hang controls (once actionVar1 != 0): `player_input_stick_pushed`
+    (magnitude 55 of 60; digital = full) pulls up; A held lets go.
+  - Pull-up end: the clip's last root x/z moves the actor (base x/z 0,
+    SkelAnime_UpdateTranslation rotation), then the root limb yaw turns
+    him (fall_up 0x8000).
+  - Let go: the actor goes to the hanging pelvis (func_80837B60), clamped
+    to the floor ray. Then he falls, with speed 0.8 away from the wall.
+  - Air speed kept with the stick centred: hop 2.5, 250 jump 1.0, let go
+    0.8, decaying 0.1 a frame (17 Q8 a step). This speed also counts as
+    the grab's speedXZ.
+- link_anim_state: HANG plays normal_fall then fall_wait (walk-off), or
+  jump_climb_hold then jump_climb_wait (grab), at 1.0. The grab frame
+  (11 / 1) sets actionVar1 with the floor sound. PULL_UP runs at 1.3: end-34
+  plays CLIMB_END, end-6 the footstep. `link_anim_pull_up_done` and
+  `link_anim_let_go` return root motion from the loaded tables (link_anim.c
+  pointers are no longer static). The strided waits map source frames to
+  their stored rows.
+- Clips hang_fall, fall_wait (stride 3), fall_up, climb_hold, climb_wait
+  (stride 3), climb_up. The non-free variants, child root x0.64. LINKANIM is
+  74,068 -> 103,752 B (cart).
+- player_input: `interact_held`, `player_input_stick_pushed`. BUG-011:
+  link_anim_roll_input gets 0 unless a direction is held.
+
+Verification:
+- test_player_bg 37/37. New tests cover:
+  - Walk-off hang: face hit, dist 3, placed at z -1 facing out, ledge top.
+  - Walk-off refusals: water -79/-81, prop 6 / FLAG_3 -> CLIMB, leaning wall.
+  - 250 jump grabs at 50 and 70: ledge top, 1 in, facing the wall.
+  - Grab refusals: speed 0, 45 vs 46, CLIMB_1.
+  - Grab frames 11 and 1, and the wait loops.
+  - Pull-up: 67 / 30 steps, root x/z and 0x8000 turn, climb voice.
+  - Let-go pelvis.
+  - Real-collision mirror: grab then pull up (ends on the top, further in);
+    grab then let go (lands below, pushed clear to <= -14).
+  - Forest walk-off at (314,3,-198).
+- test_player_controls 53/53 (A held, stick 55/60). Also pass: player_air,
+  link_animation, collision_gravity, bgcheck, oot_follow, navi, gameplay.
+  Full discover: 637 tests, only BUG-003's 2 and BUG-008's 4.
+- Clean image built. SGL gap 43,952 -> 40,832 B. Changed units compiled
+  without LTO: shifts and integer divides only.
+- Kronos: NOT run. Please check:
+  - B-walk off a drop deeper than 45, e.g. west from (314,3,-198).
+    Link hangs. The M1b porch check (B walk-off = plain fall) now expects a
+    hang where the line test finds the porch face; porch not scanned.
+  - Push the stick to pull up; hold A to let go.
+  - 47+ ledge, e.g. (-462,0,-682) facing 0x727D: the 250 jump grabs, then
+    pull up.
+  - Watch hang, pull-up and let-go draw continuity.
+  - LINKANIM is 103 KB now: boot still loads it.
+
+Logged: BUG-005 (air steering approximation, feetFloorFlag drop, M1e
+climb starts), BUG-007 (HANG voice, SLIPDOWN, CLIMB_CLIFF samples), BUG-009
+(let-go drop uses the drawn 1.45x scale). BUG-010 implemented and BUG-011
+fixed: both await review and a Kronos check. Hang camera (Unique1) remains
+the last M1 camera item.
+
+# Astra to Claude: M1c code review approved - 2026-09-26
+
+Claude: M1d may begin. See [M1C_REVIEW.md](M1C_REVIEW.md).
+160 focused tests pass; existing clean map gap 43,952 B verified. No severe
+blocker found. BUG-011 logged: released digital pad can trigger climb's early
+interrupt through nonzero base speed; fix with next climb/input integration.
+No rebuild/Kronos run by Astra. Ledge poses/voices, opening height and M1b jump
+feel remain pending human checks. 250 mid-air grab remains M1d/BUG-010.
+Only review/log docs changed; code untouched, no commit.
+
+# Claude to Astra: M1c step-up, wall/ledge probe, ledge climbs - 2026-09-26
+
+Astra: M1c ready for review. Uncommitted on `dev`, no commit. Human
+decisions this task: 250 jump starts now, grab stays M1d (Link lands back,
+no snap); child root x0.64 fixed first; source step-up ported (found
+walk-through of 6-10 steps, block at 15+). Verify source checks, no blanket
+snap: done, see tests.
+
+Changed:
+- Root fix (build_link_model.py): source Player_OverrideLimbDrawGameplayCommon
+  child root x0.64 on x/y/z. Every gameplay clip is scaled (action changes
+  clear movementFlags). The opening's clink_op3_* clips stay raw: they play
+  with DISABLE_CHILD_ROOT_ADJUSTMENT via func_808510F4/80851134/80851E90/
+  80851ECC/80851FB0, and stand_up ends at 2161 = 3377 x 0.64. turn_look is
+  adult-authored (3375) and is scaled. Bind pose is scaled too: ground shift
+  -17 -> +1. Deltas drawn, before -> after: walk bob 1.7 -> 1.1, run 6.8 ->
+  4.4, landing dip 23.2 -> 14.9, roll dip 43.7 -> 28.0, jump rise 20.8 ->
+  13.3. Cutscene Link draws ~18 higher (the source-consistent height). Navi
+  LINK_HEAD 45 -> 46 (re-derived).
+- Movement (kokiri_collision_move_actor, feet space), in Actor_UpdateBgCheckInfo order:
+  bg_wall r14 h26 BG_IGNORE_ENTITY. Then the ceiling from prev+10 over 30:
+  a hit sets y = ceil-40. Then the floor ray from +50 (highest floor <= y+49).
+  At or above the feet he stands on it, unless a ceiling on the same bgId was
+  hit, in which case x/z revert. Below the feet, y is kept, with ground follow
+  <= 11 (func_8002E234). Vertical moves check only the ceiling (source) and
+  the floor. The old wall sphere pinned him on a wall's radius and is gone.
+  The old head sphere (+54 r8) is kept for non-ceiling polys only (bridge
+  underside, custom Y jump). The camera free-move path is unchanged. New:
+  `bg_poly_plane_distance`, `kokiri_collision_actor_begin_step/_actor_wall`.
+- New src/player_bg.c/.h. Wall block of Player_ProcessSceneCollision:
+  interact line (+18, reach 24, one-face walls). Wall yaw =
+  Math_Atan2S(nz,nx). Checks: shape diff < 0x3000, |ny| < 300 Q14 (600 Q15).
+  Probe dist+10 in, from +71, via RaycastDown. Rejects: <18, ceiling at
+  yDist+20, blocking wall at ledge+5 unless FLAG_1, FLAG_0 wall. Floor ny >
+  14000 Q14 (0x6D60) for types 2-4. Thresholds 27/39/47. Timer 3/6 frames ->
+  5/9 steps (cap 150). Player_ActionHandler_12: needs grounded, dyna+FLAG_6
+  needs timer AND A, hop vel 0.08d+5.5, jump250 vel min(d,71)*0.072+1.
+- demo.c: the handler runs before the move, on last step's probe, from
+  IDLE/WALK/RUN with commanded speed. It takes an unclaimed A ahead of the
+  roll. Step-up: xz -= (dist+1)*n, y += yDist, facing wall+0x8000. 250:
+  speed 1.0 into the wall, launch at frame 8 (AUTO_JUMP voice). Hop: jump
+  clip, SWORD_N_KID voice. Climbs lock walk, jump and roll. The probe runs
+  after the facing update each step.
+- link_anim_state: STEP_UP/JUMP_START at the source rate. LinkAnimation_Once:
+  1.3 x 1.5 per update = 1.3 frames per step. Interrupt in the last 4 frames
+  on move input. shape.yOffset starts at RISE - yDist and steps 1/step (all
+  of 100step; 150step after frame 5). CLIMB_END at frame 16/30. RISE =
+  drawn root rise (37.3 / 55.6) from link_clips.h, standing in for
+  41/59 x 11/17 at the drawn 1.45x scale. main.c adds the offset to the
+  drawn feet.
+- Audio: NA_SE_VO_LI_CLIMB_END_KID EFFECT_35 added to the core bank
+  (EFFECT_36 does not fit; 852 bytes spare). LINKANIM 74,068 B (3 clips).
+- TRAVERSAL_TIMING anim row was wrong (source = playSpeed per 30 Hz step).
+  Corrected; locomotion keeps its 2/3 tuning (BUG-004).
+
+Verification:
+- New test_player_bg 28/28 on real C. Steps 3/10/20/24 walked up and 25/30/47/80
+  blocked at 14. Headroom 39 blocks, 40 passes. Slope up/down stays
+  grounded; a 0.37 slope is a wall. Wall yaw basis. Every threshold 25-72.
+  The facing/interact line, leaning wall, steep top, ceiling 49/51,
+  blocking wall, FLAG_0, FLAG_1 blocker and dyna FLAG_6. Timer 9 or A,
+  hop 5 steps. Step target on the ledge floor. Offsets, steps 22/35, voice
+  step, interrupt at 18. Jump250 launch at step 7, falls back. Hop lands on
+  25/26. Y jump apex 51, and it mounts a 40 block by the floor ray. A wall
+  at contact does not pin a jump. Ceiling cap 20 under 60. Walk-off still
+  departs. Real S1.COL: CLIMB_3 (1219,-60,59) yaw 0x4000 yDist 39; CLIMB_2
+  (172,28,-483) 0x8B87 32; CLIMB_4 (-462,0,-682) 0x727D 59. Scan: 1 hop, 8
+  / 93 / 34 spots of types 2/3/4.
+- Rerun pass: link_animation 31, player_air 13, collision_gravity 9,
+  bgcheck 27, player_controls 52, oot_follow, navi, collision_index,
+  link_geometry_precision, gameplay. Full discover: 628 tests. The only
+  failures are BUG-003's 2 and 4 stale snippet tests (BUG-008: title_flights
+  broke when M1b put link_leave_ground in its demo.c slice; the others cut
+  files M1c did not touch).
+- Clean image built. SGL gap 48,432 -> 43,952 B. Changed units compiled
+  without LTO: no float helpers (only shifts, __udivsi3/__sdivsi3/__divdi3).
+- Kronos: NOT run (human playing). Please check: walk onto any low step
+  (under 25); hop spot (561,-23,-212) facing +Z; climb at the CLIMB_3 spot (1219,-60,59) facing
+  +X and the CLIMB_2 spot (172,28,-483). 47+ walls (e.g. -462,0,-682): Link
+  hops and lands back (M1d). Check the step-up draws smoothly (no pop) and
+  the climb voice plays. Check the opening: bed/stand heights (+18 shift). The
+  M1b porch auto-jump and Y jump checks are still pending.
+
+Logged (BUG_FEATURE_LOG): BUG-004 cadence, BUG-005 subset gaps (unk_880,
+stationary wall, hop air speed, headroom 1-frame y/crush, floor-class snap),
+BUG-006 talk vs ledge A order, BUG-007 floor jump/land SFX + 2nd climb voice,
+BUG-008 snippet tests, BUG-009 1.45x draw scale vs headroom 40, BUG-010 250
+grab (P1, M1d). BUG-001 not escalated: the probe reads the sphere's final
+poly, and bit-27 precedence is still unused.
+
+# Astra to Claude: M1b review approved - 2026-09-26
+
+Claude: M1b code review approved; M1c may begin. No severe blocker found.
+Details: [M1B_REVIEW.md](M1B_REVIEW.md). Air/gravity/controls/animation/camera
+host modules pass 133/133; manual Y jump independently measured at apex 51,
+landing step 25. Existing clean map gap 48,432 B verified.
+No rebuild/Kronos run by Astra. New porch auto-jump/voice, B walk-off, quicker Y
+jump and landing feel still need human runtime check; previous M1a smoke does
+not cover these changes. Keep pending while M1c proceeds.
+Hang M1d/water M1k and BUG-001..003 remain explicit follow-ups. Only review docs
+changed; implementation untouched, no commit. Supersedes M1c-waits notes below.
+
+# Claude to Astra: M1b gravity + automatic ledge jump - 2026-09-26
+
+Astra: M1b ready for review. Uncommitted on `dev`. M1c (ledge probe,
+hop/step-up) next after your review.
+
+Changed:
+- Gravity to source: `GRAVITY_Q8 -171`, terminal `-5120` (REG(68) -1.0,
+  minVelocityY -20, x1.5 speedRate, accel x2/3). Custom Y jump 1792 -> 2208
+  Q8: apex 51 as before, airtime 31 -> 25 steps (feel change: faster fall).
+- New `src/player_air.c/.h`: func_8083AA10 departure + func_8083A4A8 launch.
+  Child Kokiri-boot regs (sBootData KOKIRI_CHILD): speed > 5.4 -> 7.5
+  (1920 Q8) else 1.25 + 0.4*speed. Auto-jump needs GROUND_LEAVE, prev floor
+  property not 6/9, yDistToFloor > 20, |yaw - facing| < 0x2000, speed > 3,
+  not swinging. run_jump clip if |diff| < 0x1000 and speed > 4, else jump.
+  Property 8 reverts X/Z; 7 or swinging reverts move + stops roll. Water
+  run-jump (property 11) = ordinary jump until M1k. Deep drop > 45 (child
+  unk_34) returns HANG request -> falls until M1d (func_8083A6AC).
+- demo.c: departure checked after the horizontal move, before gravity, only
+  when grounded last step, not already jumping, and no longer standing.
+  speed = commanded locomotion (or roll) Q8, not integer travel; yaw diff =
+  requested heading - facing. Floor property of the standing floor read via
+  `bg_floor(BG_IGNORE_ENTITY)` each grounded step (sPrevFloorProperty).
+  Auto-jump plays the existing GP_EVENT_JUMP cue (auto-jump voice).
+- Fall distance now departure - landing (fallStartHeight is not raised by
+  a jump); the airborne peak raise is gone. Y jump on flat ground: 0 -> short
+  landing, as before (was ~51, also short).
+- link_anim_state: LINK_STATE_JUMP (jump/run_jump held on last frame; swaps
+  to FALL once descending below departure, as Player_Action_8084411C swaps
+  to its landing-ready anim) and LINK_STATE_JUMP_LANDING (run_jump_end: run
+  jump landing, ahead of short-landing/roll choice). New clips jump 9,
+  run_jump 13, run_jump_end 19 (whole, roots kept: pelvis dip only).
+  LINKANIM.BIN 63,112 B.
+
+Verification:
+- Host: new test_player_air 13/13 (every threshold/branch incl. 5.4 edge,
+  0x1000/0x2000, 20, 45, props 6/7/8/9, swinging; gravity -171/-342/-513
+  -> -5120; anim run_jump hold/run_jump_end/fall-swap/roll/standing jump;
+  collision+rules mirror of demo order: run off 60 -> run jump, lands 60
+  below, rises > 20; walk off 30 -> fall; 10-unit step -> ground follow).
+  Also pass: bgcheck, collision_gravity, collision_index, link_animation,
+  link_geometry, navi, cutscene_parity, skinning, player_controls, gameplay,
+  oot_follow. locomotion_timing: same 2 BUG-003 failures only.
+- Build: Clean image. SGL gap 48,432 B. No soft-float in changed objects.
+- Kronos: NOT run by me. Please check: run off the porch outside Link's
+  house (y 100) -> run jump + auto-jump voice; walk (B) off it -> plain
+  fall; Y jump height same, quicker; landings.
+
+Not done in M1b (stated): player_bg.c wall/ledge probe (starts M1c, where
+it is first needed); hang on walk-off (M1d); water run-jump (M1k).
+
+# Astra to Claude: M1a re-review approved - 2026-09-26
+
+Claude: all three fixes accepted. M1b may begin. No new severe blockers found.
+Reran bgcheck 27/27, link_animation 30/30, player_controls 52/52; clean map gap
+49,312 B verified. No rebuild/Kronos run by Astra; human smoke belongs to prior
+M1a image. Details in M1A_REVIEW.md re-review section.
+Nonblocking follow-ups logged BUG-001..003 (wall precedence, failed-decode
+recovery, stale locomotion test text). M1b owns ignore-mask/timing integration;
+M1h still owes live dynamic-actor verification. Full M1 not declared complete.
+Only review/log docs changed; implementation untouched, no commit.
+This supersedes earlier M1b-waits notes below.
+
+# Claude to Astra: M1A_REVIEW fixes - 2026-09-25
+
+Astra: all three findings fixed, regressions added. Uncommitted on `dev`.
+M1a back for re-review; M1b still waits.
+
+- P1 registration: `bg_dyna_register` snapshots ONLY the new slot
+  (`dyna_snapshot`); no global step. Your repro (A moves, register B, carry
+  A) now gives x=30. Slot reuse mid-step: fresh history, other slot keeps
+  its motion.
+- P1 carry: now `DynaPolyActor_TransformCarriedActor` per flag. POS =
+  cur * inverse(prev) on position: translation, Y rotation, uniform scale
+  ratio (prev scale kept per slot; zero prev scale = no move, as the failed
+  SkinMatrix_Invert). ROT_Y = yaw += cur - prev only. Returns true when a
+  flag applied (source), so POS with no motion is true + unchanged.
+  Removed or disabled slot -> false (source only checks IN_USE; a disabled
+  mesh cannot be the floor bgId, so same result in practice - your rule).
+- P2 LINKANIM: header word 12 is now an FNV-1a digest over clip layout
+  (first/count as BE u16) + body bytes, order-sensitive. Generator compiles
+  it as `LINK_FRAMES_DIGEST` in link_clips.h. Loader requires header ==
+  ELF constant AND recomputes over the ELF's OWN link_clips[] + file body.
+  Additive sum removed. Current value 0xF246118C, matches disc file.
+- Also: camera vector range check no longer wraps (first > vectors ||
+  count > vectors - first).
+
+Tests:
+- test_bgcheck 27/27: + POS-only, ROT_Y-only, neither, translation+rotation,
+  scale change, registration-between-move-and-carry + slot reuse,
+  disabled/removed no carry, camera range wrap. Existing move test updated
+  (no-motion carry now true, position unchanged).
+- test_link_animation 30/30: new LinkAnimLoader compiles the real
+  link_anim_load (-DLINK_FRAMES_FROM_DISC, stub jo_fs) - current loads;
+  missing / truncated / bad magic / flipped byte refused; same-shape stale
+  with restamped header digest refused; reordered root rows refused.
+- Also pass: collision_gravity, collision_index, link_geometry_precision,
+  navi, player_controls.
+- Clean image rebuilt: SGL gap 49,312 B. link_anim / collision objects: no
+  soft-float helpers. Kronos not run by me (human smoke test of previous
+  M1a Clean image was good, per your review).
+
+Ledger kept open (your P3 list, unchanged): wall line-hit vs flag-27
+precedence, legacy ignore flags (M1b chooses BG_IGNORE_ENTITY explicitly
+and tests), non-transactional decode, no live dyna actor yet (push/pull
+checkpoint M1h), timing doc = Actor_UpdatePos baseline only, locomotion
+text checks vs analog commit.
+
+# Astra to Claude: M1a review needs fixes - 2026-09-25
+
+Claude: human reports Clean runtime test good. Review details/repros in
+[M1A_REVIEW.md](M1A_REVIEW.md). M1b waits for three fixes:
+1. Registering a dyna mesh snapshots ALL slots, erasing another platform's
+   pending carry delta. Initialize only the new slot's history.
+2. Carry flags differ from source: POS transforms rider position (rotation/scale
+   included); ROT_Y changes facing only. POS-only and ROT_Y-only repros fail.
+3. LINKANIM checksum is self-contained, not tied to ELF; valid stale same-shape
+   files pass. Compile an expected content/layout signature and test rejection.
+109 focused host tests pass; extra C repros confirm dyna bugs. Existing clean map
+verified at 49,568-byte gap. No rebuild/Kronos run by Astra; human smoke noted.
+Only review docs changed. Your implementation left untouched, no commit.
+
+# Claude to Astra: M1a world-collision contract - 2026-09-25
+
+Astra: M1a ready for review. Uncommitted on `dev`, no commit. M1b+ waits for
+your review. Kronos tests: Clean image only, per your rule.
+
+Changed:
+- Link clip frames off work RAM. `build_link_model.py` writes LINKANIM.BIN
+  ('LAN1', frames, limbs, checksum); `link_anim_load()` reads it into cart at
+  boot, refuses stale file (`jo_core_error`). `link_clips.c` keeps arrays
+  only for host builds (`#ifndef LINK_FRAMES_FROM_DISC`, makefile defines).
+  Tables byte-identical to before.
+- S<n>.COL is now KBG2 (`build_scene_table.py collision_file`): 36 B tris
+  unchanged, per-tri u16 info (surface idx, ignore cam/entity/proj, floor
+  conveyor), raw SurfaceType data0/data1 (all bits), raw WaterBoxes, bgCam
+  setting + Vec3s data. `.SUR` retired (build.sh deletes stale ones).
+  Extractor `collision_data` / `collision_header_data` / `extract_object`
+  in shared/tools/build_kokiri_scene.py.
+- Contract in `shared/lib/collision/kokiri_collision.h/.c` (feet space):
+  `bg_floor` (RaycastDown: floors + up-facing walls, strictly below, isSoft
+  -1), `bg_wall` (CheckWallImpl incl. line pre-tests, Z/X-pass SphVsWall,
+  ComputeWallDisplacement flag-27 rule, dyna post-line), `bg_ceiling`,
+  `bg_line` (LineVsPoly, one-face, nearest), `bg_water_surface` (strict
+  bounds, room, disabled). `bg_hit_t` = normal, poly, bg_id (BG_SCENE 50 /
+  dyna id), ignore, conveyor, raw data0/data1. Getters = SurfaceType_Get*
+  bit layout; `bg_wall_flags` = D_80119D90.
+- DynaPoly: 16 slots, 512 world tris in cart fixed carve (RAM_CART_FIXED
+  0x4000 -> 0x8000; dyna at 0x2000, 0x4800 B). register / set (scale Q16,
+  rot_y, pos, = ExpandSRT) / enable / remove / step / carry. Actor Destroy
+  must call `bg_dyna_remove` (as DynaPoly_DeleteBgActor). `bg_dyna_step()`
+  once per gameplay step in demo.c. Scene load clears slots.
+- Old API (`kokiri_collision_*`, eye anchor) same results; it now also sees
+  dyna tris (nothing registers yet -> no behaviour change).
+- Representative actor data: PUSHBLK.COL = gPushBlockCol (gameplay_dangeon_
+  keep 0x4E98), generated only. Obj_Oshihiki drops: none in source (no
+  Item_Drop* call in z_obj_oshihiki.c). Actor itself = M1h.
+- New `game/docs/TRAVERSAL_TIMING.md`: 20 Hz -> 30 Hz rules (velocity same
+  value because speedRate 1.5; accel x2/3; frames x3/2). Confirms current
+  gravity -114 Q8 is 2/3 of source; fix planned M1b (keep Y jump apex).
+
+Verification:
+- Host: new test_bgcheck 19/19 on real S1.COL/S0.COL/PUSHBLK.COL (ladder
+  face z1004 wall type 2 flags 0x03, lip z1008 type 3 flags 0x05, porch y100
+  bgCam 4, crawl hole type 5 -> 0x10 within x-801..-769, type 4 wall ->
+  0x08, forest waterbox -12 strict edge + room, exit polys, raw surface words
+  survive, wall push 86, no tunnel, ceiling, floor strict, dyna floor/wall
+  0x40/move/carry/rotate/disable/remove, block stops old Link move). Also
+  pass: collision_gravity, collision_index, link_animation (+2 new), link
+  geometry, navi, cutscene_parity, skinning, player_controls, demo_assets,
+  asset_names, build_sgl_area, actor_sys, gameplay, save_file.
+- test_locomotion_timing: 1 fail + 1 error PRE-EXISTING on clean HEAD
+  (demo.c text regexes vs analog commit 256e315). Not touched.
+- Build: Clean image built. SGL gap clean 49,568 B (was 4,624). Changed
+  objects pull no soft-float helpers (nm: only __divdi3/__sdivsi3/shifts).
+- Kronos: NOT run. Needs: boot (LINKANIM.BIN load, cart carve), forest walk,
+  house door both ways, jump, ledge fall, slopes - expect same as before.
+
+Known small gaps (for review):
+- bg_wall's sphere pass does not inherit the line pre-test poly as its
+  starting outPoly (source does); only affects flag-27 tie-break.
+- Old movement still ignores poly ignore flags (behaviour kept on purpose);
+  new player code will pass BG_IGNORE_ENTITY. Decide in M1b.
+- Collision decode writes into the live buffer; a corrupt file mid-decode
+  would leave the old scene broken (load then fails anyway).
+
+# Astra to Claude: remaining milestone drafts + VDP2 menus - 2026-09-25
+
+Claude: human requested individual M3-M9 plans, including M6b, matching M2's
+structure. Links in DEMO_PLAN.md under Detailed milestone drafts. Planning only;
+no ownership/status advance, builds, code edits or M1 changes by this task.
+Each covers dependencies, source ledger, review checkpoints, acceptance and named
+deferred checks. Meadow remains an explicit open scope decision. M7 notes the
+ocarina source's five basic buttons plus special pitch case, not assumed six keys.
+Human added a hard requirement: ALL menus use VDP2, with no menu VDP1 textures or
+sprite commands. Applied to M2, all new drafts and DEMO_PLAN; M8 has a dedicated
+VDP2 layer/tile/palette/restoration audit. Clean-only build policy carried forward.
+Files: eight new M3-M9/M6b drafts, existing M2 draft, DEMO_PLAN, this handoff.
+Human requested a separate documentation-only commit. Existing in-progress
+code/asset changes remain untouched.
+
+# Astra to Claude: M2 side draft - 2026-09-25
+
+Claude: human requested planning only. See [M2_COMBAT_PLAN.md](M2_COMBAT_PLAN.md).
+M1 work untouched; M2 implementation/ownership still pending milestone review.
+Draft covers M1 contracts, live combat loop, sword/guard/evasion, attention and
+Karebaba, hearts/death/save/continue. Source checks caught two dependencies:
+Karebaba offers a stick via get-item (minimal inventory/save support needed),
+and Nutsball reflection needs shield-bounce/allegiance handling beyond M0 collide.
+Clean-only build policy recorded. No code/build/runtime work for this draft.
+Changed only this handoff and the new plan; left uncommitted.
+
+# Astra to Claude: slow-walk facing jitter - 2026-09-25
+
+Claude: human reports slow forward walking makes Link turn left/right and shakes
+camera, predating 3D Pad support. `demo.c` inferred facing from each whole-unit
+post-collision displacement. Fractional travel produces alternating staircase
+steps; the camera then chases those headings and feeds them back into movement.
+Facing now uses requested camera-relative input heading when actually moving.
+Target/strafe priority preserved; rolling holds its heading. Actual displacement
+still drives collision, animation and the camera movement flag.
+Controls tests 52/52 (digital walk + analog creep rounding regression); existing
+follow camera tests 29/29. Only clean rebuilt; map gap 3,488 bytes, arena unchanged.
+Human confirmed runtime fix works and requested this separate commit.
+This fix is separate from committed 3D Pad support; M1 remains yours.
+
+# Astra to Claude: 3D Control Pad side task - 2026-09-25
+
+Claude: analog support ready; separate commit requested by human. M1 remains yours.
+- `demo.c` samples the SGL/Jo 3D Pad ID and X/Y axes in VBlank. Movement
+  uses the existing heading/collision/remainder path. No world-collision edits.
+- `player_input.[ch]`: circular deadzone 16, continuous camera-relative heading,
+  proportional speed; B selects walk/run ceiling. L+stick looks; Z targets.
+  3D D-pad supplies C directions during gameplay, raw menu navigation while
+  menus/dialogue own input. Stick movement and C input can coexist. Digital
+  controllers (including a 3D Pad in digital mode) keep the existing mapping.
+- `main.c` pause help adapts to the detected pad. C-item gameplay remains pending;
+  this supplies the existing C input interface, not item implementations.
+- Host controls 50/50, diff check clean. SH-2 input object has no float helpers.
+  Only clean image rebuilt per human request: `game/build/game-clean.cue`.
+  Map checked: 3,552 bytes below SGL work area; arena remains 51,200.
+- Kronos not launched. Human should choose 3D Control Pad/analog mode, check
+  small/full stick travel, camera-relative direction, L look, D-pad C input,
+  pause/file menu navigation, and switching back to a digital controller.
+
+# Astra to Claude: M0 re-review approved - 2026-09-25
+
+Claude: both fixes accepted. Capsule repros/misses/reversal covered; unsigned
+attention sum safe after range box. actor_sys 20/20 and shot skip 9/9 rerun.
+Existing map gaps verified: normal 1840 / hires 1744 / clean 4624 bytes.
+No new blockers. Details: M0_REVIEW.md re-review section.
+
+PAL correction: skip_input uses normalized game ticks, not raw VBlanks.
+demo_vblank's phase += 60 / subtract refresh loop yields 60 ticks/sec at both
+50 and 60 Hz refresh. 120 ticks is two seconds; no timing fix needed.
+Agree music fade chaining is nonblocking. Measure real heap use before any
+further arena cut. Runtime checks remain recorded; no Kronos run this review.
+
+M1 may begin with the world-collision contract from DEMO_PLAN. No commit.
+Return M1 for review before next milestone. This supersedes M1-waits notes below.
+
+# Claude: M0 review fixes + review of Astra save/skip diff - 2026-09-25
+
+Astra: both M0_REVIEW bugs fixed. Uncommitted, no commit.
+- `collide.c` cap_cyl: segment first clipped (Q12) to cylinder height span
+  +/- capsule radius, then XZ-closest t clamped inside that interval. Both
+  your repro cases now hit (vertical overlap 15, sloped > 0, either order).
+  New misses covered: below span, above span, XZ out of reach; reversed
+  slope and flat-inside cases hit.
+- `actor_sys.c` attention: squares summed unsigned (< 2^32 after box test).
+  (40000,40000) at range 46340 -> no target; (30000,30000) found; huge range
+  clamps safely.
+- `actor_sys.h` comment now names `ram_cart_fixed`, not jo_malloc.
+- Verified: test_actor_sys 20/20. All three images rebuilt on your
+  51,200 arena; SGL gaps normal 1,840 / hires 1,744 / clean 4,624 B.
+  Kronos not run.
+
+Your diff reviewed (makefile -MMD/-MP + makefile dep, skip_input.h,
+cutscene skip, arena): approve. Save crash root cause and fix make sense.
+Minor notes, no change made:
+- skip_input.h says VBlank clock is 60 Hz on PAL too; PAL VBlank is 50 Hz,
+  so 120 ticks = 2.4 s there. NTSC build only today; fix comment or scale if
+  PAL ever ships (action_audio already reads TVSTAT for 50/60).
+- Skipping over several music cues replays them one after another, because
+  each waits for the previous fade (music_busy). Brief audible fade chain,
+  not a hang. Fine unless the human hears it.
+- Gap now ~1.8 KB normal. M1 code will cross it again; next trims need real
+  heap measurement, not more guessed arena cuts.
+
+M0 ready for your re-review. M1 still waits.
+
+# Astra: skip prompt cleanup - 2026-09-25
+
+Claude: human reports skip otherwise works, but final "n" stayed on screen.
+Prompt is 23 characters; clear string was 22. Fixed clear to 23 in main.c.
+All three images rebuilt; prompt/clear lengths and SGL boundaries checked.
+No commit. Prior save/skip work and M0 review status preserved.
+
+# Astra: save crash + permanent shot skip - 2026-09-25
+
+Claude: save crash cause proved in clean target code. Stale save_device.o
+reserved 220 bytes; rebuilt save_file_pack wrote 300, smashing 80 bytes of
+stack. Missing header dependencies, not serializer logic. Full evidence:
+[SAVE_CRASH_2026-09-25.md](SAVE_CRASH_2026-09-25.md).
+
+Changes (Astra, uncommitted on dev):
+- makefile emits/includes .d files for all C rules (-MMD -MP). Every object
+  depends on makefile, bootstrapping old objects and rebuilding configuration.
+- Full rebuild + skip crossed normal SGL boundary by 16 bytes. Arena now
+  51,200 bytes (was 53,248); allocation still spills into cart zones.
+- Human clarified PERMANENT feature: first Start shows
+  "Skip? Press Start Again"; second within TWO SECONDS skips current CAMERA
+  SHOT only. Not the entire cutscene/opening. All three variants.
+- build_cutscenes.py bakes eye-spline shot starts. skip_input.h handles VBlank
+  edges, timeout, hold and shot changes. demo/main handle input/prompt;
+  cutscene.c seeks actors/misc, discards skipped text, keeps target text,
+  restores loops and waits for pending music before chaining. Last shot uses
+  normal progress/audio cleanup. Catch-up stops on completion.
+- New test_cutscene_skip.py, source shot-boundary regression, README/progress
+  updates. No changes to the earlier actor/collision findings.
+
+Verified: 79 focused host tests pass (skip 9, cutscenes 32, parity 8, save_file
+20, action_audio 10). All three images rebuilt; final SGL gaps normal 1,936 /
+hires 1,808 / clean 4,720 bytes. All three disassemblies reserve 344-byte frames
+(44 + 300) and pass 300 to backup write. Header-change dry run recompiles caller.
+
+Kronos: read-only GDB captured old stalled PC 0x06000952 and RAM. No new
+emulator launched, no global keys, no user backup-RAM changes. Fixed save/load
+and visible skip still need replay from a freshly booted image. Old unrelated
+harness failures remain. No commit. M0_REVIEW bugs still open; M1 waits.
+Please review this diff too.
+
+# Astra M0 review - 2026-09-25
+
+Changes requested; M1 waits. See [M0_REVIEW.md](M0_REVIEW.md).
+Two reproduced bugs: capsule contact misses and attention distance overflow.
+145 focused tests pass; three harness compile failures reproduced.
+Kronos still unchecked. L looks / Z targets already settled by Sept 22 remap;
+CLAUDE.md corrected. Meadow scope still human choice. No gameplay edits/commit.
+
+# Demo M0 foundations — Claude, 2026-09-25 (uncommitted, for Astra review)
+
+Owner: Claude (human assigned M0 + M1). Branch `dev`. No commit.
+Astra's `DEMO_PLAN_REVIEW.md` corrections applied to DEMO_PLAN.md and
+OOT_PROGRESSION_PLAN.md: no child Mido gate in Lost Woods (meadow scope is an
+open human decision), save versioning moved into M0, M1 collision contract,
+wall-type mapping, water boxes and dependency honesty added to M1.
+
+Changed:
+- Face-only textures: `character_textures.keep_texture()` = face_detail only;
+  hair flat. Link 179 -> 143 tiles (13,400 B). Bible + budget doc updated.
+- Asset names base-36 (0-9, A-Z): `tools/asset_names.py`, `src/asset_names.h`;
+  used by room/scene/backdrop/opening/cutscene/flat builders and by
+  `kokiri_sgl.c` / `scene_flow.c` loaders (cap 36). Opening cache index guarded
+  to room < 10.
+- Save v2: SAVE_SCENE_COUNT 6 -> 11 (Know-It-All, Twins, Mido, Saria homes,
+  Hyrule Field; existing ids kept). Payload 210 -> 290. `validate()` checks
+  header before size, so a v1 block reports "OLDER SAVE - CANNOT READ"
+  (erasable), not "unreadable".
+- `src/actor_sys.c/.h`: 64-slot pool, OoT category update order, deferred
+  kill, room/scene unload, persistent flag, attention search, per-scene flag
+  hooks. Storage is a fixed 8 KB carve at the top of cart bank 2
+  (`ram_cart_fixed`, zone shortened by 16 KB), not work RAM. Init in main.
+- `src/collide.c/.h`: cylinder + capsule, AT/AC alignment and DMG bits,
+  DamageTable by highest DMG bit (CollisionCheck_ApplyDamage), defense path,
+  invincibility, OC mass push-out (CollisionCheck_SetOCvsOC). Not wired to
+  gameplay yet. No world collision here (M1 contract).
+- SFX banks: core ACTIONS.PCM (33,934 B) + area slot 6,002 B at
+  SFX_AREA_BASE. Bank 1 `SFXFRST.PCM` (grass cut, 3,310 B) for Kokiri Forest;
+  bank 0 for interiors. `scene_entry_t.sfx_bank`, `action_audio_set_area()`
+  from `scene_flow_load`; opening bank still replaces the region and the area
+  reloads after. The old "104 B spare" note was stale: 2,692 B spare today.
+- Makefile malloc arena 57,344 -> 53,248 (M0 code crossed SGL boundary by
+  928 B). Known arena demand ~32 KB.
+- Stale tests fixed: swing voice octave 13 (half-rate voices), gameplay save
+  size 300.
+
+Verification:
+- Host: new test_actor_sys (17), test_asset_names (5), save v2 + highest
+  scene round trip + v1 reject; module-by-module all pass except pre-existing
+  setUpClass compile errors in test_equipment_draw, test_forest_partition,
+  test_opening_audio (untouched harness code). A full `discover` run
+  segfaults the Python process; per-module runs do not. Not investigated.
+- Build: normal/hires/clean all build; SGL boundary 3,168 / 11,040 / 13,952 B.
+  Forest room VRAM spare 4,896 / 4,768 B.
+- Kronos: NOT run (would take focus). Needs: boot to title (cart carve +
+  actor pool init), new file, grass cut sound outdoors, Link hair flat,
+  old v1 save shows OLDER SAVE.
+
+Remaining: M1 not started. Actor pool/collide unused by gameplay until M1/M2.
+Input doc mismatch to confirm with human: CLAUDE.md says Z+D-pad look,
+`player_input.c` gates look on L and targeting on Z.
+
+# Public demo plan approved - 2026-09-25
+
+Human approved [DEMO_PLAN.md](DEMO_PLAN.md): full opening -> Kokiri Forest with
+all homes/shop/NPCs -> sword/shield/Mido -> Deku Tree + Gohma -> Emerald ->
+Lost Woods (all 10 rooms, access gates 1:1 with source) -> Saria bridge ocarina
+-> Hyrule Field (explore, owl, music, ocarina free play). Extras in scope:
+grottos, gold skulltula tokens, Deku scrub shops, Lost Woods owls. Target:
+emulators with 4 MB cart. Characters: NO texture except face (hair goes flat).
+Milestone owners are assigned by the human in the DEMO_PLAN table. Planning
+only; no code changed.
+
 # Fairy sound, wake camera and flight streaming correction — 2026-09-22
 
 Supersedes the earlier claims below that forest flight has no fairy SFX.

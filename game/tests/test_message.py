@@ -47,9 +47,14 @@ class Message(unittest.TestCase):
         subprocess.run([str(GCC), '-shared', '-O2', '-o', str(output),
                         '-I' + str(ROOT / 'src'), '-I' + str(GENERATED),
                         str(ROOT / 'src/message.c'),
+                        str(ROOT / 'src/text_pool.c'),
                         str(GENERATED / 'cutscenes.c')],
                        check=True, env=env, cwd=str(ROOT))
         cls.lib = ctypes.CDLL(str(output))
+        # Run text is CUTTEXT.TXT on the disc (BUG-037); bind the same file.
+        cls.text = ctypes.create_string_buffer((ROOT / 'build/cd/CUTTEXT.TXT').read_bytes())
+        cls.lib.cutscene_text_bind.restype = ctypes.c_bool
+        assert cls.lib.cutscene_text_bind(cls.text, len(cls.text.raw) - 1)
         for name in ('message_start', 'message_step', 'message_is_active',
                      'message_finished', 'message_waits_for_button',
                      'message_is_revealing'):

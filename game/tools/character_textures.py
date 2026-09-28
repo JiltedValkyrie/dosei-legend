@@ -1,4 +1,4 @@
-"""Character policy: flat bodies, textured hair and faces only.
+"""Character policy (human rule): flat everything except faces. Hair is flat.
 
 VDP1 widths are multiples of eight. A 4x4 logical tile is stored as 8x4 with
 each column repeated, preserving the original UV domain without cropping.
@@ -42,8 +42,11 @@ def mark_faces(faces, xml_path, head_limb=None, expression_segments=()):
 
 
 def keep_texture(face):
-    """A full_texture request must never bypass the global body policy."""
-    return bool(face.get('face_detail') or face.get('hair_detail'))
+    """Face only. Hair stays marked (hair_detail) for tools but goes flat.
+
+    A full_texture request must never bypass the global body policy.
+    """
+    return bool(face.get('face_detail'))
 
 
 def bake_character_tile(face, original_size, bake):

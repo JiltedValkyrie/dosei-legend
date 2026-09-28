@@ -6,6 +6,7 @@ import struct
 
 import build_hybrid_scene as hybrid
 from vdp1_budget import Budget
+import asset_names
 
 
 def transitions(oot, rom_dir=None, prefix='spot04'):
@@ -108,8 +109,8 @@ def emit_rooms(args, head, actor, normal):
                 forest_rooms.append((vertices, faces, tiles))
             mesh, pixels, bounds = pack_room(vertices, faces, tiles,
                                              manifest['faces'], normal)
-            (out / ('S%dR%d.MSH' % (scene_id, room_id))).write_bytes(mesh)
-            (out / ('S%dR%d.TEX' % (scene_id, room_id))).write_bytes(pixels)
+            (out / asset_names.room_asset(scene_id, room_id, 'MSH')).write_bytes(mesh)
+            (out / asset_names.room_asset(scene_id, room_id, 'TEX')).write_bytes(pixels)
             summaries.append(dict(scene=scene_id, prefix=prefix, id=room_id,
                                   vertices=len(vertices), polygons=len(faces),
                                   tiles=len(tiles), pixel_bytes=len(pixels),

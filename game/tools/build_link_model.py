@@ -343,8 +343,8 @@ def flatten_faces(faces):
     That detail is invisible in play and the VRAM it costs is needed by the
     ground, which is what actually smears.
 
-    Hair and face artwork (not headwear) carries facial shape
-    at the close gameplay camera and must not be replaced by per-face averages.
+    Face artwork carries facial shape at the close gameplay camera and must
+    not be replaced by per-face averages. Hair is flat (human rule, face only).
     """
     flattened = 0
     for face in faces:
@@ -515,13 +515,15 @@ def write_model(faces, out_path, skinned=False, character=True):
 # idle offset (recipe 'animation') anchors every other symbol by index. The
 # whole 573-entry table is validated before use -- see resolve_animations().
 #
-# `stride` decimates long clips. Idle is a 184-frame fidget loop whose first
-# 20 frames are the standing breath cycle we want; sampling the rest would cost
-# ROM for motion nothing in the slice triggers. Fall is a 37-frame descent that
+# `stride` decimates long clips. Idle uses Player_GetIdleAnim's free-hands
+# standing cycle in full. The first 20 frames of waitF_typeA are only the
+# start of a 184-frame fidget, not a loop: repeating them snaps the legs.
+# Keep IDLE_SYMBOL below as the ROM address anchor, not the playback clip.
+# Fall is a 37-frame descent that
 # reads fine at a third of the rate because the pose barely changes.
 CLIPS = (
     # name       symbol                                    first  count stride
-    ('idle',    'gPlayerAnim_link_normal_waitF_typeA_20f',      0,   20, 1),
+    ('idle',    'gPlayerAnim_link_normal_wait_free',           0,    0, 1),
     ('walk',    'gPlayerAnim_link_normal_walk',                 0,   29, 1),
     ('run',     'gPlayerAnim_link_normal_run',                  0,   20, 1),
     ('fall',    'gPlayerAnim_link_normal_fall',                 0,   12, 3),
@@ -530,9 +532,133 @@ CLIPS = (
     # z_player.c D_80854190[PLAYER_MWA_FORWARD_SLASH_1H], then recovery.
     ('slash',   'gPlayerAnim_link_fighter_normal_kiru',         0,    5, 1),
     ('recover', 'gPlayerAnim_link_fighter_normal_kiru_end',     0,    8, 1),
+    # M2c: the rest of the one-handed D_80854190 rows (attack, then the
+    # non-lock-on recovery unk_04). Whole clips: windows index their frames.
+    ('slash_combo',   'gPlayerAnim_link_fighter_normal_kiru_finsh',     0, 0, 1),
+    ('slash_combo_end', 'gPlayerAnim_link_fighter_normal_kiru_finsh_end', 0, 0, 1),
+    ('right',         'gPlayerAnim_link_fighter_Lside_kiru',            0, 0, 1),
+    ('right_end',     'gPlayerAnim_link_fighter_Lside_kiru_end',        0, 0, 1),
+    ('right_combo',   'gPlayerAnim_link_fighter_Lside_kiru_finsh',      0, 0, 1),
+    ('right_combo_end', 'gPlayerAnim_link_fighter_Lside_kiru_finsh_end', 0, 0, 1),
+    ('left',          'gPlayerAnim_link_fighter_Rside_kiru',            0, 0, 1),
+    ('left_end',      'gPlayerAnim_link_fighter_Rside_kiru_end',        0, 0, 1),
+    ('left_combo',    'gPlayerAnim_link_fighter_Rside_kiru_finsh',      0, 0, 1),
+    ('left_combo_end', 'gPlayerAnim_link_fighter_Rside_kiru_finsh_end', 0, 0, 1),
+    ('stab',          'gPlayerAnim_link_fighter_pierce_kiru',           0, 0, 1),
+    ('stab_end',      'gPlayerAnim_link_fighter_pierce_kiru_end',       0, 0, 1),
+    ('stab_combo',    'gPlayerAnim_link_fighter_pierce_kiru_finsh',     0, 0, 1),
+    ('stab_combo_end', 'gPlayerAnim_link_fighter_pierce_kiru_finsh_end', 0, 0, 1),
+    # Charged spin (func_808377DC / Player_Action_80844E68 / func_80844BE4):
+    # charge start (startL after a right slash), wait loop, cancel, then
+    # PLAYER_MWA_SPIN_ATTACK_1H / BIG_SPIN_1H and their recoveries.
+    ('charge_start',  'gPlayerAnim_link_fighter_power_kiru_start',      0, 0, 1),
+    ('charge_startl', 'gPlayerAnim_link_fighter_power_kiru_startL',     0, 0, 1),
+    ('charge_wait',   'gPlayerAnim_link_fighter_power_kiru_wait',       0, 0, 1),
+    ('charge_end',    'gPlayerAnim_link_fighter_power_kiru_wait_end',   0, 0, 1),
+    ('spin',          'gPlayerAnim_link_fighter_rolling_kiru',          0, 0, 1),
+    ('spin_end',      'gPlayerAnim_link_fighter_rolling_kiru_end',      0, 0, 1),
+    ('big_spin',      'gPlayerAnim_link_fighter_Wrolling_kiru',         0, 0, 1),
+    ('big_spin_end',  'gPlayerAnim_link_fighter_Wrolling_kiru_end',     0, 0, 1),
+    # Z-targeted A (Player_ActionHandler_10): jump slash (func_8083BA90,
+    # MWA_JUMPSLASH_START/FINISH; child ends on power_jump_kiru_end) and the
+    # D_80853D4C evasions with their landings (func_8083BCD0).
+    ('jslash',        'gPlayerAnim_link_fighter_Lpower_jump_kiru',      0, 0, 1),
+    ('jslash_hit',    'gPlayerAnim_link_fighter_Lpower_jump_kiru_hit',  0, 0, 1),
+    ('jslash_end',    'gPlayerAnim_link_fighter_power_jump_kiru_end',   0, 0, 1),
+    ('hop_left',      'gPlayerAnim_link_fighter_Lside_jump',            0, 0, 1),
+    ('hop_left_end',  'gPlayerAnim_link_fighter_Lside_jump_end',        0, 0, 1),
+    ('backflip',      'gPlayerAnim_link_fighter_backturn_jump',         0, 0, 1),
+    ('backflip_end',  'gPlayerAnim_link_fighter_backturn_jump_end',     0, 0, 1),
+    ('hop_right',     'gPlayerAnim_link_fighter_Rside_jump',            0, 0, 1),
+    ('hop_right_end', 'gPlayerAnim_link_fighter_Rside_jump_end',        0, 0, 1),
     # PLAYER_ANIMGROUP_defense / defense_wait, one-handed equipment group.
     ('guard',   'gPlayerAnim_link_normal_defense',              0,    2, 1),
     ('guard_wait', 'gPlayerAnim_link_normal_defense_wait',      0,   20, 1),
+    # func_808428D8: crouch stab from the guard (MWA_STAB_1H), whole clip.
+    ('crouch_stab', 'gPlayerAnim_link_normal_defense_kiru',     0,    0, 1),
+    # func_80842D20 sword rebound (D_808545CC, one-handed, not hostile-locked)
+    # and the guard recoil (D_808543C4, in the guard action).
+    ('rebound',     'gPlayerAnim_link_fighter_rebound',         0,    0, 1),
+    ('guard_hit',   'gPlayerAnim_link_normal_defense_hit',      0,    0, 1),
+    # Player_Action_80845000 / 80845308: charge walk (D_80854370/78 [0]).
+    ('charge_walk', 'gPlayerAnim_link_fighter_power_kiru_walk', 0,    0, 1),
+    ('charge_side', 'gPlayerAnim_link_fighter_power_kiru_side_walk', 0, 0, 1),
+    # z_player.c func_8083A4A8 (automatic jump off a ledge) and the landing
+    # Player_Action_8084411C picks after a run jump. Whole clips.
+    ('jump',      'gPlayerAnim_link_normal_jump',               0,    0, 1),
+    ('run_jump',  'gPlayerAnim_link_normal_run_jump',           0,    0, 1),
+    ('run_jump_end', 'gPlayerAnim_link_normal_run_jump_end',    0,    0, 1),
+    # Player_ActionHandler_12 ledge climbs (Player_Action_80845668): the
+    # 100/150 step-ups and the start of the 250 jump. Whole clips, roots kept:
+    # the step-ups rise from below the ledge and end on the idle root.
+    ('step100',   'gPlayerAnim_link_normal_100step_up',         0,    0, 1),
+    ('step150',   'gPlayerAnim_link_normal_150step_up',         0,    0, 1),
+    ('jump250',   'gPlayerAnim_link_normal_250jump_start',      0,    0, 1),
+    # Ledge hang (func_8083A5C4 / Player_Action_8084BBE4) and pull-up
+    # (func_8083A9B8 / Player_Action_8084BDFC). Walking off: normal_fall (the
+    # slip-and-grab, roots kept here unlike `fall`) -> fall_wait -> fall_up.
+    # Mid-air grab: jump_climb_hold -> jump_climb_wait -> jump_climb_up. The
+    # non-"free" variants, as for landing/defense. The two waits hold one
+    # pose; every third frame is enough.
+    ('hang_fall', 'gPlayerAnim_link_normal_fall',               0,    0, 1),
+    ('fall_wait', 'gPlayerAnim_link_normal_fall_wait',          0,    0, 3),
+    ('fall_up',   'gPlayerAnim_link_normal_fall_up',            0,    0, 1),
+    ('climb_hold', 'gPlayerAnim_link_normal_jump_climb_hold',   0,    0, 1),
+    ('climb_wait', 'gPlayerAnim_link_normal_jump_climb_wait',   0,    0, 3),
+    ('climb_up',  'gPlayerAnim_link_normal_jump_climb_up',      0,    0, 1),
+    # Ladder and vine climbing (func_8083EC18, Player_Action_8084BF1C,
+    # 8084C5F8): child sAgeProperties unk_A4/A8/AC/BC/C4/CC. Played with
+    # AnimMovement, so their roots MOVE the actor (see PINNED_ROOT_CLIPS).
+    # jump_climb_up_free is the vine-top pull-up (func_8083A9B8).
+    ('ladder_start', 'gPlayerAnim_clink_normal_climb_startA',   0,    0, 1),
+    ('ladder_down', 'gPlayerAnim_clink_normal_climb_startB',    0,    0, 1),
+    ('ladder_upL', 'gPlayerAnim_clink_normal_climb_upL',        0,    0, 1),
+    ('ladder_upR', 'gPlayerAnim_clink_normal_climb_upR',        0,    0, 1),
+    ('ladder_endAL', 'gPlayerAnim_clink_normal_climb_endAL',    0,    0, 1),
+    ('ladder_endAR', 'gPlayerAnim_clink_normal_climb_endAR',    0,    0, 1),
+    ('ladder_endBR', 'gPlayerAnim_clink_normal_climb_endBR',    0,    0, 1),
+    ('ladder_endBL', 'gPlayerAnim_clink_normal_climb_endBL',    0,    0, 1),
+    ('vine_start', 'gPlayerAnim_link_normal_Fclimb_startA',     0,    0, 1),
+    ('vine_down', 'gPlayerAnim_link_normal_Fclimb_startB',      0,    0, 1),
+    ('vine_hold', 'gPlayerAnim_link_normal_Fclimb_hold2upL',    0,    0, 1),
+    ('vine_upL',  'gPlayerAnim_link_normal_Fclimb_upL',         0,    0, 1),
+    ('vine_upR',  'gPlayerAnim_link_normal_Fclimb_upR',         0,    0, 1),
+    ('vine_sideL', 'gPlayerAnim_link_normal_Fclimb_sideL',      0,    0, 1),
+    ('vine_sideR', 'gPlayerAnim_link_normal_Fclimb_sideR',      0,    0, 1),
+    ('climb_up_free', 'gPlayerAnim_link_normal_jump_climb_up_free', 0, 0, 1),
+    # Crawlspace (Player_TryEnteringCrawlspace / TryLeavingCrawlspace):
+    # AnimMovement with UPDATE_XZ only, so only x/z are pinned.
+    ('tunnel_start', 'gPlayerAnim_link_child_tunnel_start',     0,    0, 1),
+    ('tunnel_end', 'gPlayerAnim_link_child_tunnel_end',         0,    0, 1),
+    # Player_SetupTurnInPlace (PLAYER_ANIMGROUP_45_turn) and the roll bonk
+    # (PLAYER_ANIMGROUP_hip_down), non-free variants.
+    ('turn45',    'gPlayerAnim_link_normal_45_turn',            0,    0, 1),
+    ('hip_down',  'gPlayerAnim_link_normal_hip_down',           0,    0, 1),
+    ('push_wait', 'gPlayerAnim_link_normal_push_wait',         0,    0, 1),
+    ('push_release', 'gPlayerAnim_link_normal_push_wait_end',  0,    0, 1),
+    ('push_start', 'gPlayerAnim_link_normal_push_start',       0,    0, 1),
+    ('pushing',   'gPlayerAnim_link_normal_pushing',            0,    0, 1),
+    ('push_end',  'gPlayerAnim_link_normal_push_end',           0,    0, 1),
+    ('pull_start', 'gPlayerAnim_link_normal_pull_start',       0,    0, 1),
+    ('pulling',   'gPlayerAnim_link_normal_pulling',            0,    0, 1),
+    ('pull_end',  'gPlayerAnim_link_normal_pull_end',           0,    0, 1),
+    ('lift_fail', 'gPlayerAnim_link_normal_nocarry_free',       0,    0, 1),
+    ('lift_fail_wait', 'gPlayerAnim_link_normal_nocarry_free_wait', 0, 0, 1),
+    ('lift_fail_end', 'gPlayerAnim_link_normal_nocarry_free_end', 0, 0, 1),
+    ('lift',      'gPlayerAnim_link_normal_carryB',             0,    0, 1),
+    ('carry_wait','gPlayerAnim_link_normal_carryB_wait',        0,    0, 1),
+    ('carry_throw','gPlayerAnim_link_normal_throw',             0,    0, 1),
+    ('carry_put', 'gPlayerAnim_link_normal_put',                0,    0, 1),
+    ('slide_down','gPlayerAnim_link_normal_down_slope_slip',    0,    0, 1),
+    ('slide_up',  'gPlayerAnim_link_normal_up_slope_slip',      0,    0, 1),
+    ('slide_down_end','gPlayerAnim_link_normal_down_slope_slip_end',0,0,1),
+    ('slide_up_end','gPlayerAnim_link_normal_up_slope_slip_end',0,0,1),
+    ('swim_wait', 'gPlayerAnim_link_swimer_swim_wait',         0, 0, 1),
+    ('swim', 'gPlayerAnim_link_swimer_swim',                   0, 0, 1),
+    ('swim_enter', 'gPlayerAnim_link_swimer_wait2swim_wait',   0, 0, 1),
+    ('swim_fall', 'gPlayerAnim_link_swimer_land2swim_wait',     0, 0, 1),
+    ('dive_start', 'gPlayerAnim_link_swimer_swim_deep_start',   0, 0, 1),
+    ('dive_end', 'gPlayerAnim_link_swimer_swim_deep_end',       0, 0, 1),
     # The opening cutscene's poses, from the player cues in
     # gLinkHouseIntroSleepCs / gLinkHouseIntroWakeUpCs. Mapped to these symbols
     # in z_player.c:15039-15042; see tools/build_cutscenes.py PLAYER_CUES.
@@ -545,7 +671,59 @@ CLIPS = (
     ('turn_look', 'gPlayerAnim_link_demo_furimuki',             0,    0, 3),
     ('sleep_wait2', 'gPlayerAnim_clink_op3_wait2',              0,    0, 2),
     ('sit_wait3', 'gPlayerAnim_clink_op3_wait3',                0,    0, 2),
+    # M2e (z_player.c func_80837C0C, func_80836448): hit reactions (D_808544B0
+    # front/back, shit < 5 damage, hit >= 5), knockdown (downA + down_wake)
+    # and the death, derth_rebirth to its endFrame 84.
+    ('shit_front','gPlayerAnim_link_normal_front_shit',         0,    0, 1),
+    ('shit_back', 'gPlayerAnim_link_normal_back_shit',          0,    0, 1),
+    ('hit_front', 'gPlayerAnim_link_normal_front_hit',          0,    0, 1),
+    ('hit_back',  'gPlayerAnim_link_normal_back_hit',           0,    0, 1),
+    ('down_front','gPlayerAnim_link_normal_front_downA',        0,    0, 1),
+    ('down_back', 'gPlayerAnim_link_normal_back_downA',         0,    0, 1),
+    ('wake_front','gPlayerAnim_link_normal_front_down_wake',    0,    0, 1),
+    ('wake_back', 'gPlayerAnim_link_normal_back_down_wake',     0,    0, 1),
+    ('death',     'gPlayerAnim_link_derth_rebirth',             0,   85, 1),
 )
+
+# Child root adjustment: z_player_lib.c Player_OverrideLimbDrawGameplayCommon
+# scales a child's root translation by 0.64 on x/z unless the playing clip's
+# movementFlags carry ANIM_FLAG_DISABLE_CHILD_ROOT_ADJUSTMENT without
+# ANIM_FLAG_UPDATE_XZ, and on y unless DISABLE without ANIM_FLAG_UPDATE_Y.
+# Every action change clears movementFlags (Player_SetupAction), and the
+# gameplay clips here are played with no AnimMovement flags, so they are
+# scaled: the shared animations are adult-authored (idle pelvis 3377).
+# The opening's clink_op3_* clips are played by func_808510F4 / func_80851134
+# / func_80851E90 / func_80851ECC / func_80851FB0 with DISABLE (no UPDATE
+# bits), so they stay raw -- they are child-authored: stand_up ends at 2161,
+# which is 3377 x 0.64. turn_look (link_demo_furimuki, cue type 2 =
+# func_80851030) sets no flag of its own; its pelvis (3375) is the adult
+# standing height, so it is scaled like the gameplay clips.
+#
+# Climbing clips are started with UPDATE_XZ | UPDATE_Y | DISABLE_CHILD_ROOT_
+# ADJUSTMENT | ENABLE_MOVEMENT (func_8083EC18, func_8083A6AC, and kept by
+# Player_SetupActionPreserveAnimMovement). Their root drives the actor
+# (AnimTask_ActorMovement: raw delta x actor scale, diffScaleY 1.0 with
+# DISABLE), while SkelAnime_UpdateTranslation pins the drawn root to
+# baseTransl, which the UPDATE bits then draw x0.64. So they are stored raw
+# (for the movement) and drawn with the pinned root.
+CHILD_ROOT_SCALE = 0.64
+PINNED_ROOT_CLIPS = frozenset((
+    'ladder_start', 'ladder_down', 'ladder_upL', 'ladder_upR', 'ladder_endAL',
+    'ladder_endAR', 'ladder_endBR', 'ladder_endBL', 'vine_start', 'vine_down',
+    'vine_hold', 'vine_upL', 'vine_upR', 'vine_sideL', 'vine_sideR'))
+# UPDATE_XZ without UPDATE_Y: x/z pinned (and drawn x0.64 of base), y drawn
+# raw -- DISABLE without UPDATE_Y skips the child y scaling.
+PINNED_XZ_CLIPS = frozenset(('tunnel_start', 'tunnel_end'))
+RAW_ROOT_CLIPS = frozenset(('sleeping', 'turn_over', 'sit_up', 'stand_up',
+                            'sleep_wait2', 'sit_wait3')) | PINNED_ROOT_CLIPS | PINNED_XZ_CLIPS
+# z_player.c sSkeletonBaseTransl: SkelAnime.baseTransl for Player.
+BASE_TRANSL = (-57, 3377, 0)
+
+
+def child_root(root):
+    """Root translation after the child adjustment, rounded half up."""
+    return tuple(int(math.floor(v * CHILD_ROOT_SCALE + 0.5)) for v in root)
+
 
 # Rotations keep their full 16-bit binang precision. The clip tables share the
 # RAM below SGL's work area with .bss, so they are not free; the makefile's
@@ -601,11 +779,12 @@ def read_animation_frames(keep, animetion, offset, first, count, stride,
 def emit_animation(out_dir, clips, limbs, skin_limbs, skin_locals, shift, scale):
     """Write the skinning tables and clip rotations the runtime poses from.
 
-    Rotation data is const: it lives in ROM with the rest of the ELF, not in the
-    ~9 KB of .bss left below SGL's work area. Only the posed POINT table is RAM,
-    and there is exactly one of it, which is why frames are re-posed at runtime
-    instead of pre-baked -- one baked POINT table is 12 bytes a vertex and two
-    of them would exhaust the entire remaining budget.
+    The ELF loads into work RAM, so .rodata is not free: it shares the space
+    below SGL's work area with .bss. The per-frame root/rotation tables
+    therefore go to LINKANIM.BIN, loaded into cart RAM; link_clips.c keeps
+    them only for host builds (#ifndef LINK_FRAMES_FROM_DISC). The posed POINT
+    table is the one work-RAM buffer, which is why frames are re-posed at
+    runtime instead of pre-baked.
     """
     banner = '/* Generated by game/tools/build_link_model.py -- do not edit. */'
     h = [banner, '', '#ifndef LINK_CLIPS_H', '# define LINK_CLIPS_H', '',
@@ -620,6 +799,28 @@ def emit_animation(out_dir, clips, limbs, skin_limbs, skin_locals, shift, scale)
          '# define LINK_ANIM_SCALE_Q16  %d' % int(round(scale * 65536)), '']
     for index, (name, *_rest) in enumerate(clips):
         h.append('# define LINK_CLIP_%-10s %d' % (name.upper(), index))
+    # Frame counts as constants, for platform-free code (gameplay.c sword
+    # timeline) that must not link the frame tables.
+    for name, _symbol, _start, _count, _stride, frames in clips:
+        h.append('# define LINK_FRAMES_%-10s %d' % (name.upper(), len(frames)))
+    # How far each step-up's pelvis rises over the clip, drawn, in Q8 world
+    # units. The source offsets shape.yOffset by yDistToLedge minus 41 or 59
+    # x 11/17 -- that rise at its own scale; this mesh draws at `scale`.
+    for name, _symbol, _start, _count, _stride, frames in clips:
+        if name in ('step100', 'step150'):
+            rise = (frames[-1][0][1] - frames[0][0][1]) * scale
+            h.append('# define LINK_%s_RISE_Q8  %d' % (name.upper(),
+                                                     int(round(rise * 256))))
+    pinned = child_root(BASE_TRANSL)
+    h += ['/* sSkeletonBaseTransl, raw, and as drawn for a child (x0.64): the',
+          '** root a pinned (AnimMovement) clip is drawn at, and the origin the',
+          '** source measures root motion from. */',
+          '# define LINK_BASE_ROOT_X     %d' % BASE_TRANSL[0],
+          '# define LINK_BASE_ROOT_Y     %d' % BASE_TRANSL[1],
+          '# define LINK_BASE_ROOT_Z     %d' % BASE_TRANSL[2],
+          '# define LINK_PINNED_ROOT_X   %d' % pinned[0],
+          '# define LINK_PINNED_ROOT_Y   %d' % pinned[1],
+          '# define LINK_PINNED_ROOT_Z   %d' % pinned[2]]
     h += ['', 'typedef struct { int16_t x, y, z; } link_vec3_t;',
           'typedef struct { uint8_t child, sibling; link_vec3_t pos; } link_limb_t;',
           'typedef struct { uint16_t first, count; } link_clip_t;', '',
@@ -627,15 +828,23 @@ def emit_animation(out_dir, clips, limbs, skin_limbs, skin_locals, shift, scale)
           'extern const link_clip_t  link_clips[LINK_CLIP_COUNT];',
           'extern const uint16_t link_clip_source_count[LINK_CLIP_COUNT];',
           'extern const uint8_t link_clip_stride[LINK_CLIP_COUNT];',
+          '/* AnimMovement clip: raw roots move the actor; drawn with the root',
+          '** pinned (1 = x/y/z, 2 = x/z only). */',
+          'extern const uint8_t link_clip_pinned[LINK_CLIP_COUNT];',
+          '# define LINK_FRAME_COUNT     %d' % sum(len(f) for *_r, f in clips),
+          '/* The Saturn build reads the per-frame tables from LINKANIM.BIN',
+          '** into cart RAM (link_anim_load): as .rodata they cost ~57 KB of',
+          '** the work RAM below SGL. Host tests compile the arrays instead. */',
+          '# ifndef LINK_FRAMES_FROM_DISC',
           '/* Per frame: the root translation, at full precision. */',
           'extern const int16_t      link_root[][3];',
           '/* Per frame: one binang rotation per limb, full precision. */',
           'extern const int16_t      link_rotations[][LINK_LIMB_COUNT * 3];',
+          '# endif',
           '/* Per skinned vertex: owning limb, and its limb-local position. */',
           'extern const uint8_t      link_vertex_limb[LINK_SKIN_VERTICES];',
           'extern const link_vec3_t  link_vertex_local[LINK_SKIN_VERTICES];',
           '#endif', '']
-    (out_dir / 'link_clips.h').write_text('\n'.join(h))
 
     c = [banner, '', '#include "link_clips.h"', '',
          'const link_limb_t link_limbs[LINK_LIMB_COUNT] = {']
@@ -660,13 +869,17 @@ def emit_animation(out_dir, clips, limbs, skin_limbs, skin_locals, shift, scale)
           ','.join(str(clip[3]) for clip in clips), '};',
           'const uint8_t link_clip_stride[LINK_CLIP_COUNT] = {',
           ','.join(str(clip[4]) for clip in clips), '};',
-          '', 'const int16_t link_root[][3] = {']
+          'const uint8_t link_clip_pinned[LINK_CLIP_COUNT] = {',
+          ','.join('1' if clip[0] in PINNED_ROOT_CLIPS else
+                   '2' if clip[0] in PINNED_XZ_CLIPS else '0' for clip in clips), '};',
+          '', '#ifndef LINK_FRAMES_FROM_DISC',
+          'const int16_t link_root[][3] = {']
     for root, _rotations in rows:
         c.append('    { %6d, %6d, %6d },' % tuple(root))
     c += ['};', '', 'const int16_t link_rotations[][LINK_LIMB_COUNT * 3] = {']
     for _root, rotations in rows:
         c.append('    { %s },' % ', '.join('%6d' % v for rot in rotations for v in rot))
-    c += ['};', '', 'const uint8_t link_vertex_limb[LINK_SKIN_VERTICES] = {']
+    c += ['};', '#endif', '', 'const uint8_t link_vertex_limb[LINK_SKIN_VERTICES] = {']
     for i in range(0, len(skin_limbs), 16):
         c.append('    ' + ' '.join('%3d,' % v for v in skin_limbs[i:i + 16]))
     c += ['};', '', 'const link_vec3_t link_vertex_local[LINK_SKIN_VERTICES] = {']
@@ -674,7 +887,55 @@ def emit_animation(out_dir, clips, limbs, skin_limbs, skin_locals, shift, scale)
         c.append('    { %6d, %6d, %6d },' % tuple(local))
     c += ['};', '']
     (out_dir / 'link_clips.c').write_text('\n'.join(c))
+    layout = []
+    first = 0
+    for *_r, frames in clips:
+        layout.append((first, len(frames)))
+        first += len(frames)
+    digest = write_frame_file(out_dir / 'LINKANIM.BIN', rows, len(limbs), layout)
+    # The ELF carries the digest of the exact frame file it was built with;
+    # link_anim_load() recomputes it over its OWN clip table + the file body.
+    h.insert(h.index('#endif'),
+             '/* FNV-1a of clip layout + LINKANIM.BIN body (frames_digest). */')
+    h.insert(h.index('#endif'), '# define LINK_FRAMES_DIGEST   0x%08Xu' % digest)
+    (out_dir / 'link_clips.h').write_text('\n'.join(h))
     return sum(len(f) for *_r, f in clips)
+
+
+LINKANIM_MAGIC = b'LAN1'
+
+
+def frames_digest(layout, body):
+    """FNV-1a (32-bit) over the clip layout, then the frame body, byte by byte.
+
+    Order-sensitive, so a reordered or edited file with the same shape and
+    the same additive sum still fails. Layout bytes are each clip's first and
+    count as big-endian u16, the order link_anim.c feeds its own link_clips[].
+    """
+    h = 0x811C9DC5
+    data = b''.join(struct.pack('>HH', first, count) for first, count in layout) + body
+    for byte in data:
+        h = ((h ^ byte) * 0x01000193) & 0xFFFFFFFF
+    return h
+
+
+def write_frame_file(path, rows, limb_count, layout):
+    """The same rows as link_root/link_rotations, big-endian, for the disc.
+
+    Header: 'LAN1', u32 frames, u32 limbs, u32 digest (frames_digest). Then
+    every root (frames x 3 int16), then every rotation (frames x limbs x 3
+    int16). Returns the digest, which is also compiled into link_clips.h.
+    """
+    roots = [v for root, _ in rows for v in root]
+    rotations = [v for _, rot in rows for r in rot for v in r]
+    if len(rotations) != len(rows) * limb_count * 3:
+        sys.exit('LINKANIM.BIN: rotation rows do not match %d limbs' % limb_count)
+    body = (struct.pack('>%dh' % len(roots), *roots) +
+            struct.pack('>%dh' % len(rotations), *rotations))
+    digest = frames_digest(layout, body)
+    path.write_bytes(LINKANIM_MAGIC +
+                     struct.pack('>III', len(rows), limb_count, digest) + body)
+    return digest
 
 
 def main():
@@ -704,6 +965,9 @@ def main():
     limbs = read_limbs(data)
     frames, root, rotations = read_animation(keep, animetion, args.animation,
                                              args.frame, LIMB_COUNT)
+    # The bind pose is the idle clip: a gameplay clip, so child-adjusted, and
+    # the ground shift below is measured on the pose Link actually stands in.
+    root = child_root(root)
     placed = walk_skeleton(limbs, rotations, root)
     faces, original = collect_equipment(data, keep, placed, args.oot)
     character_textures.mark_faces(faces, args.oot / 'assets/xml/objects/object_link_child.xml',
@@ -732,6 +996,8 @@ def main():
             total, sampled = read_animation_frames(
                 keep, animetion, offsets[symbol], first, count, stride,
                 LIMB_COUNT)
+            if name not in RAW_ROOT_CLIPS:
+                sampled = [(child_root(r), rot) for r, rot in sampled]
             resolved.append((name, symbol, first, total, stride, sampled))
             print('clip    : %-8s %3d/%3d frames stride %d  (%#07x)'
                   % (name, len(sampled), total, stride, offsets[symbol]))
@@ -753,9 +1019,9 @@ def main():
         print('flat    : %d faces collapsed to one colour (head artwork kept)'
               % flattened)
     if args.animate:
-        # Rotations are const and live in ROM; only the posed POINT table costs
-        # the scarce .bss below SGL's work area.
-        print('anim    : %d clips, %d frames, %d rodata bytes; %d skinned vertices'
+        # Frame tables go to the cart via LINKANIM.BIN; the posed POINT table
+        # is what costs the scarce .bss below SGL's work area.
+        print('anim    : %d clips, %d frames, %d LINKANIM.BIN bytes; %d skinned vertices'
               % (clips, baked, baked * (LIMB_COUNT * 3 + 3) * 2, len(skin_limbs)))
         print('          runtime POINT table %d bytes of .bss'
               % (len(positions) * 12))

@@ -9,7 +9,7 @@ OBJDUMP = ROOT.parent.parent / 'sh2eb-elf/bin/sh2eb-elf-objdump.exe'
 
 class SkinningCodegen(unittest.TestCase):
     def test_animated_mesh_does_not_cull_against_bind_pose_normals(self):
-        scene = ROOT / 'build/generated/link_scene.c'
+        scene = ROOT / 'build/generated/link_mesh.c'   # cart tables (BUG-039)
         if not scene.is_file():
             self.skipTest('build assets first')
         attrs = [line for line in scene.read_text().splitlines() if 'ATTRIBUTE(' in line]

@@ -61,7 +61,22 @@ typedef struct
     int32_t     look_pitch;
     bool        look_active;
     bool        targeting;     /* behind-Link lock, independent of movement */
+    /* Camera_CalcAtForLockOn aim: the at-point (and so the eye) shifted
+    ** from Link's head toward the lock's focus. Q8 world units, eased. */
+    int32_t     aim_q8[3];
+    int32_t     aim_focus[3];
+    int32_t     aim_distance;   /* mode distance: Battle1 180, KeepOn1 120 */
+    bool        aim_active, aim_off_ground;
 }               oot_follow_t;
+
+/* Traversal adapter parameters. Normal callers retain the existing camera. */
+typedef struct {
+    int32_t y_offset, pitch_target, pitch_rate;
+    unsigned yaw_policy; /* 0 normal, 1 climb (face wall), 2 hang (hold view) */
+} oot_follow_profile_t;
+void oot_follow_update_profile(oot_follow_t *camera, const camera_position_t *player,
+    uint16_t facing, bool moving, camera_position_t *eye, uint16_t *yaw,
+    int32_t *pitch, const oot_follow_profile_t *profile);
 
 /* Bounds for the Z-look aim, in binang. Yaw is limited rather than free so the
 ** look camera cannot be used as an unbounded orbit. */
@@ -96,6 +111,18 @@ bool    oot_follow_looking(const oot_follow_t *camera);
 void    oot_follow_recenter(oot_follow_t *camera);
 /* Enter with eased turn; track facing every step until released. */
 void    oot_follow_target(oot_follow_t *camera, bool active);
+
+/*
+** Lock-on aim target, set each step while locked (0 focus = none).
+** Camera_CalcAtForLockOn: v = focus - (player origin + height); the at
+** offset is v scaled by 0.15 past `distance`, else 0.75 - 0.6 * |v| / d;
+** x0.2 off the ground. The offset eases in at the Battle1/KeepOn1 rate.
+** Aim only: orbit yaw/pitch and Navi are untouched.
+*/
+#define OOT_CAM_LOCK_DIST_UNFRIENDLY 180   /* BATT1 distance */
+#define OOT_CAM_LOCK_DIST_FRIENDLY   120   /* KEEP1 unk_04 */
+void    oot_follow_aim(oot_follow_t *camera, const int32_t *focus,
+                       int32_t distance, bool off_ground);
 
 /* Place the camera behind `facing` immediately, with no easing. Used on spawn
 ** and after a void recovery, where easing would show empty space. */

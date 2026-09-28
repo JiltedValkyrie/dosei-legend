@@ -98,9 +98,66 @@ bool            oot_follow_legacy(void)
     return legacy_camera;
 }
 
+/* Keeps each squared axis below 2^30 so the sum fits 32 bits. */
+static int32_t  clamp_axis(int32_t v)
+{
+    return v > 30000 ? 30000 : v < -30000 ? -30000 : v;
+}
+
+static uint32_t isqrt_u32(uint32_t v)
+{
+    uint32_t r = 0, bit = 1u << 30;
+    while (bit > v) bit >>= 2;
+    while (bit) {
+        if (v >= r + bit) { v -= r + bit; r = (r >> 1) + bit; }
+        else r >>= 1;
+        bit >>= 2;
+    }
+    return r;
+}
+
+void            oot_follow_aim(oot_follow_t *camera, const int32_t *focus,
+                               int32_t distance, bool off_ground)
+{
+    camera->aim_active = focus != 0 && distance > 0;
+    if (!camera->aim_active)
+        return;
+    camera->aim_focus[0] = focus[0];
+    camera->aim_focus[1] = focus[1];
+    camera->aim_focus[2] = focus[2];
+    camera->aim_distance = distance;
+    camera->aim_off_ground = off_ground;
+}
+
+/* Target at-offset, Q8, from the player's head toward the lock focus. */
+static void     aim_target(const oot_follow_t *camera,
+                           const camera_position_t *player, int32_t out[3])
+{
+    int32_t v[3], k, scale_q16;
+    uint32_t r;
+    if (!camera->aim_active || !camera->targeting) {
+        out[0] = out[1] = out[2] = 0;
+        return;
+    }
+    v[0] = camera->aim_focus[0] - player->x;
+    v[1] = camera->aim_focus[1] - (player->y - OOT_CAM_PLAYER_ORIGIN + OOT_CAM_PLAYER_HEIGHT);
+    v[2] = camera->aim_focus[2] - player->z;
+    for (k = 0; k < 3; ++k) v[k] = clamp_axis(v[k]);
+    r = isqrt_u32((uint32_t)(v[0] * v[0]) + (uint32_t)(v[1] * v[1]) + (uint32_t)(v[2] * v[2]));
+    /* CAM_GLOBAL_38 0.15, CAM_GLOBAL_39 0.75 (z_camera.c, retail). */
+    if ((int32_t)r > camera->aim_distance)
+        scale_q16 = 9830;
+    else
+        scale_q16 = 49152 - (int32_t)(39322u * r / (uint32_t)camera->aim_distance);
+    if (camera->aim_off_ground)
+        scale_q16 /= 5;
+    for (k = 0; k < 3; ++k)
+        out[k] = (int32_t)(((int64_t)v[k] * scale_q16) >> 8);
+}
+
 static void     place(const oot_follow_t *camera,
                       const camera_position_t *player,
-                      camera_position_t *eye_out)
+                      camera_position_t *eye_out, int32_t y_offset)
 {
     int32_t sine, cosine, horizontal, height;
 
@@ -130,7 +187,10 @@ static void     place(const oot_follow_t *camera,
     ** atTarget.y = player origin + Player_GetHeight() + yOffset.
     ** Forgetting height put the camera only 9..20 units above the floor. */
     eye_out->y = player->y - OOT_CAM_PLAYER_ORIGIN + OOT_CAM_PLAYER_HEIGHT
-                + OOT_CAM_Y_OFFSET + height;
+                + y_offset + height;
+    eye_out->x += camera->aim_q8[0] / 256;
+    eye_out->y += camera->aim_q8[1] / 256;
+    eye_out->z += camera->aim_q8[2] / 256;
 }
 
 static int32_t  clamp(int32_t value, int32_t limit)
@@ -197,13 +257,16 @@ void            oot_follow_snap(oot_follow_t *camera,
     camera->look_yaw = 0;
     camera->look_pitch = 0;
     camera->targeting = false;
+    camera->aim_q8[0] = camera->aim_q8[1] = camera->aim_q8[2] = 0;
+    camera->aim_active = false;
 }
 
-void            oot_follow_update(oot_follow_t *camera,
+void            oot_follow_update_profile(oot_follow_t *camera,
                                   const camera_position_t *player,
                                   uint16_t player_facing, bool moving,
                                   camera_position_t *eye_out,
-                                  uint16_t *yaw_out, int32_t *pitch_out)
+                                  uint16_t *yaw_out, int32_t *pitch_out,
+                                  const oot_follow_profile_t *profile)
 {
     if (!camera->initialised)
         oot_follow_snap(camera, player, player_facing);
@@ -211,7 +274,12 @@ void            oot_follow_update(oot_follow_t *camera,
     /* Normal1 only swings back behind the player while he is actually moving
     ** (xzSpeed > 0.001). Standing still holds the current yaw, which is what
     ** keeps the view from drifting on its own. */
-    if (camera->swing_timer > 0)
+    if (profile->yaw_policy) {
+        camera->swing_timer = 0;
+        if (profile->yaw_policy == 1)
+            camera->yaw = angle_approach(camera->yaw, player_facing, 3);
+    }
+    else if (camera->swing_timer > 0)
     {
         /*
         ** Camera_Parallel1's turn, z_camera.c:2277:
@@ -263,9 +331,19 @@ void            oot_follow_update(oot_follow_t *camera,
     camera->distance = approach(camera->distance,
                                 moving ? OOT_CAM_DIST_MAX : OOT_CAM_DIST_MIN,
                                 XZ_RATE);
-    camera->pitch = approach(camera->pitch, OOT_CAM_PITCH_TARGET, PITCH_RATE);
+    camera->pitch = approach(camera->pitch, profile->pitch_target, profile->pitch_rate);
+    {
+        /* Battle1 xyz offset rate 0.6 a 20 Hz update ~ 0.45 a 30 Hz step. */
+        int32_t want[3], k;
+        aim_target(camera, player, want);
+        for (k = 0; k < 3; ++k) {
+            int32_t step = (want[k] - camera->aim_q8[k]) * 9 / 20;
+            /* Truncation would stall short of the target: finish instead. */
+            camera->aim_q8[k] = step ? camera->aim_q8[k] + step : want[k];
+        }
+    }
 
-    if (camera->look_active && !camera->targeting)
+    if (camera->look_active && !camera->targeting && !profile->yaw_policy)
     {
         /* Aim from a copy: the stored follow state is untouched, so the view
         ** returns to the ordinary follow camera the moment Z is released. */
@@ -273,12 +351,12 @@ void            oot_follow_update(oot_follow_t *camera,
 
         aimed.yaw = (uint16_t)(camera->yaw + camera->look_yaw);
         aimed.pitch = camera->pitch + camera->look_pitch;
-        place(&aimed, player, eye_out);
+        place(&aimed, player, eye_out, profile->y_offset);
         *yaw_out = aimed.yaw;
         *pitch_out = legacy_camera ? 0 : -aimed.pitch;
         return;
     }
-    place(camera, player, eye_out);
+    place(camera, player, eye_out, profile->y_offset);
     *yaw_out = camera->yaw;
     /* Negated: kokiri_camera_update() adds CAMERA_PITCH_SPEED for Up, so a
     ** positive demo_pitch looks UP. The eye has been raised above the player,
@@ -286,4 +364,13 @@ void            oot_follow_update(oot_follow_t *camera,
     ** on him. Getting this sign wrong puts Link off the bottom of the screen,
     ** which is why the previous camera avoided pitch entirely. */
     *pitch_out = legacy_camera ? 0 : -camera->pitch;
+}
+
+void oot_follow_update(oot_follow_t *camera, const camera_position_t *player,
+                      uint16_t facing, bool moving, camera_position_t *eye,
+                      uint16_t *yaw, int32_t *pitch)
+{
+    const oot_follow_profile_t normal = {OOT_CAM_Y_OFFSET, OOT_CAM_PITCH_TARGET,
+                                         PITCH_RATE, 0};
+    oot_follow_update_profile(camera, player, facing, moving, eye, yaw, pitch, &normal);
 }
