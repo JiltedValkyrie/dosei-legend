@@ -59,7 +59,7 @@ def main():
     # EnKanban sDisplayLists order corresponds to bits 0..10.
     for i,offset in enumerate((0xCB0,0xDB8,0xE78,0xF38,0xFF8,0x10B8,0x11C0,0x12C8,0x13D0,0x1488,0x1540)):
         static_mesh(args.oot,args.rom_dir,'object_kanban','object_kanban_DL_%06X'%offset,args.out/('SIGN%d.BIN'%i),.01,setup='object_kanban_DL_000C30')
-    static_mesh(args.oot,args.rom_dir,'gameplay_field_keep','gFieldBushDL',args.out/'BUSH.BIN',.4)
+    static_mesh(args.oot,args.rom_dir,'gameplay_field_keep','gFieldBushDL',args.out/'BUSH.BIN',.4,cutout=True)
     static_mesh(args.oot,args.rom_dir,'object_gs','gGossipStoneDL',args.out/'GOSSIP.BIN',.1,setup='gGossipStoneMaterialDL',extra=('gGossipStoneSquishedDL',))
     frames=chest(args.oot,args.rom_dir,args.out)
     (args.out.parent/'generated').mkdir(parents=True,exist_ok=True)

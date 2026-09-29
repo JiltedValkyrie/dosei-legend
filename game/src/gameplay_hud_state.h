@@ -21,9 +21,15 @@ static inline bool gameplay_hud_blink(gameplay_hud_blink_t *s, uint32_t tick,
     return calling && eligible && s->phase < 30u;
 }
 
-/* Match existing A-handler prompt precedence; never advertise an unbound action. */
-static inline unsigned int gameplay_hud_action(bool enter, bool chest, bool talk)
+/* Match OoT A-handler prompt precedence (gameplay.c:2820-2853); never advertise
+ * an unbound action.  Index mapping: 0=none, 1=talk, 2=open/chest, 3=enter,
+ * 4=check/sign, 5=grab, 6=drop (carrying), 7=throw (carrying+speed). */
+static inline unsigned int gameplay_hud_action(bool enter, bool chest, bool talk,
+                                               bool sign, bool grab,
+                                               bool carrying, bool throw_ready)
 {
-    return enter ? 3u : chest ? 2u : talk ? 1u : 0u;
+    return enter ? 3u : chest ? 2u :
+           carrying ? (throw_ready ? 7u : 6u) :
+           grab ? 5u : sign ? 4u : talk ? 1u : 0u;
 }
 #endif

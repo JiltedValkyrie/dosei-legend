@@ -13,6 +13,8 @@
 #include "pause_windows.h"
 #include "health_hud.h"
 #include "ui_preferences.h"
+#include "world_props.h"
+#include "world_signs.h"
 
 static const uint8_t   *file;
 static const minimap_row_t *row;        /* this scene's map, or 0 */
@@ -24,8 +26,14 @@ static bool             hud_ready, map_visible;
 static int              hud_variant = -1;
 static gameplay_hud_blink_t hud_blink;
 
-/* Label maps live in unused B0 VRAM rather than ~5 KB of work RAM. */
-#define HUD_NAMES ((volatile unsigned short *)0x25E52000u)
+/* Label maps live in unused B0 VRAM rather than ~10 KB of work RAM.
+** Eight actions x sword x Navi is 32 variants per preset, which outgrew the
+** old 8 KB slot at +0x12000 -- that slot butts against the heart atlas at
+** 0x25E50000. This is the verified free region between the button cells
+** (which end at 0x25E46000) and the heart cells, 40 KB with nothing else
+** claiming it; the next allocation above is the bold font at 0x25E60000. */
+#define HUD_NAMES ((volatile unsigned short *)0x25E46000u)
+#define HUD_NAMES_CAPACITY 0xA000u  /* 0x25E46000 .. 0x25E50000 */
 static bool hud_file(const char *name, unsigned bytes, volatile unsigned short *dst)
 {
     jo_file stream;
@@ -46,7 +54,7 @@ static bool hud_file(const char *name, unsigned bytes, volatile unsigned short *
 static bool hud_load(void)
 {
     unsigned i;
-    if (HUD_PIXEL_BYTES>0x2000u || HUD_MAP_BYTES>0x2000u ||
+    if (HUD_PIXEL_BYTES>0x2000u || HUD_MAP_BYTES>HUD_NAMES_CAPACITY ||
         !hud_file("BUTTONS.BIN", HUD_PIXEL_BYTES, (volatile unsigned short *)HUD_VRAM_CELLS) ||
         !hud_file("BUTTONS.MAP", HUD_MAP_BYTES, HUD_NAMES)) return false;
     for (i=0; i<16; ++i) ((volatile unsigned short *)JO_VDP2_CRAM)[HUD_CRAM+i]=hud_palette[i];
@@ -73,7 +81,7 @@ static void hud_visibility(int variant)
     unsigned int x, y;
     bool analog = jo_is_pad1_available() && jo_is_input_analog(0);
     unsigned preset = ui_labels() * 2 + analog;
-    int key = variant < 0 ? -1 : variant + preset * 16;
+    int key = variant < 0 ? -1 : variant + preset * 32;
     volatile uint16_t *map = (volatile uint16_t *)MINIMAP_VRAM_MAP;
     unsigned int base = (HUD_VRAM_CELLS - MINIMAP_VRAM_MAP) / 32u;
     if (key == hud_variant) return;
@@ -84,7 +92,7 @@ static void hud_visibility(int variant)
                 (variant < 0 ? (MINIMAP_VRAM_CELLS - MINIMAP_VRAM_MAP) / 32u :
                  0x2000u | (base + HUD_NAMES[variant * HUD_MAP_W * HUD_MAP_H + y * HUD_MAP_W + x]));
     if (variant >= 0) {
-        unsigned patch = HUD_PATCH_OFFSET + (preset * 2 + !!(variant & 8)) * HUD_PATCH_COUNT;
+        unsigned patch = HUD_PATCH_OFFSET + (preset * 2 + !!(variant & 16)) * HUD_PATCH_COUNT;
         for (x=0; x<HUD_PATCH_COUNT; ++x)
             map[hud_patch_positions[x]] = 0x2000u | (base + HUD_NAMES[patch+x]);
     }
@@ -229,8 +237,15 @@ uint32_t minimap_layer_flags(void)
         !demo_file_select_is_visible() && !cutscene_is_playing() &&
         !gameplay_is_talking() && !gameplay_is_paused();
     bool navi = gameplay_hud_blink(&hud_blink, demo_clock(), gameplay.navi_calling, visible);
-    unsigned int action = gameplay_hud_action(demo_enter_prompt(),
-        gameplay.chest_prompt >= 0, gameplay.shop_prompt || gameplay.prompt >= 0);
+    bool carrying = world_props_carrying();
+    unsigned int action = gameplay_hud_action(
+        demo_enter_prompt(),
+        !carrying && gameplay.chest_prompt >= 0,
+        gameplay.shop_prompt || gameplay.prompt >= 0,
+        world_signs_near(),
+        !carrying && world_props_near_liftable(),
+        demo_lift_hold_actionable(),
+        demo_lift_throw_ready());
 #ifdef DOSEI_HIRES
     /* Existing NBG2 HUD remains standard-only until doubled cells are baked. */
     return 0;
@@ -239,7 +254,7 @@ uint32_t minimap_layer_flags(void)
     if (ui_jump_key() == UI_KEY_A) action = 0;
     health_hud_draw(visible);
     map_visibility(shown());
-    hud_visibility(visible ? (int)(((gameplay.equipped & GP_SWORD) && ui_jump_key() != UI_KEY_X ? 8u : 0u) + action * 2u + navi) : -1);
+    hud_visibility(visible ? (int)(((gameplay.equipped & GP_SWORD) && ui_jump_key() != UI_KEY_X ? 16u : 0u) + action * 2u + navi) : -1);
     return (shown() || visible) ? NBG2ON : 0;
 }
 

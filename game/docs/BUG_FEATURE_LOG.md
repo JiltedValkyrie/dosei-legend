@@ -1425,3 +1425,14 @@ milestones are closed by host tests alone. See [M3c/M3d details](M3CD_IMPLEMENTA
   phase reset. Previously failed alone (3002 instead of 3001); now passes alone.
 - Required next verification: authorized target build and real RAM gap, then
   Kronos props/chests/shop/pad/save checks. Last 7,424-byte gap is historical.
+
+## Human Kronos verification (2026-09-28)
+
+Human reports hearts, plant transparency, carry animation and on-screen text
+instructions all look good in the current Clean disc. These four reported visual
+regressions pass human review. This does not certify every controller preset,
+throw/reload transition, shop occlusion or the full M3 milestone.
+Current build: `game/build/game-clean.cue`, BSS end 0x06082e50, 4,528 B below SGL.
+Baseline commit: 249cef5. Regression fixes remain uncommitted. Older status and
+RAM figures below describe earlier checkpoints.
+

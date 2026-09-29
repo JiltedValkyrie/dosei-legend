@@ -210,7 +210,12 @@ def main(oot=None):
                           ('DROPSTK', 'gDropDekuStickTex'),
                           ('DROPSED', 'gDropDekuSeedsTex')):
         with Image.open(keep / (texture + '.rgba16.png')) as source:
-            icon = build_item_icon(source)
+            # These gameplay_keep sprites are extracted with their rows in the
+            # order the original display list samples them, which is bottom-up
+            # for a VDP1 sprite.  The heart is the only one whose silhouette
+            # makes it obvious (its point lands at the top), but the whole set
+            # shares the convention, so all four are flipped, not just it.
+            icon = build_item_icon(source.transpose(Image.FLIP_TOP_BOTTOM))
         (ROOT / ('build/cd/%s.RGB' % name)).write_bytes(b''.join(
             struct.pack('>H', rgb555(pixel)) for pixel in icon.getdata()))
 

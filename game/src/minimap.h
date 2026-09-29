@@ -13,6 +13,9 @@
 **   VDP2 VRAM B0 +0x0000  NBG2 page map, 64x64 one-word names (8 KB)
 **   VDP2 VRAM B0 +0x2000  Minimap cells, 16-colour, up to 8 KB
 **   VDP2 VRAM B0 +0x4000  Gameplay button cells, up to 8 KB
+**   VDP2 VRAM B0 +0x6000  Gameplay button label maps, up to 40 KB
+**                         (32 variants per preset; the heart atlas follows
+**                          at +0x10000, the bold font at +0x20000)
 **   CRAM 768..783         map palette (NBG2 palette 0 at CRAM offset 3)
 **   CRAM 784..799         marker palette (sprite colour bank 0x300)
 **   CRAM 800..815         gameplay buttons (NBG2 palette 2)

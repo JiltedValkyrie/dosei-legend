@@ -16,6 +16,14 @@
 static actor_mesh_t *rock, *pot, *chest, *bush, *gossip, *sign[11];
 static uint16_t chest_age[KOKIRI_CHEST_COUNT];
 static unsigned int last_tick;
+/* Diagnostic draw mask — readable/writable from the Kronos debugger.
+ * Bit 0: skip pots (0x111) and rocks (0x14E, 0x14F param&3==1).
+ * Bit 1: skip signs.  Bit 2: skip gossip stones (0x1B9).
+ * Bit 3: skip bushes (0x14F param&3==2).  Bit 4: skip chests.
+ * Skipping a draw also frees SGL work space, so a triangle that disappears
+ * identifies a suspect path, not a proven cause.
+ * Default 0 = draw everything.  Spawn, load, and texture uploads are unaffected. */
+volatile int dosei_draw_mask = 0;
 void world_props_draw_free(void)
 {
     unsigned int i;for(i=0;i<11;++i) { actor_mesh_free(sign[i]);sign[i]=0; }
@@ -70,8 +78,14 @@ void world_props_draw(unsigned int tick)
         if(a->scene!=save_state.scene_id || (a->room!=ACTOR_ROOM_NONE && a->room!=(int)(scene_flow_is_interior()?0:kokiri_scene_room()))) continue;
         {
             const kokiri_world_prop_t *p=&kokiri_world_props[a->data[0]];
+            bool is_bush=p->id==0x14F && (p->param&3)==2;
+            /* Bit 0: pots and rocks.  Bit 2: gossip stones.  Bit 3: bushes. */
+            if((dosei_draw_mask & 1) && (p->id==0x111 || p->id==0x14E ||
+                                         (p->id==0x14F && !is_bush))) continue;
+            if((dosei_draw_mask & 4) && p->id==0x1B9) continue;
+            if((dosei_draw_mask & 8) && is_bush) continue;
             actor_mesh_t *mesh=p->id==0x111 ? pot : p->id==0x1B9 ? gossip :
-                p->id==0x14F && (p->param&3)==2 ? bush : rock;
+                is_bush ? bush : rock;
             jo_3d_push_matrix();jo_3d_translate_matrix(a->x,-a->y,a->z);
             if(p->id==0x1B9 && a->data[6]) {
                 int wave=(a->data[6]&7)-4;slScale(65536+wave*2048,65536-wave*4096,65536+wave*2048);
@@ -87,7 +101,7 @@ void world_props_draw(unsigned int tick)
         if(a->data[1]<GP_DROP_DELAY) y += a->data[1]*(GP_DROP_DELAY-a->data[1])/2;
         kokiri_drop_draw(a->params,a->x,y+14,a->z,tick);
     }
-    if(sign[0]) {
+    if(sign[0] && !(dosei_draw_mask & 2)) {
         for(i=0;i<KOKIRI_SIGN_COUNT;++i) {
             const kokiri_prop_t *s=&kokiri_signs[i];
             int dx=s->x-demo_link.x,dz=s->z-demo_link.z;
@@ -106,6 +120,7 @@ void world_props_draw(unsigned int tick)
             chest_age[i]=(uint16_t)(chest_age[i]+delta);
         frame=chest_age[i]/3;
         if(frame>=WORLD_CHEST_FRAMES) frame=WORLD_CHEST_FRAMES-1;
+        if(dosei_draw_mask & 16) continue; /* age still advances above */
         jo_3d_push_matrix();jo_3d_translate_matrix(c->x,-c->y,c->z);
         if((c->param>>12)==5) slScale(32768,32768,32768);
         actor_mesh_draw(chest,frame,0,0,0,c->yaw,0,0,focus);

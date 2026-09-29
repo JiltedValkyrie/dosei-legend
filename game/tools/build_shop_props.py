@@ -41,7 +41,7 @@ class PropLists(link.LimbLists):
         super().triangle(word,transparent)
         for face in self.faces[first:]:face['scrolling']=self.scrolling
 
-def static_mesh(oot, rom_dir, obj, symbol, dest, scale=1.0, setup=None, extra=(), flat=False):
+def static_mesh(oot, rom_dir, obj, symbol, dest, scale=1.0, setup=None, extra=(), flat=False, cutout=False):
     data = link.read_object(oot, obj, rom_dir)
     xml = ET.parse(oot / 'assets/xml/objects' / (obj + '.xml'))
     offsets = {e.attrib['Name']: int(e.attrib['Offset'], 16) for e in xml.iter('DList')}
@@ -58,6 +58,8 @@ def static_mesh(oot, rom_dir, obj, symbol, dest, scale=1.0, setup=None, extra=()
     for face in lists.faces:
         face['limb'] = 0
         face['full_texture'] = not flat
+        # Alpha-tested opaque N64 lists still need VDP1 zero-pixel skipping.
+        if cutout: face['transparent'] = True
     # Props keep gameplay_keep textures; the character tint helper deliberately
     # flattens segment-4 materials, which would erase the heart's scrolling art.
     for face in lists.faces:

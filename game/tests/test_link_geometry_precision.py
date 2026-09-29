@@ -112,6 +112,7 @@ int32_t link_points[LINK_SKIN_VERTICES][3];
         cls.temp.cleanup()
 
     def test_real_skinner_matches_full_precision_reference_across_clips(self):
+        self.lib.link_anim_upper_clear()    # no carry pose leaking in
         class Vec(ctypes.Structure):
             _fields_ = [('x',ctypes.c_int16),('y',ctypes.c_int16),('z',ctypes.c_int16)]
         class Limb(ctypes.Structure):
@@ -160,6 +161,99 @@ int32_t link_points[LINK_SKIN_VERTICES][3];
                         value = (expected[axis]*scale+shift[axis])*(-1 if axis==1 else 1)
                         self.assertAlmostEqual(points[i][axis]/65536,value,delta=.2,
                             msg=f'clip {clip_id} frame {frame} vertex {i} axis {axis}')
+
+    # Carrying is OoT's upper-body scheme (Player_UpdateUpperBody): the main
+    # clip keeps the legs, the overlay clip owns UPPER..TORSO. OoT limbs
+    # 0x01..0x15 import as 0..20, so UPPER (0x0A) is index 9.
+    UPPER_FIRST_LIMB = 9
+    WALK, CARRY_WAIT = 1, 90
+
+    def _skin(self):
+        points = ((ctypes.c_int32*3)*self.count).in_dll(self.lib,'link_points')
+        return [tuple(p) for p in points]
+
+    def _owners(self):
+        return list((ctypes.c_uint8*self.count).in_dll(self.lib,'link_vertex_limb'))
+
+    def test_overlay_splits_the_body_between_two_clips(self):
+        """The upper limbs must take the carry clip's rotations while the
+        lower limbs keep the walk pose -- that split is the whole fix, and a
+        stub cannot show it.
+
+        The comparison is against a reference skeleton walk rather than
+        against a pure carry pose: the upper limbs hang off the walking
+        waist, so their world positions legitimately differ from a carry
+        clip posed on its own. What must match is the joint rotations."""
+        owners = self._owners()
+        upper = [i for i, o in enumerate(owners) if o >= self.UPPER_FIRST_LIMB]
+        lower = [i for i, o in enumerate(owners) if o < self.UPPER_FIRST_LIMB]
+        self.assertTrue(upper and lower, 'both halves must have vertices')
+
+        class Vec(ctypes.Structure):
+            _fields_ = [('x',ctypes.c_int16),('y',ctypes.c_int16),('z',ctypes.c_int16)]
+        class Limb(ctypes.Structure):
+            _fields_ = [('child',ctypes.c_uint8),('sibling',ctypes.c_uint8),('pos',Vec)]
+        class Clip(ctypes.Structure):
+            _fields_ = [('first',ctypes.c_uint16),('count',ctypes.c_uint16)]
+        limbs = (Limb*21).in_dll(self.lib,'link_limbs')
+        clips = (Clip*type(self).define('LINK_CLIP_COUNT')).in_dll(self.lib,'link_clips')
+        total = max(c.first+c.count for c in clips)
+        roots = ((ctypes.c_int16*3)*total).in_dll(self.lib,'link_root')
+        rotations = ((ctypes.c_int16*63)*total).in_dll(self.lib,'link_rotations')
+        locals_ = (Vec*self.count).in_dll(self.lib,'link_vertex_local')
+        hierarchy = [dict(pos=(l.pos.x,l.pos.y,l.pos.z),child=l.child,
+                          sibling=l.sibling,far=1,near=1) for l in limbs]
+        scale = type(self).define('LINK_ANIM_SCALE_Q16')/65536
+        shift = [type(self).define('LINK_ANIM_SHIFT_'+a) for a in 'XYZ']
+
+        walk_at = clips[self.WALK].first + 4
+        carry_at = clips[self.CARRY_WAIT].first
+        # The joint table the overlay is supposed to build: walk below UPPER,
+        # carry from UPPER up. This is sUpperBodyLimbCopyMap, done by hand.
+        expected_rot = [list(rotations[walk_at][i:i+3]) if i//3 < self.UPPER_FIRST_LIMB
+                        else list(rotations[carry_at][i:i+3])
+                        for i in range(0, 63, 3)]
+        placed = {i:(m,o) for i,m,o,_ in
+                  model.walk_skeleton(hierarchy, expected_rot, list(roots[walk_at]))}
+
+        self.lib.link_anim_upper_overlay(self.CARRY_WAIT, 0, 0)
+        self.lib.link_anim_pose(self.WALK, 4, 0)
+        blended = self._skin()
+        self.lib.link_anim_upper_clear()
+
+        for i, loc in enumerate(locals_):
+            matrix, origin = placed[owners[i]]
+            expected = model.transform(matrix, origin, (loc.x, loc.y, loc.z))
+            for axis in range(3):
+                value = (expected[axis]*scale+shift[axis])*(-1 if axis==1 else 1)
+                self.assertAlmostEqual(blended[i][axis]/65536, value, delta=.2,
+                    msg=f'vertex {i} (limb {owners[i]}) axis {axis} '
+                        f'does not match the walk/carry split')
+
+        # The overlay must actually change the arms, or the test proves nothing.
+        self.lib.link_anim_pose(self.WALK, 4, 0)
+        walk = self._skin()
+        self.assertNotEqual([blended[i] for i in upper], [walk[i] for i in upper],
+                            'overlay changed nothing: the two clips pose the arms alike')
+        # ...and clearing must restore the plain walk pose on every limb.
+        for i in lower:
+            self.assertEqual(blended[i], walk[i],
+                             f'lower vertex {i} (limb {owners[i]}) left the walk pose')
+
+    def test_overlay_interpolates_between_its_own_frames(self):
+        """The fraction must move the arms, or they would step while the legs
+        interpolate."""
+        owners = self._owners()
+        upper = [i for i, o in enumerate(owners) if o >= self.UPPER_FIRST_LIMB]
+        self.lib.link_anim_upper_clear()
+        poses = []
+        for fraction in (0, 128):
+            self.lib.link_anim_upper_overlay(self.CARRY_WAIT, 0, fraction)
+            self.lib.link_anim_pose(self.WALK, 4, 0)
+            poses.append([self._skin()[i] for i in upper])
+        self.lib.link_anim_upper_clear()
+        self.assertNotEqual(poses[0], poses[1],
+                            'overlay fraction was ignored; the arms would step')
 
     def test_airborne_mesh_does_not_sink_below_collision_origin(self):
         points = ((ctypes.c_int32*3)*self.count).in_dll(self.lib,'link_points')

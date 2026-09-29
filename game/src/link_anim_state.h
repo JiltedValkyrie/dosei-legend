@@ -52,6 +52,12 @@ typedef enum
 ** frame: the posed table is kept and the call returns immediately. */
 void                link_anim_pose(unsigned int clip, unsigned int frame,
                                    unsigned int fraction);
+/* Upper-body overlay (Player_UpdateUpperBody): the given clip/frame owns the
+** UPPER..TORSO limbs of the next pose while the played clip keeps the legs.
+** This is how OoT carries an object -- there is no carry-walk animation. */
+void                link_anim_upper_overlay(unsigned int clip, unsigned int frame,
+                                            unsigned int fraction);
+void                link_anim_upper_clear(void);
 void                link_anim_reset(void);
 /* Play a reaction clip once; `next` (or LINK_REACT_NONE) follows it; `hold`
 ** keeps the last frame. link_anim_react_done(): a held clip reached its end. */
@@ -120,6 +126,8 @@ void                link_anim_swim_play(unsigned int clip);
 ** caller turns it by the facing and applies actor scale 0.01). */
 bool                link_anim_move_step(unsigned int speed_30ths, int32_t delta[3]);
 unsigned int        link_anim_move_clip(void);
+/* The clip currently set by link_anim_push_play (same storage as move_clip).
+** Use to query the active carry-state clip without modifying any state. */
 /* The play passed source frame `frame` on the last step (LinkAnimation_OnFrame). */
 bool                link_anim_move_crossed(unsigned int frame);
 /* Player_FinishAnimMovement: back to ordinary locomotion. */

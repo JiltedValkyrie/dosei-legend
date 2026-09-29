@@ -127,6 +127,17 @@ static bool link_enter_prompt;
 
 bool demo_enter_prompt(void) { return link_enter_prompt; }
 
+/* Last intent_speed passed to player_lift_update, cached for query functions. */
+static int32_t lift_last_speed_q8;
+
+bool demo_lift_hold_actionable(void) { return link_lift.phase == LIFT_HOLD; }
+
+bool demo_lift_throw_ready(void)
+{
+    return link_lift.phase == LIFT_HOLD &&
+           (link_lift.throw_only || lift_last_speed_q8 >= 282);
+}
+
 /* Camera_Subj4 (CAM_SET_CRAWLSPACE): first person on the crawlspace's bgCam
 ** line -- points [1] and [n-2] -- at the point nearest Link, looking down
 ** the tunnel, bobbing toward (r 5, pitch 50 deg) as he moves. */
@@ -2096,6 +2107,7 @@ void demo_update(void)
                 }
                 if (link_lift.phase && !gameplay_blocks_world()) {
                     int32_t hand[3],tip[3];
+                    lift_last_speed_q8 = intent_speed;
                     player_lift_update(&link_lift,world_props_lift_action(),intent_speed);
                     bool have_hand=gameplay_blade_points(hand,tip);
                     world_props_lift_sync(link_lift.events,link_lift.release_speed_q8,

@@ -114,6 +114,42 @@ bool            link_anim_load(void)
 static int      posed_frame = -1;
 static unsigned int posed_fraction;
 
+/*
+** Upper-body overlay (z_player.c Player_UpdateUpperBody, sUpperBodyLimbCopyMap).
+**
+** OoT keeps Link in his normal locomotion action while carrying: the main
+** skeleton plays idle/walk/run and a second skelanime loops carryB_wait, whose
+** UPPER..TORSO limbs are copied over the main joint table every frame. There is
+** no carry-walk clip -- the legs come from the locomotion animation, which is
+** why a carry that plays only the wait clip slides with frozen legs.
+**
+** OoT limbs 0x01..0x15 import as 0..20, so its copy map (false below UPPER,
+** true from UPPER through TORSO) is the single split at 0x0A - 1 = 9.
+*/
+#define LINK_UPPER_FIRST_LIMB   9
+static int          upper_clip = -1;    /* -1 = no overlay */
+static unsigned int upper_frame;
+static unsigned int upper_fraction;     /* 0..255 toward the next frame */
+
+void            link_anim_upper_overlay(unsigned int clip, unsigned int frame,
+                                        unsigned int fraction)
+{
+    fraction &= 255;
+    if ((int)clip != upper_clip || frame != upper_frame ||
+        fraction != upper_fraction)
+        posed_frame = -1;               /* the overlay changed: re-pose */
+    upper_clip = (int)clip;
+    upper_frame = frame;
+    upper_fraction = fraction;
+}
+
+void            link_anim_upper_clear(void)
+{
+    if (upper_clip >= 0)
+        posed_frame = -1;
+    upper_clip = -1;
+}
+
 /* SGL's fixed multiply uses the SH-2 32x32->64 instruction. Keep it here.
 ** The measured ~97 ms regression was the runtime toFIXED conversions below,
 ** not evidence that every int64 multiply calls libgcc: the forest depth loop
@@ -375,6 +411,25 @@ void            link_anim_pose(unsigned int clip, unsigned int frame,
         if (delta > 32767) delta -= 65536;
         rotations[i] = (int16_t)(link_rotations[absolute][i] + delta * (int)fraction / 256);
     }
+    if (upper_clip >= 0 && (unsigned int)upper_clip < LINK_CLIP_COUNT) {
+        /* AnimTaskQueue_AddCopyUsingMap: the overlay clip owns UPPER..TORSO,
+        ** the locomotion clip above keeps the root, waist and legs. The loop
+        ** is interpolated exactly like the main clip, so the arms run at the
+        ** same source rate as the legs instead of a frame per step. */
+        const link_clip_t *over = &link_clips[upper_clip];
+        if (over->count) {
+            unsigned int src = over->first + (upper_frame % over->count);
+            unsigned int after = src + 1;
+            if (after >= over->first + over->count) after = over->first;
+            for (i = LINK_UPPER_FIRST_LIMB * 3; i < LINK_LIMB_COUNT * 3; ++i) {
+                int32_t step = (uint16_t)(link_rotations[after][i] -
+                                          link_rotations[src][i]);
+                if (step > 32767) step -= 65536;
+                rotations[i] = (int16_t)(link_rotations[src][i] +
+                                         step * (int)upper_fraction / 256);
+            }
+        }
+    }
     pose_skeleton(root, rotations);
     skin_vertices();
 }
@@ -382,6 +437,7 @@ void            link_anim_pose(unsigned int clip, unsigned int frame,
 void            link_anim_reset(void)
 {
     posed_frame = -1;
+    upper_clip = -1;    /* a scene or file reload never keeps a carry pose */
 }
 
 /* Player focus (z_player_lib.c Player_PostLimbDraw): the head limb (OoT

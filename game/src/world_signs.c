@@ -13,6 +13,7 @@ static uint16_t parts[KOKIRI_SIGN_COUNT];
 static uint8_t cooldown[KOKIRI_SIGN_COUNT];
 static const actor_profile_t piece_profile={SIGN_PIECE_ID,ACTORCAT_PROP,0,0,0,0,0};
 static int32_t player_x,player_z;
+static gameplay_input_t last_sign_in;
 void world_signs_reset(void)
 {
     unsigned int i;actor_t *a=0;
@@ -20,9 +21,12 @@ void world_signs_reset(void)
     while((a=actor_sys_find(SIGN_PIECE_ID,a))) actor_kill(a);
 }
 unsigned int world_signs_parts(unsigned int i) { return i<KOKIRI_SIGN_COUNT ? parts[i] : 0; }
-void world_signs_step(void)
+void world_signs_step(const gameplay_input_t *in)
 {
     unsigned int i;actor_t *a=0;
+    /* Cache position every step: the A-handler can return before
+     * world_signs_text() runs, which would leave the HUD prompt stale. */
+    last_sign_in=*in;
     for(i=0;i<KOKIRI_SIGN_COUNT;++i) if(cooldown[i]) --cooldown[i];
     while((a=actor_sys_find(SIGN_PIECE_ID,a))) {
         int32_t pos[3]={a->x,a->y,a->z};
@@ -48,6 +52,24 @@ unsigned int world_signs_text(const gameplay_input_t *in)
            side>-0x4000 && side<0x4000) return kokiri_sign_params[i]|0x300;
     }
     return 0;
+}
+/* Read-only: true when a sign is within reach and in the facing cone.
+ * Mirrors world_signs_text() without consuming input. */
+bool world_signs_near(void)
+{
+    unsigned int i;
+    const gameplay_input_t *in = &last_sign_in;
+    if(save_state.scene_id!=SAVE_SCENE_KOKIRI_FOREST) return false;
+    for(i=0;i<KOKIRI_SIGN_COUNT;++i) {
+        const kokiri_prop_t *p=&kokiri_signs[i];
+        int dx=in->x-p->x,dz=in->z-p->z,dy=in->y-p->y;
+        int16_t facing=(int16_t)(gameplay_facing(-dx,-dz)-in->yaw);
+        int16_t side=(int16_t)(gameplay_facing(dx,dz)-kokiri_sign_yaws[i]);
+        if(p->room==in->room && parts[i]==0x7FF && dx>-70 && dx<70 && dz>-70 && dz<70 &&
+           dx*dx+dz*dz<4900 && dy>-40 && dy<60 && facing>-0x4000 && facing<0x4000 &&
+           side>-0x4000 && side<0x4000) return true;
+    }
+    return false;
 }
 void world_signs_register(collider_t *storage,unsigned int capacity,const gameplay_input_t *in)
 {

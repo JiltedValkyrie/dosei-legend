@@ -40,6 +40,20 @@ class WorldPropAssets(unittest.TestCase):
                 self.assertLessEqual(pixel+(size>>8)*8*(size&255)//2,tb)
                 self.assertLessEqual(clut+32,tb)
 
+    def test_bush_alpha_pixels_enable_vdp1_cutout(self):
+        data=(self.out/'BUSH.BIN').read_bytes()
+        _,_,_,faces,_,records,texture,_,_=struct.unpack_from('>9I',data)
+        for i in range(faces):
+            record=struct.unpack_from('>4HIIHH',data,records+i*20)
+            pixel,clut,size,flags=record[4:]
+            length=(size>>8)*8*(size&255)//2
+            packed=data[texture+pixel:texture+pixel+length]
+            indices=[n for b in packed for n in (b>>4,b&15)]
+            self.assertIn(0,indices)  # background survives bake as transparent
+            self.assertTrue(any(indices))  # plant remains visible
+            self.assertEqual(struct.unpack_from('>H',data,texture+clut)[0],0)
+            self.assertTrue(flags&1)  # loader must leave SPdis off
+
     def test_counter_preserves_backdrop_material_variation(self):
         from build_interior_masks import build_shop_counter
         backdrop=ROOT/'build/cd/S2R0.RGB'

@@ -8,6 +8,8 @@ void world_props_reset(void);
 void world_props_step(const gameplay_input_t *in);
 bool world_props_interact(const gameplay_input_t *in);
 bool world_props_carrying(void);
+/* Read-only: true when a liftable prop is within reach and in the facing cone. */
+bool world_props_near_liftable(void);
 bool world_props_lift_action(void);
 void world_props_lift_sync(unsigned int events, int speed_q8, int vy_q8,
                            uint16_t yaw, const int32_t hand[3]);

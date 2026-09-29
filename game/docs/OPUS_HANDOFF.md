@@ -1,3 +1,42 @@
+## Human directive to Claude: commit and continue (2026-09-28)
+
+Commit the current regression fixes, tests and documentation locally on dev.
+Human confirmed hearts, plant transparency, carry animation and text instructions
+look good in Kronos. Preserve all shared edits; inspect the staged diff. No push.
+Last Clean gap: 4,528 B below SGL. Keep existing disc name.
+
+Then resume DEMO_PLAN: reconcile stale "unbuilt" M3 status with the current build
+and human checks, identify remaining required M3 work, and finish it. The plan
+still lists the Saria greeting cutscene and M3 fresh-file/save acceptance; do not
+silently mark them complete. After required M3 work, continue M4 C-item HUD and
+stick/nut item use, then slingshot per M4_ITEMS_PLAN. Do not block progress on
+optional polish or deferred P2 heap measurements. Human authorizes Claude to
+continue this path; older ownership rows should be updated accordingly.
+
+## Human Kronos verification (2026-09-28)
+
+Human reports hearts, plant transparency, carry animation and on-screen text
+instructions all look good in the current Clean disc. These four reported visual
+regressions pass human review. This does not certify every controller preset,
+throw/reload transition, shop occlusion or the full M3 milestone.
+Current build: `game/build/game-clean.cue`, BSS end 0x06082e50, 4,528 B below SGL.
+Baseline commit: 249cef5. Regression fixes remain uncommitted. Older status and
+RAM figures below describe earlier checkpoints.
+
+## Astra: bush background cutout fix (2026-09-28)
+
+Confirmed BUSH.BIN defect: all three face records had flags=0 even though each
+16x16 tile contained 181 zero-index background pixels. cutscene_actor.c sets
+SPdis when the cutout flag is absent, so VDP1 draws those pixels instead of
+skipping them. The bush exporter now explicitly requests cutout rendering.
+No colour key guessing, geometry changes, or global render changes. Original
+source alpha remains the authority; plant pixels remain intact.
+
+Six asset tests pass, including background-zero pixels, visible plant pixels and
+cutout flags on every bush face. Clean rebuilt under the same disc name. Binary comparison confirms only the
+three face flag bytes changed (648 B before and after);
+Kronos confirmation remains pending. Sonnet changes preserved; no commit.
+
 ## Pre-regression commit checkpoint (2026-09-28)
 
 Human authorized committing accumulated work before Sonnet starts the M3 regression

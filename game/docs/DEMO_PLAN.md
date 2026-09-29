@@ -1,19 +1,3 @@
-> Latest Clean disc rebuilt (2026-09-28): `game/build/game-clean.cue`.
-> BSS end 0x06082850; **6,064 B free below SGL**. Five asset tests pass.
-> Includes Link draw priority, sign material setup, flat shop items and browsing
-> counter mesh. Kronos verification pending. Nothing committed.
-
-> Visual regression follow-up: Link submission moved ahead of optional actors;
-> signs now run their source material setup. Shop items use flat face colours by
-> human request; a source-mesh counter restores browsing-view occlusion.
-> Five asset tests pass. Kronos confirmation pending for all three visual fixes.
-
-> 2026-09-28: Human authorized Clean build. M3c/M3d assets, code and disc rebuilt.
-> `build/game-clean.cue`: **6,144 B free below SGL** (BSS end 0x06082800).
-> Renderer scratch moved to Low Work RAM after the first link exceeded the limit.
-> Nothing committed. Kronos and milestone runtime acceptance remain open.
-> See [M3c/M3d implementation and checks](M3CD_IMPLEMENTATION.md).
-
 # Dosei Legend — public demo plan: Kokiri Forest → Deku Tree → Hyrule Field
 
 Status: approved by the human 2026-09-25. **Current work plan for Claude, Astra
@@ -21,10 +5,16 @@ Status: approved by the human 2026-09-25. **Current work plan for Claude, Astra
 `KOKIRI_VERTICAL_SLICE_PLAN.md` and the scope of `VERTICALSLICE.md`. Keeps the
 architecture, verified gate table and flag research of `OOT_PROGRESSION_PLAN.md`.
 
-Status refresh: **2026-09-28**. Claude finished the shop handoff; human assigned
-remaining M3c/M3d work to Astra and released the shared files. Astra integrated
-props, drops, chests, dialogue closure and shop texture scrolling. Clean build is now generated; Kronos acceptance is still pending. BUG-035 peak measurement remains deferred P2. This does not
-close outstanding M2 death/save regressions or claim full milestone acceptance.
+Status refresh: **2026-09-28**. Current Clean disc is
+`game/build/game-clean.cue`; BSS ends at `0x06082e50`, leaving **4,528 B below
+SGL**. M3 code and assets are built. Human confirmed hearts, plant transparency,
+carry animation and on-screen text instructions look good in Kronos. This is
+partial runtime acceptance, not completion of every M3 check.
+
+Baseline committed as `249cef5`; regression fixes remain uncommitted at this
+refresh. Human authorized Claude to commit them locally and continue required
+M3 work, then M4. No push authorized. BUG-035 peak measurement remains deferred
+P2; outstanding death/save issues retain their existing severity.
 
 ## Co-coding rules
 
@@ -46,8 +36,8 @@ close outstanding M2 death/save regressions or claim full milestone acceptance.
 | M0 scope, face-only textures, naming, actor pool, SFX banks | Claude | Foundations implemented; review approved 09-25. Cart-table boot/camera/music verification pending after latest RAM move |
 | M1 traversal | Claude; Astra water/camera work and reviews | Core through M1l implemented, with reviewed checkpoints. Water, camera and actor/dungeon integration checks remain; not blanket-complete |
 | M2 combat core, hearts, death | Claude; Astra review/UI fixes | M2a-e implemented; starter route and boulder gameplay passed. Death/save regressions and runtime checks remain; not closed |
-| M3 Kokiri Forest alive (NPCs, interiors, shop, chests) | Astra: remaining M3c/M3d; Claude: completed shop handoff | M3a/b foundations and shop built previously. Props, source drop tables, signs, five animated chests, save v6, dialogue flags and shop scrolling now integrated in unbuilt source. M3b source-parity gaps and M3 runtime acceptance remain open |
-| M4 items, C buttons, pause subscreens | Astra: delivered UI/assignment subset; remaining item actions unassigned | Pause pages, counts, saved assignment and preferences pulled forward. C-item HUD and stick/nut/slingshot use still pending |
+| M3 Kokiri Forest alive (NPCs, interiors, shop, chests) | Claude: remaining work; Astra: review and verified bush fix | M3a-d implementation built in Clean. Hearts, plant cutout, carry animation and instructions passed human review. Saria greeting/source-parity work and full progression/save acceptance remain open |
+| M4 items, C buttons, pause subscreens | Claude: next after required M3 work; Astra: delivered UI/assignment subset | Pause pages, counts, saved assignment and preferences pulled forward. C-item HUD and stick/nut/slingshot use still pending |
 | M5 Deku Tree + Gohma + Emerald | unassigned | Not started |
 | M6 post-Emerald Kokiri + Lost Woods | unassigned | Not started |
 | M6b grottos, gold skulltulas, scrub shops | unassigned | Not started |
@@ -61,7 +51,7 @@ close outstanding M2 death/save regressions or claim full milestone acceptance.
    fresh-boot validation remains pending. Preserve allocation/budget guards.
 1. **M3a implemented:** actor manifest, shared grant/charge path, save v5 nuts,
    two/three-choice messages. Three-choice runtime check remains pending.
-2. **M3b active (Astra):** four remaining interiors added beside the existing
+2. **M3b built, remaining work owned by Claude:** four remaining interiors added beside the existing
    shop and Link home. Original NPC models/clips, head tracking, scene filtering
    and house/shop music integrated. Know-It-All has **three** child brothers:
    two extra type-7 records are adult variants selected by rotZ. Seventeen
@@ -69,17 +59,26 @@ close outstanding M2 death/save regressions or claim full milestone acceptance.
    BUG-006 ledge-before-talk preflight fixed and host-tested. Full source
    tracking modes/torso motion, dialogue animation changes, fade/blink polish
    and Kronos acceptance remain; do not label M3b fully complete.
-3. **M3c implemented in source, unbuilt:** original pots/rocks, source rock ring,
+3. **M3c built, partially verified in Kronos:** original pots/rocks, source rock ring,
    decorative rocks/bush, gossip-stone hit reaction, readable/cuttable signs,
    placed hearts, inventory-aware random drops, five animated/persistent chests,
-   and Link get-item pose. Lift/put/throw uses the existing player action.
+   and Link get-item pose. Carry uses locomotion legs with a source upper-body
+   overlay. Human passed carry animation, heart orientation and plant cutout;
+   full lift/put/throw, reward and chest persistence checks remain pending.
    Save v6 migrates old forest collectible bits. Exact visual/physics differences
    and acceptance cases are recorded in `M3CD_IMPLEMENTATION.md`.
-4. **M3d integrated, unbuilt:** preserve Claude's full shop, cursor, spin and hold
-   repeat; add heart/nut primary-texture scrolling. Fado now has source dialogue;
+4. **M3d built, full shop acceptance pending:** shop includes cursor, spin and hold
+   repeat. All merchandise uses flat face colours by human directive; nut/heart
+   texture scrolling was removed. Fado now has source dialogue;
    Kokiri/Saria closing flags and house Mido rules are wired. Removed automatic
    nutsball debug emitter. Saria greeting camera remains M3b work; its text closes
    the greeting flag as an explicit interim adaptation.
+5. **Next (Claude):** commit verified regression fixes, finish required M3 gaps
+   including Saria greeting camera/cues, and verify the fresh-file route: earn
+   rupees, obtain maze sword, buy/equip shield, Mido steps aside, reload preserves
+   chests and purchases. Do not stall on optional polish or deferred P2 sampling.
+6. **Then M4 (Claude):** C-item HUD and stick/nut use, followed by slingshot per
+   [M4 item plan](M4_ITEMS_PLAN.md). Do not mark M3 or M4 accepted prematurely.
 
 Human wants feature progress and later batch testing. Do not wait for a new
 BUG-035 heap peak reading. Actual crashes/allocation failures still require
@@ -87,7 +86,7 @@ severity-first triage; BUG-052 remains an open save/load recovery blocker.
 
 ### Latest shop checkpoint and forwarded work (2026-09-28)
 
-Claude reports source-based EnOssan shop flow implemented, not runtime-verified:
+Source-based EnOssan shop flow is built. Full runtime acceptance remains pending:
 
 - Shopkeeper model, En_Tana shelves and eight En_GirlA items. Fixed-view
   counter masks sort 16 units behind their farthest pixel to cover Link's head.
@@ -96,7 +95,8 @@ Claude reports source-based EnOssan shop flow implemented, not runtime-verified:
 - Talk switches to the shop panorama browsing camera and hides Link. Left/right
   turns 30 degrees toward shelves; directional selection follows source shelf
   layout, returning to the shopkeeper across the inner edge. Exit restores the
-  fixed view. Masks currently apply only to the shop fixed view.
+  fixed view. Masks apply to the shop fixed view; a source-derived counter mesh
+  now supplies occlusion in browsing view. Its Kronos acceptance remains pending.
 - Hello -> talk/quit -> item descriptions -> A Buy/Don't buy. B or Don't buy
   returns from the buy prompt; elsewhere B ends the exchange.
 - First shield/nut/stick purchase uses get-item text with Link in the fixed
@@ -104,18 +104,18 @@ Claude reports source-based EnOssan shop flow implemented, not runtime-verified:
   browsing. Insufficient funds/capacity/ownership refusals charge nothing;
   seeds/arrows refuse without bag/bow, and recovery heart refuses at full health.
 
-Forwarded to Claude, still pending:
+Shop and forwarded status:
 
-1. Cursor, selected-item spin and held-stick repeat are in Claude's last build.
-   Heart/nut primary-texture scroll is now in Astra's unbuilt source. N64 two-layer
-   material blending remains an approximation; check the result in Kronos.
-2. The old Navi timer failure was reproduced alone. Fixed source branch ordering:
-   accepting a hint skips the idle timer tick, leaving 3001; reset fractional phase
-   when recreating Navi. The test now passes alone and in the gameplay suite.
-3. Kronos on both pads: all shop choices, shelves, purchases/refusals, view restoration,
-   counter occlusion, scrolling, VRAM and frame rate. No new run claimed.
-4. Claude confirmed the latest built `main.o` contains the **4-pixel speaker gap**.
-   Its visual acceptance is still pending.
+1. Cursor, selected-item spin and held-stick repeat are built. Merchandise is
+   flat-coloured; texture scrolling is no longer a requirement. Shelves/counter
+   retain original materials.
+2. Navi timer branch-order and fractional reset fixes pass focused host tests.
+3. Still verify both pads: shop choices, shelves, purchases/refusals, view
+   restoration, counter occlusion, VRAM and frame rate.
+4. The 4-pixel speaker gap is built; no separate human acceptance claimed.
+5. Check/Grab/Drop/Throw action labels and the expanded HUD map reservation are
+   built. Human says text instructions look good; full context/preset matrix
+   remains pending.
 
 Camera/text delivered: five houses use original panorama/overhead views;
 C-Up toggles the interior view or enters outdoor first person; L toggles the
@@ -129,6 +129,17 @@ Link drawing with/without sword and shield after the Low Work RAM move remain
 pending. No frame-rate regression has been accepted for that move yet.
 
 ### Human review: passed versus pending
+
+Latest Clean passes reported by human: **field hearts upright, plant background
+transparent, carry animation looks good, text instructions look good**. The pale
+plant triangle was traced to missing VDP1 cutout flags, corrected and visually
+accepted. It is no longer an unidentified field-triangle blocker. Diagnostic
+draw toggles remain available but are not the fix.
+
+Verification evidence: Sonnet reports 984 host tests with the same seven existing
+failures (including setup errors), 13 lift and 10 geometry tests passing; 12 HUD
+tests pass after the map reservation fix. Astra ran six asset tests successfully.
+Clean build passes its SGL boundary check. No blanket all-tests-green claim.
 
 Passed in human review: BUG-016 ceiling, BUG-032 boulder movement/damage/
 knockdown/escape, BUG-047 audio, cutscene Navi, pause carousel/menus, save v4,
@@ -152,7 +163,7 @@ missing assignment-modifier hint was fixed afterward; its visual recheck is pend
 | M3b interiors/NPCs/music | Enter/leave all six interiors, reload inside, talk/target from multiple angles, cross forest room banks, hear house/shop/forest transitions |
 | BUG-006 climb versus talk | Host fix passes; check A while walking into a climbable ledge beside an NPC, then normal talk and open-text advance |
 | BUG-035 heap peak | P2, measurement deferred to batch playtest; historical reading is not a new measurement |
-| BUG-050 child death voice sounds adult | P3, deferred audio polish; cause unresolved, half-rate policy retained |
+| BUG-050 child death voice sounds adult | P3, deferred audio polish; cause unresolved, no death-voice-specific quality fix accepted |
 
 Fresh batch: die in forest/house, Save Yes/No, Continue Yes/No, load a Game Over
 save, both pads. **Cold boot a completed image; never rebuild its mounted ISO

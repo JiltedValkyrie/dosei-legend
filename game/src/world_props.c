@@ -16,6 +16,7 @@ static actor_handle_t carried;
 static bool carry_action;
 static int current_room;
 static uint32_t rng = 0x761234u;
+static gameplay_input_t last_in; /* cached each step for query functions */
 #if KOKIRI_WORLD_PROP_COUNT > 32
 #error Expand world prop removal bitset
 #endif
@@ -87,8 +88,9 @@ void world_props_step(const gameplay_input_t *in)
 {
     unsigned int i;
     actor_t *a = 0;
+    last_in = *in;
     current_room=in->room;
-    world_signs_step();
+    world_signs_step(in);
     for (i=0; i<KOKIRI_WORLD_PROP_COUNT; ++i) {
         const kokiri_world_prop_t *p = &kokiri_world_props[i];
         bool found = false;
@@ -144,6 +146,26 @@ void world_props_step(const gameplay_input_t *in)
     }
 }
 bool world_props_carrying(void) { return actor_resolve(carried) != 0; }
+
+/* Read-only range/facing check: true when a liftable prop is in reach.
+ * Mirrors world_props_interact() conditions without consuming A or changing state. */
+bool world_props_near_liftable(void)
+{
+    actor_t *a = 0;
+    if (actor_resolve(carried)) return false;
+    while ((a = actor_sys_find(WORLD_PROP_ID, a))) {
+        unsigned int id = kokiri_world_props[a->data[0]].id;
+        int16_t turn;
+        if (id != 0x111 && id != 0x14E) continue;
+        if (a->scene != save_state.scene_id || a->room != last_in.room || a->data[1]) continue;
+        if (!near(&last_in, a, 50)) continue;
+        turn = (int16_t)(gameplay_facing(a->x - last_in.x, a->z - last_in.z) - last_in.yaw);
+        if (turn < -0x2AAA || turn > 0x2AAA) continue;
+        return true;
+    }
+    return false;
+}
+
 bool world_props_interact(const gameplay_input_t *in)
 {
     actor_t *a=actor_resolve(carried);

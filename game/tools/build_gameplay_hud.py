@@ -51,7 +51,7 @@ def make_images(oot, analog=False, mode="saturn"):
                 if bit == '1': d.point((x-X+i,y-Y+j), fill='white')
     images = []
     for owned in range(2):
-        for action in ('', 'Talk', 'Open', 'Enter'):
+        for action in ('', 'Talk', 'Open', 'Enter', 'Check', 'Grab', 'Drop', 'Throw'):
             for navi in range(2):
                 im = Image.new('RGBA', (W,H))
                 place(im, tint(circle, (0,150,0)).resize((28,28), Image.Resampling.NEAREST), 160,17)
@@ -114,13 +114,13 @@ def build(oot, out_cd, out_gen):
     variants = [make_images(oot, analog=a, mode=m) for m in
                 ('saturn','xbox','n64','gamecube','playstation') for a in (False,True)]
     blob, palette, all_maps = encode([im for group in variants for im in group])
-    maps = all_maps[:16]
+    maps = all_maps[:32]
     # Includes C header, sword label (two rows), and action label (two rows).
     patch_cells = [(y,x) for y in range(2) for x in range(11,15)] + [(5,2),(6,2),(5,6),(6,6)]
     patches = []
     for mode in range(10):
         for owned in range(2):
-            mapping = all_maps[mode*16 + owned*8]
+            mapping = all_maps[mode*32 + owned*16]
             patches.append([mapping[y*(W//8)+x] for y,x in patch_cells])
     out_cd, out_gen = Path(out_cd),Path(out_gen)
     out_cd.mkdir(parents=True,exist_ok=True); out_gen.mkdir(parents=True,exist_ok=True)
@@ -133,8 +133,9 @@ def build(oot, out_cd, out_gen):
          '#define HUD_MAP_X %d' % (X//8),'#define HUD_MAP_Y %d' % (Y//8),
          '#define HUD_MAP_W %d' % (W//8),'#define HUD_MAP_H %d' % (H//8),
          'static const unsigned short hud_palette[16] = {%s};' % ','.join(map(str,palette)),
+         '#define HUD_VARIANT_COUNT 32',
          '#define HUD_MAP_BYTES %d' % (len(map_words)*2),
-         '#define HUD_PATCH_OFFSET %d' % (16*W*H//64),
+         '#define HUD_PATCH_OFFSET %d' % (32*W*H//64),
          '#define HUD_PATCH_COUNT %d' % len(patch_cells),
          'static const unsigned short hud_patch_positions[] = {%s};' %
              ','.join(str(y*64+x+X//8) for y,x in patch_cells),

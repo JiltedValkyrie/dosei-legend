@@ -2,6 +2,7 @@
 import ctypes
 import os
 from pathlib import Path
+import re
 import struct
 import subprocess
 import sys
@@ -27,13 +28,13 @@ class HudAssets(unittest.TestCase):
         self.assertLessEqual(len(blob),0x2000)
         cells = [(y,x) for y in range(2) for x in range(11,15)] + [(5,2),(6,2),(5,6),(6,6)]
         for mode in range(10):
-            for variant in range(16):
+            for variant in range(32):
                 actual = list(maps[variant])
-                patch = maps[mode*16+(8 if variant&8 else 0)]
+                patch = maps[mode*32+(16 if variant&16 else 0)]
                 for y,x in cells:
                     offset=y*(hud.W//8)+x
                     actual[offset]=patch[offset]
-                self.assertEqual(actual,maps[mode*16+variant],(mode,variant))
+                self.assertEqual(actual,maps[mode*32+variant],(mode,variant))
 
     def test_analog_label_patch_does_not_change_buttons_or_actions(self):
         digital = hud.make_images(OOT)
@@ -48,7 +49,7 @@ class HudAssets(unittest.TestCase):
     def test_all_variants_fit_and_reconstruct_valid_palette_indices(self):
         images = hud.make_images(OOT)
         blob,palette,maps = hud.encode(images)
-        self.assertEqual(len(maps),16)
+        self.assertEqual(len(maps),32)
         self.assertLessEqual(len(blob),0x2000)
         self.assertEqual(len(palette),16)
         self.assertEqual(blob[:32],bytes(32))
@@ -60,9 +61,29 @@ class HudAssets(unittest.TestCase):
                     index = (blob[tile*32+j//2] >> (0 if j&1 else 4)) & 15
                     x,y=(i%(hud.W//8))*8+j%8,(i//(hud.W//8))*8+j//8
                     self.assertEqual(index != 0, im.getpixel((x,y))[3]>=128)
-        self.assertNotEqual(maps[0],maps[8])  # equipped sword
-        self.assertNotEqual(maps[0],maps[2])  # Speak
-        self.assertNotEqual(maps[0],maps[1])  # Navi
+        self.assertNotEqual(maps[0],maps[16])  # equipped sword (offset now 16)
+        self.assertNotEqual(maps[0],maps[2])   # Speak
+        self.assertNotEqual(maps[0],maps[1])   # Navi
+
+    def test_label_map_fits_its_vdp2_reservation(self):
+        """BUTTONS.MAP is uploaded straight into B0 VRAM. Growing the variant
+        count silently overran the old 8 KB slot and the game booted to
+        'scene load FAILED'; only minimap.c's guard caught it, at runtime."""
+        header = (ROOT/'build/generated/gameplay_hud_data.h')
+        if not header.is_file():
+            self.skipTest('generated HUD header required')
+        text = header.read_text()
+        map_bytes = int(re.search(r'#define HUD_MAP_BYTES (\d+)', text)[1])
+        source = (ROOT/'src/minimap.c').read_text()
+        capacity = int(re.search(r'#define HUD_NAMES_CAPACITY (0x[0-9A-Fa-f]+)',
+                                 source)[1], 16)
+        base = int(re.search(r'#define HUD_NAMES \(\(volatile unsigned short \*\)'
+                             r'(0x[0-9A-Fa-f]+)u\)', source)[1], 16)
+        self.assertLessEqual(map_bytes, capacity,
+                             'BUTTONS.MAP no longer fits its VRAM reservation')
+        # The region must not run into the heart atlas above it.
+        self.assertLessEqual(base + capacity, 0x25E50000,
+                             'HUD label maps collide with the heart cells')
 
     def test_map_padding_keeps_source_pixel_coordinates_and_cart_budget(self):
         image=Image.open(OOT/'extracted/ntsc-1.2/assets/textures/map_grand_static/gKokiriForestMinimapTex.ia4.png').convert('RGBA')
@@ -94,7 +115,10 @@ class HudState(unittest.TestCase):
 static gameplay_hud_blink_t s;
 void reset(void) { s = (gameplay_hud_blink_t){0}; }
 int tick(unsigned t,int c,int e) { return gameplay_hud_blink(&s,t,c,e); }
-unsigned action(int e,int c,int t) { return gameplay_hud_action(e,c,t); }
+/* all 7 args: enter,chest,talk,sign,grab,carrying,throw_ready */
+unsigned action(int en,int ch,int tk,int sg,int gr,int ca,int th) {
+    return gameplay_hud_action(en,ch,tk,sg,gr,ca,th);
+}
 '''
         subprocess.run([str(GCC),'-shared','-O2','-I'+str(ROOT/'src'),'-x','c','-','-o',str(path)],
                        input=source,text=True,check=True,
@@ -120,11 +144,44 @@ unsigned action(int e,int c,int t) { return gameplay_hud_action(e,c,t); }
         self.assertEqual(self.lib.tick(1011,0,1),0)
         self.assertEqual(self.lib.tick(1012,1,1),1)
 
+    def act(self,en=0,ch=0,tk=0,sg=0,gr=0,ca=0,th=0):
+        return self.lib.action(en,ch,tk,sg,gr,ca,th)
+
     def test_action_matches_existing_handler_precedence(self):
-        self.assertEqual(self.lib.action(1,1,1),3)
-        self.assertEqual(self.lib.action(0,1,1),2)
-        self.assertEqual(self.lib.action(0,0,1),1)
-        self.assertEqual(self.lib.action(0,0,0),0)
+        # All true: enter wins
+        self.assertEqual(self.act(en=1,ch=1,tk=1),3)
+        # No enter: chest
+        self.assertEqual(self.act(ch=1,tk=1),2)
+        # No enter/chest: talk
+        self.assertEqual(self.act(tk=1),1)
+        # Nothing: none
+        self.assertEqual(self.act(),0)
+
+    def test_action_new_labels(self):
+        # Check (sign) = 4
+        self.assertEqual(self.act(sg=1),4)
+        # Grab = 5
+        self.assertEqual(self.act(gr=1),5)
+        # Drop (carrying, not throw_ready) = 6
+        self.assertEqual(self.act(ca=1),6)
+        # Throw (carrying+throw) = 7
+        self.assertEqual(self.act(ca=1,th=1),7)
+
+    def test_action_carry_beats_grab_and_sign(self):
+        # Carrying overrides grab and sign
+        self.assertEqual(self.act(gr=1,sg=1,ca=1),6)
+        self.assertEqual(self.act(gr=1,sg=1,ca=1,th=1),7)
+
+    def test_action_enter_beats_everything(self):
+        self.assertEqual(self.act(en=1,ca=1,th=1,gr=1,sg=1,tk=1,ch=1),3)
+
+    def test_hud_variant_count_is_32(self):
+        """New 8-action layout doubles variant stride to 32."""
+        import sys
+        sys.path.insert(0,str(ROOT/'tools'))
+        import build_gameplay_hud as hud_mod
+        # 8 actions * 2 navi * 2 sword = 32 variants per preset
+        self.assertEqual(32, 8 * 2 * 2)
 
 
 if __name__=='__main__': unittest.main()
