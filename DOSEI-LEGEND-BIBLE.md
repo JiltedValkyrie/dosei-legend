@@ -1,5 +1,69 @@
 # Dosei Legend engineering rules
 
+## Desktop viewport workflow (2026-09-29)
+
+The human-facing room/layout editor is **Map Workshop**, not merely Mesh
+Workshop. Mesh Workshop remains the asset utility. Map editing uses stable
+ROM display-list object IDs, and must preserve every non-selected object.
+Mesh replacement/placement lives in the named layout; immutable, content-hashed
+OBJ/MTL/texture bundles keep saved alternatives independent across re-imports.
+Use the existing UV converter and full room budgets; do not create a competing
+runtime renderer. Moving visuals does not move collision. Label original actor
+code, project converters and known runtime code honestly; source availability
+is not proof an actor is ported. Keep non-agent Help instructions current.
+
+Original ROM is an immutable baseline, decoded independently of published or
+baked custom meshes. Save edits as named, tracked alternatives; selecting a
+preview must not silently change the next build. Explicit build choice is
+frozen before baking. Reject stale source fingerprints and unsupported fields
+instead of silently dropping edits. Reset restores the baseline without deleting
+saved alternatives. Expose only properties the current runtime bake consumes;
+grass yaw is not one of them. Keep unsupported editing clearly disabled.
+
+Human prefers UE5 keyboard/mouse navigation for Workshop viewports. Preserve
+RMB mouse look with WASD/QE flight, RMB wheel speed, F frame selection,
+Alt-LMB orbit, MMB pan and F11 immersive. Keep controls discoverable in Help.
+Use native source coordinates and clearly identify host preview limitations.
+Inspection never publishes or modifies assets; editing needs explicit tracked
+override and bake workflows. This preference does not change Saturn controls.
+
+## Stable song dictionary (2026-09-29)
+
+Gameplay requests `music_play(NA_BGM_...)` or `music_play_fade`, never a literal
+CD track number. `game/assets/audio/songs.json` owns stable song IDs and BANK/CD
+routes. CD routes refer to names in `cdda_tracks.json`; physical track numbers
+belong only in that disc manifest and generated driver constants. Reordering
+tracks must preserve gameplay behavior and regenerate both audio and headers.
+Cache validity must include song/track identity and render inputs, not just
+file timestamps. Missing song routes, banks or CD names must fail validation.
+Workshop edits the same dictionary. Keep the current BANK-only streaming and
+timed-bank callers enforced until a compatible CD playback lifecycle exists.
+Publishing audio from Workshop must also update the selected game song's
+dictionary route in the same operation. Stage and validate audio before replacing
+live files, preserve other song routes, and roll back ordinary write failures.
+Do not require a separate Save song mapping step after Publish; that button
+is for assigning audio which already exists.
+
+## Mesh Workshop game installs (2026-09-29)
+
+Mesh Workshop's Publish mesh installs the selected playable room visual
+under `game/assets/room-meshes/` and records it in `game/assets/room_imports.json`.
+Overwriting that room is explicitly authorized; these assets belong in Git.
+Clean builds must consume this default manifest automatically. Preserve the
+advanced `ROOM_IMPORTS` override and other rooms' manifest entries. Do not
+store the only build selection in the ignored workspace or generated folder.
+Validate geometry, textures and capacity before overwriting. Forest imports
+must reserve resident actors and the 32 KiB margin as the normal baker does.
+Visual replacement does not replace collision or enable unregistered rooms.
+Keep the Workshop Help guide accurate when changing this workflow.
+Successful publication must record UTC time and installed dependency hashes
+in the same transaction as the mesh and room selection. Failed publishes must
+retain the prior date/selection. Asset browser dates are publication records,
+not file mtimes; old/manual assignments have unknown dates. Distinguish source,
+generated and staged assets and do not claim unimplemented asset types can be
+published just because the browser lists them. See `game/docs/LEVEL_EDITOR_PLAN.md`
+for the human's long-term scene/actor/trigger editor direction.
+
 ## CD filesystem handles: count overlapping lifetimes (2026-09-29)
 
 Permanent rule for Claude, Codex and every agent. The hut-exit failure showed
@@ -236,6 +300,16 @@ save sound RAM, unless the human identifies a specific SFX as sounding too bad.
   the complete active bank fits.
 
 ## Red Book (CD-DA) audio: only while the world is frozen
+
+Permanent music-mix rule (2026-09-29): when a CD track plays, mute all non-CD
+background music immediately. Keep the background bank resident. When the CD
+track ends, restore background music over 0.5 seconds (30 NTSC / 25 PAL VBlanks).
+Apply this through the shared CD playback path, including chest, item and Game
+Over tracks. Compose with pause ducking and normal bank fades; do not mute SFX
+or the CD external audio sends. Detect the actual drive/track state rather than
+guessing the song length. Failed/interrupted playback must release the mute.
+Finish pending music-bank loads before starting CD audio; do not stream another
+music bank while the CD track owns the drive.
 
 Human rule (2026-09-27). Playing a CD track moves the drive off the data
 track; any file read (room bank, actor asset, save device) must seek back,

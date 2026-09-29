@@ -35,6 +35,9 @@ fi
 
 export PATH="$compiler/Other Utilities:$compiler/bin:$PATH"
 mkdir -p "$here/build/cd" "$here/build/generated"
+# Freeze the chosen layout once so mid-build GUI changes cannot mix versions.
+"$python" "$here/tools/layout_variants.py" --snapshot "$here/build/generated/layout-build.json" --oot "$oot" --rom-dir "$roms"
+export DOSEI_LAYOUT_SNAPSHOT="$(cygpath -w "$here/build/generated/layout-build.json")"
 cp "$here/disc/ABS.TXT" "$here/disc/BIB.TXT" "$here/disc/CPY.TXT" "$here/build/cd/"
 
 # Regenerate the SGL tables from the original scene, then stage the 4bpp blob
@@ -100,6 +103,7 @@ rm -f "$here"/build/cd/S*.SUR
 "$python" "$here/tools/build_minimap.py" --oot "$oot"
 "$python" "$here/tools/build_pause_windows.py" --oot "$oot" --sdk "$sdk"
 "$python" "$here/tools/build_cdda.py"
+"$python" "$here/tools/song_dictionary.py"
 "$python" "$here/tools/build_action_audio.py" --oot "$oot"
 "$python" "$here/tools/build_opening_audio.py" --oot "$oot"
 "$python" "$here/tools/build_demo_assets.py" --oot "$oot"

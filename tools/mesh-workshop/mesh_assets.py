@@ -192,7 +192,7 @@ def _split_quad(points):
     return min(choices)[1]
 
 
-def parse_obj(path, *, split_incompatible=False, diagnostics=None):
+def parse_obj(path, *, split_incompatible=False, diagnostics=None, require_quads=True, require_flags=True):
     vertices, uvs, faces, libraries = [], [], [], []
     split_lines = []
     material = None
@@ -217,8 +217,9 @@ def parse_obj(path, *, split_incompatible=False, diagnostics=None):
             elif tag == 'mtllib': libraries.append(' '.join(args))
             elif tag == 'usemtl':
                 material = ' '.join(args)
-                if material not in ('flags_0', 'flags_1', 'flags_2', 'flags_3'):
+                if require_flags and material not in ('flags_0', 'flags_1', 'flags_2', 'flags_3'):
                     raise ValueError('Preserve exported flags_0 through flags_3 material names')
+                if not require_flags and len(args)!=1: raise ValueError('Material names cannot contain spaces')
             elif tag == 'f':
                 if len(args) not in (3, 4): raise ValueError('Only triangles and quads accepted; split n-gons explicitly')
                 if material is None: raise ValueError('Face has no exported material')
@@ -244,18 +245,18 @@ def parse_obj(path, *, split_incompatible=False, diagnostics=None):
             raise ValueError(f'Line {line_no}: {exc}') from exc
     if not vertices or not faces or len(vertices) >= 65536 or len(faces) >= 10000:
         raise ValueError('Empty mesh or scene capacity exceeded')
-    if not any(len(c) == 4 for _, c in faces) and not split_lines:
+    if require_quads and not any(len(c) == 4 for _, c in faces) and not split_lines:
         raise ValueError('No quads found. Disable Triangulate Faces when exporting from Blender.')
     if diagnostics is not None:
         diagnostics.update(split_quads=len(split_lines), split_lines=split_lines)
     return vertices, uvs, faces, libraries
 
 
-def import_obj(entry, path, project=PROJECT, workspace=WORKSPACE, *, split_incompatible=False):
+def import_obj(entry, path, project=PROJECT, workspace=WORKSPACE, *, split_incompatible=False, require_quads=True, require_flags=True):
     path = Path(path).resolve()
     diagnostics = {}
     vertices, uvs, faces, libraries = parse_obj(path, split_incompatible=split_incompatible,
-                                              diagnostics=diagnostics)
+                                              diagnostics=diagnostics, require_quads=require_quads,require_flags=require_flags)
     # Read only explicitly referenced MTLs/textures; write a self-contained bundle.
     materials = {}
     for library in libraries:
@@ -273,7 +274,7 @@ def import_obj(entry, path, project=PROJECT, workspace=WORKSPACE, *, split_incom
     if any(m not in materials for m in used):
         raise ValueError('Missing diffuse texture. Export OBJ materials alongside the OBJ; no map_Kd options supported.')
     folder = revision(workspace, entry, 'imports')
-    lines = ['# Validated quad candidate. NOT a runtime asset.', 'mtllib mesh.mtl']
+    lines = ['# Validated editing mesh. Use Mesh Workshop to install for a game room.', 'mtllib mesh.mtl']
     lines += ['v ' + ' '.join(format(x, '.9g') for x in v) for v in vertices]
     lines += ['vt ' + ' '.join(format(x, '.9g') for x in uv) for uv in uvs]
     for material, corners in faces:
@@ -288,7 +289,7 @@ def import_obj(entry, path, project=PROJECT, workspace=WORKSPACE, *, split_incom
     metadata = dict(source=entry['source'], source_sha256=digest(project / entry['source']),
                     input_sha256=digest(path), vertices=len(vertices),
                     triangles=sum(len(c) == 3 for _, c in faces), quads=sum(len(c) == 4 for _, c in faces),
-                    runtime_ready=False, reason='Quad texture baking and renderer support pending')
+                    runtime_ready=False, reason='Stored editing revision; use in game to validate budget and install a room override')
     metadata.update(diagnostics, split_incompatible=split_incompatible)
     (folder / 'mesh.json').write_text(json.dumps(metadata, indent=2))
     settings = load_settings(workspace)
@@ -310,12 +311,12 @@ def save_settings(settings, workspace=WORKSPACE):
 
 
 def build_selection(entry, project=PROJECT, workspace=WORKSPACE):
-    """Honest selection contract: never feed quads to the current triangle renderer."""
+    """Legacy catalog selection; runtime room overrides use room_imports.json."""
     settings = load_settings(workspace)
     candidate = settings.get('meshes', {}).get(entry['id'], {}).get('candidate')
     reason = 'Original triangles selected'
     if settings.get('prefer_quads'):
         reason = 'Prefer quads: no imported candidate'
         if candidate:
-            reason = 'Prefer quads: candidate stored; runtime quad support pending'
+            reason = 'Candidate stored; use in game to install for a room'
     return {'source': str(project / entry['source']), 'using_quads': False, 'reason': reason}

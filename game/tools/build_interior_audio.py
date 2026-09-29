@@ -1,9 +1,28 @@
 """Bake the original house/shop sequences through the shared music pipeline."""
 import argparse
 import hashlib
+import shutil
 import xml.etree.ElementTree as ET
 from pathlib import Path
 import build_cutscene_audio as bank
+
+
+def copy_workshop_bank(name, out, overrides):
+    """Version-controlled workshop bank takes precedence over automatic baking."""
+    files = [name + '_PCM.RAW', name + '_LEVELS.RAW',
+             name.lower() + '_score.h', name.lower() + '_manifest.json']
+    present = [(overrides / file).is_file() for file in files]
+    if not any(present):
+        return False
+    if not all(present):
+        raise ValueError('Incomplete workshop bank %s in %s; generate it again' % (name, overrides))
+    out.mkdir(parents=True, exist_ok=True)
+    for file in files:
+        shutil.copyfile(overrides / file, out / file)
+    # If the override is later removed, regenerate the stock bank even when
+    # its source digest has not changed since before installation.
+    (out / (name + '.stamp')).unlink(missing_ok=True)
+    return True
 
 
 def main():
@@ -15,6 +34,9 @@ def main():
     args.out.mkdir(parents=True,exist_ok=True)
     # sequence_table.h: NA_BGM_LINK_HOUSE 31; NA_BGM_SHOP 85.
     for name,sequence in (('HOUSE',31),('SHOP',85)):
+        if copy_workshop_bank(name, args.out,
+                              Path(__file__).resolve().parents[1] / 'assets/audio/interiors'):
+            continue
         inputs=[Path(__file__),Path(bank.__file__),Path(bank.audio.__file__),
                 source/('sequences/seq_%d.seq'%sequence)]
         font=source/('soundfonts/Soundfont_%d.xml'%bank.soundfont_of(inputs[-1]))

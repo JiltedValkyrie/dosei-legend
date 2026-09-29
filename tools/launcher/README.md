@@ -22,3 +22,9 @@ settings. Close Kronos before switching.
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/launcher/kronos-launcher.ps1 -Check
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/launcher/kronos-launcher.ps1 -SmokeTest
 ```
+
+## Map Workshop
+
+Open `../map-workshop/open-map-workshop.bat` for the room/layout editor. Its
+Build Clean button uses the existing build dialog. See the Map Workshop Help
+for original/named build selection, mesh replacement and source/material tools.

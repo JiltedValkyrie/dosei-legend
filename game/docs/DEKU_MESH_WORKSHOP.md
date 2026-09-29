@@ -32,7 +32,17 @@ quads. Split invalid/non-convex quads before importing.
 The exported UVs use a baked preview atlas, not the original N64 UV layout.
 The workspace is ignored by Git: keep your own backup of finished edits.
 
-## Point the game build at an edited room manually
+## Install from Mesh Workshop (recommended)
+
+Choose **Game room > Deku Tree - entry room 0**, click **Publish mesh**,
+and select the edited OBJ with its MTL and atlas alongside it. The Workshop
+validates geometry and memory, overwrites the selected room's files under
+`game/assets/room-meshes/`, and updates `game/assets/room_imports.json`.
+Close Kronos and rebuild **Clean**. No environment variable or manual JSON
+is needed. Commit the installed assets and manifest together. Help/F1 in the
+Workshop explains the complete offline workflow and undo steps.
+
+## Point the game build at an edited room manually (advanced)
 
 Create `workspace/deku-imports.json` (paths below are examples; replace them):
 
@@ -57,14 +67,17 @@ powershell -NoProfile -ExecutionPolicy Bypass -File tools/launcher/build-game.ps
 Open the same `game/build/game-clean.cue`. Build output must contain
 `room import: ydan_room_0` and your OBJ path. The generated
 `game/build/generated/rooms_manifest.json` records the chosen path and UV mode.
-The GUI preference checkbox alone does not select a runtime replacement.
+The manual `ROOM_IMPORTS` file takes precedence over the Workshop selection.
 Do not use `AUTHORED_OBJ` for this: that older option replaces the forest path.
 
-To restore original source geometry in the next build:
+To return to the normal Workshop selection in the next build:
 
 ```powershell
 Remove-Item Env:ROOM_IMPORTS
 ```
+
+To restore original geometry, also remove that room's entry from
+`game/assets/room_imports.json` and rebuild Clean.
 
 Other room keys follow the same naming (`ydan_room_1`, `ydan_boss_room_0`, etc.),
 but a key is consumed only when that room is registered for runtime export.

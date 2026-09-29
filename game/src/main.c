@@ -15,6 +15,8 @@
 #include "kokiri_scene.h"
 #include "kokiri_sgl.h"
 #include "music.h"
+#include "cdda.h"
+#include "music_songs.h"
 #include "music_banks.h"
 #include "action_audio.h"
 #include "demo.h"
@@ -251,6 +253,7 @@ static void         viewer_draw(void)
      * framed the whole dream far too wide. */
     slSetScreenDist((FIXED)(demo_screen_distance() << 16));
     music_menu_duck(gameplay_is_paused());
+    cdda_service();
     music_service();
 #ifdef DOSEI_TEXTURE_PROBE
     texture_probe();
@@ -1391,7 +1394,7 @@ void                jo_main(void)
 
     scene_ready = kokiri_scene_load();
     scene_ready = scene_ready && demo_init();
-    music_ready = scene_ready && music_init(&music_bank_title);
+    music_ready = scene_ready && music_init(music_song_bank(NA_BGM_TITLE));
     if (scene_ready && !music_ready)
         jo_printf(2, 3, "music load FAILED");
     if (music_ready && !action_audio_init()) {

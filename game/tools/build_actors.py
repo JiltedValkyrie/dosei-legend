@@ -24,6 +24,7 @@ import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[2] / 'shared/tools'))
 import build_kokiri_scene as source
+from layout_variants import for_build
 
 ACTOR_EN_KO = 0x0163       # Kokiri child
 ACTOR_EN_MD = 0x016D       # Mido
@@ -199,7 +200,7 @@ def main():
     ap.add_argument('--rom-dir', type=pathlib.Path)
     args = ap.parse_args()
 
-    segments = source.extract(args.oot, args.rom_dir)
+    segments = for_build(source.extract(args.oot, args.rom_dir))
     triangles = entity_floor_triangles(segments['spot04_scene'])
 
     people, grass, signs, rupees, chests, wonders = [], [], [], [], [], []

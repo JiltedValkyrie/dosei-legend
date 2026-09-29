@@ -18,7 +18,9 @@ class InteriorAudio(unittest.TestCase):
                 header = (gen / (name.lower() + '_score.h')).read_text()
                 manifest = json.loads((gen / (name.lower() + '_manifest.json')).read_text())
                 value = lambda suffix: tables.define(header, name + '_' + suffix)
-                self.assertEqual(manifest['sequence'], sequence)
+                override = ROOT / 'assets/audio/interiors' / (name.lower() + '_manifest.json')
+                expected = json.loads(override.read_text())['sequence'] if override.exists() else sequence
+                self.assertEqual(manifest['sequence'], expected)
                 self.assertEqual(value('LOOP_FRAME'), manifest['loop_frame'])
                 self.assertLess(value('LOOP_FRAME'), value('FRAMES'))
                 self.assertEqual((gen / (name + '_LEVELS.RAW')).stat().st_size,

@@ -1,0 +1,26 @@
+{
+  "comment": "Named CD songs. Track 01 is data; audio tracks are consecutive from 2. Keep each name attached to its sequence/soundfont when reordering. songs.json routes stable game song IDs to these names. Clean regenerates audio, constants and cue.",
+  "tracks": [
+    {
+      "track": 2,
+      "name": "CHEST",
+      "sequence": 43,
+      "soundfont": 3,
+      "note": "NA_BGM_OPEN_TRE_BOX, treasure chest"
+    },
+    {
+      "track": 3,
+      "name": "GAME_OVER",
+      "sequence": 32,
+      "soundfont": 35,
+      "note": "NA_BGM_GAME_OVER, func_80836448 death"
+    },
+    {
+      "track": 4,
+      "name": "SMALL_ITEM",
+      "sequence": 57,
+      "soundfont": 35,
+      "note": "NA_BGM_SMALL_ITEM_GET, first Deku Stick"
+    }
+  ]
+}

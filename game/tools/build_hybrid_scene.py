@@ -195,8 +195,13 @@ def render_tile(group, width, height, shared=False):
 
 
 def convert(oot, head, actor, out_dir, patches_only=False, rom_dir=None,
-            quad_obj=None, source_path=None, room=None, prefix='spot04'):
+            quad_obj=None, source_path=None, room=None, prefix='spot04', layout=None):
     source_faces = load_faces(oot, rom_dir, prefix=prefix)
+    from layout_variants import build_document
+    document = build_document() if layout is None else layout
+    if document and document.get('meshes'):
+        from map_meshes import apply_faces
+        source_faces = apply_faces(source_faces,source.extract(oot,rom_dir,prefix=prefix),document)
     preferred, workshop = [], None
     if quad_obj:
         from workshop_quads import preferred_pairs

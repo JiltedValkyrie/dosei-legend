@@ -66,6 +66,11 @@ void music_service(void);
 /* Pause ducking: half amplitude (-6 dB), composed with fades; SFX unchanged. */
 void music_menu_duck(bool enabled);
 
+/* CD-DA owns the music mix: immediate mute, then a 0.5 s VBlank restore.
+ * Composes with bank fades and menu ducking; does not touch SFX/CD sends. */
+void music_cdda_mute(bool enabled);
+unsigned int music_vblank_count(void);
+
 /** @brief The bank currently playing, or NULL before music_init(). */
 const music_bank_t *music_current(void);
 

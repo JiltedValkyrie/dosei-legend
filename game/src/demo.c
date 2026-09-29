@@ -3,6 +3,7 @@
 #include "pause_windows.h"
 #include "music.h"
 #include "music_banks.h"
+#include "music_songs.h"
 #include "texture_probe.h"
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wunused-const-variable"
@@ -35,7 +36,6 @@
 #include "attention.h"
 #include "karebaba.h"
 #include "game_over.h"
-#include "cdda.h"
 #include "player_lift.h"
 #include "world_props.h"
 #include "player_slope.h"
@@ -44,7 +44,6 @@
 #include "combat_input.h"
 #include "kokiri_actors.h"
 #include "minimap.h"
-#include "cdda.h"
 
 static void link_focus(int32_t out[3]);
 
@@ -476,8 +475,8 @@ static bool m2e_reactions(void)
     if (e2 & GP2_EVENT_DEATH) {
         /* NA_BGM_GAME_OVER: Red Book is allowed here -- the world is frozen
          * and nothing streams until Continue reloads the scene. */
-        music_silence(DEMO_MUSIC_FADE_FRAMES);
-        cdda_play(CDDA_TRACK_GAME_OVER);
+        /* Keep the bank resident: CD-DA mutes it and restores it afterward. */
+        music_play(NA_BGM_GAME_OVER);
         link_anim_react(LINK_CLIP_DEATH, LINK_REACT_NONE, true);
         death_reported = false;
         game_mode_set(GAME_MODE_GAME_OVER);
@@ -498,7 +497,7 @@ static bool m2e_reactions(void)
     /* First Deku Stick: NA_BGM_SMALL_ITEM_GET while its text box freezes the
      * world (Red Book rule). */
     if ((gameplay.baba_events & KAREBABA_EV_STICK_FIRST) && gameplay_is_talking())
-        cdda_play(CDDA_TRACK_SMALL_ITEM);
+        music_play(NA_BGM_SMALL_ITEM_GET);
     if (!gameplay.dead)
         return false;
     if (!death_reported && link_anim_react_done()) {
@@ -696,9 +695,9 @@ static bool         take_door(void)
 /* Area themes follow the scene actually loaded, including Continue. */
 static void scene_music(void)
 {
-    const music_bank_t *bank = scene_flow_entry()->save_scene == SAVE_SCENE_KOKIRI_SHOP
-        ? &music_bank_shop : scene_flow_is_interior() ? &music_bank_house : &music_bank_kokiri;
-    music_fade_to(bank, DEMO_MUSIC_FADE_FRAMES);
+    oot_song_t song = scene_flow_entry()->save_scene == SAVE_SCENE_KOKIRI_SHOP
+        ? NA_BGM_SHOP : scene_flow_is_interior() ? NA_BGM_LINK_HOUSE : NA_BGM_KOKIRI;
+    music_play_fade(song, DEMO_MUSIC_FADE_FRAMES);
 }
 
 /* BUG-049: Kaleido Continue Yes. Link respawns at the last entrance. The
@@ -2581,7 +2580,7 @@ void demo_update(void)
     /* Cheat entered: the treasure-chest fanfare (NA_BGM_OPEN_TRE_BOX) as a
      * Red Book track; the sequence itself does not fit sound RAM. */
     if (minimap_cheat_chime()) {
-        if (gameplay_blocks_world() || !demo_link_active) cdda_play(CDDA_TRACK_CHEST);
+        if (gameplay_blocks_world() || !demo_link_active) music_play(NA_BGM_OPEN_TRE_BOX);
         else action_audio_events(GP_EVENT_MENU_OPEN); /* live play: SCSP, no CD seek */
     }
     unsigned layers = NBG0ON | minimap_layer_flags() |

@@ -1,3 +1,11 @@
+## Song dictionary / Music Workshop (2026-09-29)
+
+Game music now uses stable NA_BGM_* IDs through a tracked BANK/CD dictionary.
+Workshop edits song routes by name; physical CD positions remain in the disc
+manifest. Reordered-track audio cache and cue generation fixed. Help updated.
+53 focused tests and GUI checks pass. Final Clean built with 288 B below SGL
+(BSS 0x06083ee0); no Kronos listening check. No commit/push for this work.
+
 ## Clean build update (2026-09-28)
 
 Human authorized the Clean build. Assets and target code rebuilt into the existing
@@ -549,3 +557,71 @@ and atomic actor-bank cache completion. Saria startup now stops gameplay
 catch-up. 213 focused checks pass; minimum forest VRAM spare 33,504 B, high RAM
 gap 1,232 B. First-exit greeting and walking blue-screen fix await Kronos review.
 Existing save greeting flags unchanged. Work uncommitted.
+## 2026-09-29 music exports and CD mix
+
+Music Workshop can replace seven existing game music banks directly; house/shop
+source overrides survive builds. Offline Help documents the workflow. CD playback
+now mutes background music, then restores it over 0.5 seconds while retaining
+SFX/CD sends. Clean built: 512 B below SGL. 38 focused tests plus GUI checks pass;
+CD/BGM listening acceptance pending. No game music assets replaced during testing.
+
+## Read-only Level viewport ? 2026-09-29
+
+Mesh Workshop now opens Level viewport: Kokiri Forest rooms 0?2 and Deku entry.
+UE-style RMB/WASD/QE flight, RMB-wheel speed, Alt-LMB orbit, MMB pan, F frame,
+G overlays and F11 immersive; preference saved in Bible. Searchable Outliner
+and native-coordinate Details show baked mesh objects plus original main-header
+actors/enemies, collision, exit surfaces, spawns and transitions. Read-only; no
+textures, edit gizmos, camera volumes, alternate headers or gameplay simulation.
+Host palette-average painter rendering is not Saturn fidelity. See Workshop Help.
+Validation: 6 viewport tests + 17 mesh tests pass; all four real rooms load with
+no metadata warnings. Tk smoke passed navigation, speed, focus/capture release,
+immersive, overlay and actor picking. Measured forest draw 42?46 ms, Deku 32 ms.
+Screen capture unavailable in this session; manual visual/gameplay comparison
+remains. No runtime changes or new disc build for this tool-only step.
+
+## Named ROM-relative layout variants (2026-09-29)
+
+Level viewport now defaults to raw Original ROM triangles, independent of baked
+meshes. Save/Save as creates tracked named variants under assets/layouts; Reset
+to original retains saved variants. Use for next build persists a separate
+selection. Clean validates/freezes it before generation; build_actors applies
+verified room/actor deltas and room_imports bypasses legacy meshes in named mode.
+Current baked + Use for next build returns to legacy mesh publishing.
+Editing scope: forest grass/sign/chest XYZ, signs/chests native yaw. Grass yaw
+is locked because runtime ignores it. Other entities, meshes and collision
+remain read-only. No params/IDs/drop flags/count changes. Alternate source
+fingerprints prevent stale edits; ROM/decomp bytes are untouched.
+Validation: 33 focused tests pass, temporary GUI edit/save/reset/build-choice
+smoke passed, actual actor generator original-vs-alternate comparison changed
+only the intended grass X coordinate. All four rooms decode raw ROM geometry.
+Clean image built (layout-variants-clean.log), BSS 0x06083ee0: 288 bytes below
+SGL work area. Wrapper returned 1 for native stderr warnings; build completed.
+No actual alternate or changed live build choice saved during tests. No commit.
+Manual viewport visual review and in-game edited placement check remain.
+
+## Map Workshop object/material tools (2026-09-29)
+
+User corrected product scope: Map Workshop is the room/layout editor; Mesh
+Workshop remains an asset utility. Standalone launcher is tools/map-workshop/
+open-map-workshop.bat; Mesh Workshop also opens it. F1 shows full offline Help.
+Original rooms now retain actual ROM display-list object IDs (Forest room 0: 18).
+Selected object supports XYZ/yaw-degrees/scale, individual OBJ replacement,
+OBJ/MTL/atlas export, re-import, texture PNG preview/export/replacement and source
+code opening. Original actor links are separate from converters/known runtime
+paths. Mesh replacement uses immutable content-hashed bundles in layouts/meshes;
+named layouts can combine actor placements and mesh overrides. Original object
+transforms preserve source UVs. Imported geometry follows the existing hybrid
+UV converter; no runtime renderer or collision changes. Unsupported build modes
+fail instead of dropping mesh edits. Textured CPU preview uses affine patches
+and switches to Solid while navigating. It is not N64/Saturn rendering fidelity.
+Validation: 41 focused tests pass, Map/Mesh UI smoke passes, object/material/code
+panels and textured view checked, build dialog TestOnly passes. Real forest
+object replacement preserves other object geometry and passes production UV/
+budget bake (1602 room polygons; 33440 bytes VRAM spare after reserved actors).
+A translated original object also passes. Baseline Clean image built, BSS end
+0x06083ee0 (288 bytes below SGL); log game/build/map-workshop-clean.log.
+Textured frame inspected at game/build/map-textured-preview.png. Actual edited
+Kronos placement/visual acceptance remains pending; no live variant selected or
+saved during tests. Dialogue, triggers, collision edits, gizmos and undo remain
+unimplemented. No commit/push.

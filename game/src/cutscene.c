@@ -7,6 +7,7 @@
 #include "message.h"
 #include "music.h"
 #include "music_banks.h"
+#include "music_songs.h"
 #include "save_state.h"
 #include "scene_flow.h"
 #include "kokiri_sgl.h"
@@ -113,9 +114,9 @@ static int scene_for_cutscene(unsigned int scene)
 static const music_bank_t *bank_for_cutscene(unsigned int bank)
 {
     switch (bank) {
-        case CUTSCENE_BANK_NIGHTMARE: return (&music_bank_nightmare);
-        case CUTSCENE_BANK_NAVI:      return (&music_bank_navi);
-        case CUTSCENE_BANK_DEKU_TREE: return (&music_bank_deku_tree);
+        case CUTSCENE_BANK_NIGHTMARE: return music_song_bank(NA_BGM_OPENING_GANON);
+        case CUTSCENE_BANK_NAVI:      return music_song_bank(NA_BGM_NAVI_OPENING);
+        case CUTSCENE_BANK_DEKU_TREE: return music_song_bank(NA_BGM_DEKU_TREE_CS);
         default:                      return ((const music_bank_t *)0);
     }
 }

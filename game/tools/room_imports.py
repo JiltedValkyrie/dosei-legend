@@ -6,17 +6,23 @@ from PIL import Image
 import build_authored_scene as authored
 from vdp1_budget import Budget
 
+DEFAULT_CONFIG = Path(__file__).resolve().parents[1] / 'assets/room_imports.json'
+
 
 def selected(prefix, room):
+    from layout_variants import build_document
+    if build_document() is not None:
+        return None  # named layouts start from original ROM visuals
     path = os.environ.get('ROOM_IMPORTS')
-    if not path:
+    config = Path(path).resolve() if path else DEFAULT_CONFIG
+    if not path and not config.exists():
         return None
-    config = Path(path).resolve()
     entries = json.loads(config.read_text(encoding='utf-8'))
     entry = entries.get('%s_room_%d' % (prefix, room))
     if entry is None:
         return None
     entry = dict(entry)
+    entry['forest'] = prefix == 'spot04'
     for key in ('obj', 'atlas', 'uv_from'):
         if key in entry:
             entry[key] = (config.parent / entry[key]).resolve()
@@ -71,6 +77,10 @@ def convert(entry, actor):
             if len(indices) == 3:
                 indices.append(indices[-1])
             face = dict(idx=tuple(indices), cull=entry.get('cull', False), mesh=False)
+            material = raw_face.get('material')
+            if material in ('flags_0', 'flags_1', 'flags_2', 'flags_3'):
+                flags = int(material[-1])
+                face.update(cull=bool(flags & 2), mesh=bool(flags & 1))
             if mode == 'flat':
                 face['colour'] = colour
             else:
@@ -94,7 +104,13 @@ def convert(entry, actor):
     budget = Budget()
     budget.add('import', [(t['width'], t['height']) for t in tiles.values()],len(faces),len(vertices))
     budget.add('link', actor['tiles'], actor['polygons'], actor['vertices'])
+    if entry.get('forest'):
+        budget.reserve_forest_actors()
     failures = budget.failures()
+    if entry.get('forest'):
+        from vdp1_budget import FOREST_VRAM_MARGIN
+        if budget.vram_bytes + FOREST_VRAM_MARGIN > budget.vram_limit:
+            failures.append('Forest import must leave 32 KiB spare after resident actors')
     if failures:
         raise ValueError('; '.join(failures))
     return vertices, faces, tiles, dict(faces=records, budget=budget.parts,

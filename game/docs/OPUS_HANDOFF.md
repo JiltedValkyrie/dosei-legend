@@ -1,3 +1,88 @@
+## Mesh Workshop asset browser / editor direction (2026-09-29)
+
+Mesh Workshop now inventories local source/shared/generated/staged/workspace
+asset files and CD tracks. Added type/state filters, text search, sortable
+columns (numeric bytes), scrollbars, folder opening and last publish UTC date.
+All types are browsable; KFR1 export and registered-room OBJ publishing remain
+the supported edits. Selecting an OBJ publishes it directly; selecting an
+asset with one recorded room selects that target automatically.
+
+Mesh install adds publication time, source OBJ hash and installed dependency
+hashes to room_imports.json atomically with the files/selection. Browser checks
+Published/Modified/Missing; legacy overrides are Assigned with unknown date.
+Unrelated asset types are Not tracked, not falsely claimed published. Dates
+describe current room records, not a historical audit log. No metadata goes
+on the Saturn disc. Existing user assets/room selections were not changed.
+
+25 catalog/mesh/room-import tests pass; GUI search/type/state/sort/date and
+direct-publish snapshot checks pass. No runtime changes or new ISO needed.
+Help updated. `LEVEL_EDITOR_PLAN.md` records the requested agent-independent
+3D scene inspector, actor/enemy/trigger overlays and subsequent edit/bake path.
+Jo's documented map/model tools do not supply this OoT-specific inspector.
+The 3D viewport is planned, not implemented by this asset-browser change.
+
+## Music Publish includes song mapping (2026-09-29)
+
+Generate / Publish now snapshots the selected Game song and publishes audio
+plus its BANK/CD dictionary route in one operation. No second Save mapping
+step required. Generate to determines the published bank/CD source; the
+separate Save song mapping button still assigns already-existing audio.
+Staging isolates bank generation and CD rendering (including generated header
+and track cache); validation precedes mutation, and ordinary commit write
+failures restore replaced files. Unrelated routes are preserved. Shared audio
+replacements still affect other songs pointing to that same bank/CD name.
+
+Checks: 51 music/publish/dictionary tests pass, GUI smoke and worker snapshot
+pass, real CD render/publish/generated route verified in a temporary game.
+No live audio assignment changed, no new ISO needed for this GUI/tool change.
+Help and README updated. Existing game runtime/build verification below stands.
+
+## Stable song dictionary and Workshop routing (2026-09-29)
+
+Human approved song-ID routing instead of physical CD numbers. New tracked
+`game/assets/audio/songs.json` maps the ten current NA_BGM_* IDs to BANK names
+or named CD songs. `cdda_tracks.json` separately owns physical disc positions.
+Workshop has Game song dictionary > song/source/target > Save song mapping;
+Help/F1 documents this and adding/replacing named CD audio. Defaults unchanged.
+
+`song_dictionary.py` generates song_ids.h/song_routes.inc on every build.
+New `music_songs.c` provides music_play, music_play_fade and music_song_bank;
+demo fanfares and scene themes use IDs, and title/timed cutscene bank selection
+uses the same dictionary. Existing streaming/title/timed-bank callers enforce
+BANK-only routes; only frozen-world fanfare/death callers offer CD. The compact
+read-only route table uses no mutable state or heap (216 B target object).
+
+CD cache now fingerprints entry identity plus renderer/sequence/font/sample
+contents and verifies output hashes. Reordering tracks regenerates the correct
+audio, not just the constants. Cue writer consumes declared tracks, rejects
+missing audio and ignores leftover undeclared TRACK files. Generated files
+stay ignored; commit both source JSON manifests and tool/runtime changes.
+
+Validation: 53 focused music/dictionary/CD/interior tests pass, including host
+compilation of the actual dispatcher before/after track reorder and BANK
+assignment, cache invalidation, missing cue audio and rollback. GUI picker,
+worker snapshot and offline Help checked. Final Clean build passed; log
+`game/build/song-dictionary-final.log`, BSS end 0x06083ee0, **288 B below SGL**.
+No software-float helpers in router disassembly. No Kronos listening check.
+Shared Music/Mesh/CD work remains uncommitted; preserve all pending edits.
+
+## Mesh Workshop room installation (2026-09-29)
+
+Added Game room picker and Use OBJ in game: validates and installs an edited
+OBJ/MTL/atlas into `game/assets/room-meshes/<room>/`, overwriting the selected
+room, then updates `game/assets/room_imports.json`. Normal Clean builds read
+that manifest automatically; explicit ROOM_IMPORTS still takes precedence.
+Supported targets are the three forest rooms and Deku entry room 0. Collision
+is unchanged. GUI Help/F1 has the offline guide. Empty default manifest means
+no user mesh has been installed by this change.
+
+Room import now preserves flags_* culling/stipple and enforces forest actor
+reservations plus the 32 KiB margin. Checks: 20 mesh/import tests pass, GUI
+smoke and Help checks pass, install preflight with actual generated Link passes
+in temporary storage. Tests cover overwrite, persistence, bank packing, invalid
+geometry/budget rejection and write-failure rollback. No new ISO or Kronos
+verification for this tooling change. Existing sound work remains uncommitted.
+
 ## Human directive to Claude: commit and continue (2026-09-28)
 
 Commit the current regression fixes, tests and documentation locally on dev.
@@ -4268,3 +4353,82 @@ This is not full Saria/dungeon acceptance. Clean build: BSS 0x06083c30, 976 B
 below SGL. Preserve the accumulated Saria and Deku room-0/import work alongside
 the filesystem/VRAM fixes and permanent Bible rule. Older "uncommitted" entries
 below describe their original checkpoints.
+## Music Workshop game export and CD mix (2026-09-29, uncommitted)
+
+Human authorized direct overwrites from Music Workshop. Generate to now selects
+workspace or seven existing game banks; game exports replace matching PCM,
+levels, header and manifest. House/shop use assets/audio/interiors overrides,
+copied by build_interior_audio so ordinary rebuilds preserve them. Preview stays
+in the workspace. Operations capture UI settings before the worker starts and
+rebake rather than reusing stale inspections. Help/README updated. Tests use
+temporary destinations; no actual music selection was installed during this task.
+
+Human requested CD-DA to mute ordinary music and restore over 0.5 seconds.
+cdda.c waits for music loads and polls actual CDC track/status on the main thread.
+Shared music gain composes immediate mute and 30 NTSC / 25 PAL VBlank restore
+with bank fades/menu ducking. SFX and CD external sends remain intact. Death no
+longer discards the background bank. Failed/interrupted CD playback releases mute.
+Permanent rule added to Bible. Clean rebuilt, BSS 0x06083e00 (512 B below SGL).
+38 focused tests and hidden workshop GUI checks pass. Runtime listening of
+chest/get-item/death CD-to-BGM transitions remains pending. No commit/push.
+
+## Read-only Level viewport ? 2026-09-29
+
+Mesh Workshop now opens Level viewport: Kokiri Forest rooms 0?2 and Deku entry.
+UE-style RMB/WASD/QE flight, RMB-wheel speed, Alt-LMB orbit, MMB pan, F frame,
+G overlays and F11 immersive; preference saved in Bible. Searchable Outliner
+and native-coordinate Details show baked mesh objects plus original main-header
+actors/enemies, collision, exit surfaces, spawns and transitions. Read-only; no
+textures, edit gizmos, camera volumes, alternate headers or gameplay simulation.
+Host palette-average painter rendering is not Saturn fidelity. See Workshop Help.
+Validation: 6 viewport tests + 17 mesh tests pass; all four real rooms load with
+no metadata warnings. Tk smoke passed navigation, speed, focus/capture release,
+immersive, overlay and actor picking. Measured forest draw 42?46 ms, Deku 32 ms.
+Screen capture unavailable in this session; manual visual/gameplay comparison
+remains. No runtime changes or new disc build for this tool-only step.
+
+## Named ROM-relative layout variants (2026-09-29)
+
+Level viewport now defaults to raw Original ROM triangles, independent of baked
+meshes. Save/Save as creates tracked named variants under assets/layouts; Reset
+to original retains saved variants. Use for next build persists a separate
+selection. Clean validates/freezes it before generation; build_actors applies
+verified room/actor deltas and room_imports bypasses legacy meshes in named mode.
+Current baked + Use for next build returns to legacy mesh publishing.
+Editing scope: forest grass/sign/chest XYZ, signs/chests native yaw. Grass yaw
+is locked because runtime ignores it. Other entities, meshes and collision
+remain read-only. No params/IDs/drop flags/count changes. Alternate source
+fingerprints prevent stale edits; ROM/decomp bytes are untouched.
+Validation: 33 focused tests pass, temporary GUI edit/save/reset/build-choice
+smoke passed, actual actor generator original-vs-alternate comparison changed
+only the intended grass X coordinate. All four rooms decode raw ROM geometry.
+Clean image built (layout-variants-clean.log), BSS 0x06083ee0: 288 bytes below
+SGL work area. Wrapper returned 1 for native stderr warnings; build completed.
+No actual alternate or changed live build choice saved during tests. No commit.
+Manual viewport visual review and in-game edited placement check remain.
+
+## Map Workshop object/material tools (2026-09-29)
+
+User corrected product scope: Map Workshop is the room/layout editor; Mesh
+Workshop remains an asset utility. Standalone launcher is tools/map-workshop/
+open-map-workshop.bat; Mesh Workshop also opens it. F1 shows full offline Help.
+Original rooms now retain actual ROM display-list object IDs (Forest room 0: 18).
+Selected object supports XYZ/yaw-degrees/scale, individual OBJ replacement,
+OBJ/MTL/atlas export, re-import, texture PNG preview/export/replacement and source
+code opening. Original actor links are separate from converters/known runtime
+paths. Mesh replacement uses immutable content-hashed bundles in layouts/meshes;
+named layouts can combine actor placements and mesh overrides. Original object
+transforms preserve source UVs. Imported geometry follows the existing hybrid
+UV converter; no runtime renderer or collision changes. Unsupported build modes
+fail instead of dropping mesh edits. Textured CPU preview uses affine patches
+and switches to Solid while navigating. It is not N64/Saturn rendering fidelity.
+Validation: 41 focused tests pass, Map/Mesh UI smoke passes, object/material/code
+panels and textured view checked, build dialog TestOnly passes. Real forest
+object replacement preserves other object geometry and passes production UV/
+budget bake (1602 room polygons; 33440 bytes VRAM spare after reserved actors).
+A translated original object also passes. Baseline Clean image built, BSS end
+0x06083ee0 (288 bytes below SGL); log game/build/map-workshop-clean.log.
+Textured frame inspected at game/build/map-textured-preview.png. Actual edited
+Kronos placement/visual acceptance remains pending; no live variant selected or
+saved during tests. Dialogue, triggers, collision edits, gizmos and undo remain
+unimplemented. No commit/push.

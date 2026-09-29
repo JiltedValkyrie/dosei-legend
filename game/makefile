@@ -89,7 +89,7 @@ JO_MAX_FS_BACKGROUND_JOBS = 2
 # by 16 bytes. Keep ~2 KB clear; jo_malloc spills into the cart zones.
 JO_GLOBAL_MEMORY_SIZE_FOR_MALLOC ?= 51200
 
-SRCS = src/main.c src/ram_cart.c src/game_mode.c src/message.c src/cutscene.c src/cutscene_actor.c src/save_state.c src/item_drop.c src/world_props.c src/world_signs.c src/world_props_draw.c src/actor_sys.c src/attention.c src/karebaba.c src/karebaba_draw.c src/game_over.c src/collide.c src/save_file.c src/save_device.c src/ui_preferences.c src/file_select.c src/scene_flow.c src/kokiri_sgl.c ../shared/lib/music/music.c src/music_banks.c src/demo.c src/navi.c src/player_input.c src/gameplay.c src/dialogue_text.c src/text_pool.c src/minimap.c src/health_hud.c src/pause_windows.c src/pause_window_state.c src/cdda.c src/action_audio.c src/demo_camera.c src/demo_collision.c src/demo_follow.c src/link_anim.c src/link_anim_state.c src/player_air.c src/player_bg.c src/player_climb.c src/player_crawl.c src/frame_timer.c build/generated/kokiri_scene.c build/generated/kokiri_textures.c build/generated/link_scene.c build/generated/link_textures.c build/generated/link_clips.c build/generated/scene_table.c build/generated/kokiri_actors.c build/generated/kokiri_dialogue.c build/generated/cutscenes.c
+SRCS = src/main.c src/ram_cart.c src/game_mode.c src/message.c src/cutscene.c src/cutscene_actor.c src/save_state.c src/item_drop.c src/world_props.c src/world_signs.c src/world_props_draw.c src/actor_sys.c src/attention.c src/karebaba.c src/karebaba_draw.c src/game_over.c src/collide.c src/save_file.c src/save_device.c src/ui_preferences.c src/file_select.c src/scene_flow.c src/kokiri_sgl.c ../shared/lib/music/music.c src/music_banks.c src/demo.c src/navi.c src/player_input.c src/gameplay.c src/dialogue_text.c src/text_pool.c src/minimap.c src/health_hud.c src/pause_windows.c src/pause_window_state.c src/cdda.c src/music_songs.c src/action_audio.c src/demo_camera.c src/demo_collision.c src/demo_follow.c src/link_anim.c src/link_anim_state.c src/player_air.c src/player_bg.c src/player_climb.c src/player_crawl.c src/frame_timer.c build/generated/kokiri_scene.c build/generated/kokiri_textures.c build/generated/link_scene.c build/generated/link_textures.c build/generated/link_clips.c build/generated/scene_table.c build/generated/kokiri_actors.c build/generated/kokiri_dialogue.c build/generated/cutscenes.c
 override ASSETS_DIR = ./build/cd
 
 JO_ENGINE_SRC_DIR = ../../joengine/jo_engine
@@ -185,6 +185,10 @@ $(OBJDIR)/demo_camera.o: ../shared/lib/camera/kokiri_camera.c ../shared/lib/came
 $(OBJDIR)/demo_follow.o: ../shared/lib/camera/oot_follow.c ../shared/lib/camera/oot_follow.h ../shared/lib/camera/kokiri_camera.h
 $(OBJDIR)/demo_collision.o: ../shared/lib/collision/kokiri_collision.c ../shared/lib/collision/kokiri_collision.h
 $(OBJDIR)/demo.o: build/generated/texture_probe.h build/generated/title_paths.h src/input_edge.h
+# Red Book track numbers/names come from assets/audio/cdda_tracks.json.
+$(OBJDIR)/cdda.o $(OBJDIR)/music_songs.o: build/generated/cdda_tracks.h
+$(OBJDIR)/music_songs.o $(OBJDIR)/demo.o $(OBJDIR)/main.o $(OBJDIR)/cutscene.o: build/generated/song_ids.h
+$(OBJDIR)/music_songs.o: build/generated/song_routes.inc
 $(OBJDIR)/cutscene.o $(OBJDIR)/kokiri_sgl.o: src/vdp1_draw_wait.h
 $(OBJDIR)/main.o $(OBJDIR)/kokiri_sgl.o: build/generated/kokiri_scene.h build/generated/link_scene.h build/generated/vdp1_layout.h
 $(OBJDIR)/kokiri_sgl.o $(OBJDIR)/kokiri_actors.o $(OBJDIR)/gameplay.o $(OBJDIR)/demo.o $(OBJDIR)/main.o $(OBJDIR)/kokiri_dialogue.o $(OBJDIR)/dialogue_text.o: build/generated/kokiri_actors.h build/generated/kokiri_dialogue.h src/gameplay.h

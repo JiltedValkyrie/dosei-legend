@@ -36,6 +36,9 @@ static volatile bool playing;
 static volatile unsigned char state;
 static volatile unsigned char volume = VOLUME_MAX;
 static volatile bool menu_duck;
+static volatile bool cdda_muted;
+static volatile unsigned char cdda_volume = VOLUME_MAX;
+static volatile unsigned int cdda_restore;
 static unsigned int fade_step, fade_length = FADE_DEFAULT;
 static unsigned int transition_start, transition_frames;
 /* Switch measurements. audible_frames is request -> new bank actually playing;
@@ -60,7 +63,8 @@ static unsigned int faded_level(unsigned int level)
 {
     static const unsigned char attenuation[16] =
         {255,63,47,37,31,25,21,18,15,12,9,7,5,3,2,0};
-    unsigned int result = level + attenuation[volume] + (menu_duck ? 16u : 0u);
+    unsigned int result = level + attenuation[volume] + attenuation[cdda_volume]
+                          + (menu_duck ? 16u : 0u);
     return result > 255 ? 255 : result;
 }
 
@@ -70,6 +74,19 @@ static void set_volume(unsigned int level)
     volume = (unsigned char)level;
     for (i = 0; i < MUSIC_MAX_VOICES; ++i)
         if (active[i]) SLOT(i,12) = faded_level(voice_levels[i]);
+}
+
+void music_cdda_mute(bool enabled)
+{
+    if (enabled) {
+        cdda_muted = true;
+        cdda_restore = 0;
+        cdda_volume = 0;
+        set_volume(volume);
+    } else if (cdda_muted) {
+        cdda_restore = refresh / 2; /* 30 NTSC / 25 PAL VBlanks */
+        cdda_muted = false;
+    }
 }
 
 void music_menu_duck(bool enabled)
@@ -149,6 +166,11 @@ static void score_tick(void)
 static void music_vblank(void)
 {
     ++vblanks;
+    if (!cdda_muted && cdda_restore) {
+        --cdda_restore;
+        cdda_volume = ((refresh / 2) - cdda_restore) * VOLUME_MAX / (refresh / 2);
+        set_volume(volume);
+    }
     /* The fade is a master-volume ramp, cheap enough for the interrupt. The
      * bank swap it triggers is NOT done here: no CD reads or allocation. */
     if (state == MUSIC_FADE_OUT || state == MUSIC_FADE_IN) {
@@ -215,7 +237,7 @@ static unsigned char *read_levels(const music_bank_t *target)
 */
 bool music_silence(unsigned int fade_frames)
 {
-    if (state != MUSIC_IDLE || !bank)
+    if (cdda_muted || state != MUSIC_IDLE || !bank)
         return (false);
     incoming = JO_NULL;
     fade_length = fade_frames ? fade_frames : 1;
@@ -235,7 +257,7 @@ bool music_fade_to(const music_bank_t *target, unsigned int fade_frames)
     if (!target || target->sample_base > MUSIC_SAMPLE_LIMIT ||
         target->pcm_bytes > MUSIC_SAMPLE_LIMIT - target->sample_base ||
         target->voices > MUSIC_MAX_VOICES ||
-        state != MUSIC_IDLE || bank == target) return false;
+        cdda_muted || state != MUSIC_IDLE || bank == target) return false;
     incoming = target;
     fade_length = fade_frames ? fade_frames : 1;
     transition_start = vblanks;
@@ -256,6 +278,8 @@ bool music_fade_to(const music_bank_t *target, unsigned int fade_frames)
 */
 void music_service(void)
 {
+    /* Do not seek the drive back to data while a Red Book track owns it. */
+    if (cdda_muted) return;
     unsigned int chunk;
 
     /* Called once per rendered frame, so the gap between calls is the frame
@@ -456,6 +480,7 @@ unsigned int music_audible_frames(void) { return audible_frames; }
 unsigned int music_worst_stall(void) { return worst_stall; }
 unsigned int music_swap_count(void) { return swap_count; }
 unsigned int music_ticks(void) { return ticks; }
+unsigned int music_vblank_count(void) { return vblanks; }
 const music_bank_t *music_current(void) { return bank; }
 bool music_busy(void) { return state != MUSIC_IDLE; }
 bool music_failed(void) { return swap_failed; }

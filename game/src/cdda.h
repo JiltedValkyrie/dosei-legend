@@ -10,10 +10,17 @@
 ** chest open (mini cutscene), cutscenes, first-stick get-item show (text box
 ** freezes the world), death/Game Over. Never in live play or combat.
 */
-#define CDDA_TRACK_CHEST    2   /* NA_BGM_OPEN_TRE_BOX */
-#define CDDA_TRACK_GAME_OVER 3  /* NA_BGM_GAME_OVER */
-#define CDDA_TRACK_SMALL_ITEM 4 /* NA_BGM_SMALL_ITEM_GET */
+/*
+** Track numbers and names are generated from assets/audio/cdda_tracks.json by
+** tools/build_cdda.py. Importing a track needs no driver changes. The song
+** dictionary resolves its stable name through CDDA_TRACK_<NAME> on each build.
+*/
+#include "cdda_tracks.h"
 
+/* Driver API for music_songs.c. Gameplay uses music_play(NA_BGM_...), not tracks.
+ * Any audio track on the disc; out-of-range requests are ignored. */
 void    cdda_play(int track);
+/* Main thread: wait for pending music loads, then monitor actual CD status. */
+void    cdda_service(void);
 
 #endif
