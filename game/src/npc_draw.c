@@ -25,6 +25,20 @@
  * shop at its actor-list spot, facing the counter (rot.y 0). Not a
  * kokiri_npcs entry: the counter talk in gameplay.c already owns her. */
 #define NPC_SHOPKEEPER  15
+/*
+** Saria's greeting poses.
+**
+** EnSa_HandleCutscene indexes sAnimationInfo1 with the actor cue id: 1
+** look-up/arm-extended, 2 wave, 3 run. Cue 4 is ENSA_ANIM1_MOVE_ARMS_TO_SIDE,
+** whose clip is model 1's own, so it maps back to NPC01.
+**
+** These are clips, not models. They share Saria's skeleton, vertices and all
+** 78 of her texture tiles, so they are swapped onto the loaded model 1 rather
+** than loaded as meshes of their own: three more uploads of identical tiles
+** filled the VDP1 bank and starved the world props.
+*/
+static const char *const saria_cue_clip[3] = { "NPC16", "NPC17", "NPC18" };
+static unsigned char saria_clip_loaded;     /* cue id currently swapped in */
 static actor_mesh_t *models[NPC_MODEL_COUNT];
 /* En_Tana params 0 at its shop actor-list spot (0,0,-20), rot 0. */
 static actor_mesh_t *shelves, *counter;
@@ -98,7 +112,10 @@ static unsigned int track_mode(unsigned int i, int angle, int32_t distance,
     }
     if (npc->kind == KOKIRI_NPC_SARIA) {                /* EnSa_UpdateTrackingMode */
         *offset = 4;
-        return NPC_TRACKING_FULL_BODY;
+        /* In Kokiri Forest the source returns NPC_TRACKING_NONE while
+         * actionFunc is EnSa_HandleCutscene: the cue rotations own her facing
+         * during the greeting, so she must not turn to look at Link. */
+        return gameplay_saria_cutscene() ? NPC_TRACKING_NONE : NPC_TRACKING_FULL_BODY;
     }
     if (type > 12) type = 12;
     stone = save_check_quest_item(QUEST_KOKIRI_EMERALD);
@@ -134,7 +151,7 @@ static void track_step(unsigned int i)
     int16_t yaw_to = (int16_t)gameplay_facing(dx, dz);
     unsigned int preset, mode = track_mode(i, (int16_t)(yaw_to - (int16_t)shape),
                                            distance, &preset, &offset);
-    int16_t pitch_to = (int16_t)gameplay_facing(kokiri_npcs[i].y + offset -
+    int16_t pitch_to = (int16_t)gameplay_facing(gameplay_npc_y(i) + offset -
                                                 (demo_link.y - DEMO_LINK_EYE_HEIGHT),
                                                 distance);
     npc_track_point(&track[i], &shape, yaw_to, pitch_to, preset, mode);
@@ -144,10 +161,40 @@ static void track_step(unsigned int i)
 static int32_t q14_sin(int16_t a) { return slSin((ANGLE)a) / 4; }
 static int32_t q14_cos(int16_t a) { return slCos((ANGLE)a) / 4; }
 
+/*
+** The model a placement owns for as long as the scene is loaded.
+**
+** This is what npc_draw_load reads to decide which NPC<nn>.BIN the scene
+** needs, so it must never name one of Saria's greeting clips: those are
+** loaded and freed by the greeting itself, and asking the scene loader for
+** one fails to open a file that is not part of the scene at all.
+*/
 static unsigned int model_for(unsigned int i)
 {
     return kokiri_npcs[i].kind == KOKIRI_NPC_MIDO ? 0 :
-           kokiri_npcs[i].kind == KOKIRI_NPC_SARIA ? 1 : 2 + (kokiri_npcs[i].param & 255);
+           kokiri_npcs[i].kind == KOKIRI_NPC_SARIA ? 1 :
+           2 + (kokiri_npcs[i].param & 255);
+}
+
+/*
+** Follow the cue's clip on Saria's one model.
+**
+** Called once per drawn frame while the greeting owns her. A failed swap keeps
+** whatever clip is already on the mesh: a wrong-looking pose is better than a
+** hard stop in the middle of her cutscene.
+*/
+static void saria_follow_cue(void)
+{
+    unsigned int cue = cutscene_actor_channel_cue(GAMEPLAY_SARIA_CUE_CHANNEL);
+    unsigned int want = cue >= 1 && cue <= 3 ? cue : 0;
+
+    if (!models[1] || want == saria_clip_loaded) return;
+    if (want == 0) {
+        if (actor_mesh_swap_clip(models[1], "NPC01")) saria_clip_loaded = 0;
+        return;
+    }
+    if (actor_mesh_swap_clip(models[1], saria_cue_clip[want - 1]))
+        saria_clip_loaded = (unsigned char)want;
 }
 
 void npc_draw_free(void)
@@ -162,6 +209,9 @@ void npc_draw_free(void)
     actor_mesh_free(counter); counter = 0;
     for (i = 0; i < SHOP_ITEM_MESHES; ++i) { actor_mesh_free(shop_items[i]); shop_items[i] = 0; }
     shop_cursor_loaded = shop_cursor_ready = false;
+    /* The models are gone, so whatever clip was swapped onto Saria went with
+    ** them: a fresh NPC01 carries her idle clip again. */
+    saria_clip_loaded = 0;
     uploaded = 0;
     for (i = 0; i < KOKIRI_NPC_COUNT; ++i) track[i] = (npc_track_t){{0, 0}, {0, 0}};
     gameplay_npc_turns_reset();
@@ -249,7 +299,9 @@ static bool upload_visible(unsigned int visible, unsigned int generation)
     unsigned int i;
     if (visible != uploaded || generation != bank_generation) {
         kokiri_actor_tiles_reset();
-        uploaded = 0;
+        /* Commit this cache key only after props and masks also fit. A
+         * dismissed Jo error must not make a partial bank look complete. */
+        uploaded = 0xFFFFFFFFu;
         bank_generation = generation;
         for (i = 0; i < NPC_MODEL_COUNT; ++i) {
             if (!(visible & (1u << i))) continue;
@@ -257,7 +309,6 @@ static bool upload_visible(unsigned int visible, unsigned int generation)
                 jo_core_error("NPC texture bank full: %u", i);
                 return false;
             }
-            uploaded |= 1u << i;
         }
         if (counter && !actor_mesh_upload(counter)) return false;
         if (shelves && !actor_mesh_upload(shelves)) {
@@ -291,6 +342,7 @@ static bool upload_visible(unsigned int visible, unsigned int generation)
             jo_core_error("NPC texture bank full: masks");
             return false;
         }
+        uploaded = visible;
     }
     return true;
 }
@@ -394,6 +446,7 @@ void npc_draw(unsigned int tick)
     unsigned int generation = kokiri_actor_bank_generation();
     previous_step = tick / 3;
     if (steps > 4) steps = 4;
+    if (gameplay_saria_cutscene()) saria_follow_cue();
     for (i = 0; i < KOKIRI_NPC_COUNT; ++i) {
         int32_t dx, dz, distance;
         if (!gameplay_npc_present(i)) continue;
@@ -404,7 +457,11 @@ void npc_draw(unsigned int tick)
          * separate from this visibility bound. */
         distance = kokiri_npcs[i].kind == KOKIRI_NPC_CHILD ?
                    ((kokiri_npcs[i].param & 255) == 5 ? 240 : 180) : 400;
-        if (!scene_flow_is_interior() &&
+        /* EnSa_Update pins alpha to 255 while EnSa_HandleCutscene runs, so the
+         * distance fade does not apply: her first cue stands her 900 units out
+         * and she has to be on screen from the first frame of the shot. */
+        if (!scene_flow_is_interior() && !(gameplay_saria_cutscene() &&
+              kokiri_npcs[i].kind == KOKIRI_NPC_SARIA) &&
             (dx < -distance || dx > distance || dz < -distance || dz > distance ||
              dx * dx + dz * dz > distance * distance)) continue;
         visible |= 1u << model_for(i);
@@ -435,7 +492,7 @@ void npc_draw(unsigned int tick)
             unsigned int model = model_for(i);
             uint16_t yaw = gameplay_npc_yaw(i);
             int32_t focus[3], rotated[3];
-            draw_pose(model, tick, gameplay_npc_x(i), kokiri_npcs[i].y,
+            draw_pose(model, tick, gameplay_npc_x(i), gameplay_npc_y(i),
                       gameplay_npc_z(i), yaw, t, focus);
             {
                 int32_t sine = slSin((ANGLE)yaw) / 4;
@@ -450,6 +507,29 @@ void npc_draw(unsigned int tick)
 
 /* Flythrough uses its authored layer, independent of save scene and Link's
  * position in his house. No gameplay actor registry or talk/target changes. */
+/*
+** Saria's three greeting clips, loaded beside the forest cast for the one
+** cutscene that uses them and freed the moment it ends. Failing to load them
+** must not start the greeting at all: she would otherwise stand in her idle
+** pose through a shot built around her running up and waving.
+*/
+/*
+** The greeting needs no assets of its own: its poses are clips on Saria's
+** model, swapped in as her cue changes. This only checks she is actually
+** loaded, so the greeting does not start in a scene without her.
+*/
+bool npc_draw_load_saria_cutscene(void)
+{
+    return models[1] != 0;
+}
+
+/* EnSa_BecomeIdle: back to gSariaWaitArmsToSideAnim. */
+void npc_draw_free_saria_cutscene(void)
+{
+    if (models[1] && saria_clip_loaded)
+        if (actor_mesh_swap_clip(models[1], "NPC01")) saria_clip_loaded = 0;
+}
+
 bool npc_draw_load_navi(void)
 {
     unsigned int i;

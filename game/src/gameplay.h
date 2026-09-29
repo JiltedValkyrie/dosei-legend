@@ -3,6 +3,8 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+#define GAMEPLAY_SARIA_CUE_CHANNEL 1
+
 /*
 ** Forest gameplay state: inventory, gear pickups, Z-targeting, the sword swing
 ** and its active hit window, the shield, and which grass has been cut.
@@ -441,11 +443,22 @@ bool                gameplay_npcs_present(void);
 /* Placement `npc` exists in the current scene under its source spawn rule. */
 bool                gameplay_npc_present(unsigned int npc);
 int32_t             gameplay_npc_x(unsigned int npc);
+int32_t             gameplay_npc_y(unsigned int npc);
 int32_t             gameplay_npc_z(unsigned int npc);
 uint16_t            gameplay_npc_yaw(unsigned int npc);
 /* Source NPC_TRACKING_FULL_BODY body turn (npc_draw); reset on scene load. */
 void                gameplay_npc_turn(unsigned int npc, uint16_t yaw);
 void                gameplay_npc_turns_reset(void);
+/* True while Saria's greeting cutscene owns her position, facing and
+** pose. Her tracking, distance fade and clip all defer to it. */
+bool                gameplay_saria_cutscene(void);
+/* One gameplay step of the greeting: starts it when due, and closes it
+** out the way EnSa_BecomeIdle does. Returns true while it is running. */
+bool                gameplay_saria_greeting_step(void);
+/* Decline the greeting for this scene without touching the save: the
+** flag records that Saria HAS greeted Link, which is a different thing
+** from a scene where the cutscene simply must not run. */
+void                gameplay_saria_greeting_cancel(void);
 void                gameplay_npc_focus(unsigned int npc, const int32_t offset[3]);
 /* Mido's OC cylinder centre while he stands in `room`; false when gone. */
 bool                gameplay_mido_body(unsigned int room, int32_t *x, int32_t *z);

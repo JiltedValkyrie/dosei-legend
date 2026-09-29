@@ -164,6 +164,8 @@ for cs_bank in CSGANON CSNAVI CSDEKU; do
 done
 
 cd "$here"
+"$python" "$here/tools/check_disc_directory.py"
+"$python" "$here/tools/check_forest_budget.py"
 # jo_engine_makefile picks its toolchain from $(OS), which does not reach make
 # from every shell that can run this script; it then falls back to the LINUX
 # binaries and dies with "Exec format error". Compiler/WINDOWS is already

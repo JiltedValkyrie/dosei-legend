@@ -1,5 +1,20 @@
 # Bug and feature log
 
+## Boot asset failure after Saria / Deku entry additions (2026-09-28, P0)
+
+Human reported the blue `DIALOG/CUTTEXT/MINIMAP/MUSICTRG/TITLEPTH` boot error.
+The mastered Clean ISO contains 264 root directory records (262 files plus dot
+entries). `TITLEPTH.BIN` is record 261, zero-based, beyond Jo's 256-entry directory
+table. The staged text/music files match their generated counts and sizes.
+
+Fix: project-local `fs_capacity.h` raises the SDK filesystem object's table to
+288 entries without changing shared SDK files. `check_disc_directory.py` rejects
+overflowing directories before mastering; two guard tests pass. Boot loader now
+reports the exact failed filename and read versus validation failure.
+Clean rebuild passes: BSS ends `0x06083840`, 1,984 bytes below SGL. Same
+`game/build/game-clean.cue`. Runtime confirmation in Kronos remains pending.
+Owner: Astra.
+
 ## Human rule - effective for future work, 2026-09-25
 
 Prioritize getting the game playable. Fix severe current blockers immediately;
@@ -1436,3 +1451,41 @@ Current build: `game/build/game-clean.cue`, BSS end 0x06082e50, 4,528 B below SG
 Baseline commit: 249cef5. Regression fixes remain uncommitted. Older status and
 RAM figures below describe earlier checkpoints.
 
+## Forest blue screen / missing greeting (2026-09-29)
+
+- P1, owner Codex. Capacity defect fixed; reported runtime failure not yet
+  reproduced. User can dismiss Jo's blue screen with Start while walking.
+  Exact error text was unavailable; do not assume every blue screen is heap OOM.
+- Forest baking omitted post-room NPC/prop textures. Staged actors require a
+  conservative maximum 46,896 B / 522 slots (all props, both moving/story NPCs,
+  every overlapping child visibility box). Reserve 64 KiB / 576 slots separately
+  from the existing 32 KiB margin; enforce against staged assets before mastering.
+- Keep actor upload cache invalid until props/masks also succeed. Previously a
+  dismissed prop upload failure could cache an incomplete bank as successful.
+- Preserve existing uncommitted Saria greeting work. Stop gameplay catch-up when
+  it starts; verify greeting clips retain idle vertex/material ordering. Earlier
+  saves may already contain the greeted bit from the old dialogue-close path;
+  no save flags were cleared. Test first house exit on a fresh file.
+- Clean rebuilt at existing game-clean.cue: room spare 33,504 / 34,688 / 103,360 B
+  after actor reservation; BSS end 0x06083b30, 1,232 B below SGL. 213 focused tests
+  passed (gameplay, NPC models/bank, cutscene skip, allocator, VRAM, directory).
+  PowerShell wrapper returned 1 from compiler warning stderr; underlying build
+  log confirms mastering and final map verification completed successfully.
+- Pending human/Kronos: first house exit greeting, forest traversal/room changes,
+  NPCs and props visible with no blue screen. No emulator session was run here.
+## Hut-exit GFS_Open failure (2026-09-29 screenshot follow-up)
+
+- P1, owner Codex. Screenshot identifies jo_fs_get_file_size / GFS_Open failed,
+  with 40% dynamic memory usage. The earlier VRAM repair did not fix this cause.
+- SDK fs.c derives JO_OPEN_MAX from JO_MAX_FS_BACKGROUND_JOBS, default 1.
+  music_service keeps an LVL or PCM handle open between rendered frames.
+  A Saria track/clip, door or room read during that interval cannot open a file.
+- Set JO_MAX_FS_BACKGROUND_JOBS=2 in the project makefile. Both reads remain
+  synchronous on the main thread; one persistent music handle plus one asset
+  read is the required peak. Shared SDK unchanged; no disabled error guards.
+- New host regression runs the real SDK size/read routines with a bounded mock
+  GFS handle pool: capacity 1 reaches the screenshot's error, configured capacity
+  2 reads successfully and retains the music handle. Runtime retest still needed.
+- Clean rebuilt: extra handle costs 256 B, BSS 0x06083c30, 976 B below SGL.
+  12 focused tests pass (filesystem handle regression, cutscene skip, NPC bank).
+  Permanent prevention rule recorded in DOSEI-LEGEND-BIBLE.md by user request.

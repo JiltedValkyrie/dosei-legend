@@ -1455,7 +1455,18 @@ void demo_update(void)
         }
         if (cutscene_finished()) {
             cutscene_phase = 0;
-            enter_world();
+            /* An in-scene cutscene never unloaded the room it played in, so
+             * re-entering the world would reload the scene and respawn Link at
+             * an entrance in the middle of gameplay. Just take the pad back. */
+            if (!cutscene_is_in_scene()) enter_world();
+            else {
+                /* The scene is still standing behind it, so only the pad and
+                 * the camera come back. The owner of an in-scene cutscene
+                 * closes its own state out here -- gameplay_step does not run
+                 * in CUTSCENE mode, so it cannot do it from there. */
+                gameplay_saria_greeting_step();
+                snap_camera_to_link();
+            }
             player_input_reset();
         }
     } else if (demo_link_active) {
@@ -1551,6 +1562,13 @@ void demo_update(void)
                 }
                 if (ledge_claims_interact(&action)) action.interact = false;
                 gameplay_step(&action);
+                /* The greeting can take ownership inside gameplay_step.
+                 * Do not run movement/doors or more catch-up steps afterward. */
+                if (cutscene_is_playing()) {
+                    interact_pending = cancel_pending = pause_pending = false;
+                    jump_pending = false;
+                    break;
+                }
                 if (action.c_up && !blocked_before && !gameplay_blocks_world() &&
                     !gameplay.dead && !gameplay.face_locked && action.grounded && link_on_ground &&
                     (link_anim_state() == LINK_STATE_IDLE ||

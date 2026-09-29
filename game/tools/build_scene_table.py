@@ -70,6 +70,10 @@ SCENES = (
     dict(prefix='kokiri_home5', rooms=1, shape='image',
          scene='SCENE_SARIAS_HOUSE', sfx=0,
          save='SAVE_SCENE_SARIAS_HOUSE', name="Saria's House"),
+    # M5 entry shell: only room 0 is playable; source has 12 rooms.
+    dict(prefix='ydan', rooms=1, source_rooms=12, shape='mesh',
+         scene='SCENE_DEKU_TREE', sfx=0,
+         save='SAVE_SCENE_DEKU_TREE', name='Inside the Deku Tree'),
 )
 
 # A new file begins here: Link's house, spawn 0 (the bed).
@@ -157,7 +161,7 @@ def _segment_offset_local(command):
 # Surface bits are decoded at runtime with the SurfaceType_Get* layout, and
 # wall flags through D_80119D90, so nothing here pre-interprets the ROM.
 COLLISION_MAGIC = b'KBG2'
-COLLISION_TRIANGLES_MAX = 2048      # scene_flow.c SCENE_COLLISION_MAX
+COLLISION_TRIANGLES_MAX = 2321      # scene_flow.c SCENE_COLLISION_MAX
 COLLISION_SURFACES_MAX = 256        # info keeps an 8-bit surface index
 
 
@@ -279,7 +283,7 @@ def main():
     report, spawns, doors, summaries, cameras = [], [], [], [], []
     for index, entry in enumerate(SCENES):
         segments = source.extract(args.oot, args.rom_dir, prefix=entry['prefix'],
-                                  expect=entry['rooms'] + 1)
+                                  expect=entry.get('source_rooms', entry['rooms']) + 1)
         scene = segments[entry['prefix'] + '_scene']
         surfaces = source.collision_surfaces(scene)
         collision = source.collision_data(scene)
@@ -287,8 +291,11 @@ def main():
             collision_file(collision))
         flags = [wall_flags(collision, poly) for poly in collision['polys']]
         first_spawn = len(spawns)
-        for spawn in source.spawn_points(scene):
-            spawns.append(dict(scene=index, **spawn))
+        entrance = source.scene_header(scene)[0x06][0]
+        entrance_at = int.from_bytes(entrance[4:8], 'big') & 0xFFFFFF
+        for spawn_id, spawn in enumerate(source.spawn_points(scene)):
+            room = scene[entrance_at + spawn_id * 2 + 1]
+            spawns.append(dict(scene=index, room=room, **spawn))
         camera = fixed_camera(scene) if entry['shape'] == 'image' else None
         if entry['shape'] == 'image' and not camera:
             report.append('%s is a prerendered room but has no bgCam data; '
@@ -383,6 +390,7 @@ def main():
                '    int16_t  x, y, z;',
                '    uint16_t yaw;         /* binang, straight from the ROM */',
                '    uint8_t  scene;',
+               '    uint8_t  room;        /* source entrance room */',
                '} scene_spawn_t;', '',
                '/* A doorway, as its original collision triangle. XZ decides',
                '   whether Link is standing on it; `y` is the floor height, so',
@@ -416,9 +424,9 @@ def main():
                        summary['spawns'], entry['save'], entry['sfx']))
     body += ['};', '', 'const scene_spawn_t scene_spawns[SCENE_SPAWN_COUNT] = {']
     for spawn in spawns:
-        body.append('    { %d, %d, %d, 0x%04X, %d },'
+        body.append('    { %d, %d, %d, 0x%04X, %d, %d },'
                     % (spawn['x'], spawn['y'], spawn['z'], spawn['yaw'],
-                       spawn['scene']))
+                       spawn['scene'], spawn['room']))
     body += ['};', '', 'const scene_door_t scene_doors[SCENE_DOOR_COUNT] = {']
     for door in doors:
         xs = ','.join(str(x) for x, _ in door['xz'])

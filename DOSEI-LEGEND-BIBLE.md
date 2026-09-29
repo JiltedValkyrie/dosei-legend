@@ -1,5 +1,35 @@
 # Dosei Legend engineering rules
 
+## CD filesystem handles: count overlapping lifetimes (2026-09-29)
+
+Permanent rule for Claude, Codex and every agent. The hut-exit failure showed
+`jo_fs_get_file_size(): GFS_Open() failed` even with only 40% dynamic RAM used.
+Do not diagnose a Jo blue screen as heap or VRAM exhaustion without reading
+the actual error and tracing the failing resource.
+
+- Jo's `JO_MAX_FS_BACKGROUND_JOBS` also determines `JO_OPEN_MAX`, passed to
+  `GFS_Init`. Its default of one is insufficient for this game's music streaming.
+  Keep the project setting at least two; do not restore the SDK default.
+- Music retains an LVL or PCM file handle across rendered frames. Count that
+  handle while opening scene banks, collision, NPCs, cutscene tracks/clips,
+  backdrops or any other asset. Single-threaded calls can still have overlapping
+  handle lifetimes. Two slots cover one music stream plus one asset read.
+- Before adding another retained stream, asynchronous loader or nested file
+  read, trace the maximum simultaneous open handles. Adjust the capacity or
+  explicitly serialize ownership before shipping. Do not merely add retries,
+  suppress errors, or skip required assets/cutscenes.
+- Close each successfully opened handle on every success and failure path.
+  Do not close another subsystem's handle to make a read succeed.
+- Capacity changes must rebuild the SDK filesystem object and pass the target
+  RAM boundary check: extra GFS handles consume Work RAM, not just cart RAM.
+- Run `game/tests/test_fs_handles.py`: the SDK read path must fail with the old
+  one-slot pool and succeed with the configured pool while music remains open.
+  For runtime acceptance, check hut exit/Saria and forest room crossings during
+  a music-bank change. Host tests and a successful build do not prove Kronos.
+- Keep SDK error guards enabled. Preserve the exact error text when reporting
+  another failure; distinguish file-not-found, handle-open, read and allocation
+  failures. Shared SDK stays unchanged; configure it through the project.
+
 ## World coordinates and handedness -- the permanent reference
 
 This is the convention the whole game uses. Get it wrong and the world renders

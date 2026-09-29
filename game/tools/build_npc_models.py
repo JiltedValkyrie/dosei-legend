@@ -52,10 +52,26 @@ class NpcLists(link.LimbLists):
 
 
 SHOPKEEPER = 15    # EnOssan OSSAN_TYPE_KOKIRI: km1 body + masterkokiri head/anim
-MODEL_COUNT = 16
+
+# Saria's greeting cutscene poses. EnSa_HandleCutscene indexes sAnimationInfo1
+# with the actor cue id, so the ids the script actually uses decide this set:
+# gKokiriForestSariaGreetingCs cues 4, 3, 1 and 2. Cue 4 is
+# ENSA_ANIM1_MOVE_ARMS_TO_SIDE, whose clip is gSariaWaitArmsToSideAnim -- model
+# 1 already carries it, so it is not rebuilt here. The other three are separate
+# models sharing model 1's skeleton and textures, loaded only while the
+# greeting plays and freed with it: three clips resident through all of
+# gameplay would cost heap for a cutscene that runs once per file.
+SARIA_CS_CLIPS = {16: 'gSariaLookUpArmExtendedAnim',   # cue 1
+                  17: 'gSariaWaveAnim',                # cue 2
+                  18: 'gSariaRunAnim'}                 # cue 3
+MODEL_COUNT = 19
 
 
 def build(oot, rom_dir, out, model):
+    saria_cs = SARIA_CS_CLIPS.get(model)
+    slot = model           # the NPC<nn> the file is written as
+    if saria_cs:
+        model = 1          # same skeleton, head limb, torso and textures
     ko = model - 2     # 13 = the shopkeeper (never an ENKO_TYPE)
     girl = ko in (1, 5, 6, 9, 10, 12)
     obj = ('object_md' if model == 0 else 'object_sa' if model == 1 else
@@ -69,7 +85,9 @@ def build(oot, rom_dir, out, model):
         head = addresses.index(offsets['gMidoHeadLimb' if model == 0 else 'gSariaHeadLimb'])
         # EnMd MIDO_LIMB_TORSO; EnSa one-based limb 9 (gSariaRightChestLimb).
         torso = addresses.index(offsets['gMidoTorsoLimb']) if model == 0 else 8
-        clip, static = ('gMidoIdleAnim' if model == 0 else 'gSariaWaitArmsToSideAnim'), None
+        clip, static = (saria_cs if saria_cs else
+                        'gMidoIdleAnim' if model == 0 else
+                        'gSariaWaitArmsToSideAnim'), None
         animation_data, animation_offsets = data, offsets
     else:
         head = 14  # EnKo_OverrideLimbDraw's one-based limb 15
@@ -148,7 +166,7 @@ def build(oot, rom_dir, out, model):
         raise ValueError(f'{obj}: unresolved texture/display segments {lists.external_lists}')
     link.apply_primitive_colour(faces)
     faces = link.scale_faces(faces, 0.01)
-    dest = out / ('NPC%02d.BIN' % model)
+    dest = out / ('NPC%02d.BIN' % slot)
     positions, tiles, owners, locals_ = link.write_model(faces, dest, skinned=True)
     source_frames = [static] if static is not None else range(2, 15) if ko == 3 else range(frames)
 
@@ -192,7 +210,7 @@ def build(oot, rom_dir, out, model):
         values += [round(v * .01 * 64) for v in origin]
         tracking += struct.pack('>27h', *values)
     dest.with_suffix('.TRK').write_bytes(tracking)
-    return dict(model=model, object=obj, clip=clip, source_frames=list(source_frames),
+    return dict(model=slot, object=obj, clip=clip, source_frames=list(source_frames),
                 vertices=len(positions), faces=len(faces), tiles=len(tiles),
                 mesh_bytes=dest.stat().st_size, animation_bytes=dest.with_suffix('.ANM').stat().st_size,
                 head=head, head_vertices=sum(owner == head for owner in owners),

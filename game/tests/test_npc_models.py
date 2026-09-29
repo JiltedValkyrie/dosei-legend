@@ -15,9 +15,32 @@ GCC = Path('C:/msys64/mingw64/bin/gcc.exe')
 
 
 class NpcModels(unittest.TestCase):
+    def test_greeting_clips_share_idle_vertex_and_material_order(self):
+        idle = (MODELS / 'NPC01.BIN').read_bytes()
+        header = struct.unpack_from('>8I', idle)
+        for model in (16, 17, 18):
+            data = (MODELS / ('NPC%02d.BIN' % model)).read_bytes()
+            self.assertEqual(struct.unpack_from('>8I', data), header)
+            # Positions change; indices and texture records must not. Runtime
+            # swaps only ANM/TRK and retains the idle polygons and VDP1 bank.
+            self.assertEqual(data[header[5]:], idle[header[5]:])
+
     def test_every_child_model_has_complete_motion_and_tracking(self):
         manifest = json.loads((MODELS / 'manifest.json').read_text())
-        self.assertEqual([r['model'] for r in manifest], list(range(16)))
+        self.assertEqual([r['model'] for r in manifest], list(range(19)))
+        # 16-18 are Saria's greeting-cutscene poses. EnSa_HandleCutscene indexes
+        # sAnimationInfo1 with the actor cue id, so these three must be exactly
+        # the clips cues 1, 2 and 3 of gKokiriForestSariaGreetingCs name -- a
+        # wrong clip here plays a wrong-looking greeting rather than failing.
+        # Cue 4 is model 1's own gSariaWaitArmsToSideAnim, so there is
+        # deliberately no fourth model.
+        greeting = {r['model']: r['clip'] for r in manifest if r['model'] >= 16}
+        self.assertEqual(greeting, {16: 'gSariaLookUpArmExtendedAnim',
+                                    17: 'gSariaWaveAnim',
+                                    18: 'gSariaRunAnim'})
+        for row in manifest:
+            if row['model'] >= 16:
+                self.assertEqual(row['object'], 'object_sa')
         for row in manifest:
             with self.subTest(model=row['model']):
                 stem = MODELS / ('NPC%02d' % row['model'])
@@ -37,7 +60,10 @@ class NpcModels(unittest.TestCase):
                 self.assertLess(max(struct.unpack_from('>%dH' % ticks, motion, 16)), poses)
                 magic, tv, tt, pivot = struct.unpack_from('>4s3I', tracking)
                 self.assertEqual((magic, tv, tt), (b'NTR2', vertices, ticks))
-                self.assertEqual(pivot, 576 if row['model'] == 1 else 768)
+                # The head pivot is the skeleton's, not the clip's: Saria's
+                # greeting models share object_sa with model 1 and so share
+                # its pivot height.
+                self.assertEqual(pivot, 576 if row['object'] == 'object_sa' else 768)
                 flags = tracking[16:16+vertices]
                 self.assertEqual(sum(f & 1 for f in flags), row['head_vertices'])
                 self.assertEqual(sum(f >> 1 & 1 for f in flags), row['torso_vertices'])

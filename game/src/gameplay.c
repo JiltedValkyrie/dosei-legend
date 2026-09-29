@@ -12,6 +12,8 @@
 #include "world_signs.h"
 #include "player_attack.h"
 #include "link_clips.h"
+#include "cutscene.h"
+#include "npc_draw.h"
 
 gameplay_t          gameplay;
 /* Contact colliders (run_contacts: sword, grass, Link, boulder), kept off work RAM. */
@@ -166,8 +168,62 @@ static void update_exit_blocker(const gameplay_input_t *in)
     }
 }
 
+/*
+** Saria's first greeting (En_Sa SARIA_TYPE_GREETING).
+**
+** EnSa_GetType (z_en_sa.c:430-436) picks the greeting over the standing NPC in
+** Kokiri Forest whenever the Kokiri Emerald is not owned and
+** INFTABLE_SARIA_GREETED_LINK is clear -- that one bit is the whole latch.
+** EnSa_Init then installs gKokiriForestSariaGreetingCs into csCtx.script and
+** sets cutsceneTrigger, which is what cutscene_start_in_scene stands in for.
+**
+** Her position, facing and pose come from actor cue channel 1 for as long as
+** it runs, exactly as EnSa_HandleCutscene takes them. When it ends,
+** EnSa_BecomeIdle puts her back on home.pos/initRot and sets the flag -- at
+** the END of the cutscene, not when its text box closes.
+*/
+#define GP_SARIA_CS_CHANNEL GAMEPLAY_SARIA_CUE_CHANNEL
+static kokiri_npc_t saria_live;
+static bool saria_greeting_running;
+/* EnSa_GetType runs ONCE, when the actor spawns. Armed on scene entry and
+** cleared as soon as the greeting starts or the type turns out not to be
+** SARIA_TYPE_GREETING, so a cutscene that cannot start is not retried on
+** every step for the rest of the scene. */
+static bool saria_greeting_armed;
+
+bool gameplay_saria_cutscene(void)
+{
+    return saria_greeting_running;
+}
+
+void gameplay_saria_greeting_cancel(void)
+{
+    saria_greeting_armed = false;
+}
+
+static bool saria_greeting_due(void)
+{
+    return in_forest() && !save_check_quest_item(QUEST_KOKIRI_EMERALD) &&
+           !save_get_inf_table(INFTABLE_SARIA_GREETED_LINK);
+}
+
+static bool forest_saria(int npc)
+{
+    return kokiri_npcs[npc].kind == KOKIRI_NPC_SARIA &&
+           kokiri_npcs[npc].scene == SAVE_SCENE_KOKIRI_FOREST;
+}
+
 static const kokiri_npc_t *npc_at(int npc)
 {
+    if (saria_greeting_running && forest_saria(npc) &&
+        cutscene_actor_channel_visible(GP_SARIA_CS_CHANNEL)) {
+        saria_live = kokiri_npcs[npc];
+        saria_live.x = (int16_t)cutscene_actor_channel_x(GP_SARIA_CS_CHANNEL);
+        saria_live.y = (int16_t)cutscene_actor_channel_y(GP_SARIA_CS_CHANNEL);
+        saria_live.z = (int16_t)cutscene_actor_channel_z(GP_SARIA_CS_CHANNEL);
+        saria_live.yaw = cutscene_actor_channel_yaw(GP_SARIA_CS_CHANNEL);
+        return &saria_live;
+    }
     if (gate_mido(npc)) {
         mido_live = kokiri_npcs[npc];
         mido_live.x = (int16_t)gameplay.mido_x;
@@ -265,6 +321,11 @@ int32_t             gameplay_npc_x(unsigned int npc)
     return npc < KOKIRI_NPC_COUNT ? npc_at((int)npc)->x : 0;
 }
 
+int32_t             gameplay_npc_y(unsigned int npc)
+{
+    return npc < KOKIRI_NPC_COUNT ? npc_at((int)npc)->y : 0;
+}
+
 int32_t             gameplay_npc_z(unsigned int npc)
 {
     return npc < KOKIRI_NPC_COUNT ? npc_at((int)npc)->z : 0;
@@ -288,6 +349,61 @@ void                gameplay_npc_turn(unsigned int npc, uint16_t yaw)
 void                gameplay_npc_turns_reset(void)
 {
     npc_turned = 0;
+}
+
+/*
+** One step of the greeting, run from the gameplay loop.
+**
+** Starting it is EnSa_Init's job (cutsceneTrigger); ending it is
+** EnSa_BecomeIdle's: put her back on home.pos and initRot -- the cue walks her
+** away from both -- and set INFTABLE_SARIA_GREETED_LINK so EnSa_GetType
+** returns SARIA_TYPE_STANDING from here on and the greeting never plays twice.
+**
+** The cutscene clips have to be resident before it starts. If they cannot be
+** loaded the greeting does not start at all, and the flag is left clear so it
+** is retried rather than silently skipped with Saria frozen in her idle pose.
+*/
+bool                gameplay_saria_greeting_step(void)
+{
+    if (saria_greeting_running) {
+        unsigned int cue;
+        if (cutscene_is_playing() && cutscene_id() == CUTSCENE_SARIA_GREETING) {
+            /* EnSa_HandleCutscene's stepTimer: the run cue is the only one
+            ** that puts a foot down, every 8 source frames. */
+            cue = cutscene_actor_channel_cue(GP_SARIA_CS_CHANNEL);
+            if (cue == 3 && (cutscene_frame() % 8) == 0)
+                gameplay.events |= GP_EVENT_FOOTSTEP;
+            return true;
+        }
+        /* EnSa_BecomeIdle. npc_at stops swapping as soon as this clears, so
+        ** her drawn position returns to the kokiri_npcs entry by itself. */
+        saria_greeting_running = false;
+        npc_draw_free_saria_cutscene();
+        save_set_inf_table(INFTABLE_SARIA_GREETED_LINK);
+        return false;
+    }
+    if (!saria_greeting_armed)
+        return false;
+    /* The type is decided once, at spawn: a file that already has the flag or
+    ** the Emerald gets SARIA_TYPE_STANDING and never asks again. */
+    if (!saria_greeting_due()) {
+        saria_greeting_armed = false;
+        return false;
+    }
+    /* Wait for a step that can actually hand the scene over, but keep the arm
+    ** so entering mid-conversation only delays the greeting. */
+    if (cutscene_is_playing() || gameplay.talking || gameplay.paused ||
+        gameplay_blocks_world())
+        return false;
+    saria_greeting_armed = false;
+    if (!npc_draw_load_saria_cutscene())
+        return false;
+    if (!cutscene_start_in_scene(CUTSCENE_SARIA_GREETING)) {
+        npc_draw_free_saria_cutscene();
+        return false;
+    }
+    saria_greeting_running = true;
+    return true;
 }
 
 static void         mido_place(void)
@@ -996,6 +1112,10 @@ void                gameplay_reset(void)
 {
     unsigned int i;
     exit_blocker_valid = false;
+    /* A new scene spawns a new En_Sa, so its type is chosen again here. Any
+    ** greeting still running belonged to the scene being left. */
+    saria_greeting_running = false;
+    saria_greeting_armed = true;
     for (i = 0; i < KOKIRI_NPC_COUNT; ++i)
         if (gate_mido(i)) { mido_yaw = kokiri_npcs[i].yaw; break; }
     gameplay.owned = 0;
@@ -2552,10 +2672,10 @@ static void npc_talk_closed(unsigned int kind, unsigned int text)
         for(i=0;i<sizeof(ko)/sizeof(ko[0]);++i)
             if(ko[i][0]==text) { save_set_inf_table(ko[i][1]); break; }
     } else if(kind == KOKIRI_NPC_SARIA) {
-        /* The greeting camera sequence is still an M3b follow-up. Until it
-         * owns EnSa_Cutscene completion, close its greeting text once rather
-         * than trapping Saria forever on 0x1001. */
-        if(text==0x1001) save_set_inf_table(INFTABLE_SARIA_GREETED_LINK);
+        /* 0x1001 is the greeting cutscene's own text. EnSa_BecomeIdle sets
+         * INFTABLE_SARIA_GREETED_LINK when the cutscene ENDS, not when this box
+         * closes, so gameplay_saria_greeting_step owns that bit and closing
+         * the box here must not set it. */
         if(text==0x1002) save_set_inf_table(INFTABLE_SARIA_NOTICED_FAIRY);
         if(text==0x1031) {
             save_set_event_chk_inf(EVENTCHKINF_SARIA_WAS_TOLD_ABOUT_MIDO);
@@ -2766,6 +2886,11 @@ void                gameplay_step(const gameplay_input_t *in)
     gameplay.baba_events = 0;
     /* Dead: the Game Over flow owns the pad (demo.c steps game_over). */
     if (gameplay.dead)
+        return;
+    /* Saria's greeting takes the scene before the pad does: while it runs
+    ** nothing else in the world steps, the way a cutscene owns the frame in
+    ** the source. It starts itself on the first forest step of a fresh file. */
+    if (gameplay_saria_greeting_step())
         return;
     /* Pause outranks everything, including an open text box: Start freezes the
     ** world wherever it is. Nothing below runs while the menu is up, so no

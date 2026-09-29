@@ -17,7 +17,8 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[2] / 'shared/too
 import build_kokiri_scene as source
 import build_quads as quads
 from vdp1_budget import (Budget, tile_bytes, MAX_POLYGONS, MAX_VERTICES,
-                         RUNTIME_SPRITE_BYTES, FOREST_VRAM_MARGIN)
+                         RUNTIME_SPRITE_BYTES, FOREST_VRAM_MARGIN,
+                         FOREST_ACTOR_BYTES)
 
 OOT_DEFAULT = pathlib.Path('D:/Workspace-Claude/game-decomps/n64/oot')
 
@@ -33,6 +34,15 @@ def load_faces(oot, rom_dir=None, prefix='spot04'):
     for name, data in segments.items():
         if 'room' in name:
             display = source.DisplayLists(segments[prefix + '_scene'], data)
+            if prefix == 'ydan':
+                # Scene_DrawConfigDekuTree binds segment 8 to the day entrance
+                # texture (not a display list). Night is outside this slice.
+                import xml.etree.ElementTree as ET
+                xml = ET.parse(oot / 'assets/xml/scenes/dungeons/ydan.xml')
+                offset = next(int(e.attrib['Offset'], 16) for e in xml.iter('Texture')
+                              if e.attrib['Name'] == 'gDekuTreeDayEntranceTex')
+                display.segments[8] = segments[prefix + '_scene'][offset:]
+
             display.room()
             for face in display.faces:
                 face['room'] = name
@@ -310,6 +320,8 @@ def convert(oot, head, actor, out_dir, patches_only=False, rom_dir=None,
 
     budget = Budget()
     budget.add('link', actor['tiles'], actor['polygons'], actor['vertices'])
+    if prefix == 'spot04':
+        budget.reserve_forest_actors()
     budget.add('shared', [(t['width'], t['height']) for t in tiles.values()], 0, 0)
     if room is not None:
         bakes = refine_room_ground(bakes, pieces, actor)
@@ -349,7 +361,8 @@ def convert(oot, head, actor, out_dir, patches_only=False, rom_dir=None,
     # that is not a tile and spend VRAM the sprite loader was going to need.
     remaining = (budget.vram_limit - sum(tile_bytes(t['width'], t['height'])
                                          for t in tiles.values())
-                 - actor_bytes(actor) - RUNTIME_SPRITE_BYTES - FOREST_VRAM_MARGIN)
+                 - actor_bytes(actor) - RUNTIME_SPRITE_BYTES - FOREST_VRAM_MARGIN
+                 - (FOREST_ACTOR_BYTES if prefix == 'spot04' else 0))
     floors = []
     for i, (group, tile) in enumerate(pieces):
         if flat_surface(group):
@@ -402,6 +415,8 @@ def convert(oot, head, actor, out_dir, patches_only=False, rom_dir=None,
     budget = Budget()
     budget.add('forest', [(t['width'],t['height']) for t in tiles.values()], len(faces), len(positions))
     budget.add('link', actor['tiles'], actor['polygons'], actor['vertices'])
+    if prefix == 'spot04':
+        budget.reserve_forest_actors()
     print(budget.report(), flush=True)
     if budget.failures():
         raise ValueError('; '.join(budget.failures()))

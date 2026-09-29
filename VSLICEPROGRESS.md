@@ -537,3 +537,15 @@ residual push. 265 focused host checks pass; Clean build passes, .bss ends
 0x06083E40 (448 B below SGL with concurrent UI changes). No Kronos run or commit.
 Human review: first-stick sound, text after hurt/rebound, counts, all assignment
 directions on digital/analog pads, save/reload. Preserve concurrent UI edits.
+## 2026-09-29 forest capacity repair
+
+Screenshot follow-up: GFS open-handle exhaustion identified. Music holds one
+handle across frames; project now reserves two. Clean rebuilt, 976 B below SGL;
+host regression reproduces old failure and passes new capacity. Runtime pending.
+Permanent all-agent CD-handle rule added to DOSEI-LEGEND-BIBLE.md.
+
+Clean rebuilt with explicit NPC/prop texture reservation, staged budget gate,
+and atomic actor-bank cache completion. Saria startup now stops gameplay
+catch-up. 213 focused checks pass; minimum forest VRAM spare 33,504 B, high RAM
+gap 1,232 B. First-exit greeting and walking blue-screen fix await Kronos review.
+Existing save greeting flags unchanged. Work uncommitted.

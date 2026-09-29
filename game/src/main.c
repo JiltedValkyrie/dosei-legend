@@ -82,17 +82,22 @@ static bool     text_file_load(const char *name, unsigned int offset, unsigned i
     int         length = 0;
     bool        ok;
 
-    if (!carve)
+    if (!carve) {
+        jo_core_error("%s: no cart carve", name);
         return (false);
+    }
     data = jo_fs_read_file(name, &length);
-    if (!data)
+    if (!data) {
+        jo_core_error("%s: read failed", name);
         return (false);
+    }
     ok = length > 0 && length <= (int)bytes;
     if (ok) {
         memcpy(carve, data, (unsigned int)length);
         ok = bind(carve, (uint32_t)length);
     }
     jo_free(data);
+    if (!ok) jo_core_error("%s: size/header mismatch", name);
     return (ok);
 }
 
@@ -376,15 +381,21 @@ static void         viewer_draw(void)
 #if !defined(DOSEI_PERF_PROBE) || DOSEI_PERF_PROBE != 3
     /* Link has priority over optional actors in SGL's finite work area.
      * Depth sorting still controls occlusion, independent of submission order. */
+    /* The opening cutscenes play in scenes the gameplay actors do not belong
+     * to, so they suppress them. An in-scene cutscene is the opposite case:
+     * it plays inside a live room, and the grass, NPCs and items standing in
+     * that room must keep being drawn or the shot cuts to an empty forest. */
     if (!kokiri_scene_backdrop_active() && !cutscene_hides_scene() &&
-        !cutscene_is_playing() && !scene_flow_is_interior()) {
+        (!cutscene_is_playing() || cutscene_is_in_scene()) &&
+        save_state.scene_id == SAVE_SCENE_KOKIRI_FOREST) {
         kokiri_grass_draw();
         kokiri_rupees_draw(demo_world_clock());
         kokiri_boulder_draw();
         kokiri_nut_draw();
         kokiri_babas_draw();
     }
-    if (demo_link_active && !demo_title_is_visible() && !cutscene_is_playing()) {
+    if (demo_link_active && !demo_title_is_visible() &&
+        (!cutscene_is_playing() || cutscene_is_in_scene())) {
         npc_draw(demo_world_clock());
         kokiri_items_draw(demo_world_clock());
         kokiri_fairies_draw(demo_world_clock());
@@ -1363,7 +1374,6 @@ void                jo_main(void)
 
     /* Dialogue line text: disc file into a fixed cart carve (BUG-033). */
     if (!dialogue_text_load()) {
-        jo_core_error("DIALOG/CUTTEXT/MINIMAP/MUSICTRG/TITLEPTH missing or stale");
         return;
     }
 

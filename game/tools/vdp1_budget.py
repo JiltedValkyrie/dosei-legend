@@ -75,6 +75,12 @@ RUNTIME_SPRITE_SLOTS = sum(n for _, n, _, _, _ in RUNTIME_SPRITES)
 # capacity after all current residents, not a substitute for counting them.
 FOREST_VRAM_MARGIN = 32 * 1024
 
+# Uploaded after the room: world props and the nearby NPC set. These are
+# separate from the safety margin. check_forest_budget validates the actual
+# staged meshes and all visibility-box intersections against this allowance.
+FOREST_ACTOR_BYTES = 64 * 1024
+FOREST_ACTOR_SLOTS = 576
+
 
 def tile_bytes(width, height):
     """Bytes one 4bpp tile costs, CLUT and alignment included."""
@@ -96,6 +102,10 @@ class Budget(object):
         self.parts.append(dict(label=label, bytes=byte_total,
                                tiles=len(tiles),
                                polygons=polygons, vertices=vertices))
+
+    def reserve_forest_actors(self):
+        self.parts.append(dict(label='actors', bytes=FOREST_ACTOR_BYTES,
+                               tiles=FOREST_ACTOR_SLOTS, polygons=0, vertices=0))
 
     @property
     def texture_bytes(self):

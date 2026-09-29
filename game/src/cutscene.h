@@ -6,10 +6,17 @@
 #include "cutscenes.h"
 
 bool            cutscene_start(unsigned int id);
+/* Start a cutscene inside the running scene, loading only its camera
+** track: no scene load, no sound-bank swap, and the music plays on. */
+bool            cutscene_start_in_scene(unsigned int id);
 bool            cutscene_step(bool confirm);
 void            cutscene_skip_shot(void);
 unsigned int    cutscene_shot_key(void);
 bool            cutscene_is_playing(void);
+/* True while an in-scene cutscene is playing, and still true on the
+** frame it finishes: the scene behind it was never unloaded, so the
+** caller resumes gameplay instead of re-entering the world. */
+bool            cutscene_is_in_scene(void);
 bool            cutscene_finished(void);
 unsigned int    cutscene_id(void);
 unsigned int    cutscene_frame(void);
@@ -67,6 +74,8 @@ int32_t         cutscene_actor_channel_x(unsigned int channel);
 int32_t         cutscene_actor_channel_y(unsigned int channel);
 int32_t         cutscene_actor_channel_z(unsigned int channel);
 uint16_t        cutscene_actor_channel_yaw(unsigned int channel);
+/* The channel's raw cue id, which the actor interprets itself. */
+unsigned int    cutscene_actor_channel_cue(unsigned int channel);
 
 bool            cutscene_link_visible(void);
 int32_t         cutscene_link_x(void);

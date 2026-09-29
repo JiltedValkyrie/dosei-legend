@@ -1,4 +1,4 @@
-"""Permanent shot skip: real VBlank input and production seek/cleanup code."""
+﻿"""Permanent shot skip: real VBlank input and production seek/cleanup code."""
 import ctypes
 import os
 from pathlib import Path
@@ -58,6 +58,12 @@ void action_audio_opening_stop(unsigned i) { (void)i; ++stopped; }
 void action_audio_opening_play(unsigned a,unsigned b,bool c) { (void)a;(void)b;(void)c; }
 void save_set_event_chk_inf(unsigned f) { flag=f; }
 static int cutscene_bridge_angle(void) { return -100; }
+/* finish_cutscene's in-scene branch frees the track and hands the mode back
+** instead of reloading the sound bank; the harness watches both. */
+static int mode, track_freed;
+static void jo_free(void *p) { (void)p; ++track_freed; }
+enum { GAME_MODE_PLAY = 1 };
+static void game_mode_set(int m) { mode = m; }
 bool cutscene_step(bool confirm);
 static bool vdp1_wait_for_draw_end(void) { return true; }
 static bool kokiri_scene_load_bank(unsigned a,unsigned b) { (void)a;(void)b;return true; }
@@ -74,7 +80,8 @@ static void step_events(const cutscene_t *cs,bool confirm) {
 void reset(void) { memset(&input,0,sizeof(input)); memset(&state,0,sizeof(state));
  state.track=track; busy=false; state.active=true; state.frame=6; state.applied_frame=5; state.text_cursor=1;
  state.bridge_start=-1; next_id=applied=-1; stopped=freed=restored=flag=cue_steps=0;
- message=true; }
+ mode=track_freed=0; message=true; }
+void set_in_scene(int v) { state.in_scene=v; }
 void set_busy(int b) { busy=b; }
 void at(int id,int frame) { state.id=id; state.frame=frame+1; state.applied_frame=frame; }
 int value(int which) { switch(which) {
@@ -82,6 +89,7 @@ int value(int which) { switch(which) {
  case 3:return freed; case 4:return restored; case 5:return flag;
  case 6:return state.rain; case 7:return state.bridge_start;
  case 8:return cue_steps; case 9:return stopped; case 10:return message;
+ case 20:return mode; case 21:return track_freed; case 22:return state.in_scene;
  default:return state.finished; }}
 '''
         cls.tmp = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
@@ -165,5 +173,25 @@ int value(int which) { switch(which) {
         self.assertEqual(self.lib.value(4),1)
         self.assertNotEqual(self.lib.value(5),0)
         self.assertEqual(self.lib.value(11),1)
+
+    def test_in_scene_finish_keeps_the_scene_and_its_sound_bank(self):
+        """An in-scene cutscene ends by handing the mode back, nothing else.
+
+        The scene, its actors, the action sound bank and the music were never
+        unloaded, so restoring them would reload a room in the middle of
+        gameplay. EVENTCHKINF_DEKU_TREE_INTRO_CS_SEEN belongs to the opening
+        chain and must not be set by a cutscene that just plays inside a room.
+        """
+        self.lib.at(1, 61)
+        self.lib.set_in_scene(1)
+        self.lib.cutscene_skip_shot()
+        self.assertEqual(self.lib.value(3), 0)    # no cutscene_actors_free
+        self.assertEqual(self.lib.value(4), 0)    # ACTIONS.PCM not reloaded
+        self.assertEqual(self.lib.value(5), 0)    # no opening flag written
+        self.assertEqual(self.lib.value(21), 1)   # its track is freed
+        self.assertEqual(self.lib.value(20), 1)   # back to GAME_MODE_PLAY
+        # The flag survives the finish: demo.c reads it on the frame it sees
+        # cutscene_finished() to know the world behind it is still standing.
+        self.assertEqual(self.lib.value(22), 1)
 
 if __name__ == '__main__': unittest.main()

@@ -5,11 +5,13 @@ Status: approved by the human 2026-09-25. **Current work plan for Claude, Astra
 `KOKIRI_VERTICAL_SLICE_PLAN.md` and the scope of `VERTICALSLICE.md`. Keeps the
 architecture, verified gate table and flag research of `OOT_PROGRESSION_PLAN.md`.
 
-Status refresh: **2026-09-28**. Current Clean disc is
-`game/build/game-clean.cue`; BSS ends at `0x06082e50`, leaving **4,528 B below
+Status refresh: **2026-09-29**. Current Clean disc is
+`game/build/game-clean.cue`; latest CD-handle fix BSS ends at `0x06083c30`, leaving **976 B below
 SGL**. M3 code and assets are built. Human confirmed hearts, plant transparency,
 carry animation and on-screen text instructions look good in Kronos. This is
 partial runtime acceptance, not completion of every M3 check.
+Human reports hut-exit behavior improved after the CD-handle fix and approved
+committing/pushing this checkpoint. Full greeting and dungeon review remain open.
 
 Baseline committed as `249cef5`; regression fixes remain uncommitted at this
 refresh. Human authorized Claude to commit them locally and continue required
@@ -17,6 +19,18 @@ M3 work, then M4. No push authorized. BUG-035 peak measurement remains deferred
 P2; outstanding death/save issues retain their existing severity.
 
 ## Co-coding rules
+
+### M5 entry shell / human mesh handoff (2026-09-28)
+
+Astra wired the original forest exit collision to Deku Tree room 0 and its
+return exit to forest spawn 1 / room 1. Only room 0 is registered for gameplay;
+dungeon transitions, actors and progression remain unfinished. Clean build
+passes at `game/build/game-clean.cue`: BSS ends `0x060834b0`, **2,896 B below
+SGL**, including the concurrent Saria work. Kronos entry/return is unverified.
+All 12 Tree rooms plus two boss rooms are exposed to Mesh Workshop.
+Explicit per-room `ROOM_IMPORTS` supports keep/transfer/flat UV modes; visual
+imports leave source collision unchanged. See
+[Deku Mesh Workshop instructions](DEKU_MESH_WORKSHOP.md).
 
 - Human assigns each milestone/task an owner in the table below. An agent only
   starts a task marked with its name; unassigned → ask the human.
@@ -455,6 +469,10 @@ Pause: Items / Equipment / Quest Status (Emerald, hearts pieces) / Map
 Keep it OoT layout, 2D not rotating cube (Saturn cost) — say so in README.
 
 ### M5 — Great Deku Tree dungeon + Gohma
+Human working without an agent: start with [M5 solo guide](M5_SOLO_GUIDE.md)
+and [file/boilerplate/decomp reference](M5_CODE_AND_SOURCE_MAP.md). Read-only
+inventory and room-loading research can proceed while earlier dependencies finish.
+
 - Bg_Treemouth meeting/choice/mouth-opening/ask-again cutscenes; ydan intro cs.
 - Import ydan 12 rooms + ydan_boss 2 rooms with streaming, Door_Shutter (+
   lock-on-clear), En_Holl, dungeon music (seq 24), boss music (27), clear (33).

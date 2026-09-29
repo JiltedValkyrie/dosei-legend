@@ -12,6 +12,9 @@ void actor_mesh_draw_static(actor_mesh_t *mesh, int32_t x, int32_t y, int32_t z,
                             uint16_t yaw);
 bool actor_mesh_upload(actor_mesh_t *mesh);
 bool actor_mesh_load_scroll(actor_mesh_t *mesh, const char *file);
+/* Replace only the clip on a loaded mesh: same geometry, same uploaded
+** tiles, different .ANM/.TRK. `stem` is the file name without extension. */
+bool actor_mesh_swap_clip(actor_mesh_t *mesh, const char *stem);
 void actor_mesh_scroll(actor_mesh_t *mesh, unsigned int frame);
 void actor_mesh_draw(actor_mesh_t *mesh, unsigned int frame,
                      int32_t x, int32_t y, int32_t z, uint16_t yaw,

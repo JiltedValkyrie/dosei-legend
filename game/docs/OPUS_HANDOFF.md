@@ -4234,3 +4234,37 @@ decision to leave forest flight silent for strict source parity.
   and duration at the corresponding SCSP playback rate. Other action sounds
   retain 11025 Hz. Bank now 33,762 bytes with 6,174 sound-RAM bytes spare.
 - User requested no tests/emulator check. Build only; human verifies sound.
+## Codex: forest capacity repair (2026-09-29, uncommitted)
+
+User reports dismissible Jo blue screens while walking and no first-exit Saria
+greeting. Fixed missing NPC/prop allowance in forest baking; full staged check
+now runs before mastering. Keeps 32 KiB spare after 64 KiB / 576 actor slots.
+Actor upper bound is 46,896 B / 522 slots. Upload cache commits only after every
+prop/mask succeeds. Gameplay catch-up stops when Saria takes cutscene ownership.
+All pre-existing shared edits preserved; no commit. Existing greeting code is
+included in the rebuilt Clean image. Old greeted save flags remain unchanged.
+213 focused checks pass. Clean map: BSS 0x06083b30, 1,232 B below SGL. Minimum
+forest spare 33,504 B after reservation. Actual blue-screen text unavailable;
+runtime diagnosis remains provisional. Need fresh-file house exit and forest
+walking/room-change review in Kronos; no runtime acceptance claimed.
+## Codex: screenshot identifies CD handle exhaustion (2026-09-29)
+
+The hut-exit blue screen is jo_fs_get_file_size / GFS_Open failed, not the
+previously repaired texture budget. SDK default allows one open file, while
+music_service retains a streaming handle across frames. Saria and room reads
+can overlap that lifetime. Project makefile now sets JO_MAX_FS_BACKGROUND_JOBS=2
+(also SDK GFS_Init handle capacity). SDK unchanged. New host regression reproduces
+failure at capacity 1 and succeeds at 2 without closing the music handle.
+Human closed Kronos; Clean rebuilt at the existing game-clean.cue. Extra handle
+costs 256 B: BSS ends 0x06083c30, 976 B below SGL. Target boundary check passes;
+12 focused tests pass. Wrapper reports warning stderr as exit 1, but underlying
+build completed mastering and final map validation. Runtime acceptance pending.
+Permanent prevention rule added to DOSEI-LEGEND-BIBLE.md for every agent.
+## Human review and publication approval (2026-09-29)
+
+Human reports the hut-exit behavior seems better after the two-handle CD fix,
+then explicitly authorizes committing and pushing the current checkpoint on dev.
+This is not full Saria/dungeon acceptance. Clean build: BSS 0x06083c30, 976 B
+below SGL. Preserve the accumulated Saria and Deku room-0/import work alongside
+the filesystem/VRAM fixes and permanent Bible rule. Older "uncommitted" entries
+below describe their original checkpoints.

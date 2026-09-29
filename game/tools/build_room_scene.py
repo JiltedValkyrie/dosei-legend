@@ -98,17 +98,23 @@ def emit_rooms(args, head, actor, normal):
             # display-list geometry to convert, so it gets no VDP1 bank. Its
             # backdrop is staged by build_scene_backdrops.py instead.
             continue
-        scene_portals = transitions(args.oot, args.rom_dir, prefix=prefix)
+        scene_portals = transitions(args.oot, args.rom_dir, prefix=prefix) if prefix == 'spot04' else []
         for portal in scene_portals:
             portals.append(dict(portal, scene=scene_id))
         for room_id in range(entry['rooms']):
             room = '%s_room_%d' % (prefix, room_id)
             folder = out / ('s%dr%d' % (scene_id, room_id))
-            _, vertices, faces, tiles = hybrid.convert(
-                args.oot, head, actor, folder, rom_dir=args.rom_dir,
-                quad_obj=args.quad_obj, source_path=args.scene, room=room,
-                prefix=prefix)
-            manifest = json.loads((folder / 'texture_manifest.json').read_text())
+            from room_imports import selected, convert as convert_import
+            override = selected(prefix, room_id)
+            if override:
+                vertices, faces, tiles, manifest = convert_import(override, actor)
+                print('room import:', room, override['obj'], flush=True)
+            else:
+                _, vertices, faces, tiles = hybrid.convert(
+                    args.oot, head, actor, folder, rom_dir=args.rom_dir,
+                    quad_obj=args.quad_obj, source_path=args.scene, room=room,
+                    prefix=prefix)
+                manifest = json.loads((folder / 'texture_manifest.json').read_text())
             if prefix == 'spot04':
                 forest_rooms.append((vertices, faces, tiles))
             mesh, pixels, bounds = pack_room(vertices, faces, tiles,

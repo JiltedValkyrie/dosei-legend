@@ -47,6 +47,10 @@ endif
 # overrun loudly. Standard HUD row 27 shows the live peak (sp).
 JO_MAX_SPRITE = 2400
 
+# The SDK also uses this as GFS_Init's open-file capacity. Music streams keep
+# one handle across frames; scene/cutscene reads need a second handle meanwhile.
+JO_MAX_FS_BACKGROUND_JOBS = 2
+
 # The project-local SGL work area (generated/sglarea.o) is laid out from the
 # top of work RAM downwards and needs .bss to end below its base. The stock
 # 384 KB malloc arena sits in .bss and is nearly unused -- textures are read
@@ -170,6 +174,9 @@ $(MY_OBJS): build/generated/toolchain.stamp makefile
 $(foreach s,$(SRCS),$(eval $(s:.c=.o): $(OBJDIR)/$(notdir $(s:.c=.o))))
 
 %.o: %.c
+
+$(OBJDIR)/fs.o: $(JO_ENGINE_SRC_DIR)/fs.c src/fs_capacity.h | $(OBJDIR)
+	$(CC) $< $(DFLAGS) $(CCFLAGS) $(_CCFLAGS) -include src/fs_capacity.h -MMD -MP -MF $(@:.o=.d) -MT $@ -o $@
 
 $(OBJDIR)/%.o: src/%.c src/video_mode.h | $(OBJDIR)
 	$(CC) $< $(DFLAGS) $(CCFLAGS) $(_CCFLAGS) -MMD -MP -MF $(@:.o=.d) -MT $@ -o $@

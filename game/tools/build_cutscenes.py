@@ -52,6 +52,7 @@ CUTSCENE_PATHS = [
     'overworld/spot00/gHyruleFieldIntroNightmareCs.csdata.inc.c',
     'overworld/spot04/gKokiriForestIntroNaviFlyingCs.csdata.inc.c',
     'indoors/link_home/gLinkHouseIntroWakeUpCs.csdata.inc.c',
+    'overworld/spot04/gKokiriForestSariaGreetingCs.csdata.inc.c',
 ]
 
 # The BGM each cutscene's own scene layer sets, from its
@@ -68,6 +69,13 @@ CUTSCENES = [
     dict(key='NAVI_FLY',  scene='SPOT04',    path=SCENES / CUTSCENE_PATHS[2],
          scene_bgm='NA_BGM_DEKU_TREE_CS'),
     dict(key='WAKE_UP',   scene='LINK_HOME', path=SCENES / CUTSCENE_PATHS[3],
+         scene_bgm=None),
+    # Saria's first greeting. Unlike the opening four this plays inside an
+    # already-loaded Kokiri Forest: En_Sa installs it into csCtx.script itself
+    # (z_en_sa.c EnSa_Init, SARIA_TYPE_GREETING) rather than the scene header
+    # starting it, so the runtime enters it without a scene load or a PCM swap.
+    # spot04's gameplay layer music keeps playing; the script never touches it.
+    dict(key='SARIA_GREETING', scene='SPOT04', path=SCENES / CUTSCENE_PATHS[4],
          scene_bgm=None),
 ]
 

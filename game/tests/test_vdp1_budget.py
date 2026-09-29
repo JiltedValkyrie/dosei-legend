@@ -8,9 +8,22 @@ import unittest
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'tools'))
 import vdp1_budget as budget
+import check_forest_budget
 
 
 class ResidentBudgetTests(unittest.TestCase):
+    def test_actor_reservation_rejects_pre_fix_room(self):
+        b = budget.Budget()
+        b.parts = [dict(bytes=378368 + 8824 + 143 * 32,
+                        tiles=1400 + 143, polygons=0, vertices=0)]
+        self.assertFalse(b.failures())
+        b.reserve_forest_actors()
+        self.assertTrue(any('VDP1 textures' in f for f in b.failures()))
+
+    @unittest.skipUnless((ROOT / 'build/cd/NPC01.BIN').exists(), 'actors not built')
+    def test_staged_forest_includes_props_and_nearby_npcs(self):
+        check_forest_budget.check(ROOT)
+
     def test_rejects_forest_bank_that_failed_after_attention_glows(self):
         # Captured failing S1R0: 369024 pixels, 1400 CLUTs; Link 8824/143.
         b = budget.Budget()

@@ -34,6 +34,13 @@ typedef struct
     /* False when this cutscene's scene is not in the scene table yet, so the
     ** screen is held covered instead of showing an unrelated room. */
     bool              scene_loaded;
+    /* True when the cutscene was entered from inside its own scene, as
+    ** En_Sa does for Saria's greeting: it installs the script into
+    ** csCtx.script and sets cutsceneTrigger instead of the scene header
+    ** starting it (z_en_sa.c EnSa_Init). Nothing is loaded or unloaded --
+    ** the room, its streamed textures, the action sound bank and the
+    ** playing music all stay exactly as gameplay left them. */
+    bool              in_scene;
     cutscene_point_t *track;
     const cutscene_cue_t *player_cue;
     const cutscene_cue_t *actor_cues[10];
@@ -152,19 +159,17 @@ static bool load_track(const cutscene_t *cs)
     return (true);
 }
 
-bool cutscene_start(unsigned int id)
+static const cutscene_t *cutscene_reset(unsigned int id)
 {
     const cutscene_t *cs;
 
     if (id >= CUTSCENE_COUNT)
-        return (false);
+        return ((const cutscene_t *)0);
     if (state.track) {
         jo_free(state.track);
         state.track = 0;
     }
     message_stop();
-    kokiri_opening_cache_free();
-    npc_draw_free();
     cs = &cutscenes[id];
     state.active = false;
     state.finished = false;
@@ -194,10 +199,22 @@ bool cutscene_start(unsigned int id)
     state.text_cursor = 0;
     state.music_cursor = 0;
     state.text_hold_end = 0;
+    state.in_scene = false;
     /* Start covered. The opening's first transition is a fade OUT from black,
     ** so the frames before it are black in the original too. */
     state.fade_alpha = 255;
     state.fade_colour = CUTSCENE_FADE_BLACK;
+    return (cs);
+}
+
+bool cutscene_start(unsigned int id)
+{
+    const cutscene_t *cs = cutscene_reset(id);
+
+    if (!cs)
+        return (false);
+    kokiri_opening_cache_free();
+    npc_draw_free();
     /* The opening starts in silence. link_home's cutscene layer is
     ** SCENE_CMD_SOUND_SETTINGS(..., NA_BGM_GENERAL_SFX) -- ambience only -- so
     ** the title theme stops here rather than playing on under the narration.
@@ -236,6 +253,38 @@ bool cutscene_start(unsigned int id)
     asset_loading("OPENING.PCM");
     if (!action_audio_set_opening(true)) return false;
     asset_loading_done();
+    game_mode_set(GAME_MODE_CUTSCENE);
+    state.active = true;
+    return (true);
+}
+
+/*
+** Start a cutscene inside the scene that is already running.
+**
+** En_Sa's greeting is the case this exists for: EnSa_Init points
+** play->csCtx.script at gKokiriForestSariaGreetingCs and sets cutsceneTrigger,
+** and z_demo begins playback on the next frame. No scene is loaded, no room
+** is swapped, and the scene's own BGM keeps playing -- the greeting script has
+** no CS_START_SEQ or CS_STOP_SEQ at all.
+**
+** So this deliberately skips everything cutscene_start does around the track:
+** the cache frees, the scene bank load, the OPENING.PCM swap and the LOADING
+** screen. Only the baked camera track is read from the disc. Failure leaves
+** gameplay exactly as it was rather than dropping into a half-loaded scene.
+*/
+bool cutscene_start_in_scene(unsigned int id)
+{
+    const cutscene_t *cs = cutscene_reset(id);
+
+    if (!cs)
+        return (false);
+    if (!load_track(cs))
+        return (false);
+    state.in_scene = true;
+    state.scene_loaded = true;
+    /* Nothing covers an in-scene cutscene: it cuts straight from gameplay,
+    ** and its script carries no CS_TRANSITION to clear a black screen with. */
+    state.fade_alpha = 0;
     game_mode_set(GAME_MODE_CUTSCENE);
     state.active = true;
     return (true);
@@ -442,6 +491,17 @@ static void finish_cutscene(const cutscene_t *cs)
     if (cs->destination >= 0) {
         if (!cutscene_start(next))
             state.finished = true;
+    } else if (state.in_scene) {
+        /* The scene, its textures, the action sound bank and the music were
+        ** never disturbed, so there is nothing to restore: hand control back.
+        ** The EVENTCHKINF below belongs to the opening chain and must not be
+        ** set by an in-scene cutscene. The caller owns its own flag, the way
+        ** EnSa_BecomeIdle owns INFTABLE_SARIA_GREETED_LINK. */
+        if (state.track) { jo_free(state.track); state.track = 0; }
+        /* in_scene stays set: the caller reads it on the frame it sees
+        ** cutscene_finished(), to know gameplay is still standing behind the
+        ** cutscene and must not be reloaded. cutscene_reset clears it. */
+        game_mode_set(GAME_MODE_PLAY);
     } else {
         cutscene_actors_free();
         asset_loading("ACTIONS.PCM");
@@ -542,7 +602,10 @@ bool cutscene_step(bool confirm)
     if (!state.active || state.id >= CUTSCENE_COUNT)
         return (false);
     cs = &cutscenes[state.id];
-    if (cs->scene == CUTSCENE_SCENE_SPOT04 &&
+    /* Navi's flight streams a room bank per 100 camera frames. An in-scene
+    ** cutscene plays in the room gameplay already has loaded; reloading bank 2
+    ** under it would replace the live room's textures mid-shot. */
+    if (cs->scene == CUTSCENE_SCENE_SPOT04 && !state.in_scene &&
         state.frame / 100 != state.scenery_bank) {
         /* Wait for the previous VDP1 draw before replacing its textures. */
         if (!vdp1_wait_for_draw_end()) return true;
@@ -585,6 +648,11 @@ bool cutscene_step(bool confirm)
 bool cutscene_is_playing(void)
 {
     return (state.active);
+}
+
+bool cutscene_is_in_scene(void)
+{
+    return (state.in_scene);
 }
 
 bool cutscene_finished(void)
@@ -722,6 +790,20 @@ int32_t cutscene_actor_channel_y(unsigned int channel)
 int32_t cutscene_actor_channel_z(unsigned int channel)
 {
     return current_actor_cue(channel) ? state.actor_pos[channel][2] : 0;
+}
+
+/*
+** The raw cue id for a channel.
+**
+** EnSa_HandleCutscene uses it as the index into sAnimationInfo1[] and gates
+** its footstep sfx on id 3, so the actor needs the id itself, not a clip we
+** have already mapped for Link.
+*/
+unsigned int cutscene_actor_channel_cue(unsigned int channel)
+{
+    const cutscene_cue_t *cue = current_actor_cue(channel);
+
+    return (cue ? cue->id : 0);
 }
 
 uint16_t cutscene_actor_channel_yaw(unsigned int channel)

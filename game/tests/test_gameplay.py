@@ -1,4 +1,4 @@
-"""Drive the real gameplay.c: chest, wonder rupees, Mido, equip, targeting, swing window, cutting.
+﻿"""Drive the real gameplay.c: chest, wonder rupees, Mido, equip, targeting, swing window, cutting.
 
 Compiled and called through ctypes rather than reimplemented, so a rule that
 changes in C changes here too.
@@ -113,19 +113,27 @@ class Gameplay(unittest.TestCase):
         self.lib.gp_c_up(0)
         self.lib.gp_navi_timer_set(0)
         self.lib.gp_go_reset()
-        self.lib.gameplay_reset()
+        self.lib.gp_saria_cs_reset()
+        self.lib.gp_reset_no_greeting()
         self.lib.gp_room(0)
+        # A fresh forest file is a file Saria has not greeted yet, so En_Sa
+        # spawns as SARIA_TYPE_GREETING and its cutscene owns the first step of
+        # the scene. That is the real behaviour and has its own tests below;
+        # every other test wants the ordinary walking-around forest. Decline
+        # the greeting rather than setting its flag: the flag also changes
+        # which line Saria says, which several tests below check.
+        self.lib.gp_saria_greeting_cancel()
 
     def test_interior_people_have_dialogue_and_no_forest_targets(self):
         for scene, expected in ((4,1),(6,3),(7,1),(5,0),(8,0),(9,0)):
             self.lib.gp_scene(scene)
-            self.lib.gameplay_reset()
+            self.lib.gp_reset_no_greeting()
             present = [i for i in range(self.lib.gp_npc_count()) if self.lib.gp_npc_present(i)]
             self.assertEqual(len(present),expected)
             for i in present:
                 self.assertEqual(self.lib.gp_npc_scene(i),scene)
                 self.assertGreater(self.talk_to(i),0)
-                self.lib.gameplay_reset()
+                self.lib.gp_reset_no_greeting()
 
     # --- helpers ---------------------------------------------------------
     def pickup(self, index):
@@ -238,12 +246,12 @@ class Gameplay(unittest.TestCase):
         for _ in range(20): self.step(gx,gy,gz)
         carried = self.lib.gp_rupees()
         self.assertGreater(carried, 0)
-        self.lib.gameplay_reset()
+        self.lib.gp_reset_no_greeting()
         self.assertEqual(self.lib.gp_rupees(), carried)
         # The uncut-grass drop itself is volatile, so it does go.
         self.assertEqual(self.lib.gp_drop(0), 0)
         self.lib.save_new_game()
-        self.lib.gameplay_reset()
+        self.lib.gp_reset_no_greeting()
         self.assertEqual(self.lib.gp_rupees(), 0)
         self.assertFalse(self.lib.gameplay_rupee_taken(0))
 
@@ -948,7 +956,7 @@ class Gameplay(unittest.TestCase):
 
     def test_no_hint_outside_the_forest(self):
         self.lib.gp_scene(5)
-        self.lib.gameplay_reset()
+        self.lib.gp_reset_no_greeting()
         self.lib.gp_navi_timer_set(700)
         self.step(*self.SPOT)
         self.assertEqual(0, self.lib.gp_navi_text())
@@ -974,7 +982,7 @@ class Gameplay(unittest.TestCase):
 
     def test_scene_change_resets_a_short_timer(self):
         self.lib.gp_navi_timer_set(1200)
-        self.lib.gameplay_reset()
+        self.lib.gp_reset_no_greeting()
         self.assertEqual(0, self.lib.gp_navi_timer())
 
     # --- dialogue --------------------------------------------------------
@@ -1010,7 +1018,7 @@ class Gameplay(unittest.TestCase):
         """A multi-page speaker must need one press per page."""
         for index in range(self.lib.gp_npc_total()):
             x, y, z = self.talk_spot(index)
-            self.lib.gameplay_reset()
+            self.lib.gp_reset_no_greeting()
             self.step(x, y, z, yaw=0)
             self.step(x, y, z, yaw=0, interact=1)
             if self.lib.gp_talking() and self.lib.gp_page_lines():
@@ -1059,7 +1067,7 @@ class Gameplay(unittest.TestCase):
     def test_two_speakers_give_different_conversations(self):
         seen = set()
         for index in range(self.lib.gp_npc_total()):
-            self.lib.gameplay_reset()
+            self.lib.gp_reset_no_greeting()
             x, y, z = self.talk_spot(index)
             self.step(x, y, z, yaw=0)
             self.step(x, y, z, yaw=0, interact=1)
@@ -1073,7 +1081,7 @@ class Gameplay(unittest.TestCase):
         for index in range(self.lib.gp_npc_total()):
             if self.lib.gp_npc_kind(index) != 0:    # KOKIRI_NPC_CHILD
                 continue
-            self.lib.gameplay_reset()
+            self.lib.gp_reset_no_greeting()
             x, y, z = self.talk_spot(index)
             self.step(x, y, z, yaw=0)
             self.step(x, y, z, yaw=0, interact=1)
@@ -1305,7 +1313,7 @@ class Gameplay(unittest.TestCase):
             x, y, z, _ = self.pickup(index)
             self.step(x, y, z)
         self.assertEqual(GP_SWORD | GP_SHIELD, self.lib.gp_owned())
-        self.lib.gameplay_reset()
+        self.lib.gp_reset_no_greeting()
         self.assertEqual(GP_SWORD | GP_SHIELD, self.lib.gp_owned())
         self.assertEqual(GP_SWORD | GP_SHIELD, self.lib.gp_equipped())
         self.assertTrue(self.lib.save_mido_demands_met())
@@ -1315,7 +1323,7 @@ class Gameplay(unittest.TestCase):
         self.lib.gp_room(room)
         self.step(x, y, z)
         self.assertEqual(value, self.lib.gp_rupees())
-        self.lib.gameplay_reset()
+        self.lib.gp_reset_no_greeting()
         self.lib.gp_room(room)
         self.assertEqual(value, self.lib.gp_rupees())
         # Source flag 0x24 is temporary: scene reload respawns this green.
@@ -1329,7 +1337,7 @@ class Gameplay(unittest.TestCase):
             x, y, z, _ = self.pickup(index)
             self.step(x, y, z)
         self.lib.save_new_game()
-        self.lib.gameplay_reset()
+        self.lib.gp_reset_no_greeting()
         self.assertEqual(0, self.lib.gp_owned())
         self.assertEqual(0, self.lib.gp_equipped())
         self.assertEqual(0, self.lib.gp_rupees())
@@ -1340,7 +1348,7 @@ class Gameplay(unittest.TestCase):
         saves, so regrowing across a reload is the original's behaviour."""
         gx, gy, gz = self.spawn_grass_rupee()
         self.assertTrue(self.lib.gameplay_grass_cut(0))
-        self.lib.gameplay_reset()
+        self.lib.gp_reset_no_greeting()
         self.assertFalse(self.lib.gameplay_grass_cut(0))
 
     def test_gear_survives_an_actual_save_and_reload(self):
@@ -1366,11 +1374,11 @@ class Gameplay(unittest.TestCase):
 
         # Everything gone, as it is after a return to the title.
         self.lib.save_new_game()
-        self.lib.gameplay_reset()
+        self.lib.gp_reset_no_greeting()
         self.assertEqual(0, self.lib.gp_owned())
 
         self.assertEqual(0, self.lib.gp_save_unpack(bytes(block.raw), SAVE_FILE_BYTES))
-        self.lib.gameplay_reset()           # entering the scene, as on load
+        self.lib.gp_reset_no_greeting()           # entering the scene, as on load
         self.lib.gp_room(room)
 
         self.assertEqual(GP_SWORD | GP_SHIELD, self.lib.gp_owned())
@@ -1386,7 +1394,7 @@ class Gameplay(unittest.TestCase):
 
     def forest(self, room=0):
         self.lib.gp_scene(self.SAVE_SCENE_KOKIRI_FOREST)
-        self.lib.gameplay_reset()
+        self.lib.gp_reset_no_greeting()
         self.lib.gp_room(room)
 
     def chest(self):
@@ -1408,7 +1416,7 @@ class Gameplay(unittest.TestCase):
         import math
         for i, reward in ((1, 5), (2, 5), (3, 1), (4, 0)):
             self.lib.gp_scene(8)
-            self.lib.gameplay_reset()
+            self.lib.gp_reset_no_greeting()
             self.lib.gp_room(0)
             vals = [ctypes.c_int() for _ in range(5)]
             self.lib.gp_chest_at(i, *(ctypes.byref(v) for v in vals))
@@ -1420,7 +1428,7 @@ class Gameplay(unittest.TestCase):
             self.assertTrue(self.lib.gp_chest_flag(i))
             self.assertFalse(self.lib.save_get_treasure(0, i-1))
             self.assertEqual(before+reward, self.lib.gp_rupees())
-            self.lib.gameplay_reset()
+            self.lib.gp_reset_no_greeting()
             self.lib.gp_step_full(px,y,pz,yaw,0,0,0,1,1,0,0,0)
             self.assertEqual(before+reward,self.lib.gp_rupees())
 
@@ -1430,7 +1438,7 @@ class Gameplay(unittest.TestCase):
             self.lib.gp_world_prop_at(i,*(ctypes.byref(x) for x in v))
             x,y,z,aid,scene,param=(x.value for x in v)
             if aid==kind:
-                self.lib.gp_scene(scene);self.lib.gameplay_reset();self.lib.gp_actors_reap()
+                self.lib.gp_scene(scene);self.lib.gp_reset_no_greeting();self.lib.gp_actors_reap()
                 self.lib.gp_room(self.lib.gp_world_prop_room(i))
                 self.step(x,y,z-35)
                 return i,x,y,z,param
@@ -1481,7 +1489,7 @@ class Gameplay(unittest.TestCase):
     def test_all_signs_read_their_authored_text(self):
         import math
         for i in range(self.lib.gp_sign_count()):
-            self.lib.gameplay_reset();self.lib.gp_actors_reap()
+            self.lib.gp_reset_no_greeting();self.lib.gp_actors_reap()
             v=[ctypes.c_int() for _ in range(6)]
             self.lib.gp_sign_at(i,*(ctypes.byref(x) for x in v))
             x,y,z,yaw,room,text=(a.value for a in v)
@@ -1499,7 +1507,7 @@ class Gameplay(unittest.TestCase):
         for _ in range(20): self.step(x,y,z-35)
         self.assertNotEqual(0x7FF,self.lib.gp_sign_parts(0))
         self.assertGreater(self.lib.gp_piece_count(),0)
-        self.lib.gameplay_reset()
+        self.lib.gp_reset_no_greeting()
         self.assertEqual(0x7FF,self.lib.gp_sign_parts(0))
         self.assertEqual(0,self.lib.gp_piece_count())
 
@@ -1522,20 +1530,98 @@ class Gameplay(unittest.TestCase):
         self.assertTrue(self.lib.save_get_inf_table(0xB7))
         self.assertEqual(0x10D8,self.talk_to(fado))
 
-    def test_saria_greeting_then_fairy_line_advance_on_close(self):
-        saria=next(i for i in range(self.lib.gp_npc_count()) if self.lib.gp_npc_kind(i)==2 and self.lib.gp_npc_scene(i)==0)
-        self.assertEqual(0x1001,self.talk_to(saria))
-        x,y,z=self.talk_spot(saria)
-        self.step(x,y,z,cancel=1)
-        self.assertTrue(self.lib.save_get_inf_table(0))
-        self.assertEqual(0x1002,self.talk_to(saria))
-        self.step(x,y,z,cancel=1)
+    def saria(self):
+        return next(i for i in range(self.lib.gp_npc_count())
+                    if self.lib.gp_npc_kind(i) == 2 and self.lib.gp_npc_scene(i) == 0)
+
+    def test_saria_fairy_line_advances_on_close(self):
+        """Her spoken lines after the greeting, from EnSa_UpdateTalkState.
+
+        0x1001 is the greeting cutscene's own text and is not reached by
+        walking up to her, so this starts from a file that has already been
+        greeted -- which is exactly what INFTABLE_SARIA_GREETED_LINK means.
+        """
+        saria = self.saria()
+        self.lib.save_set_inf_table(0)          # INFTABLE_SARIA_GREETED_LINK
+        self.assertEqual(0x1002, self.talk_to(saria))
+        x, y, z = self.talk_spot(saria)
+        self.step(x, y, z, cancel=1)
         self.assertTrue(self.lib.save_get_inf_table(1))
-        self.assertEqual(0x1003,self.talk_to(saria))
+        self.assertEqual(0x1003, self.talk_to(saria))
+
+    def test_closing_the_greeting_box_does_not_set_the_greeted_flag(self):
+        """EnSa_BecomeIdle owns that flag, and only at the end of the cutscene.
+
+        The interim this replaces set it when the 0x1001 box closed, which let
+        a file skip the greeting entirely by talking past it.
+        """
+        saria = self.saria()
+        self.assertEqual(0x1001, self.talk_to(saria))
+        self.step(*self.talk_spot(saria), cancel=1)
+        self.assertFalse(self.lib.save_get_inf_table(0))
+
+    def test_greeting_runs_once_per_file_and_ends_by_setting_its_flag(self):
+        """EnSa_Init starts it at spawn; EnSa_BecomeIdle closes it out.
+
+        The type is chosen once, so a greeting that has been declined or
+        already seen is not retried on every step for the rest of the scene.
+        """
+        self.lib.gameplay_reset()               # arms it, as scene entry does
+        self.assertTrue(self.lib.gp_saria_greeting_step())
+        self.assertTrue(self.lib.gp_saria_cs_playing())
+        self.assertTrue(self.lib.gp_saria_cs_meshes())
+        self.assertTrue(self.lib.gp_saria_cs_running())
+        self.assertFalse(self.lib.save_get_inf_table(0))
+        # The script runs out: the flag is written and the clips are freed.
+        self.lib.gp_saria_cs_end()
+        self.assertFalse(self.lib.gp_saria_greeting_step())
+        self.assertTrue(self.lib.save_get_inf_table(0))
+        self.assertFalse(self.lib.gp_saria_cs_meshes())
+        self.assertFalse(self.lib.gp_saria_cs_running())
+        # Re-entering the scene does not play it again.
+        self.lib.gameplay_reset()
+        self.assertFalse(self.lib.gp_saria_greeting_step())
+        self.assertFalse(self.lib.gp_saria_cs_playing())
+
+    def test_greeting_moves_saria_by_her_cue_and_returns_her_home(self):
+        """EnSa_HandleCutscene takes her position and facing from cue channel 1.
+
+        Her home is a long way from where the cue puts her, so drawing her at
+        the placement instead of the cue would leave the shot empty.
+        """
+        saria = self.saria()
+        home = (self.lib.gp_npc_x(saria), self.lib.gp_npc_y(saria),
+                self.lib.gp_npc_z(saria))
+        self.lib.gameplay_reset()
+        self.assertTrue(self.lib.gp_saria_greeting_step())
+        self.lib.gp_saria_cs_cue(3, 80, -7, 0, 409, 0x4000)
+        self.assertEqual((self.lib.gp_npc_x(saria), self.lib.gp_npc_y(saria),
+                          self.lib.gp_npc_z(saria)), (-7, 0, 409))
+        self.assertEqual(self.lib.gp_npc_yaw(saria), 0x4000)
+        # EnSa_BecomeIdle puts her back on home.pos and initRot.
+        self.lib.gp_saria_cs_end()
+        self.lib.gp_saria_greeting_step()
+        self.assertEqual((self.lib.gp_npc_x(saria), self.lib.gp_npc_y(saria),
+                          self.lib.gp_npc_z(saria)), home)
+
+    def test_greeting_does_not_start_when_its_clips_cannot_load(self):
+        """Without them she would stand in her idle pose through her own shot.
+
+        The flag stays clear so the greeting is retried on the next entry
+        rather than being silently skipped for the rest of the file.
+        """
+        self.lib.gp_saria_cs_fail_meshes(1)
+        self.lib.gameplay_reset()
+        self.assertFalse(self.lib.gp_saria_greeting_step())
+        self.assertFalse(self.lib.gp_saria_cs_playing())
+        self.assertFalse(self.lib.save_get_inf_table(0))
+        self.lib.gp_saria_cs_fail_meshes(0)
+        self.lib.gameplay_reset()
+        self.assertTrue(self.lib.gp_saria_greeting_step())
 
     def test_heart_chest_still_opens_when_health_is_full(self):
         import math
-        self.lib.gp_scene(8);self.lib.gameplay_reset()
+        self.lib.gp_scene(8);self.lib.gp_reset_no_greeting()
         vals=[ctypes.c_int() for _ in range(5)]
         self.lib.gp_chest_at(4,*(ctypes.byref(v) for v in vals))
         x,y,z,yaw,room=(v.value for v in vals)
@@ -1551,14 +1637,14 @@ class Gameplay(unittest.TestCase):
             self.lib.gp_world_prop_at(i,*(ctypes.byref(v) for v in vals))
             x,y,z,aid,scene,param=(v.value for v in vals)
             if aid!=0x15: continue
-            self.lib.gp_scene(scene);self.lib.gameplay_reset();self.lib.gp_room(0)
+            self.lib.gp_scene(scene);self.lib.gp_reset_no_greeting();self.lib.gp_room(0)
             self.lib.save_damage(16)
             before=self.lib.gp_rupees()
             self.step(x,y,z)
             if ((param>>8)&63) < 32:
                 self.assertTrue(self.lib.save_get_collectible(scene,(param>>8)&63))
             self.assertEqual(before,self.lib.gp_rupees())
-            self.lib.gameplay_reset();self.step(x,y,z)
+            self.lib.gp_reset_no_greeting();self.step(x,y,z)
             self.assertEqual(before,self.lib.gp_rupees())
 
     def test_sword_chest_is_the_source_maze_chest(self):
@@ -1586,7 +1672,7 @@ class Gameplay(unittest.TestCase):
         self.assertEqual(self.lib.gp_chest_prompt(), -1)
         self.step(x, y, z - 25, yaw=0, interact=1)
         self.assertFalse(self.lib.gp_events() & GP_EVENT_PICKUP)
-        self.lib.gameplay_reset()                        # reload the scene
+        self.lib.gp_reset_no_greeting()                        # reload the scene
         self.assertTrue(self.lib.gameplay_chest_opened(0))
         self.assertEqual(self.lib.gp_owned(), GP_SWORD)
 
@@ -1623,7 +1709,7 @@ class Gameplay(unittest.TestCase):
         self.step(w['x'], w['y'], w['z'])
         paid = self.lib.gp_rupees()
         self.assertEqual(paid, 5)
-        self.lib.gameplay_reset(); self.lib.gp_room(0)
+        self.lib.gp_reset_no_greeting(); self.lib.gp_room(0)
         self.step(w['x'], w['y'], w['z'])
         self.assertEqual(self.lib.gp_rupees(), paid)
 
@@ -1742,7 +1828,7 @@ class Gameplay(unittest.TestCase):
             self.step(1000, 0, -1000)
         self.assertEqual(self.lib.gp_mido_state(), 2)
         self.assertEqual((self.lib.gp_mido_x(), self.lib.gp_mido_z()), (1412, 211))
-        self.lib.gameplay_reset()                       # later visit
+        self.lib.gp_reset_no_greeting()                       # later visit
         self.assertEqual((self.lib.gp_mido_x(), self.lib.gp_mido_z()), (1412, 211))
     # --- Kokiri Shop: the 40-rupee Deku Shield ------------------------------
     SAVE_SCENE_KOKIRI_SHOP = 4
@@ -1750,7 +1836,7 @@ class Gameplay(unittest.TestCase):
 
     def shop(self, rupees):
         self.lib.gp_scene(self.SAVE_SCENE_KOKIRI_SHOP)
-        self.lib.gameplay_reset()
+        self.lib.gp_reset_no_greeting()
         self.lib.gp_room(0)
         self.lib.gp_wallet(rupees)
 
@@ -1959,13 +2045,13 @@ class Gameplay(unittest.TestCase):
         self.lib.gp_save_pack(block)
         self.lib.save_new_game()
         self.assertEqual(0, self.lib.gp_save_unpack(bytes(block.raw), SAVE_FILE_BYTES))
-        self.lib.gameplay_reset()
+        self.lib.gp_reset_no_greeting()
         self.assertEqual(self.lib.gp_owned(), GP_SHIELD)
         self.assertEqual(self.lib.gp_rupees(), 5)
 
     def test_shopkeeper_is_only_in_the_shop(self):
         self.lib.gp_scene(self.SAVE_SCENE_KOKIRI_FOREST)
-        self.lib.gameplay_reset()
+        self.lib.gp_reset_no_greeting()
         self.shop_step()
         self.assertFalse(self.lib.gp_shop_prompt())
 
@@ -1979,7 +2065,7 @@ class Gameplay(unittest.TestCase):
         while self.lib.gp_talking():
             self.step(x, y, z - 25, yaw=0, interact=1)
         self.lib.gp_scene(self.SAVE_SCENE_KOKIRI_SHOP)
-        self.lib.gameplay_reset()
+        self.lib.gp_reset_no_greeting()
         self.lib.gp_room(0)
         self.assertEqual(self.lib.gp_rupees(), purse)
         self.to_choice()
@@ -1990,7 +2076,7 @@ class Gameplay(unittest.TestCase):
         self.assertEqual(self.lib.gp_rupees(), purse - 40)
         self.assertEqual(self.lib.gp_owned(), GP_SWORD | GP_SHIELD)
         self.lib.gp_scene(self.SAVE_SCENE_KOKIRI_FOREST)
-        self.lib.gameplay_reset()
+        self.lib.gp_reset_no_greeting()
         self.lib.gp_room(0)
         self.assertNotEqual(self.talk_mido(), 0x1033)      # owned, not equipped
         for slot in (0, 1):                               # pause screen equip
@@ -2200,7 +2286,7 @@ class Gameplay(unittest.TestCase):
         """Link's house (scene 5) sits over forest coordinates."""
         x, y, z = self.npc(0)[:3]
         self.lib.gp_scene(5)
-        self.lib.gameplay_reset()
+        self.lib.gp_reset_no_greeting()
         for yaw in range(0, 65536, 8192):
             self.step(x, y, z - 30, yaw=yaw)
             self.assertEqual(self.lib.gp_prompt(), -1, yaw)

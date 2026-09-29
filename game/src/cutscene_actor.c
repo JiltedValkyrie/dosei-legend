@@ -435,6 +435,73 @@ actor_mesh_t *actor_mesh_load(const char *file)
     return mesh;
 }
 
+/*
+** Swap the clip on a mesh that is already loaded and uploaded.
+**
+** Saria's greeting poses are the same model as her idle -- same skeleton, same
+** vertices, same 78 texture tiles -- and differ only in which animation plays.
+** Loading them as separate meshes cost three more uploads of identical tiles,
+** which is what filled the VDP1 bank and starved the world props at 99% VRAM.
+** Only the .ANM and .TRK change here; points, polygons, attributes and the
+** uploaded tiles are left exactly as they are, so nothing re-uploads.
+**
+** The vertex count is what makes this safe: a clip built for a different
+** skeleton fails the CVA1/NTR2 checks and the old clip is kept, rather than
+** posing the mesh with someone else's motion.
+*/
+bool actor_mesh_swap_clip(actor_mesh_t *mesh, const char *stem)
+{
+    char name[13];
+    unsigned char *animation = 0, *tracking = 0;
+    unsigned int vertices, poses, ticks, flags, n, stem_len = 0;
+    int length = 0;
+
+    if (!mesh || !mesh->loaded || !mesh->animation) return false;
+    vertices = (unsigned int)mesh->pdata.nbPoint;
+    while (stem[stem_len] && stem_len < 8) { name[stem_len] = stem[stem_len]; ++stem_len; }
+    name[stem_len] = '.'; name[stem_len+1] = 'A';
+    name[stem_len+2] = 'N'; name[stem_len+3] = 'M'; name[stem_len+4] = 0;
+    asset_loading(name);
+    animation = (unsigned char *)jo_fs_read_file(name, &length);
+    if (!animation || length < 16 || read_be32(animation) != 0x43564131u ||
+        read_be32(animation + 4) != vertices)
+        goto reject;
+    poses = read_be32(animation + 8);
+    ticks = read_be32(animation + 12);
+    if (!poses || poses > 1024 || !ticks || ticks > 1024 ||
+        (unsigned int)length != 16 + ticks * 2 + poses * vertices * 6)
+        goto reject;
+    for (n = 0; n < ticks; ++n)
+        if (read_be16(animation + 16 + n * 2) >= poses) goto reject;
+
+    name[stem_len+1] = 'T'; name[stem_len+2] = 'R'; name[stem_len+3] = 'K';
+    asset_loading(name);
+    tracking = (unsigned char *)jo_fs_read_file(name, &length);
+    flags = (vertices + 3) & ~3u;
+    if (!tracking || length < 16 || read_be32(tracking) != 0x4e545232u ||
+        read_be32(tracking + 4) != vertices || read_be32(tracking + 8) != ticks ||
+        (read_be32(tracking + 12) != 576 && read_be32(tracking + 12) != 768) ||
+        (unsigned int)length != 16 + flags + ticks * 54)
+        goto reject;
+    for (n = 0; n < vertices; ++n)
+        if (tracking[16 + n] > 3) goto reject;
+
+    jo_free(mesh->animation);
+    jo_free(mesh->tracking);
+    mesh->animation = animation;
+    mesh->tracking = tracking;
+    mesh->poses = poses;
+    mesh->ticks = ticks;
+    asset_loading_done();
+    return true;
+
+reject:
+    if (animation) jo_free(animation);
+    if (tracking) jo_free(tracking);
+    asset_loading_done();
+    return false;
+}
+
 /* Animated prop: original baked clip, no NPC head/torso tracking. */
 actor_mesh_t *actor_mesh_load_animated(const char *file)
 {

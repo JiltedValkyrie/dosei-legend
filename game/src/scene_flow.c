@@ -29,7 +29,7 @@ static bool         door_armed;
 ** triangles, per-triangle surface info, raw SurfaceTypes, water boxes and
 ** bgCams. Reused across scenes so a transition does not fragment the arena;
 ** sized for the largest set the format allows, checked at load time. */
-#define SCENE_COLLISION_MAX   2048  /* triangles; spot04 has 1692 */
+#define SCENE_COLLISION_MAX   2321  /* ydan source scene; allocated dynamically */
 #define SCENE_COLLISION_BYTES \
     (SCENE_COLLISION_MAX * (36 + 2) + 256 * 8 + 64 * 16 + 64 * 8 + 512 * 6)
 static void                 *collision_buffer;
@@ -194,6 +194,7 @@ bool            scene_flow_load(unsigned int scene, unsigned int spawn)
     if (scene >= SCENE_COUNT)
         return (false);
     entry = &scene_entries[scene];
+    if (scene_flow_spawn(scene, spawn)->room >= entry->rooms) return false;
     npc_draw_free();
     if (!collision_load(scene))
         return (false);
@@ -203,7 +204,7 @@ bool            scene_flow_load(unsigned int scene, unsigned int spawn)
               kokiri_scene_load_bank(4, scene)))
             return (false);
     } else {
-        if (!kokiri_scene_load_bank(scene, 0))
+        if (!kokiri_scene_load_bank(scene, scene_flow_spawn(scene, spawn)->room))
             return (false);
     }
     /* Area SFX follow the scene. A failed bank load leaves those sounds

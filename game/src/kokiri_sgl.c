@@ -772,6 +772,7 @@ static bool room_load_bank(unsigned int scene, unsigned int room)
     for (i=0;i<forest_tile_count;++i) tile_fog[i] = 255;
     forest_prepared = false;
     forest_room = (int)room;
+    requested_room = (int)room;
     forest_scene = (unsigned char)scene;
     forest_far_current = scene == KOKIRI_FIELD_SCENE ? FIELD_FAR :
                          (scene == 2 ? 2620 : FOREST_FAR_DEFAULT);
@@ -852,7 +853,9 @@ bool kokiri_scene_update(void)
     ** stream for. */
     if (cutscene_is_playing()) { room_gameplay = false; return true; }
     if (!demo_link_active || demo_title_is_visible() || backdrop_active || forest_scene == 4) { room_gameplay = false; return true; }
-    if (!room_gameplay) { target = 0; room_gameplay = true; }
+    /* M5 entry shell keeps room 0 resident. Forest portals do not belong here. */
+    if (forest_scene != SCENE_SPOT04) { room_gameplay = false; return true; }
+    if (!room_gameplay) { target = forest_room; room_gameplay = true; }
     for (i=0;i<KOKIRI_PORTAL_COUNT;++i) {
         const kokiri_portal *p = &kokiri_portals[i];
         int32_t sine,cosine;

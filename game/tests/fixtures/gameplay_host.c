@@ -502,3 +502,78 @@ int gp_baba_spawn(int i) { const karebaba_t *b = karebaba_at(i); return b ? b->s
 
 int gp_npc_scene(int i) { return kokiri_npcs[i].scene; }
 int gp_npc_present(int i) { return gameplay_npc_present(i); }
+
+/*
+** Saria's greeting cutscene, from gameplay's side.
+**
+** The cutscene module itself is not linked here, so these stand in for it and
+** are driven from the test: gp_saria_cs_cue() plays the cue the script would
+** be feeding channel 1, and gp_saria_cs_end() is the script running out. That
+** is enough to check what gameplay.c actually owns -- when the greeting
+** starts, that her position follows the cue, and that
+** INFTABLE_SARIA_GREETED_LINK is written at the END and nowhere else.
+*/
+static int cs_playing, cs_id, cs_frame, cs_cue;
+static int cs_x, cs_y, cs_z, cs_yaw;
+static int cs_meshes, cs_mesh_fail;
+
+bool cutscene_is_playing(void) { return cs_playing != 0; }
+unsigned int cutscene_id(void) { return (unsigned int)cs_id; }
+unsigned int cutscene_frame(void) { return (unsigned int)cs_frame; }
+bool cutscene_start_in_scene(unsigned int id)
+{
+    cs_playing = 1; cs_id = (int)id; cs_frame = 0;
+    return true;
+}
+bool cutscene_actor_channel_visible(unsigned int c) { return cs_playing && c == 1; }
+int32_t cutscene_actor_channel_x(unsigned int c) { (void)c; return cs_x; }
+int32_t cutscene_actor_channel_y(unsigned int c) { (void)c; return cs_y; }
+int32_t cutscene_actor_channel_z(unsigned int c) { (void)c; return cs_z; }
+uint16_t cutscene_actor_channel_yaw(unsigned int c) { (void)c; return (uint16_t)cs_yaw; }
+unsigned int cutscene_actor_channel_cue(unsigned int c) { (void)c; return (unsigned int)cs_cue; }
+bool npc_draw_load_saria_cutscene(void)
+{
+    if (cs_mesh_fail) return false;
+    cs_meshes = 1; return true;
+}
+void npc_draw_free_saria_cutscene(void) { cs_meshes = 0; }
+
+void gp_saria_cs_cue(int cue, int frame, int x, int y, int z, int yaw)
+{
+    cs_cue = cue; cs_frame = frame;
+    cs_x = x; cs_y = y; cs_z = z; cs_yaw = yaw;
+}
+void gp_saria_cs_end(void) { cs_playing = 0; cs_cue = 0; }
+/* Whole-stub reset: the library outlives each test, so a cutscene left
+** playing by one would keep the next from ever starting its own. */
+void gp_saria_cs_reset(void)
+{
+    cs_playing = cs_id = cs_frame = cs_cue = 0;
+    cs_x = cs_y = cs_z = cs_yaw = 0;
+    cs_meshes = cs_mesh_fail = 0;
+}
+void gp_saria_cs_fail_meshes(int fail) { cs_mesh_fail = fail; }
+int  gp_saria_cs_playing(void) { return cs_playing; }
+int  gp_saria_cs_meshes(void) { return cs_meshes; }
+int  gp_saria_cs_running(void) { return gameplay_saria_cutscene(); }
+int  gp_saria_greeting_step(void) { return gameplay_saria_greeting_step(); }
+int  gp_npc_x(int i) { return gameplay_npc_x((unsigned int)i); }
+int  gp_npc_y(int i) { return gameplay_npc_y((unsigned int)i); }
+int  gp_npc_z(int i) { return gameplay_npc_z((unsigned int)i); }
+int  gp_npc_yaw(int i) { return gameplay_npc_yaw((unsigned int)i); }
+void gp_saria_greeting_cancel(void) { gameplay_saria_greeting_cancel(); }
+
+/*
+** Scene entry for tests that are not testing the greeting.
+**
+** gameplay_reset() arms Saria's greeting exactly as entering the forest does
+** in the game, and the greeting then owns the first step of the scene. Almost
+** every test wants the ordinary walking-around forest, so this is the entry
+** they use; the greeting's own tests call gameplay_reset() directly and let
+** it arm.
+*/
+void gp_reset_no_greeting(void)
+{
+    gameplay_reset();
+    gameplay_saria_greeting_cancel();
+}
