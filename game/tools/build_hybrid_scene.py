@@ -210,6 +210,11 @@ def convert(oot, head, actor, out_dir, patches_only=False, rom_dir=None,
               % (workshop['accepted_pairs'], workshop['material_or_uv_rejected'],
                  workshop['split_incompatible']), flush=True)
     groups = quads.build(source_faces, preferred)
+    # Bake tiled UVs into the authored face instead of adding repeat/height
+    # subdivisions. Retopology belongs to the imported mesh's author.
+    for group in groups:
+        if group['tri'].get('authored_mesh'):
+            group['kind'] = quads.BAKE
     if room is not None:
         groups = [g for g in groups if g['tri']['room'] == room]
     split = max((g for g in groups if g['kind'] == quads.SPLIT),
@@ -240,7 +245,7 @@ def convert(oot, head, actor, out_dir, patches_only=False, rom_dir=None,
     candidates = []
     for i,g in enumerate(groups):
         n = quads.normal(g['points'])
-        if g['kind'] == quads.BAKE and g['size'] > 400 and abs(n[1]) > .85*math.sqrt(sum(x*x for x in n)):
+        if not g['tri'].get('authored_mesh') and g['kind'] == quads.BAKE and g['size'] > 400 and abs(n[1]) > .85*math.sqrt(sum(x*x for x in n)):
             center = [sum(p[k] for p in g['points'])/len(g['points']) for k in range(3)]
             if not patches_only or g['source'] == ground['source']:
                 candidates.append(((center[0]+300)**2+center[2]**2, i))
@@ -329,7 +334,8 @@ def convert(oot, head, actor, out_dir, patches_only=False, rom_dir=None,
         budget.reserve_forest_actors()
     budget.add('shared', [(t['width'], t['height']) for t in tiles.values()], 0, 0)
     if room is not None:
-        bakes = refine_room_ground(bakes, pieces, actor)
+        bakes = refine_room_ground(bakes, pieces, actor,
+                                   budget.vram_limit-budget.vram_bytes-FOREST_VRAM_MARGIN)
     # Start with 16x16 bakes. Spend remaining space on the worst *directional*
     # density, not a blanket resolution increase. Keep room for new effects.
     available = budget.vram_limit-budget.vram_bytes-FOREST_VRAM_MARGIN
@@ -482,6 +488,10 @@ def triangle_quads(group):
 
 
 def room_ground(group):
+    # Imported meshes already carry the author's chosen tessellation. The
+    # ROM floor heuristic can multiply a retopologized floor beyond VRAM.
+    if group['tri'].get('authored_mesh'):
+        return [group]
     n = quads.normal(group['points'])
     if group['kind'] != quads.BAKE or abs(n[1]) < .85*math.sqrt(sum(x*x for x in n)):
         return [group]
@@ -494,16 +504,21 @@ def room_ground(group):
     return [group]
 
 
-def refine_room_ground(bakes, pieces, actor):
+def refine_room_ground(bakes, pieces, actor, texture_budget=None):
     """Use a room's spare geometry capacity for short, regular floor patches."""
     positions = {tuple(round(x) for x in p[:3])
                  for g in bakes + [g for g,_ in pieces] for p in g['points']}
     remaining_polygons = MAX_POLYGONS-actor['polygons']-len(bakes)-len(pieces)-32
     remaining_vertices = MAX_VERTICES-actor['vertices']-len(positions)-16
+    # Optional refinement must leave room for every patch's minimum texture,
+    # including its palette. Geometry capacity alone is not sufficient.
+    remaining_texture = (texture_budget-len(bakes)*tile_bytes(16,16)
+                         if texture_budget is not None else float('inf'))
     candidates = []
     for i,g in enumerate(bakes):
         n = quads.normal(g['points'])
         if (len(g['points']) == 4 and g['size'] > 128 and
+            not g['tri'].get('authored_mesh') and
             not g['tri']['transparent'] and
             abs(n[1]) > .85*math.sqrt(sum(x*x for x in n))):
             candidates.append((g['size'],i))
@@ -511,11 +526,13 @@ def refine_room_ground(bakes, pieces, actor):
     for _,i in sorted(candidates,reverse=True):
         parts = split_ground(bakes[i])
         new_positions = {tuple(round(x) for x in p[:3]) for g in parts for p in g['points']} - positions
-        if remaining_polygons < 3 or len(new_positions) > remaining_vertices:
+        extra_texture=(len(parts)-1)*tile_bytes(16,16)
+        if remaining_polygons < 3 or len(new_positions) > remaining_vertices or extra_texture > remaining_texture:
             continue
         replacements[i] = parts
         remaining_polygons -= 3
         remaining_vertices -= len(new_positions)
+        remaining_texture -= extra_texture
         positions.update(new_positions)
     return [g for i,bake in enumerate(bakes) for g in replacements.get(i,[bake])]
 

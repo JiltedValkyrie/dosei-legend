@@ -4432,3 +4432,51 @@ Textured frame inspected at game/build/map-textured-preview.png. Actual edited
 Kronos placement/visual acceptance remains pending; no live variant selected or
 saved during tests. Dialogue, triggers, collision edits, gizmos and undo remain
 unimplemented. No commit/push.
+
+## Map Outliner exchange and edit history (2026-09-29)
+
+Right-click mesh row: Export / Import-replace / Re-import. Original allows only
+export and offers Save as alternate; all edits require a named alternate, also
+through inspector/actor fields. Import refreshes scene with camera/selection
+preserved. Undo/Redo toolbar + Ctrl-Z/Y/Shift-Z covers document edits (actors,
+mesh import/move, texture replace, restore). History survives Save, clears on
+layout switch/new-edit redo branch. Undo after Save correctly marks unsaved.
+No file export/build undo. Tests cover protection, refresh, saved-state and
+undo/redo visible map geometry. No runtime/bake changes or commit/push.
+
+## Named object export / original textures (2026-09-29)
+
+User rejected the triangle atlas for editing. Map export now uses named Save As
+OBJ + same-name MTL/materials.json + deduplicated full source RGBA PNGs. No
+triangle resampling. Continuous OBJ UVs preserve tiling; sidecar preserves
+repeat/mirror/clamp/mask periods, primitive tint and flags. Map-only import
+accepts finite tiled UVs; legacy mesh tools retain their strict atlas rule.
+Old stored bundles keep old width-minus-one behavior; new bundles explicitly
+store material settings. Named Outliner labels use stable IDs in layouts, F2/
+right-click Rename, undo/redo, blank reset and export filename suggestion.
+Original remains read-only. Texture replacement also keeps intact images now.
+Real ROM object: 12 triangles -> one original 16x32 PNG; re-import and production
+UV/budget bake pass. Primitive tint/sampler sample regression tests pass.
+Per-vertex lighting/full N64 combiner export remains unsupported and documented.
+No runtime renderer change, no commit/push.
+
+Blender renamed-water import fix: inspected actual kokiri0-waterquads.obj/mtl
+and original export under game/levels/kokiri/assets/static. Blender removed
+the metadata comment but retained the exact original texture binding. Import
+now recovers JSON only through matching original MTL material/image bindings;
+ambiguous settings fail. Actual user OBJ imports successfully (178 triangles),
+retaining alpha 99, transparent flag and 32-texel wrap masks. Source files
+unchanged; no layout published. Regression tests cover recovery, wrong-image
+rejection and conflicting matches.
+
+## Obvious map-to-game workflow (2026-09-29)
+
+Replaced separate Use-for-next-build/build buttons with a persistent numbered
+preview bar: 1. Save + build this map, 2. Play in Kronos. Build saves draft and
+selects visible layout before opening existing Clean build dialog. Cancelled
+save prevents launch. Play opens configured Clean launcher, enabled only for
+matching successful map receipt and unchanged ISO/CUE. game/build.sh writes
+receipt after successful boundary verification; prior images need one rebuild.
+Status distinguishes unsaved edits, active build window and verified map image.
+11 focused workflow/Outliner tests plus Map UI smoke pass. No user map built or
+Kronos launched during this task; no commit/push.

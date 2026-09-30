@@ -28,7 +28,7 @@ def empty(): return {'version': 1, 'base': 'ntsc-1.2', 'rooms': {}}
 
 
 def validate(document):
-    if not isinstance(document, dict) or not {'version','base','rooms'} <= set(document) or set(document)-{'version','base','rooms','meshes'}:
+    if not isinstance(document, dict) or not {'version','base','rooms'} <= set(document) or set(document)-{'version','base','rooms','meshes','labels'}:
         raise ValueError('Invalid layout document fields')
     if document['version'] != 1 or document['base'] != 'ntsc-1.2' or not isinstance(document['rooms'], dict):
         raise ValueError('Unsupported layout version/base')
@@ -50,6 +50,13 @@ def validate(document):
                 raise ValueError('Position requires XYZ')
             if any(type(v) is not int or not -32768 <= v <= 32767 for v in [*actor['position'], actor['yaw']]):
                 raise ValueError('XYZ and yaw must be signed 16-bit integers')
+    labels=document.get('labels',{})
+    if not isinstance(labels,dict): raise ValueError('Invalid Outliner names')
+    for key,name in labels.items():
+        if not isinstance(key,str) or not re.fullmatch(r'(spot04|ydan)/room/[0-9]+/(mesh|actor)/[0-9]+',key):
+            raise ValueError('Invalid named object ID')
+        if not isinstance(name,str) or not name.strip() or len(name)>96 or not name.isprintable():
+            raise ValueError('Object name must be 1-96 printable characters')
     meshes=document.get('meshes',{})
     if not isinstance(meshes,dict): raise ValueError('Invalid mesh mapping')
     for key,entry in meshes.items():

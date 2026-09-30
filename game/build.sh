@@ -190,6 +190,9 @@ if ! "$python" "$here/tools/build_sgl_area.py" --source "$sgl_source" --max-poly
 fi
 
 echo
+if [ "$variant" = game-clean ]; then
+    "$python" "$here/tools/map_build_status.py" --game "$here"
+fi
 echo "built: $here/build/$variant.iso  (cue: build/$variant.cue)"
 if [ "$variant" = game-clean ]; then
     echo "run  : open game/build/game-clean.cue in Kronos"

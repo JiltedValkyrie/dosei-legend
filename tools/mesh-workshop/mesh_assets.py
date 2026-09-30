@@ -192,7 +192,7 @@ def _split_quad(points):
     return min(choices)[1]
 
 
-def parse_obj(path, *, split_incompatible=False, diagnostics=None, require_quads=True, require_flags=True):
+def parse_obj(path, *, split_incompatible=False, diagnostics=None, require_quads=True, require_flags=True, allow_tiled_uv=False):
     vertices, uvs, faces, libraries = [], [], [], []
     split_lines = []
     material = None
@@ -211,8 +211,8 @@ def parse_obj(path, *, split_incompatible=False, diagnostics=None, require_quads
             elif tag == 'vt':
                 if len(args) not in (2, 3): raise ValueError('Expected UV coordinates')
                 uv = tuple(map(float, args[:2]))
-                if not all(math.isfinite(x) and 0 <= x <= 1 for x in uv):
-                    raise ValueError('UVs must stay in the exported atlas [0,1]')
+                if not all(math.isfinite(x) and (abs(x)<=4096 if allow_tiled_uv else 0 <= x <= 1) for x in uv):
+                    raise ValueError('UVs must be finite and within +/-4096' if allow_tiled_uv else 'UVs must stay in the exported atlas [0,1]')
                 uvs.append(uv)
             elif tag == 'mtllib': libraries.append(' '.join(args))
             elif tag == 'usemtl':
@@ -252,11 +252,11 @@ def parse_obj(path, *, split_incompatible=False, diagnostics=None, require_quads
     return vertices, uvs, faces, libraries
 
 
-def import_obj(entry, path, project=PROJECT, workspace=WORKSPACE, *, split_incompatible=False, require_quads=True, require_flags=True):
+def import_obj(entry, path, project=PROJECT, workspace=WORKSPACE, *, split_incompatible=False, require_quads=True, require_flags=True, allow_tiled_uv=False):
     path = Path(path).resolve()
     diagnostics = {}
     vertices, uvs, faces, libraries = parse_obj(path, split_incompatible=split_incompatible,
-                                              diagnostics=diagnostics, require_quads=require_quads,require_flags=require_flags)
+                                              diagnostics=diagnostics, require_quads=require_quads,require_flags=require_flags,allow_tiled_uv=allow_tiled_uv)
     # Read only explicitly referenced MTLs/textures; write a self-contained bundle.
     materials = {}
     for library in libraries:
@@ -276,7 +276,7 @@ def import_obj(entry, path, project=PROJECT, workspace=WORKSPACE, *, split_incom
     folder = revision(workspace, entry, 'imports')
     lines = ['# Validated editing mesh. Use Mesh Workshop to install for a game room.', 'mtllib mesh.mtl']
     lines += ['v ' + ' '.join(format(x, '.9g') for x in v) for v in vertices]
-    lines += ['vt ' + ' '.join(format(x, '.9g') for x in uv) for uv in uvs]
+    lines += ['vt ' + ' '.join(format(x, '.17g') for x in uv) for uv in uvs]
     for material, corners in faces:
         lines += ['usemtl ' + material, 'f ' + ' '.join(f'{v+1}/{uv+1}' for v, uv in corners)]
     (folder / 'mesh.obj').write_text('\n'.join(lines) + '\n')

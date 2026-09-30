@@ -1,0 +1,13 @@
+# dosei_materials: kokiri0-walls.materials.json
+newmtl dosei_000
+Kd 1.0 1.0 1.0
+map_Kd kokiri0-walls_texture_c7f7223f943310bb.png
+
+newmtl dosei_001
+Kd 1.0 1.0 1.0
+map_Kd kokiri0-walls_texture_d72b28c5236dc63b.png
+
+newmtl dosei_002
+Kd 1.0 1.0 1.0
+map_Kd kokiri0-walls_texture_cac4db0d7192420d.png
+

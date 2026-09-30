@@ -195,4 +195,7 @@ def load_room(prefix, scene_index, room, project=PROJECT, paths=None, document=N
         if document is not None: raise ValueError('Original/alternate load failed: '+str(exc)) from exc
         result['warnings'].append('Original metadata unavailable: '+str(exc)+'. Check launcher Config paths.')
     result.setdefault('bounds',((-100,-100,-100),(100,100,100)))
+    for entity in result['entities']:
+        entity['details']['original_label']=entity['label']
+        if document is not None: entity['label']=document.get('labels',{}).get(entity['id'],entity['label'])
     return result

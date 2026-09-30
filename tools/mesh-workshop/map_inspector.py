@@ -3,6 +3,7 @@ import copy
 import json
 import math
 import os
+import re
 from pathlib import Path
 import shutil
 import subprocess
@@ -28,23 +29,26 @@ def open_code(path):
 
 
 class ObjectInspector(tk.Toplevel):
-    def __init__(self,viewport):
+    def __init__(self,viewport,show=True):
         super().__init__(viewport)
+        if not show: self.withdraw()
         self.viewport=viewport
+        self.dialog_parent=self if show else viewport
         self.entity=copy.deepcopy(viewport.entities[viewport.selected])
         self.title('Map Workshop - '+self.entity['label'])
         self.geometry('650x650')
         self.raw=[f['source_face'] for f in viewport.scene['faces']
                   if f['entity']==viewport.selected and 'source_face' in f]
         self.key=self.entity.get('details',{}).get('mesh_key')
-        self.editable=bool(self.key and viewport.document is not None)
+        self.editable=bool(self.key and viewport.document is not None and viewport.layout_name!='original')
         self.initial_document=viewport.document
         self.initial_scene=viewport.scene
         self.pivot=tuple((a+b)/2 for a,b in zip(*self.entity['bounds'])) if 'bounds' in self.entity else (0,0,0)
         bar=ttk.Frame(self,padding=8); bar.pack(fill='x')
-        for text,action in [('Export OBJ / MTL / atlas',self.export),('Replace OBJ...',self.replace),
+        for text,action in [('Export named OBJ / textures',self.export),('Replace OBJ...',self.replace),
                             ('Re-import OBJ / UV',self.reimport)]:
-            ttk.Button(bar,text=text,command=lambda a=action:self.run(a),state='normal' if self.editable else 'disabled').pack(side='left',padx=3)
+            allowed=bool(self.raw) if action==self.export else self.editable
+            ttk.Button(bar,text=text,command=lambda a=action:self.run(a),state='normal' if allowed else 'disabled').pack(side='left',padx=3)
         place=ttk.LabelFrame(self,text='Mesh placement (native XYZ; yaw degrees; uniform scale)',padding=8)
         place.pack(fill='x',padx=8)
         entry=viewport.document.get('meshes',{}).get(self.key,{}) if self.editable else {}
@@ -75,14 +79,16 @@ class ObjectInspector(tk.Toplevel):
         self.code.pack(fill='x',padx=8)
         if self.code['values']: self.code.current(0)
         ttk.Button(self,text='Open selected source in code editor',command=lambda:self.run(lambda:open_code(self.code.get()))).pack(pady=5)
-        ttk.Label(self,text='OBJ uses local Y-up coordinates; keep UVs in 0..1. Re-import reads OBJ + MTL + diffuse images.\nEdits change the draft only. Save alternate, validate UV bake, then choose build.\nCollision stays original; static mesh groups may contain several visual props.',wraplength=620).pack(padx=8,pady=5)
+        ttk.Label(self,text='OBJ uses local Y-up coordinates; repeating UVs are supported. Re-import reads OBJ + MTL + diffuse images.\nEdits change the draft only. Save alternate, validate UV bake, then choose build.\nCollision stays original; static mesh groups may contain several visual props.',wraplength=620).pack(padx=8,pady=5)
         if names: picker.current(0); self.show_texture()
 
     def run(self,action):
         try: action()
-        except (OSError,ValueError,KeyError,IndexError) as exc: messagebox.showerror('Map object',str(exc),parent=self)
+        except (OSError,ValueError,KeyError,IndexError) as exc: messagebox.showerror('Map object',str(exc),parent=self.dialog_parent)
 
     def ensure_current(self):
+        if self.viewport.document is None or self.viewport.layout_name=='original':
+            raise ValueError('Original is read-only. Save as a named alternate before editing meshes.')
         if self.viewport.document is not self.initial_document or self.viewport.scene is not self.initial_scene:
             raise ValueError('Map changed while inspector was open. Close and reopen selected object.')
 
@@ -103,7 +109,7 @@ class ObjectInspector(tk.Toplevel):
         if entry and entry['bundle']!='original':
             room,_,obj=self.key.partition('/object/')
             scene.map_meshes.replacement_faces(entry,room,int(obj))
-        self.viewport.document=document; self.viewport.unsaved=True
+        self.viewport.apply_document(document)
         self.viewport.refresh_layouts(); self.viewport.load(preserve=True)
         self.destroy()
 
@@ -111,7 +117,8 @@ class ObjectInspector(tk.Toplevel):
     def restore(self): self.commit(None)
 
     def export(self):
-        folder=filedialog.askdirectory(title='Export selected object bundle',parent=self)
+        suggested=re.sub(r'[<>:"/\\|?*\x00-\x1f]','_',self.entity['label']).strip(' .') or 'mesh'
+        folder=filedialog.asksaveasfilename(title='Export named mesh and original textures',initialfile=suggested+'.obj',defaultextension='.obj',filetypes=[('Wavefront OBJ','*.obj')],parent=self.dialog_parent)
         if folder:
             replacement=self.entity['details'].get('replacement')
             if replacement:
@@ -123,13 +130,24 @@ class ObjectInspector(tk.Toplevel):
                     faces.append(dict(face,vertices=vertices))
                 scene.map_meshes.export_faces(faces,folder)
             else: scene.map_meshes.export_faces(self.raw,folder,self.pivot)
-            messagebox.showinfo('Mesh exported','mesh.obj, mesh.mtl and atlas.png saved. OBJ origin is selected bounds centre.',parent=self)
+            messagebox.showinfo('Mesh exported','Saved '+Path(folder).name+' with MTL, original texture PNGs and material sampler metadata. Keep these files together for re-import.',parent=self.dialog_parent)
 
     def replace(self,path=None):
         self.ensure_current()
-        path=path or filedialog.askopenfilename(title='Replace selected mesh object',filetypes=[('Wavefront OBJ','*.obj')],parent=self)
+        path=path or filedialog.askopenfilename(title='Replace selected mesh object',filetypes=[('Wavefront OBJ','*.obj')],parent=self.dialog_parent)
         if not path: return
-        bundle=scene.map_meshes.store(path)
+        def confirm_split(diagnostics):
+            lines=', '.join(map(str,diagnostics['split_lines'][:12]))
+            if len(diagnostics['split_lines'])>12: lines+=', ...'
+            return messagebox.askyesno('Import requires splitting quads',
+                f"{Path(path).name}\n\n{diagnostics['split_quads']} quads cannot stay intact in the current importer. "
+                'They will be split into triangles, changing your authored topology.\n\n'
+                f'OBJ face lines: {lines}\n\n'
+                'Yes: import with those quads split.\n'
+                'No: cancel import and keep the current mesh.\n\n'
+                'Import with splitting?',default='no',parent=self.dialog_parent)
+        bundle=scene.map_meshes.store(path,confirm_split=confirm_split)
+        if bundle is None: return
         self.viewport.reimport_paths[self.key]=str(Path(path).resolve())
         self.commit(self.entry(bundle))
 
@@ -148,13 +166,13 @@ class ObjectInspector(tk.Toplevel):
 
     def export_texture(self):
         tex=self.texture()
-        path=filedialog.asksaveasfilename(title='Export diffuse texture',defaultextension='.png',filetypes=[('PNG','*.png')],parent=self)
+        path=filedialog.asksaveasfilename(title='Export diffuse texture',defaultextension='.png',filetypes=[('PNG','*.png')],parent=self.dialog_parent)
         if path:
             image=Image.new('RGBA',(tex['width'],tex['height'])); image.putdata(tex['colors']); image.save(path)
 
     def replace_texture(self):
         self.ensure_current(); tex=self.texture()
-        path=filedialog.askopenfilename(title='Replacement texture (same dimensions)',filetypes=[('PNG','*.png')],parent=self)
+        path=filedialog.askopenfilename(title='Replacement texture (same dimensions)',filetypes=[('PNG','*.png')],parent=self.dialog_parent)
         if not path: return
         with Image.open(path) as image:
             if image.size!=(tex['width'],tex['height']): raise ValueError('Texture must keep current dimensions; use OBJ re-import for new UV layout')

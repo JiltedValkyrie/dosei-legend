@@ -34,6 +34,20 @@ function Test-BuildLogLine {
     return $false
 }
 
+function Start-BuildProcess {
+    param([string]$Script, [string]$Variant, [string]$OutputPath, [string]$ErrorPath)
+    $process = Start-Process -FilePath 'powershell.exe' -PassThru `
+        -WindowStyle Hidden `
+        -RedirectStandardOutput $OutputPath -RedirectStandardError $ErrorPath `
+        -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass',
+                        '-File', ('"' + $Script + '"'), '-Variant', $Variant)
+    # Windows PowerShell's Start-Process returns a Process without a retained
+    # handle. Open it while the child is alive, so ExitCode remains available
+    # after Windows removes the process from its active process table.
+    $null = $process.Handle
+    return $process
+}
+
 function Show-BuildDialog {
     param(
         [Parameter(Mandatory = $true)] $Owner,
@@ -225,11 +239,8 @@ function Show-BuildDialog {
         $run.OutAt = 0
         $run.ErrAt = 0
         $script = Join-Path $PSScriptRoot 'build-game.ps1'
-        $run.Process = Start-Process -FilePath 'powershell.exe' -PassThru `
-            -WindowStyle Hidden `
-            -RedirectStandardOutput $run.Out -RedirectStandardError $run.Err `
-            -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass',
-                            '-File', $script, '-Variant', $variant)
+        $run.Process = Start-BuildProcess -Script $script -Variant $variant `
+            -OutputPath $run.Out -ErrorPath $run.Err
         $timer.Start()
     }
 
@@ -249,15 +260,11 @@ function Show-BuildDialog {
             $offset = $run.ErrAt
             & $append (& $tail $run.Err ([ref]$offset)); $run.ErrAt = $offset
             $variant = $run.Queue[$run.At]
-            # A Process from Start-Process -PassThru does NOT have a populated
-            # ExitCode until the handle is waited on, even once HasExited is
-            # true: reading it straight away yields $null, which compares
-            # unequal to 0 and reports a perfectly good build as FAILED.
-            # HasExited is already true here, so this returns immediately.
+            # The handle was retained at launch. Wait before reading status;
+            # do not discard cached process information with Refresh().
             $code = $null
             try {
                 $run.Process.WaitForExit()
-                $run.Process.Refresh()
                 $code = $run.Process.ExitCode
             } catch { $code = $null }
             if ($code -eq 0) {
@@ -273,6 +280,7 @@ function Show-BuildDialog {
                 & $append "`r`n--- $variant FAILED (exit $code) ---`r`n"
             }
             Remove-Item -LiteralPath $run.Out, $run.Err -ErrorAction SilentlyContinue
+            $run.Process.Dispose()
             $run.Process = $null
             $run.At++
             & $startNext

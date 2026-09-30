@@ -1,0 +1,5 @@
+# dosei_materials: kokiri0-water.materials.json
+newmtl dosei_000
+Kd 1.0 1.0 1.0
+map_Kd kokiri0-water_texture_802a9b4c0188ae02.png
+
