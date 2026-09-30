@@ -70,10 +70,13 @@ SCENES = (
     dict(prefix='kokiri_home5', rooms=1, shape='image',
          scene='SCENE_SARIAS_HOUSE', sfx=0,
          save='SAVE_SCENE_SARIAS_HOUSE', name="Saria's House"),
-    # M5 entry shell: only room 0 is playable; source has 12 rooms.
-    dict(prefix='ydan', rooms=1, source_rooms=12, shape='mesh',
+    # M5: all source room banks; shutters retain their actual gate conditions.
+    dict(prefix='ydan', rooms=12, shape='mesh',
          scene='SCENE_DEKU_TREE', sfx=0,
          save='SAVE_SCENE_DEKU_TREE', name='Inside the Deku Tree'),
+    dict(prefix='spot10', rooms=10, shape='mesh',
+         scene='SCENE_LOST_WOODS', sfx=1,
+         save='SAVE_SCENE_LOST_WOODS', name='Lost Woods'),
 )
 
 # A new file begins here: Link's house, spawn 0 (the bed).

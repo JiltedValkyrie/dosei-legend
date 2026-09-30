@@ -103,6 +103,7 @@ PYTHON ?= python
 SHELL := C:/msys64/usr/bin/bash.exe
 
 include $(COMPILER_DIR)/COMMON/jo_engine_makefile
+LDFILE = sgl.linker
 
 # Link our patched work area instead of the SDK's, so MaxPolygons covers the
 # scene's 2060-polygon list. The shared SDK object is only ever read.
@@ -160,6 +161,7 @@ $(OBJDIR)/kokiri_sgl.o: src/scene_actor_order.h src/actor_order.h src/sgl_order_
 # cancel the inherited suffix rule so it can never fire on an SDK source.
 SRCS += src/push_block.c src/player_push.c src/player_lift.c src/player_slope.c src/player_water.c src/player_camera.c src/npc_draw.c
 SRCS += src/npc_pose.c src/interior_mask.c
+SRCS += src/player_items.c src/dungeon_doors.c src/dungeon_webs.c
 MY_OBJS = $(patsubst %.c,$(OBJDIR)/%.o,$(notdir $(SRCS)))
 # Header layout changes must rebuild every consumer (save v2 otherwise wrote
 # 300 bytes into a stale 220-byte stack buffer). makefile bootstraps .d files
@@ -204,6 +206,10 @@ $(OBJDIR)/music.o: ../shared/lib/music/music.c ../shared/lib/music/music.h src/v
 	$(CC) $< $(DFLAGS) $(CCFLAGS) $(_CCFLAGS) -MMD -MP -MF $(@:.o=.d) -MT $@ -o $@
 
 $(OBJDIR)/core.o: makefile
+
+# Keep the shared SDK immutable; relocate only its sprite metadata.
+$(OBJDIR)/sprites.o: src/sprites_low.c src/ram_low.h $(JO_ENGINE_SRC_DIR)/sprites.c | $(OBJDIR)
+	$(CC) src/sprites_low.c $(DFLAGS) $(CCFLAGS) $(_CCFLAGS) -I$(JO_ENGINE_SRC_DIR) -MMD -MP -MF $(@:.o=.d) -MT $@ -o $@
 
 # Observe every SDK allocation from boot, without patching the shared SDK.
 # heap_profile.c includes the selected allocator implementation privately.

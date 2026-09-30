@@ -144,6 +144,7 @@ typedef struct
     uint8_t             equip_shield;
     uint8_t             slingshot;          /* owned flag */
     uint8_t             ammo_seeds;
+    uint8_t             deku_dungeon_items; /* source dungeonItems[0]: compass 1, map 2 */
     uint8_t             scene_id;           /* SAVE_SCENE_*, for resume */
     uint8_t             entrance;           /* spawn point within that scene */
     /* playerData.naviTimer: En_Elf's quest-hint clock, 20 Hz updates. */
@@ -152,13 +153,14 @@ typedef struct
     ** CUR_UPG_VALUE(UPG_DEKU_STICKS): capacity {0, 10, 20, 30}. */
     uint8_t             stick_owned;
     uint8_t             stick_ammo;
-    uint8_t             c_items[3];         /* down, left, right: 0 empty, 1 stick, 2 slingshot */
+    uint8_t             c_items[3];         /* down, left, right: 0 empty, 1 stick, 2 slingshot, 3 nut */
     uint8_t             stick_upgrade;
     /* v5 (M3a): INV_CONTENT(ITEM_DEKU_NUT), AMMO(ITEM_DEKU_NUT),
     ** CUR_UPG_VALUE(UPG_DEKU_NUTS): capacity {0, 20, 30, 40}. */
     uint8_t             nut_owned;
     uint8_t             nut_ammo;
     uint8_t             nut_upgrade;
+    uint16_t            deku_visited_rooms; /* persisted source room discovery */
 }                       save_state_t;
 
 extern save_state_t     save_state;
@@ -174,6 +176,9 @@ typedef enum
     SAVE_ITEM_DEKU_NUT, SAVE_ITEM_DEKU_NUTS_5, SAVE_ITEM_DEKU_NUTS_10,
     SAVE_ITEM_SWORD_KOKIRI, SAVE_ITEM_SHIELD_DEKU,
     SAVE_ITEM_SEEDS_5,
+    SAVE_ITEM_SLINGSHOT,
+    SAVE_ITEM_DEKU_MAP,
+    SAVE_ITEM_DEKU_COMPASS,
     SAVE_ITEM_COUNT
 }                       save_item_t;
 

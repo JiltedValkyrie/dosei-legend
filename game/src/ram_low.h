@@ -28,7 +28,17 @@
 #define RAM_LOW_TILE_FOG_BYTES      0x0800u
 #define RAM_LOW_FOREST_MESH_OFFSET  0x8800u
 #define RAM_LOW_FOREST_MESH_BYTES   0x1000u
-#define RAM_LOW_USED_BYTES          0x9800u
+/* Streamed room metadata. Every used byte is filled by room_load_bank before
+ * drawing; no boot-zero assumption. Separate from depth/material scratch. */
+#define RAM_LOW_ROOM_OBJECTS_OFFSET 0x9800u
+#define RAM_LOW_ROOM_OBJECTS_BYTES  0x1000u
+#define RAM_LOW_ROOM_BOUNDS_OFFSET  0xA800u
+#define RAM_LOW_ROOM_BOUNDS_BYTES   0x1000u
+#define RAM_LOW_SPRITES_OFFSET      0xB800u
+#define RAM_LOW_SPRITES_BYTES       0xC000u
+#define RAM_LOW_MUSICTRG_OFFSET     0x17800u
+#define RAM_LOW_MUSICTRG_BYTES      0x10000u
+#define RAM_LOW_USED_BYTES          0x27800u
 
 #define RAM_LOW(offset)             ((void *)(RAM_LOW_ADDRESS + (offset)))
 
@@ -44,5 +54,13 @@ typedef char ram_low_ordered[RAM_LOW_EQUIP_POLY_OFFSET + RAM_LOW_EQUIP_POLY_BYTE
                              RAM_LOW_TILE_FOG_OFFSET + RAM_LOW_TILE_FOG_BYTES
                              <= RAM_LOW_FOREST_MESH_OFFSET &&
                              RAM_LOW_FOREST_MESH_OFFSET + RAM_LOW_FOREST_MESH_BYTES
+                             <= RAM_LOW_ROOM_OBJECTS_OFFSET &&
+                             RAM_LOW_ROOM_OBJECTS_OFFSET + RAM_LOW_ROOM_OBJECTS_BYTES
+                             <= RAM_LOW_ROOM_BOUNDS_OFFSET &&
+                             RAM_LOW_ROOM_BOUNDS_OFFSET + RAM_LOW_ROOM_BOUNDS_BYTES
+                             <= RAM_LOW_SPRITES_OFFSET &&
+                             RAM_LOW_SPRITES_OFFSET + RAM_LOW_SPRITES_BYTES
+                             <= RAM_LOW_MUSICTRG_OFFSET &&
+                             RAM_LOW_MUSICTRG_OFFSET + RAM_LOW_MUSICTRG_BYTES
                              <= RAM_LOW_USED_BYTES ? 1 : -1];
 #endif

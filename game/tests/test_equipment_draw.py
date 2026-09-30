@@ -27,6 +27,23 @@ class EquipmentDraw(unittest.TestCase):
 #include <stdint.h>
 #include "gameplay.h"
 #include "link_equipment.h"
+#include "ram_low.h"
+static unsigned int fake_low[RAM_LOW_USED_BYTES/4];
+#undef RAM_LOW
+#define RAM_LOW(offset) ((void *)((unsigned char *)fake_low + (offset)))
+typedef int FIXED;
+typedef unsigned short ANGLE;
+#define CUTSCENE_NIGHTMARE 0
+#define LINK_ANIM_SCALE_Q16 65536
+#define LINK_ANIM_SHIFT_X 0
+#define LINK_ANIM_SHIFT_Y 0
+#define LINK_ANIM_SHIFT_Z 0
+static bool stick;
+static bool player_items_stick(void) { return stick; }
+static bool cutscene_is_playing(void) { return false; }
+static unsigned cutscene_id(void) { return 0; }
+static void slScale(int x,int y,int z) {}
+static void slRotY(ANGLE y) {}
 typedef unsigned int POLYGON;
 typedef unsigned int ATTR;
 typedef struct { void *pntbl; unsigned int nbPoint; POLYGON *pltbl; unsigned int nbPolygon; ATTR *attbl; } PDATA;
@@ -42,6 +59,7 @@ static void jo_3d_translate_matrix(int x,int y,int z) {}
 static void jo_3d_rotate_matrix_y(int y) {}
 '''
         wrapper = '''
+void hold_stick(int on) { stick = on; }
 void select_gear(unsigned int mask) {
  unsigned int i;
  for(i=0;i<1024;++i) { polygons[i]=i; attributes[i]=i+1000; }
@@ -80,3 +98,13 @@ unsigned int attribute(unsigned int i) { return drawn.attbl[i]; }
             self.assertEqual(len(actual),len(set(actual)))
             self.assertLessEqual(len(actual),self.defines['LINK_VISIBLE_POLYGONS'])
             for i,p in enumerate(actual): self.assertEqual(self.lib.attribute(i),p+1000)
+
+    def test_held_stick_hides_sword_without_changing_saved_equipment(self):
+        self.lib.hold_stick(1)
+        self.lib.select_gear(3)
+        without=[self.lib.polygon(i) for i in range(self.lib.count())]
+        self.lib.hold_stick(0)
+        self.lib.select_gear(2)
+        self.assertEqual(without,[self.lib.polygon(i) for i in range(self.lib.count())])
+        self.lib.select_gear(3)
+        self.assertGreater(self.lib.count(),len(without))

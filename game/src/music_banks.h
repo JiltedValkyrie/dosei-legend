@@ -13,6 +13,8 @@ extern music_bank_t music_bank_title;
 extern music_bank_t music_bank_kokiri;
 extern music_bank_t music_bank_house;
 extern music_bank_t music_bank_shop;
+extern music_bank_t music_bank_dungeon;
+extern music_bank_t music_bank_woods;
 /* The opening cutscenes' original sequence banks, including Ganon percussion. */
 extern music_bank_t music_bank_nightmare;
 extern music_bank_t music_bank_navi;

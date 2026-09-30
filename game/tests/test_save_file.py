@@ -19,11 +19,11 @@ import unittest
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 GCC = pathlib.Path('C:/msys64/mingw64/bin/gcc.exe')
 
-SAVE_FILE_PAYLOAD_BYTES = 301
+SAVE_FILE_PAYLOAD_BYTES = 304
 SAVE_FILE_V4_PAYLOAD_BYTES = 298
 SAVE_FILE_V2_PAYLOAD_BYTES = 290
 SAVE_FILE_BYTES = 8 + SAVE_FILE_PAYLOAD_BYTES + 2
-SAVE_FILE_VERSION = 6
+SAVE_FILE_VERSION = 8
 
 SAVE_FILE_OK = 0
 SAVE_FILE_EMPTY = 1
@@ -160,11 +160,23 @@ class SaveFile(unittest.TestCase):
         self.assertEqual(self.unpack(old), SAVE_FILE_OK)
         self.assertEqual(self.lib.sf_nut_ammo(), 0)
 
+    def test_v6_migrates_dungeon_inventory_without_rewriting_source_collectibles(self):
+        self.lib.save_set_collectible(0, 0x12)
+        old=self.pack()[:8+301]; old[5]=6
+        checksum=self.lib.sf_checksum(bytes(old[8:]),301)
+        old.extend((checksum >> 8, checksum & 255))
+        self.lib.save_new_game()
+        self.assertEqual(SAVE_FILE_OK,self.unpack(old))
+        self.assertTrue(self.lib.save_get_collectible(0,0x12))
+        self.assertEqual(self.pack()[8+301],0)
+
     def test_v5_rupee_indices_migrate_to_source_flags(self):
         self.lib.save_set_collectible(0, 0) # temporary green, must respawn
         self.lib.save_set_collectible(0, 4) # persistent blue 0x12
         self.lib.save_set_collectible(0, 7) # persistent blue 0x0E
-        block=self.pack();block[5]=5 # same payload; version excluded from checksum
+        block=self.pack()[:8+301]; block[5]=5
+        checksum=self.lib.sf_checksum(bytes(block[8:]),301)
+        block.extend((checksum >> 8, checksum & 255))
         self.assertEqual(SAVE_FILE_OK,self.unpack(block))
         for flag in (0,4,7):self.assertFalse(self.lib.save_get_collectible(0,flag))
         for flag in (0x12,0x0E):self.assertTrue(self.lib.save_get_collectible(0,flag))
@@ -209,6 +221,20 @@ class SaveFile(unittest.TestCase):
         self.assertEqual(SAVE_FILE_OK, self.unpack(block))
         self.assertFalse(self.lib.save_check_quest_item(QUEST_KOKIRI_EMERALD))
         self.assertFalse(self.lib.save_is_dead())
+
+    def test_visited_rooms_round_trip_and_v7_migration(self):
+        block = self.pack()
+        block[310:312] = bytes((0x08, 0x05))
+        total = self.lib.sf_checksum(bytes(block[8:312]), 304)
+        block[312:314] = bytes((total >> 8, total & 255))
+        self.assertEqual(SAVE_FILE_OK, self.unpack(block))
+        self.assertEqual(bytes((0x08, 0x05)), bytes(self.pack()[310:312]))
+        old = block[:310]
+        old[5] = 7
+        total = self.lib.sf_checksum(bytes(old[8:]), 302)
+        old += bytes((total >> 8, total & 255))
+        self.assertEqual(SAVE_FILE_OK, self.unpack(old))
+        self.assertEqual(bytes((0, 0)), bytes(self.pack()[310:312]))
 
     # ---- refusal -------------------------------------------------------
 

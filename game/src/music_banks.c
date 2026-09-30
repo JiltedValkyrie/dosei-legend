@@ -14,6 +14,8 @@
 #include "nightmare_score.h"
 #include "house_score.h"
 #include "shop_score.h"
+#include "dungeon_score.h"
+#include "woods_score.h"
 
 /* Trigger tables live on the cart (MUSICTRG.BIN, BUG-043); these copies in
 ** the headers are unreferenced and dropped. */
@@ -22,11 +24,11 @@ typedef char music_trigger_is_8_bytes[sizeof(music_trigger_t) == 8 ? 1 : -1];
 
 static music_bank_t *const banks[] = {
     &music_bank_title, &music_bank_kokiri, &music_bank_navi,
-    &music_bank_deku_tree, &music_bank_nightmare, &music_bank_house, &music_bank_shop
+    &music_bank_deku_tree, &music_bank_nightmare, &music_bank_house, &music_bank_shop, &music_bank_dungeon, &music_bank_woods
 };
 static const unsigned int counts[] = {
     TITLE_TRIGGER_COUNT, KOKIRI_TRIGGER_COUNT, NAVI_TRIGGER_COUNT,
-    DEKU_TREE_TRIGGER_COUNT, NIGHTMARE_TRIGGER_COUNT, HOUSE_TRIGGER_COUNT, SHOP_TRIGGER_COUNT
+    DEKU_TREE_TRIGGER_COUNT, NIGHTMARE_TRIGGER_COUNT, HOUSE_TRIGGER_COUNT, SHOP_TRIGGER_COUNT, DUNGEON_TRIGGER_COUNT, WOODS_TRIGGER_COUNT
 };
 #define BANK_COUNT (sizeof(banks) / sizeof(banks[0]))
 
@@ -110,3 +112,15 @@ bool music_banks_bind(const uint8_t *blob, uint32_t bytes)
     }
     return true;
 }
+
+music_bank_t music_bank_dungeon = {
+    "DUNGEON.PCM", "DUNGEON.LVL", (const music_pcm_t *)dungeon_pcm, 0,
+    DUNGEON_TRIGGER_COUNT, DUNGEON_FRAMES, DUNGEON_LOOP_FRAME, DUNGEON_VOICES,
+    DUNGEON_SAMPLE_BASE, DUNGEON_PCM_BYTES, DUNGEON_LEVEL_BYTES
+};
+
+music_bank_t music_bank_woods = {
+    "WOODS.PCM", "WOODS.LVL", (const music_pcm_t *)woods_pcm, 0,
+    WOODS_TRIGGER_COUNT, WOODS_FRAMES, WOODS_LOOP_FRAME, WOODS_VOICES,
+    WOODS_SAMPLE_BASE, WOODS_PCM_BYTES, WOODS_LEVEL_BYTES
+};

@@ -18,6 +18,9 @@
 #include "skip_input.h"
 #include "player_input.h"
 #include "gameplay.h"
+#include "player_items.h"
+#include "dungeon_doors.h"
+#include "dungeon_webs.h"
 #include "file_select.h"
 #include "scene_flow.h"
 #include "save_state.h"
@@ -252,7 +255,8 @@ static bool interact_pending;
 static bool cancel_pending;
 static bool pause_pending;
 static int8_t menu_step, menu_dx, menu_dy, menu_page;
-static uint8_t c_assign;
+static uint8_t c_assign, c_use, item_aim;
+static bool item_release;
 static bool shield_held;
 /* L held. Not an edge: hold targeting needs the button state every step. */
 static bool target_held;
@@ -588,6 +592,7 @@ static void         place_at_spawn(unsigned int scene, unsigned int spawn)
     /* demo_link.y is the collision/eye position; the spawn records his FEET,
      * which is what the original stores. */
     view_first_person = c_up_pending = false;
+    item_aim = 0; item_release = false;
     demo_link.x = point->x;
     demo_link.y = point->y + DEMO_LINK_EYE_HEIGHT;
     demo_link.z = point->z;
@@ -696,7 +701,9 @@ static bool         take_door(void)
 static void scene_music(void)
 {
     oot_song_t song = scene_flow_entry()->save_scene == SAVE_SCENE_KOKIRI_SHOP
-        ? NA_BGM_SHOP : scene_flow_is_interior() ? NA_BGM_LINK_HOUSE : NA_BGM_KOKIRI;
+        ? NA_BGM_SHOP : scene_flow_entry()->save_scene == SAVE_SCENE_DEKU_TREE
+        ? NA_BGM_DUNGEON : scene_flow_entry()->save_scene == SAVE_SCENE_LOST_WOODS
+        ? NA_BGM_SARIA_THEME : scene_flow_is_interior() ? NA_BGM_LINK_HOUSE : NA_BGM_KOKIRI;
     music_play_fade(song, DEMO_MUSIC_FADE_FRAMES);
 }
 
@@ -804,7 +811,7 @@ static void         file_select_tick(void)
     pick.confirm = interact_pending;
     pick.cancel = cancel_pending;
     menu_step = menu_dx = menu_dy = menu_page = 0;
-    c_assign = 0;
+    c_assign = c_use = 0;
     interact_pending = false;
     cancel_pending = false;
     pause_pending = false;
@@ -1128,6 +1135,8 @@ bool gameplay_blade_points(int32_t base[3], int32_t tip[3])
         out[1] = feet + l[1] / 65536;
         out[2] = demo_link.z + (int32_t)((((int64_t)cosine * l[2]) - ((int64_t)sine * l[0])) >> 32);
     }
+    if (player_items_stick())
+        for (end = 0; end < 3; ++end) tip[end] = base[end] + (tip[end] - base[end]) * 2;
     return true;
 }
 
@@ -1343,6 +1352,10 @@ void demo_update(void)
     if (input.menu_page) menu_page = input.menu_page;
     if (gameplay_is_paused() && input.c_pressed >= PLAYER_C_DOWN)
         c_assign = input.c_pressed - PLAYER_C_DOWN + 1;
+    if (!gameplay_blocks_world() && input.c_pressed >= PLAYER_C_DOWN)
+        c_use = input.c_pressed - PLAYER_C_DOWN + 1;
+    if (item_aim && input.c_released == (player_c_button_t)(PLAYER_C_DOWN + item_aim - 1))
+        item_release = true;
     shield_held = input.shield_held;
     target_held = input.target_held;
     /* Pause assigns inventory slots. Live stick/slingshot actions remain
@@ -1416,7 +1429,7 @@ void demo_update(void)
         cancel_pending = false;
         pause_pending = false;
         menu_step = menu_dx = menu_dy = menu_page = 0;
-        c_assign = 0;
+        c_assign = c_use = 0;
         player_input_set_dialogue(true);
         if (input_edge_consume(&skip_input.request) &&
             skip_input.request_shot == cutscene_shot_key()) {
@@ -1526,6 +1539,8 @@ void demo_update(void)
                 action.menu_dy = menu_dy;
                 action.menu_page = menu_page;
                 action.c_assign = c_assign;
+                action.c_use = land_combat && !link_water.phase ? c_use : 0;
+                action.item_pitch = 0;
                 action.grounded = !link_water.phase && link_velocity_y_q8 == 0;
                 {
                     /* controlStickDirections: the stick's heading against
@@ -1551,15 +1566,46 @@ void demo_update(void)
                     action.interact = action.cancel = action.attack = false;
                     action.attack_held = action.shield = action.target_held = false;
                     action.c_up = false;
+                    action.c_use = 0;
                     bool exit_view = cancel_pending || input.look_exited || pause_pending;
                     interact_pending = cancel_pending = false;
                     if (exit_view && view_first_person) {
                         view_first_person = false;
+                        item_aim = 0; item_release = false;
                         demo_link_yaw += link_follow.look_yaw;
                         snap_camera_to_link();
                     }
                 }
+                /* Held C draws/aims the slingshot. Release fires once; cancel,
+                 * pause, damage and scene ownership discard the pending shot. */
+                if (item_aim && !view_first_person) { item_aim = 0; item_release = false; }
+                if (item_aim && item_release && !action.pause && !gameplay_blocks_world()) {
+                    action.c_use = item_aim;
+                    action.item_pitch = (int16_t)link_follow.look_pitch;
+                    action.yaw = (uint16_t)(demo_link_yaw + link_follow.look_yaw);
+                    demo_link_yaw = action.yaw;
+                    item_aim = 0; item_release = false; view_first_person = false;
+                    snap_camera_to_link();
+                } else if (!item_aim && action.c_use && action.c_use <= 3 &&
+                           save_state.c_items[action.c_use - 1] == 2 &&
+                           save_state.slingshot && save_state.ammo_seeds &&
+                           !gameplay_blocks_world() && action.grounded &&
+                           !gameplay.attack_phase && !action.shield && !action.pause &&
+                           !view_first_person && !input.look_mode) {
+                    item_aim = action.c_use;
+                    item_release = input.c_held != (player_c_button_t)(PLAYER_C_DOWN + item_aim - 1);
+                    action.c_use = 0; view_first_person = true;
+                    oot_follow_look_exit(&link_follow);
+                    oot_follow_look(&link_follow, 0, 0);
+                }
+                if (!gameplay_blocks_world() && !action.pause &&
+                    !dungeon_webs_step(save_state.scene_id,action.room))
+                    jo_core_error("Dungeon web collision pool exhausted");
                 if (ledge_claims_interact(&action)) action.interact = false;
+                if (save_state.scene_id == SAVE_SCENE_DEKU_TREE && kokiri_scene_room() < 12)
+                    save_state.deku_visited_rooms |= (uint16_t)(1u << kokiri_scene_room());
+                if (!gameplay_blocks_world() && !action.pause && dungeon_doors_step(&action))
+                    action.interact = false;
                 gameplay_step(&action);
                 /* The greeting can take ownership inside gameplay_step.
                  * Do not run movement/doors or more catch-up steps afterward. */
@@ -1590,7 +1636,7 @@ void demo_update(void)
                     snap_camera_to_link();
                 }
                 c_up_pending = false;
-                input.c_pressed = PLAYER_C_NONE;
+                input.c_pressed = input.c_released = PLAYER_C_NONE;
                 if (view_first_person || input.look_mode) {
                     walk = 0;
                     input.move_buttons = 0;
@@ -1619,7 +1665,7 @@ void demo_update(void)
                         player_input_set_dialogue(load);
                         interact_pending = cancel_pending = pause_pending = jump_pending = false;
                         menu_step = menu_dx = menu_dy = menu_page = 0;
-                        c_assign = 0;
+                        c_assign = c_use = 0;
                         if (load) file_select_open();
                         break; /* no catch-up world step after leaving play */
                     }
@@ -1641,7 +1687,7 @@ void demo_update(void)
                     roll_pending = false;
                     interact_pending = cancel_pending = pause_pending = false;
                     menu_step = menu_dx = menu_dy = menu_page = 0;
-                    c_assign = 0;
+                    c_assign = c_use = 0;
                     player_input_set_dialogue(false);
                     break;
                 }
@@ -1686,7 +1732,7 @@ void demo_update(void)
                 cancel_pending = false;
                 pause_pending = false;
                 menu_step = menu_dx = menu_dy = menu_page = 0;
-                c_assign = 0;
+                c_assign = c_use = 0;
                 /* Tell the mapper who owns B before the next sample. */
                 player_input_set_dialogue(gameplay_blocks_world() || gameplay.dead);
                 /* gameplay.c decides whether a Z press was a tap or a
@@ -2286,6 +2332,8 @@ void demo_update(void)
                      * this is the whole drop. It is only meaningful on the step he
                      * lands; link_anim_update() ignores it otherwise. */
                     fell = link_fall_peak_y - demo_link.y;
+                    if (dungeon_webs_land(demo_link.x,demo_link.y-DEMO_LINK_EYE_HEIGHT,demo_link.z,fell))
+                        fell=0; /* source web catches the impact before breaking */
                     if (fell < 0) fell = 0;
                     link_safe_position = demo_link;
                     link_safe_position_valid = true;
@@ -2479,6 +2527,7 @@ void demo_update(void)
                                          scene_flow_is_interior()?0:kokiri_scene_room(),push);
                     if(push[0] || push[1]) kokiri_collision_move_actor(&demo_link,push[0],0,push[1]);
                 }
+                dungeon_doors_constrain(&demo_link.x,&demo_link.z,demo_link.y-DEMO_LINK_EYE_HEIGHT);
                 mido_push_link();
                 boulder_push_link();
                 if (recovered) {
@@ -2633,4 +2682,14 @@ unsigned int demo_world_clock(void)
 unsigned int demo_clock(void)
 {
     return ticks;
+}
+
+/* En_Arrow uses projectile-ignored surfaces, including floor/ceiling sweeps. */
+bool player_items_wall(const int32_t from[3], int32_t to[3])
+{
+    bg_vec_t a = {from[0], from[1], from[2]}, b = {to[0], to[1], to[2]}, at;
+    bg_hit_t hit;
+    if (!bg_line(&a, &b, &at, BG_CHECK_ALL | BG_CHECK_ONE_FACE, BG_IGNORE_PROJECTILES, &hit)) return false;
+    to[0] = at.x; to[1] = at.y; to[2] = at.z;
+    return true;
 }

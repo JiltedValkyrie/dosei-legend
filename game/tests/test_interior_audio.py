@@ -12,7 +12,7 @@ import build_cart_tables as tables
 
 class InteriorAudio(unittest.TestCase):
     def test_house_and_shop_score_bounds(self):
-        for name, sequence in (('HOUSE', 31), ('SHOP', 85)):
+        for name, sequence in (('HOUSE', 31), ('SHOP', 85), ('DUNGEON', 24), ('WOODS', 62)):
             with self.subTest(bank=name):
                 gen = ROOT / 'build/generated'
                 header = (gen / (name.lower() + '_score.h')).read_text()
@@ -27,6 +27,9 @@ class InteriorAudio(unittest.TestCase):
                                  value('FRAMES') * value('VOICES'))
                 self.assertEqual((gen / (name + '_PCM.RAW')).stat().st_size, value('PCM_BYTES'))
                 self.assertLessEqual(value('SAMPLE_BASE') + value('PCM_BYTES'), 0x50000)
+                for offset, start, end in tables.rows(header, name.lower() + '_pcm'):
+                    self.assertTrue(0 <= start < end < 65535)
+                    self.assertLessEqual(offset + 2 * end, value('PCM_BYTES'))
                 for frame, slot, sample, pitch, pan in tables.rows(header, name.lower() + '_triggers'):
                     self.assertLess(frame, value('FRAMES'))
                     self.assertLess(slot, value('VOICES'))

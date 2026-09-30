@@ -21,6 +21,9 @@ BASE = 0x50000  # above music banks at 0x1000 with 159600-sample budget
 RATE = 11025
 # seq_0.prg.seq layer, instrument, note, bounded one-shot seconds.
 EFFECTS = (
+    ('seed_fire', 'CHAN_1208', 30, 'A0', .19),
+    ('seed_impact', 'LAYER_128E', 26, 'A2', .25),
+    ('nut_flash', 'LAYER_1344', 41, 'DF3', .12),
     ('swing', 'LAYER_0F91', 27, 'D2', .45),
     ('shield', 'LAYER_11EF', 28, 'F3', .45),
     ('cut', 'LAYER_222C', 47, 'G3', .30),

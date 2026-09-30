@@ -24,6 +24,7 @@
 #include "game_over.h"
 #include "navi.h"
 #include "gameplay.h"
+#include "player_items.h"
 #include "dialogue_text.h"
 #include "minimap.h"
 #include "pause_windows.h"
@@ -35,6 +36,7 @@
 #include "frame_timer.h"
 #include "oot_follow.h"
 #include "ram_cart.h"
+#include "ram_low.h"
 #include "heap_profile.h"
 #include "actor_sys.h"
 #include "npc_draw.h"
@@ -76,10 +78,10 @@ static void         cutscene_fade(void);
 ** transient work-RAM copy; only the cart copy stays. */
 typedef char dialogue_text_fits[DIALOGUE_TEXT_BYTES <= RAM_CART_DIALOGUE_BYTES ? 1 : -1];
 typedef char cutscene_text_fits[CUTSCENE_TEXT_BYTES <= RAM_CART_CUTTEXT_BYTES ? 1 : -1];
-static bool     text_file_load(const char *name, unsigned int offset, unsigned int bytes,
+static bool     table_file_load(const char *name, void *destination, unsigned int bytes,
                                bool (*bind)(const uint8_t *, uint32_t))
 {
-    uint8_t    *carve = (uint8_t *)ram_cart_fixed(offset, bytes);
+    uint8_t    *carve = (uint8_t *)destination;
     void       *data;
     int         length = 0;
     bool        ok;
@@ -104,6 +106,11 @@ static bool     text_file_load(const char *name, unsigned int offset, unsigned i
 }
 
 typedef char actor_pool_fits[ACTOR_POOL_MAX * sizeof(actor_t) <= RAM_CART_ACTOR_POOL_BYTES ? 1 : -1];
+static bool text_file_load(const char *name, unsigned int offset, unsigned int bytes,
+                           bool (*bind)(const uint8_t *, uint32_t))
+{
+    return table_file_load(name, ram_cart_fixed(offset, bytes), bytes, bind);
+}
 typedef char minimap_file_fits[MINIMAP_FILE_BYTES <= RAM_CART_MINIMAP_BYTES ? 1 : -1];
 static bool     dialogue_text_load(void)
 {
@@ -113,8 +120,8 @@ static bool     dialogue_text_load(void)
                            RAM_CART_CUTTEXT_BYTES, cutscene_text_bind) &&
             text_file_load("MINIMAP.BIN", RAM_CART_MINIMAP_OFFSET,
                            RAM_CART_MINIMAP_BYTES, minimap_bind) &&
-            text_file_load("MUSICTRG.BIN", RAM_CART_MUSICTRG_OFFSET,
-                           RAM_CART_MUSICTRG_BYTES, music_banks_bind) &&
+            table_file_load("MUSICTRG.BIN", RAM_LOW(RAM_LOW_MUSICTRG_OFFSET),
+                           RAM_LOW_MUSICTRG_BYTES, music_banks_bind) &&
             text_file_load("TITLEPTH.BIN", RAM_CART_TITLEPTH_OFFSET,
                            RAM_CART_TITLEPTH_BYTES, demo_title_paths_bind));
 }
@@ -394,11 +401,11 @@ static void         viewer_draw(void)
         kokiri_grass_draw();
         kokiri_rupees_draw(demo_world_clock());
         kokiri_boulder_draw();
-        kokiri_nut_draw();
         kokiri_babas_draw();
     }
     if (demo_link_active && !demo_title_is_visible() &&
-        (!cutscene_is_playing() || cutscene_is_in_scene())) {
+          (!cutscene_is_playing() || cutscene_is_in_scene())) {
+        kokiri_nut_draw();
         npc_draw(demo_world_clock());
         kokiri_items_draw(demo_world_clock());
         kokiri_fairies_draw(demo_world_clock());
@@ -493,6 +500,7 @@ static void         cutscene_fade(void)
     bool hidden = cutscene_hides_scene();
     unsigned int alpha = cutscene_fade_alpha();
     int flash = cutscene_lightning();
+    if (!cutscene_is_playing() && player_items_flash()) flash = (int)player_items_flash() * 255 / 6;
     Sint16 level = (Sint16)(flash - (int)alpha);
 
     if (alpha && cutscene_fade_colour() != CUTSCENE_FADE_BLACK)
@@ -978,20 +986,28 @@ static void         inventory_menu(void)
                 if (cursor == 13) name = "Kokiri Boots";
             } else if (p->page == PAUSE_ITEMS) {
                 if (cursor == 0 && save_state.stick_owned) name = "Deku Stick";
+                if (cursor == 1 && save_state.nut_owned) name = "Deku Nut";
                 if (cursor == 6 && save_state.slingshot) name = "Fairy Slingshot";
-            } else if (p->page == PAUSE_MAP) name = "Kokiri Forest";
+            } else if (p->page == PAUSE_MAP) name =
+                (save_state.scene_id == SAVE_SCENE_DEKU_TREE || save_state.scene_id == SAVE_SCENE_DEKU_TREE_BOSS)
+                ? "Deku Tree" : "Kokiri Forest";
             else if (save_check_quest_item(QUEST_KOKIRI_EMERALD)) name = "Kokiri Emerald";
         }
         pause_windows_printf(11, 25, "%-18s", name);
+        if (p->page == PAUSE_MAP && !p->save_prompt &&
+            (save_state.scene_id == SAVE_SCENE_DEKU_TREE || save_state.scene_id == SAVE_SCENE_DEKU_TREE_BOSS)) {
+            pause_windows_printf(4,27,"[%s]: Floor  Blue: visited",ui_button_label(UI_KEY_DPAD,false));
+        }
         if (p->page == PAUSE_ITEMS && !p->save_prompt) {
             if (save_state.stick_owned) pause_windows_printf(9, 10, "%2u", (unsigned)save_state.stick_ammo);
+            if (save_state.nut_owned) pause_windows_printf(13, 10, "%2u", (unsigned)save_state.nut_ammo);
             if (save_state.slingshot) pause_windows_printf(9, 14, "%2u", (unsigned)save_state.ammo_seeds);
             pause_windows_printf(5, 27, "Hold [%s]+[%s]: Assign", ui_assign_modifier_label(),
                                  ui_button_label(UI_KEY_DPAD, false));
             pause_windows_printf(6, 23, "D:%-5s L:%-5s R:%-5s",
-                save_state.c_items[0] == 1 ? "Stick" : save_state.c_items[0] == 2 ? "Seeds" : "--",
-                save_state.c_items[1] == 1 ? "Stick" : save_state.c_items[1] == 2 ? "Seeds" : "--",
-                save_state.c_items[2] == 1 ? "Stick" : save_state.c_items[2] == 2 ? "Seeds" : "--");
+                save_state.c_items[0] == 1 ? "Stick" : save_state.c_items[0] == 2 ? "Seeds" : save_state.c_items[0] == 3 ? "Nuts" : "--",
+                save_state.c_items[1] == 1 ? "Stick" : save_state.c_items[1] == 2 ? "Seeds" : save_state.c_items[1] == 3 ? "Nuts" : "--",
+                save_state.c_items[2] == 1 ? "Stick" : save_state.c_items[2] == 2 ? "Seeds" : save_state.c_items[2] == 3 ? "Nuts" : "--");
         }
     }
     /* Backup writes remain the real demo/save-device path. */
@@ -1326,6 +1342,8 @@ static void         file_select_screen(void)
 
 void                jo_main(void)
 {
+    extern void sprites_low_init(void);
+    sprites_low_init();
     jo_core_init(JO_COLOR_Black);
     frame_timer_init();
 #ifdef DOSEI_HIRES

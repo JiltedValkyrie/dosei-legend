@@ -1,4 +1,4 @@
-﻿"""Drive the real gameplay.c: chest, wonder rupees, Mido, equip, targeting, swing window, cutting.
+"""Drive the real gameplay.c: chest, wonder rupees, Mido, equip, targeting, swing window, cutting.
 
 Compiled and called through ctypes rather than reimplemented, so a rule that
 changes in C changes here too.
@@ -38,6 +38,105 @@ GP_EVENT_RECENTER = 1 << 21
                      and (GENERATED / 'kokiri_dialogue.c').is_file(),
                      'host compiler and generated tables required')
 class Gameplay(unittest.TestCase):
+    def test_live_seed_ammo_sweep_and_hit(self):
+        g = self.lib
+        g.player_items_reset(); g.gp_item_floor(0); g.gp_item_inventory(2, 2)
+        self.assertTrue(g.player_items_use(2, 0, 0, 0, 0, 0))
+        self.assertEqual(g.gp_item_ammo(2), 1)
+        self.assertFalse(g.player_items_use(2, 0, 0, 0, 0, 0))
+        g.gp_item_victim(0, 0, 45, 4)
+        g.player_items_step()
+        self.assertTrue(g.gp_item_contacts() & 4)
+        x, y, z = ctypes.c_int(), ctypes.c_int(), ctypes.c_int()
+        self.assertEqual(g.player_items_body(0, ctypes.byref(x), ctypes.byref(y), ctypes.byref(z)), 0)
+        self.assertEqual(g.gp_item_ammo(2), 1)
+
+    def test_seed_sweep_hits_actor_before_floor_impact(self):
+        g=self.lib
+        g.player_items_reset(); g.gp_item_floor(1); g.gp_item_inventory(1,0)
+        self.assertTrue(g.player_items_use(2,0,0,0,0,-0x4000))
+        g.gp_item_victim(0,0,12,4)
+        g.player_items_step()
+        self.assertTrue(g.gp_item_contacts() & 4)
+        self.assertTrue(g.player_items_events() & 2)
+        g.gp_item_floor(0)
+
+    def test_live_nut_flash_mask_and_one_hit(self):
+        g = self.lib
+        g.player_items_reset(); g.gp_item_floor(1); g.gp_item_inventory(0, 2)
+        self.assertTrue(g.player_items_use(3, 0, 0, 0, 0, 0))
+        g.player_items_step()
+        self.assertEqual(g.player_items_flash(), 6)
+        self.assertEqual(g.gp_item_ammo(3), 1)
+        g.gp_item_victim(0, 0, 80, 4)  # seeds only: nut immune
+        self.assertFalse(g.gp_item_contacts() & 4)
+        g.gp_item_victim(0, 0, 80, 1)
+        self.assertTrue(g.gp_item_contacts() & 4)
+        self.assertFalse(g.gp_item_contacts() & 4)
+        for _ in range(6): g.player_items_step()
+        self.assertEqual(g.player_items_flash(), 0)
+        g.gp_item_floor(0)
+
+    def test_live_items_empty_timeout_and_reset(self):
+        g = self.lib
+        g.player_items_reset(); g.gp_item_floor(0); g.gp_item_inventory(-1, 0)
+        self.assertFalse(g.player_items_use(2, 0, 0, 0, 0, 0))
+        self.assertFalse(g.player_items_use(3, 0, 0, 0, 0, 0))
+        g.gp_item_inventory(2, 2)
+        self.assertTrue(g.player_items_use(3, 0, 10000, 0, 0, 0))
+        for _ in range(24): g.player_items_step()
+        self.assertEqual(g.player_items_flash(), 0)
+        self.assertEqual(g.player_items_events(), 0)
+        self.assertTrue(g.player_items_use(2, 0, 0, 0, 0, 0))
+        g.player_items_reset()
+        self.assertEqual(g.player_items_events(), 0)
+        x, y, z = ctypes.c_int(), ctypes.c_int(), ctypes.c_int()
+        self.assertEqual(g.player_items_body(0, ctypes.byref(x), ctypes.byref(y), ctypes.byref(z)), 0)
+
+    def test_stick_burn_expiry_putaway_and_room_change(self):
+        g = self.lib
+        g.player_items_reset(); g.gp_sticks(1, 3, 1)
+        self.assertTrue(g.player_items_use(1, 0, 0, 0, 0, 0))
+        self.assertEqual(g.gp_stick_ammo(), 3)
+        g.player_items_ignite()
+        for _ in range(100): g.player_items_step()
+        g.player_items_room_changed()
+        self.assertEqual(g.player_items_burning(), 215)
+        for _ in range(215): g.player_items_step()
+        self.assertEqual(g.gp_stick_ammo(), 2)
+        self.assertFalse(g.player_items_stick())
+        g.player_items_use(1, 0, 0, 0, 0, 0); g.player_items_ignite()
+        g.player_items_putaway()
+        for _ in range(320): g.player_items_step()
+        self.assertEqual(g.gp_stick_ammo(), 2)
+
+    def test_dungeon_map_floor_selection_wraps_but_world_map_stays_fixed(self):
+        self.assertEqual(self.lib.gp_map_step(2,0,0,-1,0),4)
+        self.assertEqual(self.lib.gp_map_step(2,4,0,1,0),0)
+        self.assertEqual(self.lib.gp_map_step(3,2,1,0,0),3)
+        self.assertEqual(self.lib.gp_map_step(0,2,1,0,0),2)
+        self.assertEqual(self.lib.gp_map_step(2,2,0,1,1),2)
+        self.assertTrue(self.lib.gp_save_prompt())
+
+    def test_deku_source_chests_grant_persistent_map_compass_and_slingshot(self):
+        import math
+        g = self.lib
+        for reward, expected in ((0x41, 2), (0x40, 1), (5, 30)):
+            g.gp_reset_no_greeting(); g.gp_scene(2)
+            i = next(i for i in range(g.gp_chest_total())
+                     if g.gp_chest_scene(i) == 2 and ((g.gp_chest_param(i) >> 5) & 127) == reward)
+            x,y,z,yaw,room = self.chest(i)
+            g.gp_room(room)
+            angle = yaw * math.tau / 65536
+            self.step(x - 25*math.sin(angle), y, z - 25*math.cos(angle), yaw=yaw, interact=1)
+            self.assertTrue(g.gameplay_chest_opened(i))
+            if reward == 5: self.assertEqual(g.gp_item_ammo(2), expected)
+            else: self.assertTrue(g.gp_dungeon_items() & expected)
+            block = ctypes.create_string_buffer(314)
+            g.gp_save_pack(block); g.save_new_game()
+            self.assertEqual(g.gp_save_unpack(block,314), 0)
+            if reward != 5: self.assertTrue(g.gp_dungeon_items() & expected)
+
     @classmethod
     def setUpClass(cls):
         cls.tmp = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
@@ -61,6 +160,7 @@ class Gameplay(unittest.TestCase):
                         '-I' + str(ROOT.parent / 'shared/lib/collision'),
                         str(ROOT / 'tests/fixtures/gameplay_host.c'),
                         str(ROOT / 'src/gameplay.c'),
+                        str(ROOT / 'src/player_items.c'),
                         str(ROOT / 'src/world_props.c'),
                         str(ROOT / 'src/world_signs.c'),
                         str(ROOT / 'src/item_drop.c'),
@@ -1358,7 +1458,7 @@ class Gameplay(unittest.TestCase):
         menu's SAVE does, wipe everything as returning to the title and loading
         a file would, then read the block back and re-enter the scene.
         """
-        SAVE_FILE_BYTES = 311  # v5: 8 + 301 + 2
+        SAVE_FILE_BYTES = 314  # v7: 8 + 304 + 2
         for index in range(2):
             x, y, z, _ = self.pickup(index)
             self.step(x, y, z)
@@ -1397,9 +1497,9 @@ class Gameplay(unittest.TestCase):
         self.lib.gp_reset_no_greeting()
         self.lib.gp_room(room)
 
-    def chest(self):
+    def chest(self, index=0):
         vals = [ctypes.c_int() for _ in range(5)]
-        self.lib.gp_chest_at(0, *(ctypes.byref(v) for v in vals))
+        self.lib.gp_chest_at(index, *(ctypes.byref(v) for v in vals))
         return tuple(v.value for v in vals)
 
     def wonders(self):
@@ -1648,7 +1748,7 @@ class Gameplay(unittest.TestCase):
             self.assertEqual(before,self.lib.gp_rupees())
 
     def test_sword_chest_is_the_source_maze_chest(self):
-        self.assertEqual(self.lib.gp_chest_total(), 5)
+        self.assertEqual(self.lib.gp_chest_total(), 11)
         x, y, z, yaw, room = self.chest()
         self.assertEqual((x, y, z, yaw, room), (-232, 178, 2245, 0, 2))
         self.assertEqual(self.lib.gp_chest_param(0), 0x04E0)
@@ -1831,6 +1931,43 @@ class Gameplay(unittest.TestCase):
         self.lib.gp_reset_no_greeting()                       # later visit
         self.assertEqual((self.lib.gp_mido_x(), self.lib.gp_mido_z()), (1412, 211))
     # --- Kokiri Shop: the 40-rupee Deku Shield ------------------------------
+    def test_post_emerald_mido_departure_waits_for_talk_and_path(self):
+        self.lib.save_set_event_chk_inf(self.EVENTCHKINF_MIDO_STOOD_ASIDE_KOKIRI)
+        self.lib.save_give_quest_item(self.QUEST_KOKIRI_EMERALD)
+        self.forest(0)
+        self.assertEqual(self.lib.gp_mido_state(), 0)
+        for _ in range(20):
+            self.step(1522, 0, -300)
+        self.assertFalse(self.lib.save_get_event_chk_inf(0x1C))
+        self.assertEqual(self.talk_mido(), 0x1045)
+        self.assertFalse(self.lib.save_get_event_chk_inf(0x1C))
+        for _ in range(400):
+            self.step(1000, 0, -1000)
+        self.assertTrue(self.lib.save_get_event_chk_inf(0x1C))
+        x, z = ctypes.c_int(), ctypes.c_int()
+        self.assertFalse(self.lib.gp_mido_body(0, ctypes.byref(x), ctypes.byref(z)))
+        forest_mido = self.npc_of_kind(self.KOKIRI_NPC_MIDO)
+        self.assertFalse(self.lib.gp_npc_present(forest_mido))
+        self.lib.gp_reset_no_greeting()
+        self.assertFalse(self.lib.gp_npc_present(forest_mido))
+        self.lib.gp_scene(8)
+        self.lib.gp_reset_no_greeting()
+        house = [i for i in range(self.lib.gp_npc_count()) if
+                 self.lib.gp_npc_kind(i) == self.KOKIRI_NPC_MIDO and self.lib.gp_npc_scene(i) == 8]
+        self.assertEqual(len(house), 1)
+        self.assertTrue(self.lib.gp_npc_present(house[0]))
+
+    def test_post_emerald_exit_guard_uses_source_path_endpoint_on_reload(self):
+        guard = next(i for i in range(self.lib.gp_npc_count()) if
+                     self.lib.gp_npc_kind(i) == 0 and
+                     self.lib.gp_npc_scene(i) == 0 and (self.lib.gp_npc_param(i) & 255) == 3)
+        self.lib.save_give_quest_item(self.QUEST_KOKIRI_EMERALD)
+        for _ in range(2):
+            self.forest(0)
+            self.step(-1400, -80, -350)
+            self.assertEqual((self.lib.gp_npc_x(guard), self.lib.gp_npc_y(guard),
+                              self.lib.gp_npc_z(guard)), (-1416, -74, -138))
+
     SAVE_SCENE_KOKIRI_SHOP = 4
     COUNTER = (0, 0, 60, 0x8000)                # in front of EnOssan, facing him
 
@@ -2037,7 +2174,7 @@ class Gameplay(unittest.TestCase):
         self.assertEqual(self.lib.gp_shop_state(), 0)
 
     def test_shop_purchase_survives_save_and_reload(self):
-        SAVE_FILE_BYTES = 311  # v5
+        SAVE_FILE_BYTES = 314  # v7
         self.shop(45)
         self.to_choice()
         self.shop_step(interact=1)

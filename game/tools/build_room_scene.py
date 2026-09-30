@@ -10,8 +10,8 @@ import asset_names
 from build_sgl_scene import floor_uses_far_sort
 
 
-def transitions(oot, rom_dir=None, prefix='spot04'):
-    """En_Holl room-to-room tunnels inside one scene.
+def transitions(oot, rom_dir=None, prefix='spot04', room_count=None):
+    """En_Holl tunnels and supported source-gated Door_Shutter transitions.
 
     Distinct from the scene-to-scene doors in build_scene_table.py: these swap
     a room bank without leaving the scene. A scene with no room transitions --
@@ -27,9 +27,15 @@ def transitions(oot, rom_dir=None, prefix='spot04'):
             result = []
             for i in range(command[1]):
                 front,_,back,_,actor,x,y,z,yaw,params = struct.unpack_from('>4b5hH',scene,start+i*16)
-                if actor != 35 or (params >> 6) & 7 != 4:
-                    raise ValueError('Unsupported authored room transition')
-                result.append(dict(front=front,back=back,x=x,y=y,z=z,yaw=yaw))
+                if room_count is not None and not (0 <= front < room_count and 0 <= back < room_count):
+                    continue  # bank not registered yet; never request a missing room
+                kind = (params >> 6) & 7
+                if actor == 46 and ((params >> 6) & 15) in (0, 1, 2, 7):
+                    kind = 8 + ((params >> 6) & 15)
+                elif actor != 35 or kind not in (0, 2, 4, 6):
+                    raise ValueError('Unsupported authored room transition: %s actor %d params %04X' %
+                                     (prefix, actor, params))
+                result.append(dict(front=front,back=back,x=x,y=y,z=z,yaw=yaw,kind=kind,flag=params&63))
             return result
     return []
 
@@ -98,7 +104,7 @@ def emit_rooms(args, head, actor, normal):
             # display-list geometry to convert, so it gets no VDP1 bank. Its
             # backdrop is staged by build_scene_backdrops.py instead.
             continue
-        scene_portals = transitions(args.oot, args.rom_dir, prefix=prefix) if prefix == 'spot04' else []
+        scene_portals = transitions(args.oot, args.rom_dir, prefix=prefix, room_count=entry['rooms'])
         for portal in scene_portals:
             portals.append(dict(portal, scene=scene_id))
         for room_id in range(entry['rooms']):
@@ -141,7 +147,7 @@ def emit_rooms(args, head, actor, normal):
                        OBJECT_COUNT=maximum('objects'))
     header = ['/* Generated room-bank capacities; only one bank is resident. */',
               '#ifndef KOKIRI_SCENE_H', '#define KOKIRI_SCENE_H',
-              '#include <jo/jo.h>',
+              '#include <jo/jo.h>', '#include "ram_low.h"',
               '#define KOKIRI_STREAM_ROOMS 1']
     header += ['#define KOKIRI_%s %d' % item for item in definitions.items()]
     header += ['#define KOKIRI_CENTER_X %d'%head['cx'],'#define KOKIRI_CENTER_Y %d'%head['cy'],
@@ -150,13 +156,15 @@ def emit_rooms(args, head, actor, normal):
                'typedef struct { int minimum[3],maximum[3]; } kokiri_object;',
                '/* An En_Holl tunnel between two rooms of ONE scene. `scene` is',
                '   which scene it belongs to; a portal never crosses scenes. */',
-               'typedef struct { short front,back,x,y,z,yaw; unsigned char scene; } kokiri_portal;',
+               'typedef struct { short front,back,x,y,z,yaw; unsigned char scene,kind,flag; } kokiri_portal;',
                'extern PDATA kokiri_pdata;',
                'extern kokiri_tile *kokiri_tiles;',
                'extern unsigned short (*kokiri_cluts)[16];',
                'bool kokiri_bank_allocate(void);',
-               'extern unsigned char kokiri_objects[KOKIRI_POLYGON_COUNT+3];',
-               'extern kokiri_object kokiri_bounds[KOKIRI_OBJECT_COUNT];',
+               '#define kokiri_objects ((unsigned char *)RAM_LOW(RAM_LOW_ROOM_OBJECTS_OFFSET))',
+               '#define kokiri_bounds ((kokiri_object *)RAM_LOW(RAM_LOW_ROOM_BOUNDS_OFFSET))',
+               'typedef char room_objects_fit[KOKIRI_POLYGON_COUNT+3 <= RAM_LOW_ROOM_OBJECTS_BYTES ? 1 : -1];',
+               'typedef char room_bounds_fit[KOKIRI_OBJECT_COUNT*sizeof(kokiri_object) <= RAM_LOW_ROOM_BOUNDS_BYTES ? 1 : -1];',
                '#define KOKIRI_PORTAL_COUNT %d'%max(len(portals), 1),
                'extern const kokiri_portal kokiri_portals[KOKIRI_PORTAL_COUNT];','#endif']
     (out/'kokiri_scene.h').write_text('\n'.join(header)+'\n')
@@ -179,14 +187,12 @@ def emit_rooms(args, head, actor, normal):
             '    kokiri_pdata.pntbl = points; kokiri_pdata.pltbl = polygons;',
             '    kokiri_pdata.attbl = attributes; return true;',
             '}',
-            'unsigned char kokiri_objects[KOKIRI_POLYGON_COUNT+3];',
-            'kokiri_object kokiri_bounds[KOKIRI_OBJECT_COUNT];',
             'const kokiri_portal kokiri_portals[KOKIRI_PORTAL_COUNT] = {']
-    code += ['    {%d,%d,%d,%d,%d,%d,%d},'
-             % tuple(p[k] for k in ('front','back','x','y','z','yaw','scene'))
+    code += ['    {%d,%d,%d,%d,%d,%d,%d,%d,%d},'
+             % tuple(p[k] for k in ('front','back','x','y','z','yaw','scene','kind','flag'))
              for p in portals]
     if not portals:
-        code += ['    {0,0,0,0,0,0,0},']
+        code += ['    {0,0,0,0,0,0,0,0},']
     code += ['};']
     (out/'kokiri_scene.c').write_text('\n'.join(code)+'\n')
     (out/'kokiri_textures.c').write_text('#include "kokiri_scene.h"\n'

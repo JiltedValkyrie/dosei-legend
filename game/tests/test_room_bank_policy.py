@@ -3,6 +3,9 @@ import json
 import pathlib
 import struct
 import unittest
+import sys
+sys.path.insert(0,str(pathlib.Path(__file__).resolve().parents[1]/'tools'))
+import build_sgl_scene as scene
 
 GEN = pathlib.Path(__file__).resolve().parents[1] / 'build/generated'
 
@@ -34,7 +37,10 @@ class RoomBankPolicy(unittest.TestCase):
                     self.assertEqual(flag, 0 if face['cull'] else 1)
                     self.assertEqual(bool(mode & 0x100), face['mesh'])
                     self.assertEqual(mode & ~0x100, 0x88)  # CL16Look + ECdis
-                    self.assertEqual(sort, 0x67)  # SORT_CEN, palette, near clip
+                    indices=struct.unpack_from('>4H',mesh,32+nv*12+i*20+12)
+                    points=[tuple(v//65536 for v in struct.unpack_from('>3i',mesh,32+j*12)) for j in indices]
+                    normal=struct.unpack_from('>3i',mesh,32+nv*12+i*20)
+                    self.assertEqual(sort,0x66 if scene.floor_uses_far_sort(points,range(4),normal) else 0x67)
                     self.assertEqual(direction, 2)
                     self.assertLess(tile, nt)
                 end = 0

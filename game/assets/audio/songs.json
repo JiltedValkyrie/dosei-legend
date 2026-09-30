@@ -1,6 +1,7 @@
 {
   "comment": "Stable OoT song IDs. BANK routes use a built-in bank; CD routes refer to a named entry in cdda_tracks.json, never a physical track number.",
   "songs": [
+    {"song": "NA_BGM_DUNGEON", "id": 24, "src": "BANK", "bank": "dungeon"},
     {"song": "NA_BGM_TITLE", "id": 30, "src": "BANK", "bank": "title"},
     {"song": "NA_BGM_LINK_HOUSE", "id": 31, "src": "BANK", "bank": "house"},
     {"song": "NA_BGM_GAME_OVER", "id": 32, "src": "CD", "cd": "GAME_OVER"},
@@ -8,6 +9,7 @@
     {"song": "NA_BGM_OPEN_TRE_BOX", "id": 43, "src": "CD", "cd": "CHEST"},
     {"song": "NA_BGM_SMALL_ITEM_GET", "id": 57, "src": "CD", "cd": "SMALL_ITEM"},
     {"song": "NA_BGM_KOKIRI", "id": 60, "src": "BANK", "bank": "kokiri"},
+    {"song": "NA_BGM_SARIA_THEME", "id": 62, "src": "BANK", "bank": "woods"},
     {"song": "NA_BGM_NAVI_OPENING", "id": 74, "src": "BANK", "bank": "navi"},
     {"song": "NA_BGM_DEKU_TREE_CS", "id": 75, "src": "BANK", "bank": "deku_tree"},
     {"song": "NA_BGM_SHOP", "id": 85, "src": "BANK", "bank": "shop"}

@@ -13,6 +13,10 @@
 #include "demo.h"
 #include "scene_flow.h"
 #include "world_prop_assets.h"
+#include "kokiri_scene.h"
+#include "dungeon_doors.h"
+#include "dungeon_webs.h"
+static actor_mesh_t *door,*web;
 static actor_mesh_t *rock, *pot, *chest, *bush, *gossip, *sign[11];
 static uint16_t chest_age[KOKIRI_CHEST_COUNT];
 static unsigned int last_tick;
@@ -29,6 +33,8 @@ void world_props_draw_free(void)
     unsigned int i;for(i=0;i<11;++i) { actor_mesh_free(sign[i]);sign[i]=0; }
     actor_mesh_free(rock);actor_mesh_free(pot);actor_mesh_free(chest);
     actor_mesh_free(bush);actor_mesh_free(gossip);
+    actor_mesh_free(door);door=0;actor_mesh_free(web);web=0;
+    dungeon_doors_reset();dungeon_webs_reset();
     rock=pot=chest=bush=gossip=0;
 }
 bool world_props_draw_load(unsigned int scene)
@@ -53,12 +59,14 @@ bool world_props_draw_load(unsigned int scene)
             if(!(sign[i]=actor_mesh_load_static(name))) return false;
         }
     }
+    if(scene==SAVE_SCENE_DEKU_TREE && (!(door=actor_mesh_load_static("DTDOOR.BIN")) ||
+       !(web=actor_mesh_load_static("DTWEB.BIN")))) return false;
     last_tick=demo_world_clock();return true;
 }
 bool world_props_draw_upload(void)
 {
     unsigned int i;for(i=0;i<11;++i) if(sign[i] && !actor_mesh_upload(sign[i])) return false;
-    return (!rock || actor_mesh_upload(rock)) && (!pot || actor_mesh_upload(pot)) &&
+    return (!web || actor_mesh_upload(web)) && (!door || actor_mesh_upload(door)) && (!rock || actor_mesh_upload(rock)) && (!pot || actor_mesh_upload(pot)) &&
            (!chest || actor_mesh_upload(chest)) && (!bush || actor_mesh_upload(bush)) &&
            (!gossip || actor_mesh_upload(gossip));
 }
@@ -111,6 +119,15 @@ void world_props_draw(unsigned int tick)
         a=0;while((a=actor_sys_find(SIGN_PIECE_ID,a)))
             if(a->scene==save_state.scene_id && a->room==kokiri_scene_room())
                 draw_sign(a->params,a->x,a->y,a->z,a->yaw,a->data[3]!=0);
+    }
+    for(i=0;web && i<dungeon_webs_count();++i) {
+        int32_t x,y,z;uint16_t yaw;
+        if(dungeon_webs_body(i,&x,&y,&z,&yaw)) actor_mesh_draw_static(web,x,y,z,yaw);
+    }
+    for(i=0;door && i<KOKIRI_PORTAL_COUNT;++i) {
+        const kokiri_portal *p=&kokiri_portals[i];
+        if(p->kind<8 || (p->front!=kokiri_scene_room() && p->back!=kokiri_scene_room())) continue;
+        actor_mesh_draw_static(door,p->x,p->y+dungeon_door_height(i),p->z,p->yaw);
     }
     for(i=0;chest && i<KOKIRI_CHEST_COUNT;++i) {
         const kokiri_chest_t *c=&kokiri_chests[i];

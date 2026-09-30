@@ -38,7 +38,7 @@ MAX_PAGES = 16
 # Messages that belong to no speaker's text-id ladder: get-item text and the
 # Kokiri Shop's Deku Shield exchange (z_player.c sGetItemTable, z_en_girla.c,
 # z_en_ossan.c). The runtime opens them by id; see dialogue_system[].
-SYSTEM_TEXTS = (0x006F, 0x00CC, 0x00A4, 0x004C, 0x10BA, 0x009F, 0x0089, 0x0084, 0x0085, 0x0086,
+SYSTEM_TEXTS = (0x0030, 0x0066, 0x0067, 0x006F, 0x00CC, 0x00A4, 0x004C, 0x10BA, 0x009F, 0x0089, 0x0084, 0x0085, 0x0086,
                 # Full Kokiri Shop (EnOssan/EnGirlA): hello, facing choice,
                 # continue choice, each shelf item's text and buy prompt, and
                 # the get-item texts a first buy shows.

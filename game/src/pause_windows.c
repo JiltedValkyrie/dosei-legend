@@ -7,6 +7,7 @@
 #include "ram_cart.h"
 #include "demo.h"
 #include "pause_cursor_data.h"
+#include "dungeon_map_data.h"
 
 #define PAGE_BYTES (320u * 240u * 2u)
 #define PAGE_MAP ((volatile unsigned short *)0x25E3C000u)
@@ -99,7 +100,7 @@ bool pause_windows_text_ready(void)
 {
     const pause_window_state_t *s=&gameplay.pause_window;
     unsigned page=s->system_confirm ? PAUSE_EXTRA : s->save_prompt ? PAUSE_SAVE : s->page;
-    return active && !failed && phase!=1 && loaded/4==(int)page;
+    return active && !failed && phase!=1 && loaded/8==(int)page;
 }
 static void pixel(int x,int y,unsigned colour)
 {
@@ -134,6 +135,21 @@ static void frame(int x, int y, int size, unsigned colour)
 }
 
 
+static bool dungeon_map(void)
+{
+    return save_state.scene_id == SAVE_SCENE_DEKU_TREE ||
+           save_state.scene_id == SAVE_SCENE_DEKU_TREE_BOSS;
+}
+static unsigned map_colour(unsigned tag)
+{
+    unsigned floor=gameplay.pause_window.cursor[PAUSE_MAP]%5;
+    unsigned rooms=deku_map_rooms[floor][tag&15];
+    if (rooms & save_state.deku_visited_rooms) return 0xFD40; /* source visited blue */
+    if (rooms && (save_state.deku_dungeon_items&2)) return 0xBDEF; /* unvisited */
+    if ((tag&15)==14) return 0xA108; /* source map background */
+    if ((tag&15)==15 && (save_state.deku_dungeon_items&2)) return 0x8000;
+    return 0x8C41;
+}
 static void paint(void)
 {
     const unsigned short *data=cache();
@@ -141,7 +157,12 @@ static void paint(void)
     for (tile=0;tile<1200;++tile) {
         volatile unsigned short *dst=cell(tile);
         x=(tile%40)*8; y=(tile/40)*8;
-        for (i=0;i<64;++i) dst[i]=data[(y+i/8)*320+x+i%8];
+        for (i=0;i<64;++i) {
+            unsigned colour=data[(y+i/8)*320+x+i%8];
+            if (loaded/8==PAUSE_MAP && loaded%8 && colour>=0x10 && colour<=0x1F)
+                colour=map_colour(colour);
+            dst[i]=colour;
+        }
     }
 }
 void pause_windows_print(int x,int y,const char *text)
@@ -162,7 +183,7 @@ void pause_windows_print(int x,int y,const char *text)
 static bool load_page(int key)
 {
     char name[]="PAUSE00.BIN";
-    name[5]+=key/4; name[6]+=key%4;
+    name[5]+=key/8; name[6]+=key%8;
     failed=!read_file(name,cache(),PAGE_BYTES);
     loaded=key; drawn=-1;
     return !failed;
@@ -189,19 +210,20 @@ bool pause_windows_update(void)
     pause_window_state_t *s=&gameplay.pause_window;
     unsigned page=s->system_confirm ? PAUSE_EXTRA : s->save_prompt ? PAUSE_SAVE : s->page;
     unsigned variant=page==PAUSE_EQUIPMENT ? gameplay.owned&3 :
-        page==PAUSE_ITEMS ? ((!!save_state.stick_owned) | ((!!save_state.slingshot)<<1)) :
-        page==PAUSE_QUEST ? !!(save_state.quest_items&(1u<<QUEST_KOKIRI_EMERALD)) : 0;
-    int key=page*4+variant;
+        page==PAUSE_ITEMS ? ((!!save_state.stick_owned) | ((!!save_state.slingshot)<<1) | ((!!save_state.nut_owned)<<2)) :
+        page==PAUSE_QUEST ? !!(save_state.quest_items&(1u<<QUEST_KOKIRI_EMERALD)) :
+        page==PAUSE_MAP && dungeon_map() ? 1+s->cursor[PAUSE_MAP]%5 : 0;
+    int key=page*8+variant;
     int cursor=s->save_prompt ? s->save_choice : s->cursor[s->page];
     int stamp=cursor+(gameplay.equipped<<8)+(s->system_confirm<<16);
     unsigned now=demo_clock(),t;
-    if (page==PAUSE_ITEMS) stamp += (save_state.c_items[0] + 3*save_state.c_items[1] + 9*save_state.c_items[2]) << 18;
+    if (page==PAUSE_ITEMS) stamp += (save_state.c_items[0] + 4*save_state.c_items[1] + 16*save_state.c_items[2]) << 18;
     if (failed) return false;
     if (!active && !begin()) { failed=true; return false; }
     if (loaded<0) { if (!load_page(key)) goto fail; }
     if (!phase && key!=loaded) {
-        if (key/4!=loaded/4 && page!=PAUSE_SAVE && loaded/4!=PAUSE_SAVE && !s->system_confirm) {
-            int from=loaded/4==PAUSE_EXTRA ? 4 : loaded/4;
+        if (key/8!=loaded/8 && page!=PAUSE_SAVE && loaded/8!=PAUSE_SAVE && !s->system_confirm) {
+            int from=loaded/8==PAUSE_EXTRA ? 4 : loaded/8;
             int to=page==PAUSE_EXTRA ? 4 : page;
             direction=((to-from+5)%5)<=2 ? 1 : -1;
             phase=1; started=now;
@@ -223,6 +245,7 @@ bool pause_windows_update(void)
             unsigned i;
             for (i=0;i<3;++i) {
                 unsigned item=save_state.c_items[i];
+                if (item==3) frame(97,63,29,0x83FF);
                 if (item==1 || item==2) frame(65,63+(item==2 ? 32 : 0),29,0x83FF);
             }
             frame(64+(cursor%6)*32,62+(cursor/6)*32,31,0xFF50);
@@ -236,7 +259,17 @@ bool pause_windows_update(void)
         else if (page==PAUSE_QUEST && variant) frame(179,165,25,0xFF50);
         drawn=stamp;
     }
-    if (page==PAUSE_MAP) pulse_map_marker(now);
+    if (page==PAUSE_MAP) {
+        if (!variant) pulse_map_marker(now);
+        else {
+            static const char *floors[5]={"3F","2F","1F","B1","B2"};
+            unsigned f;
+            for (f=0;f<5;++f) {
+                pause_windows_print(6,6+f*3,floors[f]);
+                pause_windows_print(5,6+f*3,f==variant-1 ? ">" : " ");
+            }
+        }
+    }
     transform(phase ? t : 0);
     return true;
 fail:

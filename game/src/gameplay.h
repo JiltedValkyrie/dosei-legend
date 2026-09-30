@@ -265,6 +265,8 @@ typedef struct
     int32_t     focus[3];       /* Link focus.pos (head point), world */
     uint8_t     c_assign;       /* 1=down, 2=left, 3=right; pause only */
     bool        c_up;           /* C-Up pressed this step (talk to Navi) */
+    uint8_t     c_use;          /* 1 down, 2 left, 3 right; world input only */
+    int16_t     item_pitch;
 }               gameplay_input_t;
 
 typedef struct

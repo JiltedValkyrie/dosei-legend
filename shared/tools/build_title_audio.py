@@ -297,7 +297,10 @@ def load_font(source, font_id=6):
     ratio = min(1.0, MUSIC_SAMPLE_BUDGET / sum(len(pcm) for pcm, *_ in original))
     samples, blob = [], bytearray()
     for name, (pcm, rate, unity, loop) in zip(names, original):
-        out_rate = int(rate * ratio)
+        # SCSP loop registers address at most 65535 samples per instrument,
+        # independently of the whole bank budget (Deku Tree's long drone).
+        # Resample that instrument further, preserving pitch via its rate.
+        out_rate = max(1, int(rate * min(ratio, 65530 / len(pcm))))
         actual_ratio = out_rate / rate
         data = resample(pcm, actual_ratio, loop)
         start = int(loop * actual_ratio)
@@ -311,7 +314,7 @@ def load_font(source, font_id=6):
         # beyond, so interpolation cannot read the next instrument's data.
         data.extend(data[start:start + 4])
         samples.append(dict(name=name, offset=len(blob), loop_start=start,
-                            loop_end=end, rate=out_rate, unity=unity, pcm=data))
+                            loop_end=end, rate=out_rate, source_rate=rate, unity=unity, pcm=data))
         blob.extend(struct.pack('>%dh' % len(data), *data))
     assert SAMPLE_BASE + len(blob) < 0x80000
     return envelopes, instruments, samples, blob, hashes
@@ -350,7 +353,9 @@ def release_seconds(index):
         return 4 * (143 - index) / 60
     if index:
         return 60 * (23 - index) / 60
-    raise ValueError('Infinite release unsupported')
+    # Rate zero does not decay. Nonlooping samples still stop at their end;
+    # looping samples retain their level until the score/voice allocator ends.
+    return math.inf
 
 
 def volume_at(changes, tick):
@@ -376,14 +381,15 @@ def bake(notes, times, changes, seq_volume, envelopes, instruments, samples, end
                    'Hi' if n['key'] > pitch(instrument.get('RangeHi', 'B9')) else '')
         sample = next(s for s in samples if s['name'] == instrument['Sample' + variant])
         # Soundfont 15 overrides the high split's base note for program 14.
-        assert not any('Rate' in k for k in instrument), instrument
         unity = pitch(instrument['BaseNote' + variant]) if 'BaseNote' + variant in instrument else sample['unity']
         rate = sample['rate'] * 2 ** ((n['key'] - unity) / 12)
+        if 'SampleRate' + variant in instrument:
+            rate *= int(instrument['SampleRate' + variant]) / sample['source_rate']
         start = times[n['tick']]
         gate = times[min(n['end_tick'], end_tick)]
         gate_level = envelope_level(env, gate - start)
         release = release_seconds(env['release'])
-        stop = min(times[end_tick], gate + gate_level * release)
+        stop = times[end_tick] if math.isinf(release) else min(times[end_tick], gate + gate_level * release)
         if limit_one_shots and sample["loop_end"] - sample["loop_start"] <= 1:
             stop = min(stop, start + sample["loop_end"] / rate)
         first, last = round(start * FPS), min(frames, math.ceil(stop * FPS))

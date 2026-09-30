@@ -5,27 +5,71 @@ Status: approved by the human 2026-09-25. **Current work plan for Claude, Astra
 `KOKIRI_VERTICAL_SLICE_PLAN.md` and the scope of `VERTICALSLICE.md`. Keeps the
 architecture, verified gate table and flag research of `OOT_PROGRESSION_PLAN.md`.
 
-Status refresh: **2026-09-29**. Current Clean disc is
-`game/build/game-clean.cue`; latest CD-handle fix BSS ends at `0x06083c30`, leaving **976 B below
-SGL**. M3 code and assets are built. Human confirmed hearts, plant transparency,
-carry animation and on-screen text instructions look good in Kronos. This is
-partial runtime acceptance, not completion of every M3 check.
-Human reports hut-exit behavior improved after the CD-handle fix and approved
-committing/pushing this checkpoint. Full greeting and dungeon review remain open.
+Status refresh: **2026-09-30**, recording the 2026-09-29 M5/M6 implementation
+checkpoint. **M5 and M6 are partial, not complete.** Codex/Astra owns both;
+the human no longer owns M5 solo. Full gameplay, source AI/drops, items, music,
+SFX and story remain required. Continue autonomously, fix blockers, and record
+nonblocking issues in [BUG_FEATURE_LOG.md](BUG_FEATURE_LOG.md).
 
-Baseline committed as `249cef5`; regression fixes remain uncommitted at this
-refresh. Human authorized Claude to commit them locally and continue required
-M3 work, then M4. No push authorized. BUG-035 peak measurement remains deferred
-P2; outstanding death/save issues retain their existing severity.
+Latest verified Clean disc: `game/build/game-clean.cue`. BSS ends at
+`0x0607b510`, leaving **35,568 bytes below SGL** after guarded low-RAM moves for
+sprite metadata and music triggers. Shared SDK and heap limits are unchanged.
+Disc directory capacity is 384 after registering the full Tree room set. M5/M6 changes remain uncommitted on `dev`;
+older commit/publication notes below apply only to their named checkpoints.
+
+Verification: **341 focused checks passed**; Clean build passed; foreground
+Kronos boot/title/world rendering observed. Item controls, room traversal,
+audio listening and a full dungeon/story playthrough are **not runtime verified**.
+Full discovery initially ran 1,023 tests with 15 failures and five setup errors;
+some harnesses were repaired, four stale harnesses remain logged as BUG-060.
+No full-suite pass is claimed. See [implementation checkpoint](M5_M6_IMPLEMENTATION.md)
+for evidence and exact limits.
+
+Earlier M3 human acceptance still covers hearts, plant transparency, carry
+animation and on-screen instructions, plus improved hut-exit behavior. It does
+not close the remaining M3 progression, greeting or save acceptance checks.
+
+## Dungeon connection checkpoint (2026-09-30)
+
+All 12 Tree rooms now registered; nine source-gated shutters have original
+geometry, opening state and movement collision. Two floor webs have source
+collision/model, high-fall break and saved destruction. 245 focused checks and
+Clean build pass; foreground boot observed. Full route remains blocked by missing
+wall webs/fire, torch/switch/platform mechanisms, enemies, scrub sequence and
+boss/story. No complete-playthrough acceptance or deadline completion claimed.
+See [current checkpoint](M5_M6_IMPLEMENTATION.md) and BUG-063.
+
+## Dungeon map fix (2026-09-30)
+
+The pause Map page now selects the Deku Tree map inside the dungeon/boss scene,
+with five original floor diagrams and floor navigation through menu directions.
+229 focused gameplay/save/renderer checks and the updated Clean build pass;
+in-game map acceptance remains unverified.
+Visited rooms are blue; owning the map reveals unvisited rooms in gray. Save v8
+persists discovered rooms and migrates v2-v7 without inventing visit history.
+Outside the dungeon, the existing world page remains. Compass chest/boss/player
+markers, automatic current-floor selection and in-game acceptance remain open.
+This corrects the missing map view promised by the map reward text; it does not
+make the currently unregistered dungeon rooms playable.
 
 ## Co-coding rules
 
-### M5 entry shell / human mesh handoff (2026-09-28)
+### M5/M6 autonomous assignment (2026-09-29)
+
+Human assigned M5 and M6 to Codex/Astra, superseding the solo-human guide and
+unassigned rows. Continue without requesting help; log minor issues for morning
+review. Implementation is partial: source graph and isolated bank preflight cover
+all 24 rooms, invisible portal streaming is generalized, and post-Emerald forest
+Mido/exit-guard behavior is implemented. Live C-items, ten-room Woods streaming,
+area music and dungeon treasure/save support now added. Dungeon puzzles/enemies/
+boss/story and Woods encounters/bridge progression remain required. See `M5_M6_IMPLEMENTATION.md` for exact limits.
+
+### Historical M5 entry shell / human mesh handoff (2026-09-28)
 
 Astra wired the original forest exit collision to Deku Tree room 0 and its
 return exit to forest spawn 1 / room 1. Only room 0 is registered for gameplay;
 dungeon transitions, actors and progression remain unfinished. Clean build
-passes at `game/build/game-clean.cue`: BSS ends `0x060834b0`, **2,896 B below
+passed at that checkpoint: BSS ended `0x060834b0`, **2,896 B below
 SGL**, including the concurrent Saria work. Kronos entry/return is unverified.
 All 12 Tree rooms plus two boss rooms are exposed to Mesh Workshop.
 Explicit per-room `ROOM_IMPORTS` supports keep/transfer/flat UV modes; visual
@@ -45,24 +89,49 @@ imports leave source collision unchanged. See
 - Every new actor: check real OoT drop code + spawn tables in the same task
   (Bible rule). Record gaps; never silently drop rewards.
 
-| Milestone | Owner | Status at 2026-09-28 |
+| Milestone | Owner | Status at 2026-09-30 |
 |---|---|---|
 | M0 scope, face-only textures, naming, actor pool, SFX banks | Claude | Foundations implemented; review approved 09-25. Cart-table boot/camera/music verification pending after latest RAM move |
 | M1 traversal | Claude; Astra water/camera work and reviews | Core through M1l implemented, with reviewed checkpoints. Water, camera and actor/dungeon integration checks remain; not blanket-complete |
 | M2 combat core, hearts, death | Claude; Astra review/UI fixes | M2a-e implemented; starter route and boulder gameplay passed. Death/save regressions and runtime checks remain; not closed |
 | M3 Kokiri Forest alive (NPCs, interiors, shop, chests) | Claude: remaining work; Astra: review and verified bush fix | M3a-d implementation built in Clean. Hearts, plant cutout, carry animation and instructions passed human review. Saria greeting/source-parity work and full progression/save acceptance remain open |
-| M4 items, C buttons, pause subscreens | Claude: next after required M3 work; Astra: delivered UI/assignment subset | Pause pages, counts, saved assignment and preferences pulled forward. C-item HUD and stick/nut/slingshot use still pending |
-| M5 Deku Tree + Gohma + Emerald | unassigned | Not started |
-| M6 post-Emerald Kokiri + Lost Woods | unassigned | Not started |
+| M4 items, C buttons, pause subscreens | Claude: remaining M4; Codex/Astra: shared M5 item dependencies delivered | Pause assignment/counts and live stick, nut and aim/release slingshot use implemented. Models, torch/web/water integration, targeting, compass markers and runtime acceptance remain |
+| M5 Deku Tree + Gohma + Emerald | Codex/Astra | All 12 Tree rooms registered; nine gated shutters and two breakable floor webs implemented. Boss rooms remain isolated. Full puzzles, enemies, boss/story and traversal acceptance pending |
+| M6 post-Emerald Kokiri + Lost Woods | Codex/Astra | All ten Woods rooms live with tunnel streaming, source exit routing and area music; post-Emerald forest behavior implemented. Encounters, pickups, minigames, owls, bridge/ocarina story and boundary handling pending |
 | M6b grottos, gold skulltulas, scrub shops | unassigned | Not started |
 | M7 Hyrule Field (explore, owl, music, ocarina free play) | unassigned | Not started |
 | M8 demo polish | unassigned | Main pass not started; deferred bugs recorded |
 | M9 release checks + package | unassigned | Not started |
 
-### Active order
+### Active M5/M6 order (Codex/Astra)
 
-0. RAM relocation implemented: title paths and music triggers now load into cart;
-   fresh-boot validation remains pending. Preserve allocation/budget guards.
+1. Integrate all Tree rooms and source shutter lifecycle, then torch/web/switch,
+   block/platform/water puzzles. Preserve actual gate conditions and collision;
+   isolated room bakes do not establish a playable route.
+2. Add source dungeon enemies, damage responses and drops, ordered scrub puzzle,
+   reachable Slingshot/Map/Compass rewards and compass markers. Finish item
+   puzzle hooks, source visuals and control acceptance alongside their users.
+3. Implement Gohma, eggs/minions, heart container and blue warp; connect Emerald,
+   Deku Tree death/flashbacks and dungeon/boss save/continue behavior.
+4. Complete Woods actors, pickups/grass, minigames and owls; connect aftermath
+   dialogue, Saria bridge/Fairy Ocarina and the Field handoff. Keep source gates;
+   Meadow/Goron/River destination handling remains unresolved, not silently open.
+   M6b side content and M7 Field gameplay retain their separate scope.
+5. Verify fresh-file progression without debug grants, both pad modes, death,
+   save/reload, room churn and music/SFX. Record observed runtime results
+   separately from host checks. Log small issues without dropping required work.
+
+Delivered dependencies: bounded swept seed shots, nut flash/stun, stick swings
+and burn lifetime; pause nut assignment; save v7 migration from v2-v6; all six
+source dungeon chest exports; dungeon/Woods BANK music and seed/nut SFX. Only
+room-0 map chest is on the live dungeon route. Stick ignition through torches,
+web burning, source item models and exact SFX sequencing remain incomplete.
+
+### Earlier M3/M4 sequence (Claude; remaining acceptance still open)
+
+0. RAM relocation has since advanced: title paths remain cart-resident; music
+   triggers and sprite metadata use guarded low RAM. Latest boot passed;
+   preserve allocation/budget guards and verify gameplay transitions.
 1. **M3a implemented:** actor manifest, shared grant/charge path, save v5 nuts,
    two/three-choice messages. Three-choice runtime check remains pending.
 2. **M3b built, remaining work owned by Claude:** four remaining interiors added beside the existing
@@ -91,8 +160,10 @@ imports leave source collision unchanged. See
    including Saria greeting camera/cues, and verify the fresh-file route: earn
    rupees, obtain maze sword, buy/equip shield, Mido steps aside, reload preserves
    chests and purchases. Do not stall on optional polish or deferred P2 sampling.
-6. **Then M4 (Claude):** C-item HUD and stick/nut use, followed by slingshot per
-   [M4 item plan](M4_ITEMS_PLAN.md). Do not mark M3 or M4 accepted prematurely.
+6. **Remaining M4 (Claude):** integrate and verify delivered C-item use; finish
+   presentation, HUD/map and source behavior gaps in the
+   [M4 item plan](M4_ITEMS_PLAN.md). Do not duplicate the delivered item module
+   or mark M3/M4 accepted prematurely.
 
 Human wants feature progress and later batch testing. Do not wait for a new
 BUG-035 heap peak reading. Actual crashes/allocation failures still require
@@ -374,8 +445,9 @@ spawns, BGM, SFX bank, layer rules). Check asset naming limits for > 9 scenes /
 ## Milestone scope (acceptance targets; status and sequencing above take precedence)
 
 Each milestone: host tests for rules, build the Clean image only for Kronos
-tests (Astra 09-25; other images on request), short Kronos check of what changed (background capture only, no
-focus steal), VSLICEPROGRESS + OPUS_HANDOFF updated, left uncommitted for
+tests (Astra 09-25; other images on request), short Kronos check of what changed
+(foreground authorized for this M5/M6 assignment), VSLICEPROGRESS + OPUS_HANDOFF
+updated, left uncommitted for
 Astra review. Check drop code for every new actor in same task (Bible rule).
 
 ### M0 — scope, policy, foundations (small)
@@ -469,9 +541,11 @@ Pause: Items / Equipment / Quest Status (Emerald, hearts pieces) / Map
 Keep it OoT layout, 2D not rotating cube (Saturn cost) — say so in README.
 
 ### M5 — Great Deku Tree dungeon + Gohma
-Human working without an agent: start with [M5 solo guide](M5_SOLO_GUIDE.md)
-and [file/boilerplate/decomp reference](M5_CODE_AND_SOURCE_MAP.md). Read-only
-inventory and room-loading research can proceed while earlier dependencies finish.
+Owner: **Codex/Astra**, autonomous full implementation. The former
+[M5 solo guide](M5_SOLO_GUIDE.md) and
+[file/boilerplate/decomp reference](M5_CODE_AND_SOURCE_MAP.md) remain references,
+not a requirement for human implementation. Current delivery limits and next
+steps are recorded above; all acceptance targets below remain required.
 
 - Bg_Treemouth meeting/choice/mouth-opening/ask-again cutscenes; ydan intro cs.
 - Import ydan 12 rooms + ydan_boss 2 rooms with streaming, Door_Shutter (+

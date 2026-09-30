@@ -25,6 +25,7 @@
 
 #include "kokiri_scene.h"
 #include "scene_table.h"
+#include "room_portal.h"
 #include "link_scene.h"
 #include "link_clips.h"
 #include "kokiri_sgl.h"
@@ -41,6 +42,8 @@ static unsigned int texture_base = GAME_TEXTURE_BASE;
 #include "link_anim_state.h"
 #include "kokiri_actors.h"
 #include "gameplay.h"
+#include "player_items.h"
+#include "dungeon_doors.h"
 
 /* Original forest renderer: radius (4367) * 60%, halved for the room banks.
 ** The authored single-mesh scene spans the whole town in one list, so that
@@ -853,31 +856,35 @@ bool kokiri_scene_update(void)
     ** stream for. */
     if (cutscene_is_playing()) { room_gameplay = false; return true; }
     if (!demo_link_active || demo_title_is_visible() || backdrop_active || forest_scene == 4) { room_gameplay = false; return true; }
-    /* M5 entry shell keeps room 0 resident. Forest portals do not belong here. */
-    if (forest_scene != SCENE_SPOT04) { room_gameplay = false; return true; }
     if (!room_gameplay) { target = forest_room; room_gameplay = true; }
+    dungeon_doors_constrain(&demo_link.x,&demo_link.z,demo_link.y-DEMO_LINK_EYE_HEIGHT);
     for (i=0;i<KOKIRI_PORTAL_COUNT;++i) {
         const kokiri_portal *p = &kokiri_portals[i];
         int32_t sine,cosine;
         int dx = demo_link.x-p->x, dz = demo_link.z-p->z;
         int dy = demo_link.y-DEMO_LINK_EYE_HEIGHT-p->y;
-        int side, depth;
+        int side, depth, portal_side;
+        if (p->scene != forest_scene) continue;
         if (forest_room != p->front && forest_room != p->back) continue;
         kokiri_camera_sincos(p->yaw,&sine,&cosine);
         side = (int)(((int64_t)dx*cosine-(int64_t)dz*sine)>>16);
         depth = (int)(((int64_t)dx*sine+(int64_t)dz*cosine)>>16);
         /* Original invisible tunnel volume; the central 100-unit band keeps
          * tiny movements from repeatedly swapping CD banks. */
-        if (dy > -50 && dy < 200 && side > -200 && side < 200 &&
-            ((depth > 50 && depth < 100) || (depth < -50 && depth > -100)))
-            target = depth < 0 ? p->front : p->back;
+        portal_side = p->kind>=8 ?
+            (dungeon_door_open(i) ? room_portal_side(0,side,dy,depth) : -1) :
+            room_portal_side(p->kind, side, dy, depth);
+        if (portal_side >= 0)
+            target = portal_side == 0 ? p->front : p->back;
     }
     requested_room = target;
     if (target != forest_room) {
         /* Wait for the in-flight draw without resubmitting it on every retry.
          * A timed-out draw leaves the bank untouched for the next callback. */
         if (!vdp1_wait_for_draw_end()) return true;
-        return room_load_bank(SCENE_SPOT04, (unsigned int)target);
+        if (!room_load_bank(forest_scene, (unsigned int)target)) return false;
+        player_items_room_changed();
+        return true;
     }
 #endif
     return true;
@@ -1317,17 +1324,18 @@ void                kokiri_link_draw(int x, int y, int z, int yaw)
             jo_3d_translate_matrix(-LINK_ANIM_SHIFT_X, LINK_ANIM_SHIFT_Y,
                                     -LINK_ANIM_SHIFT_Z);
         }
-        if (equipped_mask != gameplay.equipped) {
+        unsigned visible_gear = player_items_stick() ? gameplay.equipped & ~GP_SWORD : gameplay.equipped;
+        if (equipped_mask != visible_gear) {
             equipped_count = 0;
             link_part(LINK_BODY_FIRST, LINK_BODY_COUNT);
-            if (gameplay.equipped & GP_SWORD) {
+            if (visible_gear & GP_SWORD) {
                 link_part(LINK_LEFT_SWORD_FIRST, LINK_LEFT_SWORD_COUNT);
                 link_part(LINK_SHEATH_FIRST, LINK_SHEATH_COUNT);
             } else link_part(LINK_LEFT_EMPTY_FIRST, LINK_LEFT_EMPTY_COUNT);
             if (gameplay.equipped & GP_SHIELD)
                 link_part(LINK_RIGHT_SHIELD_FIRST, LINK_RIGHT_SHIELD_COUNT);
             else link_part(LINK_RIGHT_EMPTY_FIRST, LINK_RIGHT_EMPTY_COUNT);
-            equipped_mask = gameplay.equipped;
+            equipped_mask = visible_gear;
         }
         /* One submission: submitting each variant separately would transform
          * the full POINT table repeatedly and exhaust SGL's vertex work area. */
@@ -1553,10 +1561,43 @@ void                kokiri_boulder_draw(void)
     jo_3d_pop_matrix();
 }
 
+/* Compact flat item geometry: no texture upload or new sprite slots. The
+ * source hand model and nut burst particles remain presentation follow-ups. */
+static POINT item_points[8];
+static POLYGON item_polys[] = {
+    {{0,0,0},{0,1,2,3}}, {{0,0,0},{4,5,6,7}}
+};
+static ATTR item_attrs[] = {
+    ATTRIBUTE(Dual_Plane, SORT_CEN | UseNearClip, 0, C_RGB(20,12,4), No_Gouraud, CL32KRGB | ECdis, sprPolygon, No_Option),
+    ATTRIBUTE(Dual_Plane, SORT_CEN | UseNearClip, 0, C_RGB(16,9,3), No_Gouraud, CL32KRGB | ECdis, sprPolygon, No_Option)
+};
+static PDATA item_mesh = {item_points,8,item_polys,2,item_attrs};
+static void item_rod(const int32_t a[3], const int32_t b[3], int width)
+{
+    unsigned i, axis;
+    for (i=0;i<8;++i) {
+        const int32_t *p = (i%4 >= 2) ? b : a;
+        for (axis=0;axis<3;++axis) item_points[i][axis] = p[axis] * (axis==1 ? -65536 : 65536);
+        item_points[i][i<4 ? 0 : 2] += ((i%4==0 || i%4==3) ? -width : width)*65536;
+    }
+    kokiri_submit_pdata(&item_mesh);
+}
+
 /* M2c nutsball test: the boulder's sphere scaled to the ball's radius. */
 void                kokiri_nut_draw(void)
 {
     int32_t x, y, z;
+    unsigned i;
+    if (player_items_stick()) {
+        int32_t base[3], tip[3];
+        if (gameplay_blade_points(base, tip)) item_rod(base, tip, 1);
+    }
+    for (i = 0; i < PLAYER_SHOTS; ++i) {
+        int32_t a[3], b[3];
+        if (!player_items_body(i, &x, &y, &z)) continue;
+        a[0]=b[0]=x; a[2]=b[2]=z; a[1]=y-2; b[1]=y+2;
+        item_rod(a,b,2);
+    }
     if (!gameplay_nut_body(&x, &y, &z))
         return;
     jo_3d_push_matrix();

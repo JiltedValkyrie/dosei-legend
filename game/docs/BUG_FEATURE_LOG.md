@@ -1,5 +1,71 @@
 # Bug and feature log
 
+## BUG-063: Dungeon route completion (2026-09-30)
+
+P1, Codex/Astra, open. User requires a completely playable route by deadline.
+All 12 Tree rooms, nine source-gated shutters and two breakable floor webs now
+integrated; 245 focused checks and Clean build pass. Boss scene remains isolated.
+Missing wall webs/fire, torches/switches/platforms, dungeon enemies and source
+scrub sequence still prevent normal completion; no debug clear flags added.
+Door controls are A while facing within reach. Opening camera/animation/SFX and
+HUD prompt, web edge deformation and particles need follow-up. Foreground boot
+observed; room-by-room controller traversal and full fresh-file clear unverified.
+See the latest M5_M6_IMPLEMENTATION.md entry for files and evidence.
+
+## BUG-062: Dungeon map reward opens world map (2026-09-30)
+
+Owner: Codex/Astra. P1 feature gap; implementation repaired, runtime acceptance
+pending. Report: Map reward directs the player to the menu and says visited
+areas are blue, but the page always displayed Kokiri Forest. Added five source
+Deku floor diagrams, directional floor selection and blue visited-room shading;
+map ownership reveals unexplored rooms. Save v8 appends visit bits and migrates
+v2-v7 with unknown visits clear; the current room is recorded during gameplay.
+Clean build passes (BSS 0x06079cb0, 41,808 bytes below SGL).
+229 focused gameplay/save/renderer tests pass, including floor selection,
+visited/unknown colors, v7 migration and VDP2 restoration. Offline source-art
+preview inspected. Compass markers and automatic current-floor selection remain
+follow-ups. Full dungeon traversal is still BUG-055, not closed by this fix.
+
+## M5/M6 live integration follow-up (2026-09-29)
+
+Owner: Codex/Astra. Scope and verification: M5_M6_IMPLEMENTATION.md. No commits.
+
+- **BUG-055, P1, still open:** full dungeon/boss/story and Woods encounter chain
+  are not implemented. New ten-room Woods streaming, C-item core, treasure grants
+  and source music are progress, not milestone closure. Required work remains
+  listed in the checkpoint; no request for human implementation or debug grants.
+- **BUG-057, repaired capacity blockers:** sprite metadata now lives in an
+  explicitly zeroed, guarded low-RAM NOLOAD section. Music trigger data exceeded
+  the old 24 KB cart carve (29,288 B); now in a checked 64 KB low-RAM carve.
+  Woods/music/menu assets exceeded the 288-entry disc directory (293 entries);
+  capacity is now 320 and pre-master guard retained. No heap/render-limit cuts.
+  Foreground boot/title rendering passed. Full room-churn/performance acceptance
+  remains pending; see the final build log for current boundary measurements.
+- **BUG-058, P2 presentation / P1 puzzle dependency:** live sticks/seeds/nuts use
+  compact flat geometry. Source hand models, slingshot reticle/auto-target aim,
+  throw animation frame timing and acquisition presentation remain incomplete.
+  Analog hold/aim/release is wired; digital C-chord aiming needs runtime review.
+  Stick burn lifetime exists, but torch/web ignition, water extinction, wall
+  break and source jump-stick damage still need integration. Do not close M4/M5.
+- **BUG-059, P1 content / P2 transition presentation:** Woods geometry/exits/music
+  are live, but enemies, pickups, minigames, owls and bridge/ocarina story are
+  absent. Visible tunnels swap one bank near their plane; source dual-room
+  prefetch/black-plane fade is not reproduced. Meadow/Goron/River/Field still
+  have reported unsupported destinations; no invented barrier has been added.
+- **BUG-060, P2 test infrastructure:** full discovery ran 1,023 tests, initially
+  15 failures and five setup errors. Equipment and room assertions were updated
+  and pass in the focused run. Remaining stale extraction fixtures:
+  `test_forest_partition` lacks current renderer state/types;
+  `test_opening_audio` lacks sound-eye/CD duck state;
+  `test_title_flights` assumes resident path tables;
+  `test_ui_preferences` lacks cdda_volume. These are not evidence that gameplay
+  passed; retain the failed full-suite log `game/build/m5-m6-regression.log`.
+- **BUG-061, P2 audio fidelity:** new seed/nut effects follow source samples but
+  use the existing single-layer bake, without full portamento/envelope layering.
+  Dungeon/Woods music passes sample/loop/trigger bounds; listening and the full
+  source dynamic sequence behavior remain unverified. Review with other SFX.
+
+
 ## Boot asset failure after Saria / Deku entry additions (2026-09-28, P0)
 
 Human reported the blue `DIALOG/CUTTEXT/MINIMAP/MUSICTRG/TITLEPTH` boot error.
@@ -132,6 +198,46 @@ whether work stops. Optional features stay in backlog until assigned.
 | BUG-052 | Loading a Game Over save starts Link dying | `bug`, `priority: P0` | Claude | M2e save/load regression; before further M3 expansion | Open |
 | BUG-053 | Pause corruption after Continue with rebuilt mounted ISO | `bug`, `priority: P1` | Codex | Cold-boot Continue retest; keep mounted image unchanged | Open: live wrong-sector reads confirmed |
 | BUG-054 | Fresh-boot title hangs in full-work-heap callback allocation | `bug`, `priority: P0` | Astra | Cold boot title | Code fixed; Clean build passes; runtime retest pending |
+| BUG-055 | M5/M6 source rooms not yet connected to complete gameplay | `bug`, `priority: P1` | Codex/Astra | M5/M6 integration | Open |
+| BUG-056 | Post-Emerald NPC presentation and early-close semantics | `bug`, `priority: P2` | Codex/Astra | M6 NPC/scene review | Open |
+| BUG-057 | M5/M6 room-loader addition exceeded SGL by 128 bytes | `bug`, `priority: P0` | Codex/Astra | Runtime check of low-RAM metadata | Build fixed; runtime unverified |
+
+### BUG-055: M5/M6 integration ledger
+
+2026-09-29 source audit: ydan has nine Door_Shutter transitions plus two vertical
+and one horizontal invisible En_Holl; Lost Woods has nine visible narrow tunnels.
+The runtime only previously handled forest invisible tunnels. Source graph and
+all 24 isolated banks now exist, but they do not constitute a playable dungeon.
+Unsupported shutter/visible-tunnel exports fail instead of opening puzzle gates.
+Only original room-0 dungeon shell remains enabled in the player build.
+
+Required dependencies: M4 live stick/nut/slingshot, dungeon mechanism/actor/drop
+ports, Gohma/reward/story chain, Woods actors/minigame/owls and bridge cutscene.
+Meadow access is source-reachable, its explicit boundary remains unresolved;
+Field handoff awaits M7. Current room budgets include Link/effects only, not the
+new enemy/puzzle actors. Track completion against M5/M6 plans, not this issue
+alone. [Implementation and evidence](M5_M6_IMPLEMENTATION.md).
+
+### BUG-056: Post-Emerald NPC presentation/early-close follow-up
+
+2026-09-29 code/source evidence: exit guard now uses the correct post-Emerald path
+endpoint and Mido leaves only after talking and reaching his endpoint. Existing
+Mido walking uses rounded integer steps rather than exact 1.5 source units/frame,
+and existing NPC animation/turning does not reproduce every source walk/stop pose.
+The generic dialogue cancel closes early and dispatches normal closing effects;
+text 0x1045 currently shares that adaptation rather than source TEXT_STATE_EVENT
+advance semantics. No milestone completion is claimed. Revisit with M6 NPC
+presentation and dialogue acceptance; host tests verify normal completion only.
+
+### BUG-057: Room metadata work-RAM relocation
+
+Measured Clean .bss end 0x06084080, SGL base 0x06084000. Boundary guard rejected
+and removed that image. Move generated room object-index and bounds arrays to
+non-overlapping low-RAM carves 0x9800..0xB800; compile-time size/order guards
+remain. Loader fills all used entries before rendering; no heap/sprite/SGL limit
+was cut. Final Clean BSS 0x06083720, 2,272 B below SGL. Foreground boot/title/forest
+render verified after launching on the interactive desktop outside the sandbox.
+Room churn/gameplay acceptance remains open. OPUS_HANDOFF has the evidence paths.
 
 ### BUG-046: Pause window parity follow-up
 

@@ -452,6 +452,15 @@ class PlayerControls(unittest.TestCase):
         self.assertTrue(self.lib.control_target_held())
         self.assertFalse(self.lib.control_look_mode())
 
+    def test_c_release_survives_aim_view_without_movement(self):
+        self.hold(C | DOWN)
+        self.lib.player_input_set_view_look(True)
+        self.hold(0)
+        self.assertEqual(self.lib.control_c_released(), C_DOWN)
+        self.assertEqual(self.lib.control_move_buttons(), 0)
+        self.hold(0)
+        self.assertEqual(self.lib.control_c_released(), C_NONE)
+
     def test_look_outranks_c(self):
         self.lib.player_input_set_view_look(True)
         self.hold(L | C | RIGHT)

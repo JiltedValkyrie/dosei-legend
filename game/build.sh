@@ -130,7 +130,7 @@ cp "$here/build/generated/GATEFIRE.BIN" "$here/build/cd/GATEFIRE.BIN"
 "$python" "$here/tools/build_cutscenes.py" --oot "$oot"
 "$python" "$here/tools/build_title_paths.py"
 "$python" "$here/tools/build_interior_audio.py" --oot "$oot"
-for area_bank in HOUSE SHOP; do
+for area_bank in HOUSE SHOP DUNGEON WOODS; do
     cp "$here/build/generated/${area_bank}_PCM.RAW" "$here/build/cd/$area_bank.PCM"
     cp "$here/build/generated/${area_bank}_LEVELS.RAW" "$here/build/cd/$area_bank.LVL"
 done

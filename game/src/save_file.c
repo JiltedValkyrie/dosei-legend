@@ -111,6 +111,8 @@ static void     pack_payload(const save_state_t *state, cursor *c)
     put8(c, state->nut_owned);
     put8(c, state->nut_ammo);
     put8(c, state->nut_upgrade);
+    put8(c, state->deku_dungeon_items);
+    put16(c, state->deku_visited_rooms);
 }
 
 static void     unpack_payload(save_state_t *state, cursor *c, uint16_t version)
@@ -143,6 +145,8 @@ static void     unpack_payload(save_state_t *state, cursor *c, uint16_t version)
     state->entrance = get8(c);
     for (i = 0; i < 3; ++i) state->c_items[i] = 0;
     state->nut_owned = state->nut_ammo = state->nut_upgrade = 0;
+    state->deku_dungeon_items = 0;
+    state->deku_visited_rooms = 0;
     if (version < 3) {
         state->stick_owned = state->stick_ammo = state->stick_upgrade = 0;
         state->navi_timer = 0;
@@ -155,20 +159,24 @@ static void     unpack_payload(save_state_t *state, cursor *c, uint16_t version)
     if (version >= 4)
         for (i = 0; i < 3; ++i) {
             unsigned item = get8(c);
-            state->c_items[i] = item <= 2 ? item : 0;
+            state->c_items[i] = item <= 3 ? item : 0;
         }
     if (version >= 5) {
         state->nut_owned = get8(c);
         state->nut_ammo = get8(c);
         state->nut_upgrade = get8(c);
     }
+    if (version >= 7) state->deku_dungeon_items = get8(c) & 3;
+    if (version >= 8) state->deku_visited_rooms = get16(c) & 0x0FFF;
 }
 
 static unsigned int payload_bytes(uint16_t version)
 {
     return version == 2 ? SAVE_FILE_V2_PAYLOAD_BYTES :
            version == 3 ? SAVE_FILE_V3_PAYLOAD_BYTES :
-           version == 4 ? SAVE_FILE_V4_PAYLOAD_BYTES : SAVE_FILE_PAYLOAD_BYTES;
+           version == 4 ? SAVE_FILE_V4_PAYLOAD_BYTES :
+           version < 7 ? SAVE_FILE_V6_PAYLOAD_BYTES :
+           version == 7 ? SAVE_FILE_V7_PAYLOAD_BYTES : SAVE_FILE_PAYLOAD_BYTES;
 }
 
 /* ---- public ------------------------------------------------------------ */
@@ -215,7 +223,7 @@ static save_file_status validate(const uint8_t *in, unsigned int bytes)
         return (SAVE_FILE_BAD_MAGIC);
     }
     version = (uint16_t)((in[4] << 8) | in[5]);
-    if (version != SAVE_FILE_VERSION && version != 5 && version != 4 && version != 3 &&
+    if (version != SAVE_FILE_VERSION && version != 7 && version != 6 && version != 5 && version != 4 && version != 3 &&
         version != 2)
         return (SAVE_FILE_BAD_VERSION);
     payload = payload_bytes(version);

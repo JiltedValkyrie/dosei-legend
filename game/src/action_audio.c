@@ -4,6 +4,7 @@
 #include "action_audio_data.h"
 #include "opening_audio_data.h"
 #include "gameplay.h"
+#include "player_items.h"
 #include "karebaba.h"
 #include "game_over.h"
 #include "music.h"
@@ -315,7 +316,11 @@ static void rupee_vblank(void)
 void action_audio_events(uint32_t events)
 {
     uint32_t events2 = gameplay.events2;
+    unsigned items = player_items_events();
     if (opening_bank) return;
+    if (items & PLAYER_ITEM_FIRE) play(ACTION_SEED_FIRE, 28);
+    if (items & PLAYER_ITEM_IMPACT) play(ACTION_SEED_IMPACT, 28);
+    if (items & PLAYER_ITEM_FLASH) play(ACTION_NUT_FLASH, 28);
     /* Attention_Update: NA_SE_SY_LOCK_ON for an attention+hostile lock,
     ** NA_SE_SY_LOCK_ON_HUMAN otherwise. */
     if (events & GP_EVENT_TARGET_ON)

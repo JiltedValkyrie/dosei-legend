@@ -269,6 +269,16 @@ bool            save_item_give(save_item_t item)
     unsigned int    total;
 
     switch (item) {
+    case SAVE_ITEM_SLINGSHOT:
+        save_state.slingshot = 1;
+        save_state.ammo_seeds = 30;
+        return true;
+    case SAVE_ITEM_DEKU_MAP:
+        save_state.deku_dungeon_items |= 2;
+        return true;
+    case SAVE_ITEM_DEKU_COMPASS:
+        save_state.deku_dungeon_items |= 1;
+        return true;
     case SAVE_ITEM_RUPEE_GREEN:
     case SAVE_ITEM_RUPEE_BLUE:
     case SAVE_ITEM_RUPEE_RED:
@@ -406,6 +416,8 @@ void            save_new_game(void)
     save_state.equip_shield = 0;
     save_state.slingshot = 0;
     save_state.ammo_seeds = 0;
+    save_state.deku_dungeon_items = 0;
+    save_state.deku_visited_rooms = 0;
     save_state.stick_owned = 0;
     save_state.stick_ammo = 0;
     save_state.stick_upgrade = 0;

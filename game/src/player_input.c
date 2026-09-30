@@ -313,8 +313,10 @@ void player_input_step(bool in_gameplay, player_input_t *out)
         vertical = !!(dpad & CAMERA_UP) - !!(dpad & CAMERA_DOWN);
         if (!analog && (held & CAMERA_C)) horizontal = vertical = 0;
         out->look_mode = true;
-        for (i = 0; i < 4; ++i)
+        for (i = 0; i < 4; ++i) {
+            if (c_released[i]) out->c_released = (player_c_button_t)(PLAYER_C_UP + i);
             if (c_pressed[i]) out->c_pressed = (player_c_button_t)(PLAYER_C_UP + i);
+        }
         out->look_exited = interacted || attacked || toggled || recentered ||
             (held & CAMERA_R) || jumped || out->c_pressed != PLAYER_C_NONE;
         /* NEGATED, same handedness correction as the movement basis. With a

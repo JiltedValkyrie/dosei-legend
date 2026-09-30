@@ -299,6 +299,16 @@ def main():
                 elif actor['id'] == ACTOR_EN_SA:
                     people.append(dict(actor, kind='SARIA'))
 
+    # Original Deku Tree treasures; room residency filters interaction/drawing.
+    dungeon = source.extract(args.oot, args.rom_dir, prefix='ydan')
+    for name in sorted(k for k in dungeon if '_room_' in k):
+        for actor in read_actors(dungeon[name]):
+            if actor['id'] != ACTOR_EN_BOX: continue
+            if actor['var'] >> 12 not in (0, 5):
+                raise ValueError('Deku chest needs a visibility gate')
+            actor.update(room=int(name.rsplit('_', 1)[1]), scene=2)
+            chests.append(actor)
+
     # Keep existing forest identities stable when interiors add named actors.
     # Within each scene, Mido and Saria precede the Kokiri children.
     people.sort(key=lambda a: (a['scene'], {'MIDO': 0, 'SARIA': 1, 'CHILD': 2}[a['kind']],
@@ -307,7 +317,7 @@ def main():
     for chest in chests:
         # En_Box: type bits 12-15, get item bits 5-11, treasure flag bits 0-4.
         # Maze sword plus Mido house heart/green/blue rewards.
-        if (chest['var'] >> 5) & 0x7F not in (0x27, 0x48, 0x4C, 0x4D):
+        if (chest['var'] >> 5) & 0x7F not in (0x05, 0x40, 0x41, 0x27, 0x48, 0x4C, 0x4D):
             sys.exit('unsupported chest reward 0x%04X' % chest['var'])
     # En_Goroiwa: path bits 0-7, loop mode 8-9, ground-follow bit 10.
     # Only the maze boulder's shape is modelled: one-way loop, bit 10 (the
@@ -317,6 +327,11 @@ def main():
         sys.exit('expected one En_Goroiwa, found %d' % len(boulders))
     boulder = boulders[0]
     paths = scene_paths(segments['spot04_scene'])
+    exit_guard = next(a for a in people if a['scene'] == 0 and
+                      a['kind'] == 'CHILD' and (a['var'] & 255) == 3)
+    exit_path = paths[(exit_guard['var'] >> 8) & 255]
+    if not exit_path:
+        raise ValueError('Kokiri exit guard has no source path')
     path = paths[boulder['var'] & 0xFF]
     if (boulder['var'] >> 8) & 3 != 0 or not (boulder['var'] >> 10) & 1 or len(path) < 2:
         sys.exit('En_Goroiwa 0x%04X shape unsupported' % boulder['var'])
@@ -396,6 +411,10 @@ def main():
                '# define KOKIRI_BOULDER_ROOM  %d' % boulder['room'],
                '# define KOKIRI_BOULDER_POINTS %d' % len(path),
                'extern const int16_t kokiri_boulder_path[KOKIRI_BOULDER_POINTS][3];',
+               '/* EnKo child type 3: Path_CopyLastPoint after the Emerald. */',
+               '# define KOKIRI_EXIT_MOVED_X %d' % exit_path[-1][0],
+               '# define KOKIRI_EXIT_MOVED_Y %d' % exit_path[-1][1],
+               '# define KOKIRI_EXIT_MOVED_Z %d' % exit_path[-1][2],
                '#endif', '']
     (args.out / 'kokiri_actors.h').write_text('\n'.join(header))
 

@@ -1,3 +1,106 @@
+# Dungeon room/door/floor-web checkpoint (2026-09-30)
+
+Uncommitted on dev. All 12 Deku Tree room banks now registered in the normal
+Clean build. Nine source shutters retain type/switch flags; the three En_Holl
+passages use the existing streaming path. Shutters have original door geometry,
+A-facing activation, lift/hold/close state, closed-door movement rejection and
+source front/back clear/switch tests. Clear flags are not fabricated: absent
+scrub/enemy/puzzle implementations still block the corresponding route.
+
+Both source floor webs have original mesh/collision/placement and saved destroyed
+flags. A central fall over 750 units begins the source-timed break; breaking
+webs survive room streaming until their switch is set. Normal room unload removes
+collision without granting progress. No source collectible drops for these actors.
+Wall webs, fire/torch integration, switches/platforms, enemies, boss and story are
+still missing. This is NOT a complete playable dungeon or M5/M6 acceptance.
+
+245 focused checks pass, including real dynamic floor collision, room unload,
+web-break persistence, shutter side/flag gates, swept closed-door collision and
+all live room-bank files (including base-36 room A/B names). Clean build passes:
+BSS 0x0607b510, 35,568 bytes below SGL; disc directory capacity 384. New SH-2
+mechanism objects have no software-float references. Kronos boots to file select;
+`game/build/dungeon-connected-boot.png` is boot evidence only, not traversal.
+Build/test logs: `game/build/dungeon-connected-build.log` and
+`game/build/dungeon-connected-tests.log`. Door animation/camera/SFX/A-prompt and
+web edge deformation/particles remain presentation gaps; real gameplay testing
+still required. Earlier checkpoint measurements and room-0-only status below
+are historical.
+
+# Dungeon pause map checkpoint (2026-09-30)
+
+Fixed the map reward/menu mismatch: dungeon scenes now show the five source
+Deku floor diagrams, menu directions select floors, visited rooms are blue and
+map ownership reveals unexplored rooms. VDP2 only, using the existing page cache.
+Save v8 persists visited rooms; v2-v7 migrate with unknown history clear.
+Changed pause artwork/renderer, menu controls, gameplay visit recording and save
+serialization. 229 focused gameplay/save/renderer checks pass; Clean build passes
+with BSS 0x06079cb0 (41,808 bytes below SGL). Source-art preview inspected at
+`game/build/dungeon-map-preview.png`; build log `game/build/dungeon-map-build.log`.
+No in-game map/controller acceptance claimed. Compass markers and automatic
+current-floor selection remain open (BUG-062). Full M5/M6 remains incomplete.
+Uncommitted on dev. Earlier checkpoint measurements below are historical.
+
+# Live items / Woods checkpoint (2026-09-29)
+
+Uncommitted on dev. Live ten-room Woods streaming, source area music, C-item
+stick/seed/nut combat, six dungeon chest exports and v7 map/compass saves added.
+Final Clean BSS 0x06079850: 42,928 bytes below SGL.
+341 focused checks pass. Low-RAM sprite/music relocation frees work RAM; disc
+capacity 320 covers 293 entries. Foreground boot/title rendering verified.
+**Full M5/M6 remains unfinished:** dungeon puzzles/enemies/Gohma/story, Woods
+encounters/minigames and bridge/ocarina progression still required. No debug
+item grants or open-door substitutes. Detailed limits and bug records:
+[implementation checkpoint](M5_M6_IMPLEMENTATION.md).
+
+Earlier sections below are historical.
+
+## Foreground boot verification (2026-09-29)
+
+Human authorized foreground Kronos. Launched the unchanged Clean disc through
+the normal launcher on the interactive desktop, outside the tool sandbox.
+Boot reaches the title and renders the forest, title art and live FPS counters.
+Evidence: `game/build/m5-m6-foreground.png`. Earlier white captures came from
+the sandbox-desktop launch; they do not indicate a game boot failure.
+Kronos remains open for the human. No input bindings/save files were changed.
+Post-Emerald NPCs, room transitions and full gameplay remain runtime-unverified.
+
+## Codex M5/M6 autonomous checkpoint (2026-09-29)
+
+Human assigned both milestones to Codex, no help requests, minor issues logged
+for morning review. Work stays uncommitted on dev. Neither milestone is complete.
+
+Implemented: source graph/actor/object/exit/collision ledger for 24 child-day
+rooms; isolated bake of all 14 dungeon/boss and ten Woods banks; scene-aware
+invisible En_Holl streaming (source kinds 2/4/6); post-Emerald forest exit-guard
+placement and Mido talk/walk/departure/house population. Shutters and visible
+tunnels remain explicit unsupported cases, not open release shortcuts. Normal
+disc still exposes only the existing dungeon room-0 shell.
+
+Changed runtime: gameplay.c, kokiri_sgl.c, room_portal.h, ram_low.h. Generators:
+build_actors.py, build_room_scene.py, new build_progression_manifest.py and
+build_progression_rooms.py. New focused tests and source/implementation ledgers.
+Room object-index/bounds arrays moved to guarded low RAM after a measured
+128-byte SGL overflow; heap and SGL limits unchanged. Save format unchanged.
+
+Validation: **205 tests passed** across gameplay, source graph, actual C portal
+bands, all 24 binary banks and filenames. **Clean build passed**, BSS ends
+**0x06083720, 2,272 bytes below SGL**; `game/build/game-clean.cue`, log
+`game/build/m5-m6-build.log`. No software-float references found in disassembly
+of gameplay.o and kokiri_sgl.o. Isolated banks total 6,341,988 mesh+pixel bytes;
+worst table 1,810 vertices / 1,602 polygons / 1,467 tiles. Future actor reservations
+and runtime heap peaks remain outstanding.
+
+Kronos: background launch/capture attempted without focus/input; two PrintWindow
+captures showed only a white render area. This is **not** proof of game boot,
+failure, or visual acceptance. Do not mark runtime verified. Test process closed;
+no mounted disc left behind. Screenshot: `game/build/m5-m6-boot.png`.
+
+Remaining required work: M4 live items, M5 mouth/mechanisms/doors/enemies/drop
+ports/Gohma/rewards/story/continue, M6 live Woods encounters/visible tunnels/
+bridge/ocarina and final scene boundaries. Minor NPC presentation/early-close
+behavior deferred in BUG-056; integration and RAM records BUG-055/057.
+See [full checkpoint](M5_M6_IMPLEMENTATION.md) and [source rooms](M5_M6_SOURCE_ROOMS.md).
+
 ## Mesh Workshop asset browser / editor direction (2026-09-29)
 
 Mesh Workshop now inventories local source/shared/generated/staged/workspace

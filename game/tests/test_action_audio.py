@@ -66,6 +66,8 @@ class AudioEvents(unittest.TestCase):
 #include <stdint.h>
 #include <string.h>
 #include "gameplay.h"
+#include "player_items.h"
+unsigned player_items_events(void) { return 0; }
 #include "action_audio_data.h"
 #include "opening_audio_data.h"
 #include "action_audio.h"

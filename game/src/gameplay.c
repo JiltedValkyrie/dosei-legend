@@ -1,4 +1,5 @@
 #include "gameplay.h"
+#include "player_items.h"
 #include "kokiri_actors.h"
 #include "kokiri_dialogue.h"
 #include "dialogue_text.h"
@@ -152,13 +153,20 @@ static bool exit_blocker(unsigned int npc)
 static void update_exit_blocker(const gameplay_input_t *in)
 {
     unsigned int i;
-    if (!in_forest() || save_check_quest_item(QUEST_KOKIRI_EMERALD)) return;
+    if (!in_forest()) return;
     for (i = 0; i < KOKIRI_NPC_COUNT; ++i) if (exit_blocker(i)) {
         int32_t sine, cosine;
         const kokiri_npc_t *home = &kokiri_npcs[i];
         uint16_t yaw = gameplay_facing(in->x - home->x, in->z - home->z);
         gameplay_sincos(yaw, &sine, &cosine);
         exit_blocker_live = *home;
+        if (save_check_quest_item(QUEST_KOKIRI_EMERALD)) {
+            exit_blocker_live.x = KOKIRI_EXIT_MOVED_X;
+            exit_blocker_live.y = KOKIRI_EXIT_MOVED_Y;
+            exit_blocker_live.z = KOKIRI_EXIT_MOVED_Z;
+            exit_blocker_valid = true;
+            return;
+        }
         exit_blocker_live.x += (80 * sine) >> 16;
         exit_blocker_live.z += (80 * cosine) >> 16;
         exit_blocker_live.yaw = gameplay_facing(in->x - exit_blocker_live.x,
@@ -231,8 +239,7 @@ static const kokiri_npc_t *npc_at(int npc)
         mido_live.yaw = mido_yaw;
         return &mido_live;
     }
-    if (exit_blocker(npc) && exit_blocker_valid &&
-        !save_check_quest_item(QUEST_KOKIRI_EMERALD)) return &exit_blocker_live;
+    if (exit_blocker(npc) && exit_blocker_valid) return &exit_blocker_live;
     return &kokiri_npcs[npc];
 }
 
@@ -408,7 +415,8 @@ bool                gameplay_saria_greeting_step(void)
 
 static void         mido_place(void)
 {
-    if (save_get_event_chk_inf(EVENTCHKINF_MIDO_STOOD_ASIDE_KOKIRI)) {
+    if (save_get_event_chk_inf(EVENTCHKINF_MIDO_STOOD_ASIDE_KOKIRI) &&
+        !save_check_quest_item(QUEST_KOKIRI_EMERALD)) {
         gameplay.mido_state = 2;
         gameplay.mido_x = MIDO_MOVED_X;
         gameplay.mido_z = MIDO_MOVED_Z;
@@ -442,6 +450,9 @@ static void         update_mido(const gameplay_input_t *in)
             gameplay.mido_x = MIDO_MOVED_X;
             gameplay.mido_z = MIDO_MOVED_Z;
             gameplay.mido_state = 2;
+            /* EnMd_Walk commits departure only after the path completes. */
+            if (save_check_quest_item(QUEST_KOKIRI_EMERALD))
+                save_set_event_chk_inf(EVENTCHKINF_MIDO_LEFT_FOR_HIS_HOUSE);
             return;
         }
         /* Q8 accumulation would be smoother; a unit a step is his speed. */
@@ -748,6 +759,7 @@ static void         check_death(const gameplay_input_t *in)
     if (gameplay.dead || save_state.health != 0 || !in->grounded)
         return;
     gameplay.dead = true;
+    player_items_reset();
     gameplay.swing = 0;
     gameplay.attack_phase = 0;
     gameplay.shielding = false;
@@ -852,7 +864,9 @@ bool                gameplay_boulder_body(unsigned int room, int32_t *x, int32_t
 
 bool                gameplay_mido_body(unsigned int room, int32_t *x, int32_t *z)
 {
-    if (!in_forest() || room != MIDO_ROOM)
+    if (!in_forest() || room != MIDO_ROOM ||
+        save_get_event_chk_inf(EVENTCHKINF_MIDO_LEFT_FOR_HIS_HOUSE) ||
+        save_get_event_chk_inf(EVENTCHKINF_OBTAINED_ZELDAS_LETTER))
         return false;
     *x = gameplay.mido_x;
     *z = gameplay.mido_z;
@@ -867,7 +881,8 @@ static void         mido_talk_closed(uint16_t text_id)
     if (text_id == 0x102F) {
         save_set_event_chk_inf(EVENTCHKINF_MIDO_DENIED_DEKU_TREE_ACCESS);
         save_set_inf_table(INFTABLE_MIDO_REFUSED_ONCE);
-    } else if (text_id == 0x1033 && gameplay.mido_state == 0) {
+    } else if ((text_id == 0x1033 || (text_id == 0x1045 &&
+                save_check_quest_item(QUEST_KOKIRI_EMERALD))) && gameplay.mido_state == 0) {
         save_set_event_chk_inf(EVENTCHKINF_MIDO_STOOD_ASIDE_KOKIRI);
         gameplay.mido_state = 1;
         gameplay.events |= GP_EVENT_MIDO_ASIDE;
@@ -953,6 +968,9 @@ static bool         update_chest(const gameplay_input_t *in)
         save_item_t item;
         unsigned int text;
         switch (reward) {
+        case 0x05: item = SAVE_ITEM_SLINGSHOT; text = 0x30; break;
+        case 0x40: item = SAVE_ITEM_DEKU_COMPASS; text = 0x67; break;
+        case 0x41: item = SAVE_ITEM_DEKU_MAP; text = 0x66; break;
         case 0x27: item = SAVE_ITEM_SWORD_KOKIRI; text = 0xA4; break;
         case 0x48: item = SAVE_ITEM_RECOVERY_HEART; text = 0x55; break;
         case 0x4C: item = SAVE_ITEM_RUPEE_GREEN; text = 0x6F; break;
@@ -1111,6 +1129,7 @@ bool                gameplay_wonder_drop(unsigned int index)
 void                gameplay_reset(void)
 {
     unsigned int i;
+    player_items_reset();
     exit_blocker_valid = false;
     /* A new scene spawns a new En_Sa, so its type is chosen again here. Any
     ** greeting still running belonged to the scene being left. */
@@ -1192,7 +1211,7 @@ void                gameplay_reset(void)
     gameplay.talking = false;
     gameplay.paused = false;
     gameplay.cursor = GP_SLOT_SWORD;
-    gameplay.pause_window = (pause_window_state_t){ .page = PAUSE_EQUIPMENT, .cursor = {0, 0, 18, 1} };
+    gameplay.pause_window = (pause_window_state_t){ .page = PAUSE_EQUIPMENT, .cursor = {0, 2, 18, 1} };
     gameplay.rupees = 0;
     gameplay.rupee_taken = 0;
     gameplay.drop_rng = 0x12345678u;
@@ -1575,6 +1594,7 @@ static bool         register_blade_quads(void)
         c->radius = GP_BLADE_RADIUS;
         c->at_type = AT_TYPE_PLAYER;
         c->at_dmg = player_attack_damage_flags(gameplay.attack_id);
+        if (player_items_stick()) c->at_dmg = DMG_DEKU_STICK;
         if (!c->at_dmg) c->at_dmg = DMG_SLASH_KOKIRI;
         c->ac_flags = COL_OUTSIDE_ACTOR;        /* Link owns it: AC_HARD bounces */
         c->attack_id = gameplay.swing_count ? gameplay.swing_count : 1;
@@ -1606,6 +1626,7 @@ static void         register_blade(const gameplay_input_t *in)
                   gameplay.attack_id == ATTACK_BIG_SPIN) ? 32768 : 16384;
     blade->at_type = AT_TYPE_PLAYER;
     blade->at_dmg = player_attack_damage_flags(gameplay.attack_id);
+    if (player_items_stick()) blade->at_dmg = DMG_DEKU_STICK;
     if (!blade->at_dmg) blade->at_dmg = DMG_SLASH_KOKIRI;
     blade->attack_id = gameplay.swing_count ? gameplay.swing_count : 1;
     blade->tag = GP_TAG_BLADE;
@@ -1715,11 +1736,21 @@ static void         run_contacts(const gameplay_input_t *in)
     if (in_forest())
         register_boulder(in);
     register_nut();
+    player_items_register();
     karebaba_register();
     world_props_register(contacts->props, 4, in);
     collide_run();
     world_props_collect();
     karebaba_collect();
+    player_items_collect();
+    if (blade_live && player_items_stick())
+        for (i = 0; i < 3; ++i)
+            if (contacts->blade[i].attack_id == gameplay.swing_count &&
+                (contacts->blade[i].result & COL_RES_AT_HIT)) {
+                player_items_break_stick();
+                gameplay_attack_cancel();
+                break;
+            }
     if (contacts->boulder.result & COL_RES_AT_HIT)
         gameplay.boulder_hit = true;
     if (blade_live)
@@ -2072,7 +2103,7 @@ static void         update_sword(const gameplay_input_t *in)
     } else if (!in->attack) {
         return;
     }
-    if (!(gameplay.equipped & GP_SWORD)) {
+    if (!(gameplay.equipped & GP_SWORD) && !player_items_stick()) {
         /* No sword means no attack, not a substitute action. */
         gameplay.events |= GP_EVENT_DENIED;
         return;
@@ -2146,7 +2177,8 @@ static void         update_menu(const gameplay_input_t *in)
         gameplay.pause_window.page == PAUSE_ITEMS) {
         unsigned cursor = gameplay.pause_window.cursor[PAUSE_ITEMS];
         unsigned item = cursor == 0 && save_state.stick_owned ? 1 :
-                        cursor == 6 && save_state.slingshot ? 2 : 0;
+                        cursor == 6 && save_state.slingshot ? 2 :
+                        cursor == 1 && save_state.nut_owned ? 3 : 0;
         if (item) {
             unsigned i;
             for (i = 0; i < 3; ++i)
@@ -2154,6 +2186,17 @@ static void         update_menu(const gameplay_input_t *in)
             save_state.c_items[in->c_assign - 1] = item;
             gameplay.events |= GP_EVENT_EQUIP;
         } else gameplay.events |= GP_EVENT_DENIED;
+        return;
+    }
+    if (gameplay.pause_window.page == PAUSE_MAP &&
+        !gameplay.pause_window.save_prompt && !gameplay.pause_window.system_confirm &&
+        !in->menu_page && !in->cancel &&
+        (save_state.scene_id == SAVE_SCENE_DEKU_TREE || save_state.scene_id == SAVE_SCENE_DEKU_TREE_BOSS) &&
+        (in->menu_dy || in->menu_dx)) {
+        int step = in->menu_dy ? in->menu_dy : in->menu_dx;
+        gameplay.pause_window.cursor[PAUSE_MAP] =
+            (gameplay.pause_window.cursor[PAUSE_MAP] + (step > 0 ? 1 : 4)) % 5;
+        gameplay.events |= GP_EVENT_MENU_MOVE;
         return;
     }
     unsigned result = pause_window_step(&gameplay.pause_window,
@@ -2962,8 +3005,23 @@ void                gameplay_step(const gameplay_input_t *in)
         return;
     }
     (void)drop_random(); /* vary outcomes with play timing, even before a cut */
+    player_items_step();
+    if (in->c_use && in->c_use <= 3 && in->grounded &&
+        !world_props_carrying() && !gameplay.attack_phase && !in->shield) {
+        if (!player_items_use(save_state.c_items[in->c_use - 1],
+                in->x, in->y, in->z, in->yaw, in->item_pitch))
+            gameplay.events |= GP_EVENT_DENIED;
+    }
     blade_live = false;
-    update_sword(in);
+    if (in->c_use && in->c_use <= 3 && save_state.c_items[in->c_use - 1] == 1 &&
+        player_items_stick() && in->grounded && !world_props_carrying()) {
+        gameplay_input_t stick_input = *in;
+        stick_input.attack = true;
+        update_sword(&stick_input);
+    } else {
+        if (in->attack && !gameplay.attack_phase) player_items_putaway();
+        update_sword(in);
+    }
     update_shield(in);
     run_contacts(in);
 }
