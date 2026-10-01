@@ -175,3 +175,22 @@ exported MTL and sampler JSON beside the edited files. Re-import now recovers
 the sampler through matching material names AND exact texture paths in that
 original MTL. Conflicting matches fail; no filename-stem guessing is used.
 An explicit edited-OBJ-name.materials.json still takes precedence.
+
+## Per-mesh LOD (Hyrule Field and other mesh rooms)
+
+Right-click a mesh in the Outliner, or open Selected object:
+
+- **Add/Import LOD0...** imports an OBJ (triangles + convex quads, same checks
+  as Replace OBJ) as the close-up version. Export the mesh first and model in
+  its local coordinates; LOD0 is placed back on the original mesh centre.
+  The original geometry stays as LOD1.
+- **Remove LOD0 (use original geometry)** drops the close-up set.
+- **LOD0 distance / Cull distance** + **Apply LOD distances**: distance from
+  Link to the mesh bounds (centre distance minus radius), native units.
+  Closer than LOD0 distance draws LOD0; closer than cull draws LOD1; farther
+  draws nothing. Defaults: LOD0 1500, cull 9000 (Field draw distance).
+
+Saved in the layout under `lods`; Undo/Redo work. A mesh at defaults with no
+LOD0 stores nothing and builds exactly as before. Pop-in is expected; fog stays.
+The viewport preview still shows LOD1 only. LOD0 adds polygons, vertices and
+VDP1 tiles to the room bank; build budget guards still apply.

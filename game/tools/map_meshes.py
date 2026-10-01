@@ -30,11 +30,52 @@ def bundle_path(identity, game=GAME):
     return folder
 
 
-def store(obj, game=GAME, confirm_split=None):
+def suffixed_sidecar_materials(obj):
+    """Blender '.001' material names whose base name is in the OBJ's own sidecar.
+
+    Returns {suffixed: base}; empty when nothing to fix."""
+    obj=Path(obj)
+    sidecar=obj.with_suffix('.materials.json')
+    if not sidecar.is_file(): return {}
+    try: known=validate_material_metadata(json.loads(sidecar.read_text(encoding='utf-8')))['materials']
+    except (OSError,ValueError): return {}
+    names={line[7:].strip() for line in obj.read_text(encoding='utf-8-sig').splitlines() if line.startswith('usemtl ')}
+    fixes={}
+    for name in names:
+        base=re.sub(r'\.\d{3,}$','',name)
+        if name.startswith('dosei_') and name not in known and base!=name and base in known: fixes[name]=base
+    return fixes
+
+
+def fix_suffixed_materials(obj, fixes):
+    """Rename suffixed materials in OBJ + its MTL; add sidecar link to MTL."""
+    obj=Path(obj)
+    def rename(line,prefix):
+        if line.startswith(prefix):
+            name=line[len(prefix):].strip()
+            return prefix+fixes.get(name,name)
+        return line
+    lines=obj.read_text(encoding='utf-8-sig').splitlines()
+    mtls=[obj.parent/line[7:].strip() for line in lines if line.startswith('mtllib ')]
+    obj.write_text('\n'.join(rename(line,'usemtl ') for line in lines)+'\n',encoding='utf-8')
+    for mtl in mtls:
+        if not mtl.is_file(): continue
+        text=[rename(line,'newmtl ') for line in mtl.read_text(encoding='utf-8-sig').splitlines()]
+        if not any(line.startswith('# dosei_materials: ') for line in text):
+            text.insert(0,'# dosei_materials: '+obj.with_suffix('.materials.json').name)
+        mtl.write_text('\n'.join(text)+'\n',encoding='utf-8')
+
+
+def store(obj, game=GAME, confirm_split=None, confirm_rename=None):
     """Normalize references, then copy an immutable bundle before saving any layout."""
     sys.path.insert(0,str(GAME.parent/'tools/mesh-workshop'))
     from mesh_assets import import_obj, parse_obj
     obj = Path(obj).resolve()
+    if confirm_rename is not None:
+        fixes=suffixed_sidecar_materials(obj)
+        if fixes:
+            if not confirm_rename(fixes): return None
+            fix_suffixed_materials(obj,fixes)
     if confirm_split is not None:
         diagnostics={}
         parse_obj(obj,split_incompatible=True,diagnostics=diagnostics,
@@ -131,6 +172,45 @@ def apply_faces(faces, segments, document, game=GAME):
                 result.append(dict(face,vertices=vertices))
         else: result.extend(replacement_faces(entry,room,obj,game))
     return result
+
+
+# LOD0 faces live in their own object id so the bank/runtime can switch the
+# close-up set and the original (LOD1) set independently.
+LOD0_OBJECT_BASE = 0x10000
+# Defaults: no LOD0 switch, cull at the scene's current far distance.
+LOD0_DISTANCE_DEFAULT = 1500
+CULL_DISTANCE_DEFAULT = {'spot00':9000}  # kokiri_sgl.c FIELD_FAR
+CULL_DISTANCE_FALLBACK = 9000
+
+
+def default_cull(prefix):
+    return CULL_DISTANCE_DEFAULT.get(prefix,CULL_DISTANCE_FALLBACK)
+
+
+def apply_lods(faces, segments, document, game=GAME):
+    """Append LOD0 close-up faces; return (faces, {room: {object: settings}}).
+
+    The original object stays as LOD1. Its faces are untouched, so a mesh
+    without an LOD0 bundle draws exactly as before."""
+    lods=document.get('lods',{}) if document else {}
+    result=list(faces); settings={}
+    for key,entry in sorted(lods.items()):
+        room,_,index=key.partition('/object/')
+        if room not in segments: continue
+        if hashlib.sha256(segments[room]).hexdigest()!=entry['sha256']:
+            raise ValueError('LOD source room changed: '+key)
+        obj=int(index)
+        if not any(f['room']==room and f.get('object')==obj for f in result):
+            raise ValueError('LOD mesh object not found: '+key)
+        lod0=0
+        if entry['bundle'] is not None:
+            placed=dict(bundle=entry['bundle'],position=entry['position'],yaw=0,scale=1)
+            extra=replacement_faces(placed,room,LOD0_OBJECT_BASE+obj,game)
+            for face in extra: face['lod0_of']=obj
+            result.extend(extra); lod0=len(extra)
+        settings.setdefault(room,{})[obj]=dict(lod0_distance=entry['lod0_distance'],
+            cull_distance=entry['cull_distance'],lod0_faces=lod0)
+    return result,settings
 
 
 def triangle_image(face, size=32):

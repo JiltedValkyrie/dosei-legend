@@ -81,6 +81,11 @@
 #define RAM_CART_NAVIGLOW_OFFSET    0x13800u
 #define RAM_CART_NAVIGLOW_BYTES     0x1200u
 
+/* Per-mesh LOD rows from the room bank (KRM1 header[6]): 16 B each, max 96.
+** Uses the free gap between Navi's glow (ends 0x14A00) and DEKUBABA. */
+#define RAM_CART_MESH_LOD_OFFSET    0x14A00u
+#define RAM_CART_MESH_LOD_BYTES     0x600u
+
 /* Fixed carve for DEKUBABA.BIN (karebaba_draw.c) plus its POLYGON/ATTR
 ** tables: 14.9 KB file + 145 faces x 32 B. */
 #define RAM_CART_DEKUBABA_OFFSET    0x15000u

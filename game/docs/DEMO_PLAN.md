@@ -102,6 +102,12 @@ bytes; 2,487 polygons and 2,305 vertices include the larger owl skeleton.
 No global limits changed, source faces intentionally removed, or old scenes
 switched to the new policy. Worst-view/runtime acceptance remains open.
 
+Field per-mesh LOD (Claude, 2026-10-01): Map Workshop per-mesh LOD0 import /
+remove and LOD0/cull distances; bank LOD rows in cart carve; runtime integer
+Link-distance select (LOD0 / original / skip). Code + host tests only; no
+human LOD0 meshes authored yet. Clean target build BLOCKED at HEAD by BUG-071
+(Field 2,714 > 2,600 table polygons), so no new image; Kronos check pending.
+
 The integrated route is implemented, host-tested and target-built in the usual
 Clean image: Gohma death/optional heart/blue warp -> all nine Tree aftermath
 scripts -> forest entrance 11 -> Saria bridge -> Fairy Ocarina -> Field intro
@@ -345,7 +351,7 @@ these do not certify every preset, pad mode or progression path.
 | M5 Tree/Gohma/Emerald | Codex/Astra | Boss/warp/rewards and nine-part aftermath integrated; presentation parity and human fresh-file clear remain |
 | M6 Woods/Meadow/bridge | Codex/Astra | Woods streaming/music and aftermath rules exist; finish actors, games, Woods owls and Meadow; bridge/Ocarina story integrated |
 | M6b side content | Unassigned | Dungeon Gold Skulltula foundation exists; reachable grottos and scrub shops remain |
-| M7 Field | Codex/Astra | Live route/intro/owl/music built; human traversal/listening acceptance and ocarina free play remain |
+| M7 Field | Codex/Astra | Live route/intro/owl/music built; human traversal/listening acceptance and ocarina free play remain. Per-mesh LOD code (Claude) awaits BUG-071 Clean build fix + Kronos check |
 | M8 polish | Unassigned | Required presentation/audio/help/release diagnostics remain |
 | M9 release | Unassigned | Complete playthrough, second-emulator check and package remain |
 

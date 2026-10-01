@@ -40,7 +40,53 @@ def transitions(oot, rom_dir=None, prefix='spot04', room_count=None):
     return []
 
 
-def pack_room(vertices, faces, tiles, records, normal):
+# Runtime record: short cx,cy,cz; ushort radius, lod0_dist, cull_dist;
+# uchar lod1_object, lod0_object (0xFF = none); 2 pad. ram_cart.h carve.
+LOD_RECORD = struct.Struct('>3h3H2B2x')
+LOD_NONE = 0xFF
+LOD_MAX_RECORDS = 96  # RAM_CART_MESH_LOD_BYTES / 16
+LOD0_OBJECT_BASE = 0x10000  # map_meshes.LOD0_OBJECT_BASE
+
+
+def lod_table(vertices, records, lods, object_ids):
+    """Integer per-mesh LOD rows. lods: {source object: settings}.
+
+    Source-space (Y up) centre and bounding radius over both LOD sets, so one
+    distance test chooses between them. Runtime uses object ids, not
+    first/count ranges: its visibility partition reorders polygons."""
+    import math
+    rows = []
+    for obj in sorted(lods, key=int):
+        setting = lods[obj]; obj = int(obj)
+        if obj not in object_ids:
+            raise ValueError('LOD object %d has no faces in this room' % obj)
+        near = obj + LOD0_OBJECT_BASE
+        if setting.get('lod0_faces') and near not in object_ids:
+            raise ValueError('LOD0 for object %d produced no faces' % obj)
+        members = [r for r in records if r['object'] in (obj, near)]
+        points = [vertices[v] for r in members for v in r['indices']]
+        low = [min(p[k] for p in points) for k in range(3)]
+        high = [max(p[k] for p in points) for k in range(3)]
+        centre = [(a + b) // 2 for a, b in zip(low, high)]
+        radius = max(math.isqrt(sum((p[k]-centre[k])**2 for k in range(3))) + 1 for p in points)
+        near_dist, cull = setting['lod0_distance'], setting['cull_distance']
+        if not (0 <= near_dist <= cull <= 32767) or radius > 32767:
+            raise ValueError('LOD distances/radius out of range for object %d' % obj)
+        rows.append(dict(object=obj, centre=centre, radius=radius,
+                         lod0_distance=near_dist if near in object_ids else 0,
+                         cull_distance=cull, lod1=object_ids[obj],
+                         lod0=object_ids.get(near, LOD_NONE)))
+    if len(rows) > LOD_MAX_RECORDS:
+        raise ValueError('%d LOD meshes exceed the %d-record cart carve' % (len(rows), LOD_MAX_RECORDS))
+    return rows
+
+
+def pack_lods(rows):
+    return b''.join(LOD_RECORD.pack(*r['centre'], r['radius'], r['lod0_distance'],
+                                    r['cull_distance'], r['lod1'], r['lod0']) for r in rows)
+
+
+def pack_room(vertices, faces, tiles, records, normal, lods=None):
     """Big-endian Saturn POINT/POLYGON/ATTR buffers, tile table and palettes."""
     baked = [(x,-y,z) for x,y,z in vertices]
     objects = collections.defaultdict(list)
@@ -52,9 +98,12 @@ def pack_room(vertices, faces, tiles, records, normal):
         points = [vertices[v] for i in objects[old] for v in records[i]['indices']]
         bounds.append(tuple(min(p[k] for p in points) for k in range(3)) +
                       tuple(max(p[k] for p in points) for k in range(3)))
+    if len(bounds) > LOD_NONE:
+        raise ValueError('%d mesh objects exceed the 8-bit object id' % len(bounds))
+    lod_rows = lod_table(vertices, records, lods or {}, object_ids)
     pixels = b''.join(t['pixels'] + bytes((-len(t['pixels']))%8) for t in tiles.values())
     data = bytearray(struct.pack('>8I',0x4b524d31,len(vertices),len(faces),len(tiles),
-                                 len(pixels),len(bounds),0,0))
+                                 len(pixels),len(bounds),len(lod_rows),0))
     for p in baked:
         data.extend(struct.pack('>3i',*(v*65536 for v in p)))
     for f in faces:
@@ -81,6 +130,7 @@ def pack_room(vertices, faces, tiles, records, normal):
     data.extend(bytes((-len(records))%4))
     for b in bounds:
         data.extend(struct.pack('>6i',*b))
+    data.extend(pack_lods(lod_rows))
     return bytes(data), pixels, bounds
 
 
@@ -131,8 +181,16 @@ def emit_rooms(args, head, actor, normal):
                 manifest = json.loads((folder / 'texture_manifest.json').read_text())
             if prefix == 'spot04':
                 forest_rooms.append((vertices, faces, tiles))
+            lods = manifest.get('lods', {})
             mesh, pixels, bounds = pack_room(vertices, faces, tiles,
-                                             manifest['faces'], normal)
+                                             manifest['faces'], normal, lods)
+            if lods:
+                near = [r for r in manifest['faces'] if r['object'] >= LOD0_OBJECT_BASE]
+                near_points = {v for r in near for v in r['indices']}
+                print('  LOD %s: %d meshes, LOD0 %d polys / %d verts (+%d B POLYGON+ATTR, '
+                      '+%d B POINT), table %d B in cart carve'
+                      % (room, len(lods), len(near), len(near_points), len(near)*32,
+                         len(near_points)*12, len(lods)*LOD_RECORD.size), flush=True)
             (out / asset_names.room_asset(scene_id, room_id, 'MSH')).write_bytes(mesh)
             (out / asset_names.room_asset(scene_id, room_id, 'TEX')).write_bytes(pixels)
             summaries.append(dict(scene=scene_id, prefix=prefix, id=room_id,

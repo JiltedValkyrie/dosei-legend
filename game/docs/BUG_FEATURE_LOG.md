@@ -59,6 +59,26 @@ Gohma/Tree-mouth focus unverified; 16 reported full-suite failures have no valid
 baseline comparison yet (message table, npc models, level_select, vdp1 budget,
 kokiri_sgl extraction harnesses). Do not call these pre-existing or unrelated.
 
+## BUG-071: Clean build fails Field table budget at HEAD (2026-10-01)
+
+P0 build blocker, unowned, found by Claude during Field LOD work. `build.bat
+-Variant clean` fails at HEAD `cd5de84` with the LOD diff stashed (same error with
+it): `2714 polygons exceed the 2600-polygon table budget` while baking spot00.
+Field room now bakes 1,403 polygons / 1,681 vertices; Link + both owl models
+add 1,311. Earlier 14:17 Clean build that day recorded spot00 at 1,258
+polygons, cause of the +145 not traced. Guard kept, not raised. No new
+game-clean image from this task. Revisit: next Field/owl or converter change;
+must fix before any Clean rebuild.
+
+## FEATURE: Hyrule Field per-mesh LOD + cull (2026-10-01)
+
+Claude. Code + host tests done; target build blocked by BUG-071; no Kronos
+check. Map Workshop: Add/Import LOD0, Remove LOD0, per-mesh LOD0/cull distance
+(layout `lods`). Bank KRM1 header[6] rows (16 B) read into cart carve
+`RAM_CART_MESH_LOD` (0x14A00, 1,536 B, 96 rows). No `lods` entry = byte-identical
+bank and today's drawing. LOD0 polys share the room bank tables/tile budget.
+Workshop preview does not draw LOD0 yet (optional, P3).
+
 ## BUG-070: Tree Continue spawns over wrong room bank (2026-09-30)
 
 P1 crash, Codex. Human died in the circular-web Tree room, chose Save/Continue,

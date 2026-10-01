@@ -47,6 +47,7 @@ void kokiri_hit_filter(unsigned level){hit_filter=level<=32?level:0;}
 #include "player_items.h"
 #include "dungeon_doors.h"
 #include "save_state.h"
+#include "mesh_lod.h"
 
 /* Original forest renderer: radius (4367) * 60%, halved for the room banks.
 ** The authored single-mesh scene spans the whole town in one list, so that
@@ -82,6 +83,11 @@ static int forest_room = -1;
 static int requested_room;
 static bool room_gameplay;
 static unsigned char object_visible[KOKIRI_OBJECT_COUNT];
+/* Per-mesh LOD rows live in a fixed cart carve (ram_cart.h). */
+#define MESH_LOD_MAX (RAM_CART_MESH_LOD_BYTES / sizeof(mesh_lod_t))
+static unsigned int forest_lod_count;
+static mesh_lod_t *forest_lods;
+static unsigned char lod_state[MESH_LOD_MAX], lod_state_applied[MESH_LOD_MAX];
 #else
 #define forest_polygon_count KOKIRI_POLYGON_COUNT
 #define forest_vertex_count KOKIRI_VERTEX_COUNT
@@ -741,7 +747,7 @@ static bool __attribute__((optimize("Os"))) room_load_bank(unsigned int scene, u
         return false;
     }
     expected = 32 + header[1]*12 + header[2]*32 + header[3]*44 +
-               ((header[2]+3)&~3u) + header[5]*24;
+               ((header[2]+3)&~3u) + header[5]*24 + header[6]*sizeof(mesh_lod_t);
     /* A bank with no tiles is flat shaded: every face carries its own colour
     ** in its ATTR and there is no pixel file at all. The dream's Hyrule Field
     ** is built that way, so header[3] of zero is a kind of bank, not a
@@ -749,7 +755,8 @@ static bool __attribute__((optimize("Os"))) room_load_bank(unsigned int scene, u
     if (header[0] != 0x4b524d31 || !header[1] || !header[2] ||
         header[1] > KOKIRI_VERTEX_COUNT || header[2] > KOKIRI_POLYGON_COUNT ||
         header[3] > KOKIRI_TILE_COUNT || header[4] > KOKIRI_PIXEL_BYTES ||
-        header[5] > KOKIRI_OBJECT_COUNT ||
+        header[5] > KOKIRI_OBJECT_COUNT || header[6] > MESH_LOD_MAX ||
+        (header[6] && !ram_cart_fixed(RAM_CART_MESH_LOD_OFFSET, RAM_CART_MESH_LOD_BYTES)) ||
         (unsigned int)(from_cache ? opening_cache[room].mesh_bytes : file.size) != expected ||
         (from_cache && (unsigned int)opening_cache[room].pixel_bytes != header[3]*4)) {
         if (!from_cache) jo_fs_close(&file);
@@ -777,8 +784,17 @@ static bool __attribute__((optimize("Os"))) room_load_bank(unsigned int scene, u
          room_read(&file, kokiri_cluts, header[3]*32, &cached) &&
          room_read(&file, kokiri_objects, (header[2]+3)&~3u, &cached) &&
          room_read(&file, kokiri_bounds, header[5]*sizeof(kokiri_object), &cached);
+    forest_lods = (mesh_lod_t *)ram_cart_fixed(RAM_CART_MESH_LOD_OFFSET, RAM_CART_MESH_LOD_BYTES);
+    forest_lod_count = 0;
+    if (ok && header[6])
+        ok = room_read(&file, forest_lods, header[6]*sizeof(mesh_lod_t), &cached);
+    for (i = 0; ok && i < header[6]; ++i)
+        ok = forest_lods[i].lod1_object < header[5] &&
+             (forest_lods[i].lod0_object == MESH_LOD_NONE ||
+              forest_lods[i].lod0_object < header[5]);
     if (!from_cache) { jo_fs_close(&file); asset_loading_done(); }
     if (!ok) return false;
+    forest_lod_count = header[6];
     relocate_resident(scene == KOKIRI_FIELD_SCENE ? CUTSCENE_TEXTURE_BASE : GAME_TEXTURE_BASE);
     /* Every bank replaces the same forest slots; Link/fairies stay resident. */
     vram_used = resident_bytes;
@@ -1048,6 +1064,26 @@ int kokiri_warp_probe(unsigned int field)
 }
 #endif
 
+#ifdef KOKIRI_STREAM_ROOMS
+/* Fill lod_state from Link's feet (camera when Link is inactive); true when
+** any mesh changed level since the last prepared frame. */
+static bool forest_lod_changed(void)
+{
+    unsigned int i;
+    bool changed = false;
+    int x = demo_camera.x, y = demo_camera.y, z = demo_camera.z;
+    if (demo_link_active) {
+        x = demo_link.x; y = demo_link.y - DEMO_LINK_EYE_HEIGHT; z = demo_link.z;
+    }
+    for (i = 0; i < forest_lod_count; ++i) {
+        unsigned char state = (unsigned char)mesh_lod_select(&forest_lods[i], x, y, z);
+        lod_state[i] = state;
+        changed |= state != lod_state_applied[i];
+    }
+    return changed;
+}
+#endif
+
 void                kokiri_scene_draw(void)
 {
     unsigned int i, j, visible = forest_polygon_count;
@@ -1070,7 +1106,11 @@ void                kokiri_scene_draw(void)
      * are excluded from normal builds. */
     if (forest_prepared && prepared_x == demo_camera.x &&
         prepared_y == demo_camera.y && prepared_z == demo_camera.z &&
-        prepared_yaw == demo_yaw && prepared_pitch == demo_pitch) {
+        prepared_yaw == demo_yaw && prepared_pitch == demo_pitch
+#ifdef KOKIRI_STREAM_ROOMS
+        && !forest_lod_changed()
+#endif
+        ) {
         visible = prepared_visible;
         forest_reused = true;
         goto prepared;
@@ -1086,6 +1126,15 @@ void                kokiri_scene_draw(void)
         int dz = b->minimum[2] > demo_camera.z ? b->minimum[2]-demo_camera.z :
                  b->maximum[2] < demo_camera.z ? demo_camera.z-b->maximum[2] : 0;
         object_visible[i] = (int64_t)dx*dx+(int64_t)dz*dz <= FOREST_FAR*FOREST_FAR;
+    }
+    forest_lod_changed();
+    for (i = 0; i < forest_lod_count; ++i) {
+        const mesh_lod_t *m = &forest_lods[i];
+        unsigned int state = lod_state[i];
+        lod_state_applied[i] = (unsigned char)state;
+        if (state != MESH_LOD_FAR) object_visible[m->lod1_object] = 0;
+        if (m->lod0_object != MESH_LOD_NONE)
+            object_visible[m->lod0_object] = state == MESH_LOD_NEAR;
     }
 #endif
     for (i = 0; i < forest_vertex_count; ++i) {

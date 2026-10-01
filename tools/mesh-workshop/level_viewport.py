@@ -231,6 +231,11 @@ class RoomViewport(tk.Toplevel):
             state='normal' if source else 'disabled',command=lambda:self.mesh_exchange('export'))
         self.mesh_menu.add_command(label='Import / replace this mesh...',
             state='normal' if editable else 'disabled',command=lambda:self.mesh_exchange('replace'))
+        has_lod0=bool(editable and ((self.document or {}).get('lods',{}).get(self.entities[row]['details']['mesh_key']) or {}).get('bundle'))
+        self.mesh_menu.add_command(label='Add/Import LOD0 (close-up OBJ)...',
+            state='normal' if editable else 'disabled',command=lambda:self.mesh_exchange('import_lod0'))
+        self.mesh_menu.add_command(label='Remove LOD0 (use original geometry)',
+            state='normal' if has_lod0 else 'disabled',command=lambda:self.mesh_exchange('remove_lod0'))
         self.mesh_menu.add_command(label='Rename... (F2)',state='normal' if editable else 'disabled',command=self.rename_selected)
         self.mesh_menu.add_command(label='Re-import last OBJ',
             state='normal' if editable else 'disabled',command=lambda:self.mesh_exchange('reimport'))

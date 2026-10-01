@@ -203,6 +203,10 @@ def convert(oot, head, actor, out_dir, patches_only=False, rom_dir=None,
     if document and document.get('meshes'):
         from map_meshes import apply_faces
         source_faces = apply_faces(source_faces,source.extract(oot,rom_dir,prefix=prefix),document)
+    lod_settings = {}
+    if document and document.get('lods'):
+        from map_meshes import apply_lods
+        source_faces, lod_settings = apply_lods(source_faces,source.extract(oot,rom_dir,prefix=prefix),document)
     preferred, workshop = [], None
     if quad_obj:
         from workshop_quads import preferred_pairs
@@ -473,7 +477,8 @@ def convert(oot, head, actor, out_dir, patches_only=False, rom_dir=None,
     (out_dir/'texture_manifest.json').write_text(json.dumps(dict(
         mode='patches' if patches_only else 'hybrid', workshop=workshop, budget=budget.parts,
         vram_limit=budget.vram_limit, vertices=positions, faces=records, chunks=chunks,
-        patches=patches, sizes=dict(collections.Counter('%dx%d' % (t['width'],t['height'])
+        patches=patches, lods={str(k):v for k,v in lod_settings.get(room,{}).items()} if room else {},
+        sizes=dict(collections.Counter('%dx%d' % (t['width'],t['height'])
                                                        for t in tiles.values()))), indent=2)+'\n')
     return head, positions, faces, tiles
 

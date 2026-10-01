@@ -76,6 +76,22 @@ class MapTests(unittest.TestCase):
         self.assertEqual({f['object'] for f in result},{2,9})
         self.assertEqual(new['texture']['colors'][0],(255,20,10,255))
 
+    def test_lod0_appends_close_set_and_keeps_original(self):
+        identity=meshes.store(self.obj,self.game)
+        doc=scene.layouts.empty()
+        doc['lods']={self.room+'/object/2':dict(sha256=self.entry['sha256'],bundle=identity,position=[1,2,3],
+                     lod0_distance=500,cull_distance=9000)}
+        scene.layouts.validate(doc)
+        result,settings=meshes.apply_lods([self.face],{self.room:self.raw},doc,self.game)
+        self.assertIs(result[0],self.face)
+        near=[f for f in result if f['object']==meshes.LOD0_OBJECT_BASE+2]
+        self.assertEqual(len(near),1); self.assertEqual(near[0]['vertices'][0][:3],(1,2,3))
+        self.assertEqual(settings,{self.room:{2:dict(lod0_distance=500,cull_distance=9000,lod0_faces=1)}})
+        doc['lods'][self.room+'/object/2']['bundle']=None
+        result,settings=meshes.apply_lods([self.face],{self.room:self.raw},doc,self.game)
+        self.assertEqual(result,[self.face]); self.assertEqual(settings[self.room][2]['lod0_faces'],0)
+        with self.assertRaises(ValueError): meshes.apply_lods([self.face],{self.room:b'new'},doc,self.game)
+
     def test_stale_room_or_missing_object_fails(self):
         with self.assertRaises(ValueError): meshes.apply_faces([self.face],{self.room:b'new'},self.document(self.entry),self.game)
         with self.assertRaises(ValueError): meshes.apply_faces([],{self.room:self.raw},self.document(self.entry),self.game)
@@ -146,6 +162,21 @@ class MapTests(unittest.TestCase):
         changed.with_suffix('.mtl').write_text(material.replace('# dosei_materials: water.materials.json','').replace('map_Kd water_texture_','map_Kd unrelated_texture_'))
         with self.assertRaises(ValueError): meshes.read_material_metadata(changed)
 
+    def test_suffixed_names_with_own_sidecar_fix_after_confirm(self):
+        original=meshes.export_faces([self.face],self.game/'exit.obj')
+        changed=self.game/'exit-quad.obj'
+        changed.write_text(original.read_text().replace('exit.mtl','exit-quad.mtl').replace('dosei_000','dosei_000.001'))
+        material=original.with_suffix('.mtl').read_text()
+        changed.with_suffix('.mtl').write_text('\n'.join(l for l in material.splitlines() if not l.startswith('#')).replace('dosei_000','dosei_000.001'))
+        changed.with_suffix('.materials.json').write_text(original.with_suffix('.materials.json').read_text())
+        with self.assertRaisesRegex(ValueError,'missing from sampler'): meshes.read_material_metadata(changed)
+        self.assertEqual(meshes.suffixed_sidecar_materials(changed),{'dosei_000.001':'dosei_000'})
+        self.assertIsNone(meshes.store(changed,self.game,confirm_rename=lambda fixes:False))
+        self.assertIn('dosei_000.001',changed.read_text())
+        self.assertTrue(meshes.store(changed,self.game,confirm_rename=lambda fixes:True))
+        self.assertNotIn('.001',changed.read_text())
+        self.assertIn('# dosei_materials: exit-quad.materials.json',changed.with_suffix('.mtl').read_text())
+
     def test_conflicting_matching_sampler_sources_are_not_guessed(self):
         original=meshes.export_faces([self.face],self.game/'water.obj')
         changed=self.game/'quad.obj'
@@ -177,3 +208,17 @@ class MapTests(unittest.TestCase):
 
 
 if __name__=='__main__': unittest.main()
+
+
+class FieldMeshKeys(unittest.TestCase):
+    def test_field_mesh_rename_and_lod_keys_validate(self):
+        doc=scene.layouts.empty()
+        doc['labels']={'spot00/room/0/mesh/24':'field tree'}
+        doc['meshes']={'spot00_room_0/object/24':dict(sha256='0'*64,bundle='original',position=[0,0,0],yaw=0,scale=1)}
+        scene.layouts.validate(doc)
+
+    def test_baked_field_bank_uses_disc_name(self):
+        import inspect
+        self.assertIn('asset_names.room_asset',inspect.getsource(scene.load_room))
+        import asset_names
+        self.assertEqual(asset_names.room_asset(10,0,'MSH'),'SAR0.MSH')

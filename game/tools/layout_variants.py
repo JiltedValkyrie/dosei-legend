@@ -15,6 +15,12 @@ ORIGINAL = 'original'
 EDITABLE = {0x125, 0x141, 0x00A}  # grass, signposts, chests
 
 
+# Mesh keys for per-object replacement/LOD. spot00 = Hyrule Field.
+MESH_KEY = r'(spot04_room_[0-2]|ydan_room_0|spot00_room_0)/object/(0|[1-9][0-9]*)'
+# Runtime stores distances as unsigned 16-bit; keep below signed range too.
+LOD_DISTANCE_MAX = 32767
+
+
 def directory(game=GAME): return Path(game)/'assets/layouts'
 
 
@@ -28,7 +34,7 @@ def empty(): return {'version': 1, 'base': 'ntsc-1.2', 'rooms': {}}
 
 
 def validate(document):
-    if not isinstance(document, dict) or not {'version','base','rooms'} <= set(document) or set(document)-{'version','base','rooms','meshes','labels'}:
+    if not isinstance(document, dict) or not {'version','base','rooms'} <= set(document) or set(document)-{'version','base','rooms','meshes','labels','lods'}:
         raise ValueError('Invalid layout document fields')
     if document['version'] != 1 or document['base'] != 'ntsc-1.2' or not isinstance(document['rooms'], dict):
         raise ValueError('Unsupported layout version/base')
@@ -53,14 +59,14 @@ def validate(document):
     labels=document.get('labels',{})
     if not isinstance(labels,dict): raise ValueError('Invalid Outliner names')
     for key,name in labels.items():
-        if not isinstance(key,str) or not re.fullmatch(r'(spot04|ydan)/room/[0-9]+/(mesh|actor)/[0-9]+',key):
+        if not isinstance(key,str) or not re.fullmatch(r'(spot04|spot00|ydan)/room/[0-9]+/(mesh|actor)/[0-9]+',key):
             raise ValueError('Invalid named object ID')
         if not isinstance(name,str) or not name.strip() or len(name)>96 or not name.isprintable():
             raise ValueError('Object name must be 1-96 printable characters')
     meshes=document.get('meshes',{})
     if not isinstance(meshes,dict): raise ValueError('Invalid mesh mapping')
     for key,entry in meshes.items():
-        if not re.fullmatch(r'(spot04_room_[0-2]|ydan_room_0)/object/(0|[1-9][0-9]*)',key):
+        if not re.fullmatch(MESH_KEY,key):
             raise ValueError('Invalid mesh object key')
         if not isinstance(entry,dict) or set(entry)!={'sha256','bundle','position','yaw','scale'}:
             raise ValueError('Invalid mesh replacement fields')
@@ -72,6 +78,23 @@ def validate(document):
             raise ValueError('Mesh transform must be finite numbers')
         if not 0.001<=entry['scale']<=1000 or any(abs(v)>32767 for v in entry['position']):
             raise ValueError('Mesh transform outside supported range')
+    lods=document.get('lods',{})
+    if not isinstance(lods,dict): raise ValueError('Invalid LOD mapping')
+    for key,entry in lods.items():
+        if not isinstance(key,str) or not re.fullmatch(MESH_KEY,key):
+            raise ValueError('Invalid LOD mesh key')
+        if not isinstance(entry,dict) or set(entry)!={'sha256','bundle','position','lod0_distance','cull_distance'}:
+            raise ValueError('Invalid LOD fields')
+        if not isinstance(entry['sha256'],str) or not re.fullmatch('[0-9a-f]{64}',entry['sha256']):
+            raise ValueError('Invalid LOD fingerprint')
+        if entry['bundle'] is not None and (not isinstance(entry['bundle'],str) or not re.fullmatch('[0-9a-f]{64}',entry['bundle'])):
+            raise ValueError('Invalid LOD0 bundle')
+        if not isinstance(entry['position'],(list,tuple)) or len(entry['position'])!=3 or            any(type(v) not in (int,float) or not math.isfinite(v) or abs(v)>32767 for v in entry['position']):
+            raise ValueError('LOD0 position needs finite XYZ inside world bounds')
+        near,far=entry['lod0_distance'],entry['cull_distance']
+        if type(near) is not int or type(far) is not int or not 0<=near<=LOD_DISTANCE_MAX or not 1<=far<=LOD_DISTANCE_MAX:
+            raise ValueError('LOD distances must be integers 0..%d (cull at least 1)' % LOD_DISTANCE_MAX)
+        if near>far: raise ValueError('LOD0 distance cannot exceed cull distance')
     return document
 
 
@@ -169,7 +192,7 @@ def for_build(segments):
 def validate_environment(document):
     if any(os.environ.get(k) not in (None,'','none') for k in ('ROOM_IMPORTS','QUAD_OBJ','AUTHORED_OBJ')):
         raise ValueError('Named layout conflicts with legacy mesh overrides; clear override environment variables')
-    if document.get('meshes') and (os.environ.get('TEXTURE_PATH','hybrid')!='hybrid' or os.environ.get('STREAM_ROOMS','1')!='1'):
+    if (document.get('meshes') or document.get('lods')) and (os.environ.get('TEXTURE_PATH','hybrid')!='hybrid' or os.environ.get('STREAM_ROOMS','1')!='1'):
         raise ValueError('Per-object mesh layouts require TEXTURE_PATH=hybrid and STREAM_ROOMS=1')
 
 
@@ -187,13 +210,16 @@ def main():
         sys.path.insert(0, str(GAME.parent/'shared/tools'))
         import build_kokiri_scene as source
         prefixes={'spot04'} if document['rooms'] else set()
-        prefixes.update(k.split('_room_')[0] for k in document.get('meshes',{}))
+        prefixes.update(k.split('_room_')[0] for k in [*document.get('meshes',{}),*document.get('lods',{})])
         for prefix in prefixes:
             original = source.extract(args.oot,args.rom_dir,prefix=prefix)
             apply(original, document)
         for entry in document.get('meshes',{}).values():
             from map_meshes import bundle_path
             if entry['bundle']!='original': bundle_path(entry['bundle'])
+        for entry in document.get('lods',{}).values():
+            from map_meshes import bundle_path
+            if entry['bundle'] is not None: bundle_path(entry['bundle'])
     atomic_json(args.snapshot, {'layout':name, 'document':document})
     print('Layout build source:', name or 'legacy Workshop selection')
 
