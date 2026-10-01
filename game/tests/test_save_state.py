@@ -99,6 +99,16 @@ class SaveState(unittest.TestCase):
         self.assertFalse(self.lib.save_check_quest_item(QUEST_KOKIRI_EMERALD))
         self.assertFalse(self.lib.save_get_treasure(SAVE_SCENE_KOKIRI_FOREST, 0))
 
+    # ---- playtest refill cheat ----------------------------------------
+
+    def test_cheat_refill_restores_hearts_without_raising_capacity(self):
+        self.lib.save_damage(0x20)
+        self.lib.save_cheat_refill()
+        self.lib.save_damage(NEW_CAPACITY - 1)
+        self.assertFalse(self.lib.save_is_dead())    # exactly full, no more
+        self.lib.save_damage(1)
+        self.assertTrue(self.lib.save_is_dead())
+
     # ---- flag addressing ----------------------------------------------
 
     def test_event_flag_round_trips(self):

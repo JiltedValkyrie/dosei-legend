@@ -377,7 +377,7 @@ static void shop_cursor_draw(int32_t x, int32_t y, int32_t z)
     attr.texno = shop_cursor_slot[pulse];
     attr.atrb |= CL32KRGB | (shop_cursor_tween >= 128 ? CL_Trans : 0);
     pos[0] = sx * 65536;
-    pos[2] = 31 * 65536;                            /* HUD depth: over the world */
+    pos[2] = kokiri_hud_depth(1) * 65536;           /* HUD depth: over the world */
     pos[3] = pos[4] = 98304;                        /* x1.5 */
 #ifdef DOSEI_HIRES
     pos[1] = sy * 2 * 65536;

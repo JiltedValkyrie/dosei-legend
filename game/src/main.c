@@ -272,6 +272,8 @@ static void         viewer_draw(void)
      * because the SH-2 has no tangent. Holding the gameplay 240 for every shot
      * framed the whole dream far too wide. */
     slSetScreenDist((FIXED)(demo_screen_distance() << 16));
+    /* Near rejection at screen distance >> level; see KOKIRI_ZDSP_LEVEL. */
+    slZdspLevel(KOKIRI_ZDSP_LEVEL);
     music_menu_duck(gameplay_is_paused());
     cdda_service();
     music_service();
@@ -370,6 +372,7 @@ static void         viewer_draw(void)
         }
     }
 
+    if (!demo_slingshot_aiming()) link_anim_first_person(false);
     if (cutscene_is_playing()) {
         /* A cutscene places and poses Link itself, from its own player cues:
          * asleep in bed for the narration, sitting up when Navi wakes him.
@@ -381,6 +384,24 @@ static void         viewer_draw(void)
                              cutscene_link_z(), cutscene_link_yaw());
             frame_timer_end(FRAME_PHASE_LINK);
         }
+    } else if (demo_link_active && !demo_title_is_visible() && demo_slingshot_aiming()) {
+#ifdef LINK_CLIP_AIM_READY
+        /* Subj3 slingshot aim: only the first-person arm, pinned to the
+         * camera focus (eye + 5 along the view, player_camera_first_person).
+         * func_80834D2C holds bow_bow_ready's last frame on the upper body. */
+        int32_t sy, cy, sp, cp;
+        kokiri_camera_sincos(demo_yaw, &sy, &cy);
+        kokiri_camera_sincos((uint16_t)demo_pitch, &sp, &cp);
+        frame_timer_begin(FRAME_PHASE_LINK);
+        link_anim_first_person(true);
+        link_anim_pose(LINK_CLIP_AIM_READY, LINK_FRAMES_AIM_READY - 1, 0);
+        kokiri_link_draw_first_person(
+            demo_camera.x + (int)(((int64_t)sy * cp * 5) >> 32),
+            demo_camera.y + (int)(sp * 5 / 65536),
+            demo_camera.z + (int)(((int64_t)cy * cp * 5) >> 32),
+            demo_yaw, (int)demo_pitch);
+        frame_timer_end(FRAME_PHASE_LINK);
+#endif
     } else if (demo_link_active && !demo_title_is_visible() && !demo_first_person() &&
                !demo_shop_browsing()) {
         frame_timer_begin(FRAME_PHASE_LINK);
@@ -1153,9 +1174,12 @@ static void __attribute__((optimize("Os"))) viewer_hud(void)
             /* The 2026-09-18 inputs whose gameplay systems do not exist yet.
             ** This is the only evidence that A, X and the routed C buttons
             ** actually arrive, since none of them can do anything yet. */
-            jo_printf(0, 4, "pend a%d x%d c%d    ",
+            /* ev: last Z+A refusal bits (1 A claimed, 2 A cleared later,
+             * 4 climb/ledge/bonk, 8 air, 16 world blocked, 32 swing,
+             * 64 guard, 128 indoors, 256 floor, 512 pose) and pose id. */
+            jo_printf(0, 4, "pend a%d x%d c%d ev%03x/%u   ",
                       (int)demo_interact_requests, (int)demo_attack_requests,
-                      (int)demo_last_c_button);
+                      (int)demo_last_c_button, demo_evade_gates, demo_evade_pose);
             /* Gear/target/sword readout. sw and sh are owned+equipped, tgt is
              * the locked kokiri_npcs index, sg the swing steps left with a '*'
              * while the blade is live, cut the tufts cleared so far. */

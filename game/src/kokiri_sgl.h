@@ -41,6 +41,16 @@ void            kokiri_scene_draw(void);
 
 /** @brief Submit Link at a world position, facing @p yaw (binang). */
 void            kokiri_link_draw(int x, int y, int z, int yaw);
+/* First-person slingshot arm, pinned to the camera focus (see kokiri_sgl.c). */
+void            kokiri_link_draw_first_person(int x, int y, int z, int yaw, int pitch);
+/* SGL display level: polygons and sprites nearer than screen distance >> level
+ * are rejected. OoT's gameplay view near plane is 10 (z_view.c); level 5 gives
+ * 240 >> 5 = 7 (play) and 290 >> 5 = 9 (first person, where the child's
+ * slingshot arm lies inside the old level-3 cut of 36). */
+#define KOKIRI_ZDSP_LEVEL 5
+/* Screen-space HUD sprite depth just past the live near rejection, so every
+ * visible world polygon sorts behind it. `above` orders HUD layers (1 front). */
+int             kokiri_hud_depth(int above);
 /* Identity of the closest DISTANCE-stippled polygon this prep, for the near
 ** checkerboard. Facts only: authored stipple is excluded because it is
 ** legitimate at any depth, and near/far together distinguish a small close

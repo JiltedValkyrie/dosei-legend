@@ -253,10 +253,10 @@ static const kokiri_npc_t *npc_at(int npc)
 /* Kokiri NPCs as registry actors, so Link's lock and Navi share one
 ** identity (M2d). Drawing and talking stay on kokiri_npcs; each step copies
 ** the live position (Mido's included) onto the actor. Focus: a head-height
-** stand-in above the feet; arrow: Actor_Init lockOnArrowOffset 2000 x 0.01.
+** stand-in above the feet; arrow: 0 (no source lockOnArrowOffset; hover adds +17).
 ** Source per-NPC attentionRangeType is a logged gap (ATTN_RANGE_SLICE_NPC). */
 #define GP_NPC_FOCUS_Y  40
-#define GP_NPC_ARROW_Y  20
+#define GP_NPC_ARROW_Y  0       /* En_Ko/Md/Sa set no lockOnArrowOffset */
 #define GP_NPC_ACTOR_ID 0xF001
 static const actor_profile_t npc_profile = {
     GP_NPC_ACTOR_ID, ACTORCAT_NPC, ACTOR_FLAG_TARGETABLE, 0, 0, 0, 0
@@ -683,6 +683,7 @@ static void         register_nut(void)
     collide_set_ac(c);
 }
 
+static bool         jump_guard;     /* jump attack still owns its no-hit window */
 #define STEPS_OF(frames) (((frames) * 3 + 1) / 2)    /* 20 Hz frames -> steps */
 
 /* The one damage entry: enemy contact, fall and void all come through here
@@ -704,8 +705,14 @@ static void         consume_link_damage(const gameplay_input_t *in)
     if (!gameplay.hurt_pending)
         return;
     gameplay.hurt_pending = 0;
-    link_damage(gameplay.hurt_damage);
-    gameplay.intangible = GP_INTANGIBLE_STEPS;
+    /* Invulnerable (dodge): the hit lands, knocks back, but costs nothing,
+    ** and Player_SetIntangibility leaves an invulnerable timer alone. */
+    if (gameplay.invulnerable) {
+        link_damage(0);
+    } else {
+        link_damage(gameplay.hurt_damage);
+        gameplay.intangible = GP_INTANGIBLE_STEPS;
+    }
     gameplay.knock_yaw = gameplay.hurt_yaw;
     gameplay.knock_speed = GP_HIT_SPEED_Q16;
     gameplay.knock_down = false;
@@ -1238,6 +1245,8 @@ void __attribute__((optimize("Os"))) gameplay_reset(void)
     boulder_reset();
     gameplay.boulder_live = false;
     gameplay.intangible = 0;
+    gameplay.invulnerable = 0;
+    jump_guard = false;
     gameplay.knock_speed = 0;
     gameplay.knock_down = false;
     gameplay.hurt_pending = 0;
@@ -1891,12 +1900,19 @@ static void         attack_start_id(unsigned int id)
     gameplay.events |= GP_EVENT_SWING;
 }
 
+void                gameplay_set_invulnerable(unsigned steps)
+{
+    if (steps > 255) steps = 255;
+    if (gameplay.invulnerable < steps) gameplay.invulnerable = (uint8_t)steps;
+}
+
 bool                gameplay_jump_attack_start(void)
 {
     if (!(gameplay.equipped & GP_SWORD) || gameplay.shielding)
         return false;
     attack_start_id(ATTACK_JUMP_START);
     gameplay.attack_phase = 6;
+    jump_guard = true;
     return true;
 }
 
@@ -3056,6 +3072,19 @@ void                gameplay_step(const gameplay_input_t *in)
     }
     if (gameplay.intangible)
         --gameplay.intangible;
+    if (gameplay.invulnerable)
+        --gameplay.invulnerable;
+    if (jump_guard) {
+        /* Human rule: untouchable through the airborne slash, then one more
+         * second once it ends (landing cut, rebound or cancel). */
+        if (gameplay.attack_phase == 6) {
+            if (gameplay.intangible < 2) gameplay.intangible = 2;
+        } else {
+            jump_guard = false;
+            if (gameplay.intangible < GP_JUMP_ATTACK_GUARD_STEPS)
+                gameplay.intangible = GP_JUMP_ATTACK_GUARD_STEPS;
+        }
+    }
     consume_link_damage(in);
     check_death(in);
     if (gameplay.dead)
@@ -3110,10 +3139,15 @@ void                gameplay_step(const gameplay_input_t *in)
             yaw = gameplay_facing(dx,dz);
             pitch = (int16_t)gameplay_facing(focus[1]-(in->y+35),distance>12?distance-12:1);
         }
-        if (!player_items_use(item,
-                in->x, in->y, in->z, yaw, pitch))
+        if (!(in->item_from_eye && item == PLAYER_ITEM_SEED ?
+                player_items_use_from(item, in->item_eye, yaw, pitch) :
+                player_items_use(item, in->x, in->y, in->z, yaw, pitch)))
             gameplay.events |= GP_EVENT_DENIED;
     }
+    /* Player_ProcessItemButtons: B carries the sword, so a B tap while a stick
+     * is held lowers the stick and returns to the sword (no stick swing). */
+    if (in->cancel && !in->c_use && player_items_stick() && !gameplay.attack_phase)
+        player_items_putaway();
     blade_live = false;
     if (in->c_use && in->c_use <= 3 && save_state.c_items[in->c_use - 1] == 1 &&
         player_items_stick() && in->grounded && !world_props_carrying()) {

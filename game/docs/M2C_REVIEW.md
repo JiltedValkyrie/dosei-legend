@@ -19,7 +19,7 @@ Checked in this order; the first that claims the step wins.
 | 8 | Attack clip (phase 1) | blade window, X chains at clip end | 808502D0, ActionHandler_7 |
 | 9 | Recovery (phase 2) | X held at unk_844 == 1 charges; X attacks; stick cancels | ActionHandler_8 |
 | 10 | X, sword, not guarding | attack by stick/targeting, 3rd repeat combos | func_80837818 / 80837948 |
-| 11 | Z held/locked + A, forest, ground, floor ok | jump slash / sidehop / backflip | ActionHandler_10 |
+| 11 | Z held/locked + A, not ROOM_TYPE_INDOORS (houses/shop), ground, floor type/effect ok | jump slash / sidehop / backflip | ActionHandler_10 |
 | 12 | A otherwise | roll (unchanged M1) | ActionHandler_Roll |
 
 Z+A is refused on floor type 7 and floor effect 1, indoors, and while

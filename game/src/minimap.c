@@ -21,7 +21,8 @@
 static const uint8_t   *file;
 static const minimap_row_t *row;        /* this scene's map, or 0 */
 static bool             hidden;
-static cheat_code_t     cheat;
+static cheat_code_t     cheat, refill_cheat;
+static volatile bool    refill_pending;
 static volatile bool    enemy_dots, chime;
 static int              marker_sprite = -1;
 static bool             hud_ready, map_visible;
@@ -192,12 +193,29 @@ void minimap_toggle(void) { hidden = !hidden; }
 
 bool    minimap_cheat_sample(uint16_t held)
 {
+    if (cheat_refill_sample(&refill_cheat, held)) {
+        refill_pending = true;
+        return true;        /* the final Start must not also pause */
+    }
     if (cheat_code_sample(&cheat, held)) {
         enemy_dots = !enemy_dots;
         chime = true;
         return true;
     }
     return false;
+}
+
+bool    minimap_cheat_refill_take(void)
+{
+    bool pending = refill_pending;
+    refill_pending = false;
+    return pending;
+}
+
+void    minimap_cheat_refill_reset(void)
+{
+    refill_pending = false;
+    refill_cheat = (cheat_code_t){0};
 }
 
 bool    minimap_cheat_chime(void)
@@ -215,6 +233,7 @@ void    minimap_session_reset(void)
 {
     enemy_dots = chime = false;
     cheat = (cheat_code_t){0};
+    minimap_cheat_refill_reset();
 }
 
 /* Minimap_Draw runs in play only; the text box and pause dim it away
@@ -277,7 +296,7 @@ static void marker(unsigned int frame, int px, int py)
     attr.texno = (Uint16)(marker_sprite + (int)frame);
     pos[0] = (px - JO_TV_WIDTH_2) * 65536;
     pos[1] = (py - JO_TV_HEIGHT_2) * 65536;
-    pos[2] = 31 * 65536;
+    pos[2] = kokiri_hud_depth(1) * 65536;   /* just past the near rejection */
     pos[3] = pos[4] = 65536;
     slDispSprite(pos, &attr, 0);
 }

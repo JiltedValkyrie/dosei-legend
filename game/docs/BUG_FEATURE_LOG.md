@@ -1,5 +1,64 @@
 # Bug and feature log
 
+## 2026-10-01b Claude: block, slingshot, Gohma (code + host tests)
+- Safe frames: roll now OoT Player_SetInvulnerability (damage-only, anim
+  frame 8, 10 source frames). Human rule (not OoT): jump attack untouchable
+  while airborne + 1 s after it ends. Host tested; runtime pending.
+
+- BUG room-3 block: FIXED in code, proven on staged S7 collision (wall ray end
+  on ledge back face; source 49.5 reach). Runtime pending.
+- BUG slingshot aim up -> shot down: FIXED (sign), cursor depth FIXED, seed
+  visible sparkle. Runtime pending.
+- P1 first-person hand/slingshot: human chose lower near cut for all play.
+  Display level 5 + HUD depth; arm groups/clip added. Runtime + warp compare
+  pending. Open: slingshot string DL, exact Subj3 eye offset.
+- OPEN P1 Gohma evades: no static cause; debug `ev` readout added. Owner Claude.
+  Revisit: human ev value from Debug Mode.
+- Minor: host sincos exact at 0x4000; target slSin may round push steps to 19.
+  Revisit if block lands off -365 in runtime.
+
+## Title level-select control delay (2026-10-01)
+
+Astra: user requests 2.5 seconds. Replaced title code's serial CD fanfare and
+Fairy-bank input wait with a 150-tick opening gate, resident title music and
+rupee SFX. Early menu presses discarded. 18 delay/minimap host tests pass;
+Clean build and human timing test pending. Actual level asset loads still take
+their required time after confirming a destination.
+
+## Basement push block refuses ledge descent (2026-10-01)
+
+P1, Claude handoff requested. Human reports room-3 block stops before dropping
+into the water area after the room-0 fall. Obj_Makeoshihiki source position
+table confirms an 85-unit descent to (-365,-905,-290). Current implementation
+has gravity and destination/switch-16 logic, but actual route is not accepted.
+Trace wall/support/grab state against real room collision; see OPUS_HANDOFF.md.
+Root cause and host route regression pending; no new build/runtime verification.
+
+## First-person slingshot unusable to aim (2026-10-01)
+
+P1, assigned to Claude by human. Human sees no cursor, hand/slingshot or seed.
+Existing centre-reticle code is not visual acceptance. Inspection found
+first-person Link draw suppression, opposite camera/shot pitch signs and tiny
+seed rods; cursor live-FOV depth/load readiness needs investigation. Detailed
+fix contract in OPUS_HANDOFF.md. No new implementation, build or runtime test.
+Revisit immediately; accept only after human can aim and hit visible targets.
+
+## 2026-10-01 playtest batch (Claude)
+
+BUG-071 reopened by human screenshot: lock remains far below Baba. Astra traced
+reversed camera pitch in project_attention, corrected both depth and vertical
+rotation, and removed Karebaba's +80 display compensation. 48 focused checks
+pass; Clean build and human pitched-camera/actor acceptance remain pending.
+Backwards stick/torch (BUG-072), Z+A moves Forest-only (BUG-073): implemented,
+host-tested, runtime pending. Features: refill cheat,
+B hold-walk/tap-put-away. Open/logged: B release after a pad disconnect looks
+like a tap (minor); Hintnuts focus animation; Keese/Stalfos/Wolfos focus/arrow
+(+10/+45/+25; 4000/500/2000 x scale) when added; non-targeted B jump slash
+(func_8083BBA0); no magic/bombs/arrows in save state for the refill cheat;
+Gohma/Tree-mouth focus unverified; 16 reported full-suite failures have no valid
+baseline comparison yet (message table, npc models, level_select, vdp1 budget,
+kokiri_sgl extraction harnesses). Do not call these pre-existing or unrelated.
+
 ## BUG-070: Tree Continue spawns over wrong room bank (2026-09-30)
 
 P1 crash, Codex. Human died in the circular-web Tree room, chose Save/Continue,

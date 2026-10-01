@@ -34,6 +34,10 @@
 #include "link_clips.h"
 #include "link_scene.h"
 #include "link_anim_state.h"
+#include "link_equipment.h"
+#ifndef LINK_BASE_VERTICES
+#define LINK_BASE_VERTICES LINK_SKIN_VERTICES   /* model without first-person arm */
+#endif
 
 /* 3x3 rotation plus translation, in the model's own units. Rotations are
 ** FIXED (16.16); origins stay integer model units until the final scale. */
@@ -113,6 +117,14 @@ bool            link_anim_load(void)
 ** nothing. -1 forces the first pose. */
 static int      posed_frame = -1;
 static unsigned int posed_fraction;
+static bool     skin_first_person;
+
+void            link_anim_first_person(bool on)
+{
+    if (on == skin_first_person) return;
+    skin_first_person = on;
+    posed_frame = -1;
+}
 
 /*
 ** Upper-body overlay (z_player.c Player_UpdateUpperBody, sUpperBodyLimbCopyMap).
@@ -319,7 +331,9 @@ static void     skin_vertices(void)
 {
     unsigned int    i;
 
-    for (i = 0; i < LINK_SKIN_VERTICES; ++i)
+    unsigned int    count = skin_first_person ? LINK_SKIN_VERTICES : LINK_BASE_VERTICES;
+
+    for (i = 0; i < count; ++i)
     {
         const limb_matrix_t *m = &limb_matrices[link_vertex_limb[i]];
         const link_vec3_t   *local = &link_vertex_local[i];
@@ -477,16 +491,16 @@ void link_anim_blade(int32_t out[2][3])
     }
 }
 
-/* Player_PostLimbDrawGameplay, DEKU_STICK branch: the child stick mesh is
- * attached to L_HAND with Translate(-428.26,267.2,-33.82) then
- * RotateZYX(-0x8000,0,0x4000).  Its long axis is local +Y (0..5604).
- * After the source Z rotation that becomes local -X.  Keep this separate from
- * the sword line: the stick uses a one-hand slash, but it is not a sword. */
+/* Player_PostLimbDrawGameplay, DEKU_STICK branch: the child stick mesh uses
+ * RotateZYX(-0x8000,0,0x4000); Rx(180) flips mesh +Y to -Y, then Rz(+90)
+ * maps it to hand +X.  Melee line (z_player_lib.c sMeleeWeaponBase/Tip0):
+ * base (0,400,0), tip (unk_85C*5000,400,0) = hand +X, like the sword.
+ * Keep separate from the sword: the stick uses a one-hand slash. */
 void link_anim_stick(int32_t out[2][3])
 {
     const limb_matrix_t *hand = &limb_matrices[15];
     static const int32_t offsets[2][3] = {
-        { -428, 267, -34 }, { -6032, 267, -34 }
+        { 0, 400, 0 }, { 5000, 400, 0 }
     };
     unsigned int end, axis;
     for (end = 0; end < 2; ++end) {

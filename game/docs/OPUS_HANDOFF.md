@@ -1,3 +1,157 @@
+# Claude result: slingshot, room-3 block, Gohma evades - 2026-10-01
+
+Code + host tests only. No Clean rebuild (standing defer), no emulator, no commit.
+SH-2 `-fsyntax-only` passes for every changed file, Clean and debug defines.
+Focused host suites: 408 checks pass (dungeon_mechanisms, push_block, item_aim,
+target_reticle, player_camera, gameplay, player_controls, minimap, save_state,
+scene_room_type, link_geometry_precision, locomotion_timing).
+
+- Room-3 block, ROOT CAUSE PROVEN on staged S7.COL: blocked() wall ray reached
+  half+20 = 50 and ended exactly ON the back face of ledge wall 1107 (x=-395);
+  BG_CHECK_ONE_FACE skips only when the end is strictly past the plane, so the
+  9th push (x=-445) was refused. Source CheckWall maxDist is half+20-0.5. Now
+  half+19. Earlier "1-unit floor margin" theory was disproved by the same test
+  (bg_floor at x=-394 already returns -905); that shared-collision change was
+  reverted. Regressions: test_push_block real S7 route (12 pushes, falls only at
+  -365, lands (-365,-905,-290), top -845) and test_dungeon_mechanisms full route
+  (switch 16, lock, room reload solved). Both fail with the old reach.
+- Slingshot: shot pitch was negated (aim up shot down). OoT spawns En_Arrow with
+  rot.x = focus.rot.x and velocity.y = -sin(rot.x) (down-positive), i.e. along the
+  look; port look_pitch is up-positive, so the sign is now passed through. Same-
+  step look is applied before the shot (first_person_camera_step, once per step).
+  Seed now starts at the camera eye (player_items_use_from) so it follows the
+  centre ray. Eye-y sign in player_camera_first_person fixed (behind the focus).
+  HUD sprite depth uses the live demo_screen_distance (was fixed 277 -> z 35,
+  rejected at the 290 first-person FOV whose near is 36). Aim marker has a dark
+  rim and tight spacing. Seed draws En_Arrow's sparkle billboard (14 units, spun);
+  impact shows a brief sparkle (stand-in for EffectSsStone1).
+  Join tests: real camera -> seed ray at 4 yaws x 3 pitches, same-step look+fire,
+  and centre aim hitting room-4 eye switch near/far/below/above (miss above).
+- Human decision: lower the near cut for aim AND regular play. SGL display level
+  is now KOKIRI_ZDSP_LEVEL 5 (main.c slZdspLevel each frame): near = 240>>5 = 7
+  in play, 290>>5 = 9 aiming (OoT z_view.c zNear 10). Every HUD sprite moved to
+  kokiri_hud_depth() = near+1 (old fixed 31/35 were inside first-person near).
+  RENDERER CHANGE: per FOREGROUND_WARP_FAILURE rules the human must compare
+  near-camera floor/walls while walking/turning; revert this one constant if
+  close-geometry warping gets worse.
+- First-person arm: generator adds fp_shoulder (gLinkChildRightShoulderNearDL,
+  R_SHOULDER) and fp_sling (gLinkChildRightArmStretchedSlingshotDL, R_HAND),
+  flat-coloured, as the LAST groups, plus clip aim_ready (bow_bow_ready).
+  link_equipment.h gains LINK_BASE_VERTICES (323); third person skins/submits
+  only those, aim skins all 464. main.c draws only the two arm groups, pinned
+  to the camera focus and turned by view yaw/pitch. Measured with the real
+  skinner: arm vertices span 2..13 units ahead of the eye; 91/141 are past the
+  new near (0/141 with the old 36). Slingshot string DL not ported yet. Generated
+  files restored to the committed set; the next build regenerates them (budget
+  checks run there). Code compiles both with and without the new headers.
+- Gohma evades: static trace found NO Gohma-only gate; cinematic/warp checks are
+  intro/death/warp only, boss floor is type 0 effect 0, room is ROOM_TYPE_BOSS.
+  Guard (R held) blocks Z+A exactly as OoT (guard action runs no handler 10).
+  Fixed parity gap: Z+A none/forward with no usable sword now rolls even when
+  standing (Player_SetupRoll). Debug build line 4 now shows `ev<bits>/<pose>` for
+  the last refused Z+A press (1 A claimed, 2 A cleared later, 4 climb/ledge/bonk,
+  8 air, 16 world blocked, 32 swing, 64 guard, 128 indoors, 256 floor, 512 pose).
+  Human: play Debug Mode in the fight, report ev value when an evade fails.
+
+# Astra side fix: title level-select delay - 2026-10-01
+
+User requests controls after 2.5 seconds. demo.c now timestamps title cheat
+menu opening and discards menu input for 150 normalized ticks. Title opening
+uses rupee SFX and retains title music: no CD fanfare/Fairy bank serial wait,
+and file_select_tick no longer gates level select on music_busy. In-game dots
+cheat retains its existing fanfare. Normal file-select and scene loading are
+unchanged. 18 tests pass (test_level_select_delay, test_minimap), including
+149/150-tick boundary, discarded early input, cancel, and unsigned clock wrap.
+No Clean build, emulator run or commit. Human timing acceptance pending.
+Preserve these narrow demo.c edits alongside Claude's gameplay work.
+
+# Claude assignment: basement push block will not descend - 2026-10-01
+
+Human screenshot/report: after falling from Tree room 0 into the basement,
+the push block stops rather than moving off the ledge into the water area.
+Original source confirms this block must descend: Obj_Makeoshihiki's position
+table lists (-605,-820,-290) -> (-365,-905,-290), an 85-unit drop. Our room-3
+dungeon_puzzles_sync uses those exact positions and switch 16. This is not a
+strength-upgrade gate or a rule preventing blocks entering water.
+
+Trace the actual room-3 route, not only synthetic block tests:
+- Reproduce from the unsolved spawn and original room collision. Record the
+  first rejected push, its wall triangle/bgId, all five support-floor results,
+  block position/state and player grab/contact state.
+- Inspect push_block.c blocked() sweep and floor_below() own-mesh exclusion,
+  mesh scale, static/dynamic overlap and ledge support. Compare the source
+  ObjOshihiki_CheckWall/SetFloors/CheckFloor and Push -> SetupFall -> Fall.
+  A supporting corner can legitimately postpone falling; do not drop the
+  block early, disable wall checks, or teleport to the solved position.
+- Check player_push_update: contact or player ledge restrictions must not stop
+  the last valid push or prevent an already unsupported block falling. Keep
+  independent gravity running after the hands release.
+- Verify landing at the source destination, switch 16 and locked solved
+  state, usable top collision for Link, and reload persistence. Do not invent
+  flotation: source actor falls to collision support.
+- Add a real room-collision regression for the complete push/drop/landing path.
+  Existing falling-block unit checks and exact destination constants do not
+  prove the route is reachable. Preserve room-5 block and pull/wall behavior.
+
+Root cause not yet established; no gameplay edits/build/runtime test by Astra.
+Human owns playtest. This is an additional task alongside slingshot aiming.
+
+# Claude assignment: usable first-person slingshot - 2026-10-01
+
+Human cannot see an aiming cursor, held slingshot/hand or seed projectile.
+Fix usable first-person aiming; this is a human-reported gameplay blocker.
+Astra inspected code only; no implementation/build/runtime claim for this task.
+
+1. Establish the actual player image versus current source/assets. main.c
+   already requests a white reticle at (160,120) when demo_slingshot_aiming().
+   Trace that predicate, RTAI00..03.RGB staging/loading, reticle_ready and sprite
+   submission/depth at the first-person FOV (screen distance 290). The current
+   helper derives depth from cutscene distance or 277, not demo_screen_distance;
+   verify the SGL near rejection at the actual FOV. Do not add another cursor
+   without checking why the existing one is absent. Provide a clearly visible
+   centre dot/cross with contrast on bright/dark scenery while aiming.
+2. Fix and test the camera-to-shot contract. player_camera_first_person outputs
+   look_pitch as demo_pitch (positive up), but demo.c sends NEGATED look_pitch
+   to player_items_use, where seed vertical velocity is +sin(pitch). This is
+   a sign mismatch. Also reconcile eye position versus spawn at feet+35 and
+   12 units forward: a centre cursor alone does not prove close-range aim.
+   Use one consistent aim ray/target and muzzle path; preserve wall obstruction,
+   target quick-shot, ammo/cooldown and delayed gravity. Resolve same-step look
+   plus fire ordering: camera update currently happens later than item use.
+3. main.c suppresses all Link drawing in first person; there is no replacement
+   hand/slingshot pass there. Port the child first-person limb selection and
+   aim/fire pose from z_player_lib.c Player_OverrideLimbDrawGameplayFirstPerson
+   and sFirstPersonRightHandHoldingWeaponDLs. Preserve hidden head/body and
+   near-plane handling; face-only character policy still applies.
+4. kokiri_nut_draw renders each shot as a tiny vertical item_rod (y +/-2,
+   thickness 2), while seeds travel 80 units/source tick. Inspect real En_Arrow
+   seed presentation, culling and draw lifetime; make shot and impact readable
+   without slowing physics or inventing damage. Prove shots remain drawn in
+   first person and at low render rates.
+5. Add behavioural tests joining camera ray, shot origin/velocity and projected
+   collision at near/far targets, positive/negative pitch, rotated yaw and
+   simultaneous look/fire. Test cursor readiness/submission at 290 and other
+   live FOVs; isolated endpoint/sign tests are insufficient. Check ammo, B exit,
+   empty inventory, room reload and both pad modes. Target build only under
+   existing build authorization; human owns runtime acceptance. Do not call
+   this fixed until human can aim at an eye switch and see shot/impact.
+
+No direct message was sent to Claude; human relays this handoff.
+
+# Baba marker projection repair - 2026-10-01
+
+Human screenshot rejects prior marker placement; source-focus math alone did
+not establish visual correctness. project_attention used positive-down pitch,
+but oot_follow_update_profile and the live view use positive-up demo_pitch.
+Corrected depth/Y rotation signs and removed the Karebaba +80 display patch.
+No actor camera/shot focus or renderer pipeline changes in this repair.
+48 host checks pass: test_item_aim, test_target_reticle, test_player_camera,
+test_dungeon_mechanisms. New camera-ray checks span positive/negative pitch
+and four yaws; the old aim test encoded the wrong pitch sign.
+Clean not rebuilt under the standing defer; no emulator run. Human must check
+locked/unlocked Baba, Karebaba and NPC markers while turning and pitching.
+Stick-to-torch integration and baseline comparison for 16 suite failures remain.
+
 # Tree Continue, target, fanfare and torch playtest repair - 2026-09-30
 
 Shared tree has new code; no new Clean image per human defer. No emulator,
@@ -3866,7 +4020,11 @@ Wired and working (host-verified, NOT Kronos-verified):
 - Y is jump. The tested A-button behavior moved unchanged: same edge latch,
   `kokiri_collision_jump` grounded/void rejection, ceiling sweep, gravity and
   landing. A no longer reaches jump at all (`JO_KEY_A` is gone from demo.c).
-- B toggles a persistent walk/run mode, once per physical press. Gameplay starts
+- SUPERSEDED 2026-10-01: B no longer toggles. HOLD B = walk, release = run; a
+  short tap (<12 VBlanks) cancels/puts away a held stick (OoT: B carries the
+  sword). A press that lands while a text box/menu/first-person view owns the
+  pad is claimed: cancels on the press, never walks or taps on release.
+  Older text: B toggled a persistent walk/run mode. Gameplay starts
   in run, preserving the shipped default. Walking is `LINK_WALK_SPEED_Q8` = 768,
   3 units/step (90 units/s); running stays 1408 (165 units/s). Both modes keep
   the 181/256 diagonal normalization, so a diagonal covers the same distance.

@@ -50,6 +50,7 @@ extern bool demo_diagnostics_toggled;
 extern unsigned int demo_interact_requests;
 extern unsigned int demo_attack_requests;
 extern player_c_button_t demo_last_c_button;
+extern unsigned demo_evade_gates, demo_evade_pose;   /* debug readout */
 /* True only in LIFT_HOLD, where player_lift_update() actually accepts A.
  * The lift/throw/put animations still hold the prop, so the carried handle
  * alone would advertise a Drop the button cannot perform. */

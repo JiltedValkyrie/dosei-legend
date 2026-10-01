@@ -319,6 +319,20 @@ static void             ammo_add(uint8_t *owned, uint8_t *ammo, uint8_t *upgrade
     *ammo = (uint8_t)total;
 }
 
+/* Human playtest cheat: hearts and every owned consumable to maximum.
+** Never grants unowned items or upgrades. */
+void            save_cheat_refill(void)
+{
+    save_state.health = save_state.health_capacity;
+    save_state.rupees = SAVE_WALLET_CAPACITY;
+    if (save_state.stick_owned)
+        save_state.stick_ammo = stick_capacity[save_state.stick_upgrade & 3];
+    if (save_state.nut_owned)
+        save_state.nut_ammo = nut_capacity[save_state.nut_upgrade & 3];
+    if (save_state.slingshot)
+        save_state.ammo_seeds = 30;
+}
+
 bool            save_item_give(save_item_t item)
 {
     static const uint8_t rupee[3] = { 1, 5, 20 };

@@ -17,7 +17,15 @@ static volatile uint8_t axis_x, axis_y;
 static bool trigger_right_held, trigger_left_held;
 static player_move_mode_t   move_mode;
 static bool                 dialogue_open;
-static input_edge_t         edge_walk_toggle;   /* B */
+/* B: hold = walk, short tap = cancel / put away the held item. Counted per
+** VBlank in sample_pad. A press that lands while a text box, menu or first-
+** person view owns the pad is CLAIMED: it cancels on the press itself and then
+** neither walks nor taps on release, so one press never acts twice. */
+#define B_TAP_TICKS 12
+static volatile unsigned int b_ticks;
+static volatile bool         b_down, b_claimed;
+static volatile unsigned int b_cancel_produced;     /* claimed press or tap */
+static unsigned int          b_cancel_consumed;
 static volatile uint16_t jump_button = CAMERA_Y;
 static input_edge_t         edge_jump;          /* Y */
 static input_edge_t         edge_interact;      /* A */
@@ -63,8 +71,11 @@ void player_input_reset(void)
     move_mode = PLAYER_MOVE_RUN;
     dialogue_open = false;
     attack_release_produced = attack_release_consumed = 0;
-    edge_walk_toggle = edge_jump = edge_interact = edge_attack =
+    edge_jump = edge_interact = edge_attack =
         edge_recenter = (input_edge_t){0};
+    b_ticks = 0;
+    b_down = b_claimed = false;
+    b_cancel_consumed = b_cancel_produced;
     for (i = 0; i < 4; ++i)
     {
         edge_c[i] = (input_edge_t){0};
@@ -109,7 +120,18 @@ void player_input_sample_pad(uint16_t held, bool analog, uint8_t x, uint8_t y)
     held_snapshot = held;
     analog_snapshot = analog;
     axis_x = x; axis_y = y;
-    input_edge_sample(&edge_walk_toggle, (held & CAMERA_B) != 0);
+    if (held & CAMERA_B) {
+        if (!b_down) {
+            b_down = true;
+            b_claimed = dialogue_open || view_look;
+            if (b_claimed) ++b_cancel_produced;
+        }
+        if (b_ticks < 255) ++b_ticks;
+    } else {
+        if (b_down && !b_claimed && b_ticks < B_TAP_TICKS) ++b_cancel_produced;
+        b_down = b_claimed = false;
+        b_ticks = 0;
+    }
     input_edge_sample(&edge_interact, (held & CAMERA_A) != 0);
     if (!(held & CAMERA_X) && edge_attack.held) ++attack_release_produced;
     input_edge_sample(&edge_attack, (held & CAMERA_X) != 0);
@@ -148,7 +170,8 @@ void player_input_step(bool in_gameplay, player_input_t *out)
     uint16_t dpad = held & DPAD_MASK;
     bool look = view_look;
     bool c_mode = analog || (held & CAMERA_C) != 0;
-    bool toggled = input_edge_consume(&edge_walk_toggle);
+    unsigned int b_cancels = b_cancel_produced;
+    bool toggled = b_cancels != b_cancel_consumed;
     bool jumped = input_edge_consume(&edge_jump);
     bool interacted = input_edge_consume(&edge_interact);
     bool attacked = input_edge_consume(&edge_attack);
@@ -161,6 +184,10 @@ void player_input_step(bool in_gameplay, player_input_t *out)
     unsigned int i;
     int horizontal, vertical;
     attack_release_consumed = attack_releases;
+    b_cancel_consumed = b_cancels;
+    /* In the world holding B walks; a claimed press never walks. */
+    move_mode = (!dialogue_open && !look && !b_claimed && (held & CAMERA_B))
+                    ? PLAYER_MOVE_WALK : PLAYER_MOVE_RUN;
 
     for (i = 0; i < 4; ++i)
     {
@@ -259,12 +286,6 @@ void player_input_step(bool in_gameplay, player_input_t *out)
         if (out->c_pressed != PLAYER_C_NONE)
             out->menu_step = out->menu_dx = out->menu_dy = 0;
     }
-    /* B toggles the persistent mode once per physical press -- unless a text
-    ** box has the pad, where the same press closes the box instead. One press
-    ** never does both. */
-    if (toggled && !dialogue_open && !look)
-        move_mode = move_mode == PLAYER_MOVE_RUN ? PLAYER_MOVE_WALK
-                                                 : PLAYER_MOVE_RUN;
     out->move_mode = move_mode;
     out->interact_pending = interacted;
     out->attack_pending = attacked;

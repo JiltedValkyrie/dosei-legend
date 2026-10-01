@@ -77,7 +77,7 @@ void story_route_step(void)
     a=actor_resolve(owl_handle);
     if(!a && owl_phase==1) {
         a=actor_spawn(&owl_profile,SAVE_SCENE_HYRULE_FIELD,ACTOR_ROOM_NONE,4284,182,7877,0,0x4c);
-        if(a){owl_handle=actor_handle(a);a->attention=ATTN_POI;a->range=ATTN_RANGE_6;a->focus[1]=110;}
+        if(a){owl_handle=actor_handle(a);a->attention=ATTN_POI;a->range=ATTN_RANGE_6;a->focus[1]=110;a->arrow_y=5;}
     }
     dx=demo_link.x-owl_x/256;dz=demo_link.z-owl_z/256;
     if(owl_phase==1 && !gameplay_blocks_world() && !cutscene_is_playing() &&

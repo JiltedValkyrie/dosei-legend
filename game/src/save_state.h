@@ -266,6 +266,7 @@ void            save_damage(unsigned int units);
 ** for child Link. Continue after Game Over does NOT go through this. */
 void            save_resume_remap(void);
 void            save_heal(unsigned int units);
+void            save_cheat_refill(void);    /* playtest: hearts + consumables to max */
 bool            save_is_dead(void);
 
 /* ---- lifecycle -------------------------------------------------------- */

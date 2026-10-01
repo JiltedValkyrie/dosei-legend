@@ -56,12 +56,12 @@ the failure during real movement before changing the rendering pipeline.
 Human directive: after the manual-jump checkpoint, work on `dev` from now on.
 `main` keeps the pushed checkpoint; do not default new development to main.
 The new 2026-09-18 control directive supersedes that checkpoint: A interact,
-X attack, Y jump, B toggles walk/run, hold C+D-pad supplies the four N64 C
+X attack, Y jump, B hold = walk (tap = cancel / put away stick; supersedes toggle, 2026-10-01), hold C+D-pad supplies the four N64 C
 directions. The 2026-09-22 remap supersedes that look/target mapping:
 C-Up opens first-person or switches the house view; L toggles the minimap;
 Z targets/recenters (2026-09-28 camera plan supersedes hold-L free look).
-3D Control Pad in analog mode: stick moves with proportional speed (B selects
-walk/run ceiling); stick looks while C-Up first-person is active. D-pad navigates menus while open, otherwise
+3D Control Pad in analog mode: stick moves with proportional speed (holding B selects
+walk ceiling); stick looks while C-Up first-person is active. D-pad navigates menus while open, otherwise
 provides C directions without holding C. Digital mode keeps the standard layout. Read the authoritative requirements
 at the top of `game/docs/OPUS_HANDOFF.md` before changing input code.
 

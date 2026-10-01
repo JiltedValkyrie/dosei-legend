@@ -277,6 +277,7 @@ void gp_npc_at(int i, int *x, int *y, int *z)
 
 int  gp_health(void) { return save_state.health; }
 int  gp_intangible(void) { return gameplay.intangible; }
+int  gp_invulnerable(void) { return gameplay.invulnerable; }
 void gp_health_set(int h, int cap) { save_state.health = (uint16_t)h; save_state.health_capacity = (uint16_t)cap; }
 int  gp_dead(void) { return gameplay.dead ? 1 : 0; }
 void gp_land(int fell, int rolled) { gameplay_land(fell, rolled != 0); }

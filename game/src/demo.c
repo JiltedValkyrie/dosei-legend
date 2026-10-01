@@ -57,6 +57,7 @@
 #include "combat_input.h"
 #include "kokiri_actors.h"
 #include "minimap.h"
+#include "scene_room_type.h"
 
 static void link_focus(int32_t out[3]);
 
@@ -239,6 +240,7 @@ static oot_follow_t link_follow;
 static uint8_t active_slot;
 static bool frozen_fanfare, item_fanfare_pending;
 static unsigned chest_start, fanfare_start;
+static unsigned level_select_open_tick;
 static uint8_t chest_scene;
 static void chest_scene_begin(void);
 static void chest_scene_step(void);
@@ -492,6 +494,23 @@ static bool ledge_claims_interact(const gameplay_input_t *action)
         return false;
     return player_ledge_action(&link_bg, true, true, &velocity) != PLAYER_LEDGE_ACT_NONE;
 }
+/* Subj3 first-person look for this step. Called once per step: before a
+ * shot when one fires (so the seed uses this frame's look), otherwise by the
+ * camera pass. */
+static bool fp_camera_done;
+/* Debug readout: last Z+A refusal bits (see the evade block) and Link pose. */
+unsigned demo_evade_gates, demo_evade_pose;
+static void first_person_camera_step(const player_input_t *in)
+{
+    int32_t focus[3];
+    bg_vec_t at;
+    link_focus(focus);
+    at = (bg_vec_t){focus[0], focus[1], focus[2]};
+    player_camera_first_person(&link_follow, &at, demo_link_yaw,
+        in->look_yaw_delta, in->look_pitch_delta,
+        &demo_camera, &demo_yaw, &demo_pitch, item_aim != 0);
+}
+
 /* Returns true when Continue respawned Link: the caller abandons the step. */
 static bool __attribute__((optimize("Os"))) m2e_reactions(void)
 {
@@ -964,8 +983,13 @@ static void __attribute__((optimize("Os"))) file_select_tick(void)
     pick.confirm = interact_pending;
     pick.cancel = cancel_pending;
     if(level_select.visible) {
-        /* Keep confirm/cancel queued until the menu bank finishes loading. */
-        if(music_busy())return;
+        /* ticks is normalized to 60 Hz on both PAL and NTSC. Do not queue
+         * inputs during the title cheat's 2.5-second opening delay. */
+        if ((unsigned)(ticks-level_select_open_tick)<150u) {
+            menu_step=menu_dx=menu_dy=menu_page=0;c_assign=c_use=0;
+            interact_pending=cancel_pending=pause_pending=false;
+            return;
+        }
         level_select_move(menu_dy,menu_dx);
         menu_step=menu_dx=menu_dy=menu_page=0;c_assign=c_use=0;
         interact_pending=cancel_pending=pause_pending=false;
@@ -1342,8 +1366,10 @@ static int project_attention(const int32_t p[3], int32_t *screen_x, int32_t *scr
     kokiri_camera_sincos((uint16_t)demo_pitch, &sp, &cp);
     horizontal = (int32_t)(((int64_t)x * sy + (int64_t)z * cy) / 65536);
     right = (int32_t)((-(int64_t)x * cy + (int64_t)z * sy) / 65536);
-    depth = (int32_t)(((int64_t)horizontal * cp + (int64_t)y * sp) / 65536);
-    up = (int32_t)(((int64_t)y * cp - (int64_t)horizontal * sp) / 65536);
+    /* demo_pitch is positive looking UP (oot_follow_update_profile), while
+     * y here is camera-relative Y DOWN. Match main.c's slRotX(-demo_pitch). */
+    depth = (int32_t)(((int64_t)horizontal * cp - (int64_t)y * sp) / 65536);
+    up = (int32_t)(((int64_t)y * cp + (int64_t)horizontal * sp) / 65536);
     int32_t divisor = depth < 1 ? 1 : depth;
     *screen_x = 160 + (int32_t)(right * dist / divisor);
     *screen_y = 120 + (int32_t)(up * dist / divisor);
@@ -1367,12 +1393,8 @@ bool demo_target_marker(int32_t *x, int32_t *y, bool *locked, unsigned *kind)
         KOKIRI_RETICLE_ENEMY : a->profile->category == ACTORCAT_NPC ?
         KOKIRI_RETICLE_NPC : KOKIRI_RETICLE_POI;
     attention_focus(a,focus);
-    if (!*locked) focus[1] = a->y + a->arrow_y;
-    /* EnKarebaba's source focus is deliberately capped at home + 40 for
-     * camera behavior. Its compact Saturn head draws higher, so only the
-     * screen reticle gets this presentation offset. Lock and shot focus stay
-     * on the source actor focus. */
-    else if (a->profile->id == KAREBABA_ACTOR_ID) focus[1] += 80;
+    /* Attention_Draw hover arrow: focus.y + lockOnArrowOffset * scale + 17. */
+    if (!*locked) focus[1] += a->arrow_y + 17;
     return project_attention(focus,x,y) > 0 && *x >= 12 && *x < 308 && *y >= 12 && *y < 228;
 }
 
@@ -1419,7 +1441,8 @@ bool gameplay_ball_move(int32_t pos[3], int32_t dx, int32_t dy, int32_t dz)
 
 
 
-/* Player_ActionHandler_10: no Z-targeted A moves on floor type 7 or floor
+/* Player_ActionHandler_10: no Z-targeted A moves indoors (scene_room_type.h),
+ * on floor type 7 or floor
  * effect 1 (sFloorType / SurfaceType_GetFloorEffect of Link's floor). */
 static bool evade_floor_ok(void)
 {
@@ -1488,12 +1511,24 @@ void demo_update(void)
     } else if (game_mode() != GAME_MODE_CUTSCENE)
         input_edge_consume(&skip_input.request);
     unsigned int now = ticks, elapsed = now - previous_tick, steps;
+    /* Playtest refill cheat: only live, unpaused, living gameplay may consume
+     * it. Anywhere else the sequence is reset and a stale trigger discarded. */
+    if(game_mode()==GAME_MODE_PLAY && !gameplay_blocks_world() && !frozen_fanfare &&
+       !game_over_active() && save_state.health) {
+        if(minimap_cheat_refill_take()) {
+            save_cheat_refill();
+            action_audio_events(GP_EVENT_RUPEE);   /* existing SFX, no music */
+        }
+    } else minimap_cheat_refill_reset();
     if(minimap_cheat_chime()) {
         if(title_visible) {
             level_select_open();game_mode_set(GAME_MODE_FILE_SELECT);
+            level_select_open_tick=now;
             slScrAutoDisp(NBG0ON);
-        }
-        frozen_fanfare=music_play(NA_BGM_SMALL_ITEM_GET);
+            /* Keep the resident title score. CD startup plus another bank
+             * upload must not determine when this menu accepts controls. */
+            action_audio_events(GP_EVENT_RUPEE);
+        } else frozen_fanfare=music_play(NA_BGM_SMALL_ITEM_GET);
         player_input_reset();interact_pending=cancel_pending=pause_pending=false;
         menu_step=menu_dx=menu_dy=menu_page=0;
     }
@@ -1509,7 +1544,6 @@ void demo_update(void)
             if(music_play(NA_BGM_ITEM_GET))return;
         }
         frozen_fanfare=false;
-        if(level_select.visible)music_play(NA_BGM_GREAT_FAIRY);
     }
     jo_img patch;
     /* One consume per rendered frame. The mapping itself lives in
@@ -1729,9 +1763,11 @@ void demo_update(void)
         int32_t unused_pitch = 0;
         bool recovered = false;
         int32_t roll_speed = 0;
-        bool roll_pending = false;
+        bool roll_pending = false, evade_a_unclaimed = false;
+        bool interact_pending_step = interact_pending;
         int step_stick_dir = -1;
         while (steps--) {
+            interact_pending_step = interact_pending; evade_a_unclaimed = false;
             bool land_combat = combat_input_land_allowed(link_anim_state());
             combat_buttons_t combat_buttons;
             if (!land_combat && !link_water.phase)
@@ -1774,6 +1810,7 @@ void demo_update(void)
                 action.c_assign = c_assign;
                 action.c_use = land_combat && !link_water.phase ? c_use : 0;
                 action.item_pitch = 0;
+                action.item_from_eye = false;
                 action.grounded = link_on_ground && !link_water.phase && link_velocity_y_q8 == 0;
                 {
                     /* controlStickDirections: the stick's heading against
@@ -1812,11 +1849,23 @@ void demo_update(void)
                 /* Tap enters aim; release does nothing. Further slot taps fire
                  * without dropping the view. The ordinary cancel exits it. */
                 if (item_aim && !view_first_person) item_aim = 0;
+                fp_camera_done = false;
                 if (item_aim && c_use == item_aim && !cancel_pending &&
                     !action.pause && !gameplay_blocks_world()) {
+                    /* Apply this step's look BEFORE the shot, so the seed
+                     * leaves along the ray the cursor shows this frame. The
+                     * later camera pass skips its own update this step. */
+                    first_person_camera_step(&input);
+                    fp_camera_done = true;
                     action.c_use = item_aim;
-                    action.item_pitch = -(int16_t)link_follow.look_pitch;
+                    /* look_pitch is positive UP, as is player_items_use's
+                     * seed pitch (+sin = up; the quick-shot uses the same). */
+                    action.item_pitch = (int16_t)link_follow.look_pitch;
                     action.yaw = (uint16_t)(demo_link_yaw + link_follow.look_yaw);
+                    action.item_from_eye = true;
+                    action.item_eye[0] = demo_camera.x;
+                    action.item_eye[1] = demo_camera.y;
+                    action.item_eye[2] = demo_camera.z;
                 } else if (!item_aim && action.c_use && action.c_use <= 3 &&
                            save_state.c_items[action.c_use - 1] == 2 &&
                            save_state.slingshot && save_state.ammo_seeds &&
@@ -1962,6 +2011,7 @@ void demo_update(void)
                                          GP_EVENT_TALK_CLOSE | GP_EVENT_PICKUP |
                                          GP_EVENT_MENU_OPEN | GP_EVENT_MENU_CLOSE |
                                          GP_EVENT_EQUIP | GP_EVENT_SAVE));
+                evade_a_unclaimed = roll_pending;
                 action_audio_events(gameplay.events);
                 if (GP_SHOP_BROWSING(gameplay.shop_state) != shop_browsing &&
                     scene_flow_entry()->save_scene == SAVE_SCENE_KOKIRI_SHOP) {
@@ -2392,6 +2442,22 @@ void demo_update(void)
                         roll_pending=false; ledge_started=true;
                     }
                 }
+                /* Diagnostic latch (debug readout only): which evade gate
+                 * refused the last Z+A press. Does not change behaviour. */
+                if (interact_pending_step && (target_held || gameplay.face_locked)) {
+                    demo_evade_gates =
+                        (!evade_a_unclaimed ? 1u : 0) |
+                        (evade_a_unclaimed && !roll_pending ? 2u : 0) |
+                        (climbing || ledge_started || bonking ? 4u : 0) |
+                        (!link_on_ground || link_velocity_y_q8 ? 8u : 0) |
+                        (gameplay_blocks_world() ? 16u : 0) |
+                        (gameplay.swing ? 32u : 0) | (gameplay.shielding ? 64u : 0) |
+                        (scene_room_indoors(save_state.scene_id) ? 128u : 0) |
+                        (!evade_floor_ok() ? 256u : 0) |
+                        (link_anim_state()!=LINK_STATE_IDLE && link_anim_state()!=LINK_STATE_WALK &&
+                         link_anim_state()!=LINK_STATE_RUN ? 512u : 0);
+                    demo_evade_pose = (unsigned)link_anim_state();
+                }
                 /* Player_ActionHandler_10: Z-targeted unclaimed A outdoors.
                  * None/forward: jump slash with a sword, else the roll below.
                  * Side: sidehop; back: backflip (func_8083BCD0). */
@@ -2399,7 +2465,7 @@ void demo_update(void)
                     link_on_ground && !link_velocity_y_q8 && !gameplay_blocks_world() &&
                     !gameplay.swing && !gameplay.shielding &&
                     (target_held || gameplay.face_locked) &&
-                    save_state.scene_id == SAVE_SCENE_KOKIRI_FOREST && evade_floor_ok() &&
+                    !scene_room_indoors(save_state.scene_id) && evade_floor_ok() &&
                     (link_anim_state()==LINK_STATE_IDLE || link_anim_state()==LINK_STATE_WALK ||
                      link_anim_state()==LINK_STATE_RUN)) {
                     static const uint16_t evade_clip[4][2] = {
@@ -2417,6 +2483,11 @@ void demo_update(void)
                             link_air_yaw = demo_link_yaw;
                             link_anim_hop();
                             launched = true;
+                        } else {
+                            /* No usable melee weapon: Player_SetupRoll, even
+                             * standing still (the plain roll needs motion). */
+                            link_anim_roll_start();
+                            roll_pending = false;
                         }
                     } else {
                         link_velocity_y_q8 = (dir & 1) ? GP_SIDEHOP_VY_Q8 : GP_BACKFLIP_VY_Q8;
@@ -2636,6 +2707,15 @@ void demo_update(void)
                     gameplay_jump_attack_land();
                 link_anim_update(moved, grounded, fell, roll_pending);
                 roll_pending = false;
+                {
+                    /* Player_Action_Roll: invulnerable from anim frame 8. */
+                    static bool roll_guarded;
+                    if (link_anim_state() != LINK_STATE_ROLL) roll_guarded = false;
+                    else if (!roll_guarded && link_anim_frame() >= GP_ROLL_INVULN_FRAME) {
+                        gameplay_set_invulnerable(GP_ROLL_INVULN_STEPS);
+                        roll_guarded = true;
+                    }
+                }
                 /* func_80843E64: the landing's fall damage (not on a roll). */
                 if (grounded && fell > 0)
                     gameplay_land(fell, link_anim_roll_speed_q8() > 0);
@@ -2816,13 +2896,7 @@ void demo_update(void)
                     player_camera_reset(&link_camera);
                 }
                 if (view_first_person) {
-                    int32_t focus[3];
-                    bg_vec_t at;
-                    link_focus(focus);
-                    at = (bg_vec_t){focus[0], focus[1], focus[2]};
-                    player_camera_first_person(&link_follow, &at, demo_link_yaw,
-                        input.look_yaw_delta, input.look_pitch_delta,
-                        &demo_camera, &demo_yaw, &demo_pitch, item_aim != 0);
+                    if (!fp_camera_done) first_person_camera_step(&input);
                 } else if (demo_first_person())
                     ;
                 else if (scene_flow_is_interior())

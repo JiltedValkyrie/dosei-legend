@@ -238,6 +238,12 @@ typedef enum {
 #define GP_LINK_BODY_HEIGHT     50      /* feet to head + 10: child stand-in */
 #define GP_KNOCKBACK_SPEED_Q16  87381   /* 2.0 a frame */
 #define GP_INTANGIBLE_STEPS     30
+/* Player_Action_Roll: Player_SetInvulnerability(-10) on anim frame 8. */
+#define GP_ROLL_INVULN_FRAME    8
+#define GP_ROLL_INVULN_STEPS    15      /* 10 source frames at 20 Hz */
+/* Human playtest rule (not OoT): the jump attack is untouchable while airborne
+** and for one second after it ends. */
+#define GP_JUMP_ATTACK_GUARD_STEPS 30
 /* Player damage response NONE (func_80837C0C from the AC_HIT branch):
 ** pushed 4.0 a frame away from the attacker. */
 #define GP_HIT_SPEED_Q16        174763
@@ -277,6 +283,10 @@ typedef struct
     bool        c_up;           /* C-Up pressed this step (talk to Navi) */
     uint8_t     c_use;          /* 1 down, 2 left, 3 right; world input only */
     int16_t     item_pitch;
+    /* First-person aim: the seed leaves from the camera eye along the view
+     * ray, so the centre cursor is where it goes. Off for quick shots. */
+    bool        item_from_eye;
+    int32_t     item_eye[3];
 }               gameplay_input_t;
 
 typedef struct
@@ -353,6 +363,9 @@ typedef struct
     uint16_t    hurt_flash_phase;
     uint8_t     hurt_flash_timer;
     uint8_t     intangible;
+    /* Player_SetInvulnerability: steps a hit still knocks Link back but
+    ** deals no damage (the roll's dodge frames). */
+    uint8_t     invulnerable;
     uint16_t    knock_yaw;
     int32_t     knock_speed;
     bool        knock_down;
@@ -500,6 +513,8 @@ bool                gameplay_attack_time(unsigned int *clip, unsigned int *third
 ** JUMPSLASH_FINISH with unk_845 = 3). Start is false without a sword. */
 bool                gameplay_jump_attack_start(void);
 void                gameplay_jump_attack_land(void);
+/* Damage-only dodge frames (keeps the longer of the current and `steps`). */
+void                gameplay_set_invulnerable(unsigned steps);
 /* End any attack at once (scene change, water entry). */
 void                gameplay_attack_cancel(void);
 

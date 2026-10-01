@@ -39,6 +39,7 @@ static void head_position(baba_state *s,actor_t *a) {
     kokiri_camera_sincos(s->view.yaw,&sn,&cs);
     a->x=s->view.home[0]+(int32_t)((int64_t)sn*h>>32);a->z=s->view.home[2]+(int32_t)((int64_t)cs*h>>32);a->y=s->view.home[1]+v/65536;
 }
+static void focus_from(actor_t *a,int32_t x,int32_t y,int32_t z){a->focus[0]=(int16_t)(x-a->x);a->focus[1]=(int16_t)(y-a->y);a->focus[2]=(int16_t)(z-a->z);}
 static void state(baba_state *s,unsigned mode,unsigned timer) {
     s->state=mode;s->timer=timer;s->anim=0;
 }
@@ -138,6 +139,21 @@ static void tick(baba_state *s,actor_t *a,const gameplay_input_t *in) {
     default:break;
     }
     v->head[0]=a->x;v->head[1]=a->y;v->head[2]=a->z;a->yaw=v->yaw;
+    /* z_en_dekubaba.c:1227 (DrawStemExtended, i == 0): the matrix starts at
+     * actor.world.pos (the head) and the first 20-unit step moves back toward
+     * the stem base. Sway focus = home + (0, 40*size, 0). Wait draws the
+     * retracted stem, which leaves focus at its init value (the actor). */
+    if(s->state==SWAY)focus_from(a,v->home[0],v->home[1]+40,v->home[2]);
+    else if(s->state==WAIT)a->focus[0]=a->focus[1]=a->focus[2]=0;
+    else {
+        int32_t sn,cs,ys,yc,h;
+        kokiri_camera_sincos(v->stem[0],&sn,&cs);h=20*cs;
+        kokiri_camera_sincos(v->yaw,&ys,&yc);
+        a->focus[0]=(int16_t)-(int32_t)((int64_t)ys*h>>32);
+        a->focus[1]=(int16_t)(20*sn/65536);
+        a->focus[2]=(int16_t)-(int32_t)((int64_t)yc*h>>32);
+    }
+    a->arrow_y=15;                      /* lockOnArrowOffset 1500 * scale 0.01 */
     v->frame=(s->state==LUNGE || s->state==PULLBACK || s->state==HIT)?baba_clips[1][0]+s->anim%baba_clips[1][1]:s->anim%baba_clips[0][1];
 }
 void dekubaba_step(const gameplay_input_t *in) {

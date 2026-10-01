@@ -41,8 +41,12 @@ resident. This prevents a room-8-style spawn over another Tree room's
 collision/backdrop, which put Link in sky and crashed after death. Target/aim UI now uses four source
 `gLockOnReticleTriangleDL` corners instead of message glyphs; the white aim
 reticle stays on the seed ray centre. Enemy is yellow, NPC blue and POI green.
-Deku Baba's display marker alone rises to its visible head; source
-lock/camera/projectile focus stays unchanged. The 16px RGB555 reticle bank
+Human rejected Baba marker placement again on 2026-10-01: the screenshot shows
+the lock far below the actor. Attention projection had reversed camera pitch;
+the current repair matches the positive-up live camera and removes Karebaba's
+old +80 display compensation. Baba source-focus changes remain. Projection
+repair passes 48 focused host tests; target build and human acceptance remain
+pending. The 16px RGB555 reticle bank
 costs 8,192 VDP1 bytes and 16 slots and is budgeted. Player fanfare tracks now
 cap/fade: chest 2.50s, token/small item 2.25s, major item 2.75s. This shortens
 the player lock, not a claim of original track length. A C-selected Deku Stick
@@ -50,7 +54,10 @@ stays held, uses the source left-hand attach transform and only its forward
 one-hand slash; it does not reuse sword direction/combo/charge/spin behavior.
 ROM has no touch prompt: tip contact with a lit torch flame ignites it. Close,
 front-facing push-block contact now shows `A: Grab`; holding A enters push/pull
-and a block can fall into water. 333 focused host checks pass. Clean target
+and block gravity is implemented. Human reports the basement room-3 block
+cannot complete its ledge descent; actual push/drop route is blocked and
+assigned to Claude for real-room collision tracing. 333 prior focused host
+checks did not establish that route. Clean target
 build and all human runtime acceptance remain pending.
 
 Game Over follows both source health protections: Continue sets Link to exactly
@@ -145,6 +152,40 @@ mechanism ambience remain required; this is not full 1:1 presentation acceptance
 
 ## Latest human playtest fixes
 
+2026-10-01c (Claude, host tests + SH-2 syntax; runtime pending): roll gets
+OoT damage-only dodge frames; jump attack untouchable in air + 1 s (human rule).
+
+2026-10-01b (Claude, code + host tests + SH-2 syntax; no Clean build, runtime
+pending): room-3 push block reaches the drop (wall ray 50 -> source 49.5; real
+S7 route, switch 16, lock and reload tested). Slingshot shot pitch sign fixed,
+same-step look before fire, seed from camera eye, live-FOV cursor depth, rimmed
+aim marker, sparkle seed + impact. Z+A without a usable sword rolls standing.
+First-person arm (shoulder + slingshot) added; SGL near lowered to level 5 for
+all play by human decision (warp comparison pending). OPEN: Gohma evade cause (debug `ev` readout; human value needed).
+
+Title level-select controls now unlock 2.5 seconds after the cheat opens the
+menu (150 normalized 60 Hz ticks, PAL/NTSC independent). The title path keeps
+resident title music and uses a rupee SFX instead of a CD fanfare followed by
+a Fairy-bank load; music_busy no longer blocks this menu. Early menu actions
+are discarded. 18 focused delay/minimap host checks pass. Clean rebuild and
+human timing acceptance remain pending; scene loading after confirmation is
+separate from this menu-opening delay.
+
+2026-10-01 (Claude, code + host tests; Clean rebuild and human runtime pending):
+hover arrow now `focus + arrow_y + 17` (Attention_Draw); Deku Baba sets source
+focus (first stem step back from head, home+40 while swaying, actor while
+retracted) and arrow 15; Kokiri NPC arrow 0, owl 5. Actor-focus host tests did
+not catch the screen-projection pitch reversal; the subsequent screenshot
+reopened marker acceptance. The corrected projection and removal of the +80
+Karebaba compensation are host-tested, not target-built or runtime-accepted.
+Child Deku Stick line is hand +X, base (0,400,0) / tip (5000,400,0)
+(z_player_lib.c) so ignition, draw rod and hit use the real tip. Z+A jump slash,
+sidehop, backflip and roll are no longer Forest-only: refused only in
+ROOM_TYPE_INDOORS scenes (houses/shop, `scene_room_type.h`), floor type 7 or
+floor effect 1. B: hold walks, short tap cancels/puts the stick away (claimed
+presses never act twice). Playtest cheat Up x4 Down x4 B A Start refills hearts,
+rupees, owned sticks/nuts/seeds (gameplay only; resets elsewhere; rupee SFX).
+
 Implemented, host-tested and rebuilt in the usual Clean image; human runtime
 acceptance remains pending. Switch collision replacement no longer carries Link
 by the switch's entire world position. Slingshot uses tap-to-enter aim, subsequent
@@ -184,8 +225,12 @@ still omits full N64 synthesis/modulation/reverb; listening acceptance is open.
   uses the source left-hand attachment/one-hand slash rather than the sword
   line, ignites by touching a lit torch flame, extinguishes in water and burns
   webs. There is no invented touch prompt. Tap aim, target quick-shot,
-  source-corner aim reticle and attention markers are implemented; full
-  animated hover/reticle presentation and controller acceptance remain.
+  source-corner aim reticle and attention markers exist in code. Human now
+  reports no visible first-person aim cursor, hand/slingshot or projectile;
+  usable slingshot aiming is NOT accepted. Claude's current handoff requires
+  tracing cursor load/submission at the live FOV, correcting camera/shot pitch
+  and origin agreement, first-person weapon limbs and readable seed/impact.
+  Full animated hover/reticle presentation and controller acceptance remain.
   C-slot HUD previously drew only empty arrows; assignment-aware original icon
   patches pass host checks. Human deferred the next Clean build.
 - All twelve Tree rooms and ten Woods rooms are registered. Nine shutters,
@@ -314,7 +359,12 @@ finish, music restoration and return loop. Repeat with shot skip and save/reload
 Keep cinematic fidelity and full M7 instrument/side-content work explicit;
 implementation and host tests do not substitute for human acceptance.
 
-1. Wait for human build request. Then build current Tree Continue, reticle,
+1. Claude: resolve the basement room-3 block's refused ledge descent, checking
+   the source 85-unit drop, landing/switch 16 and real room collision. Also
+   resolve the human-reported first-person slingshot visibility/aim
+   blocker using OPUS_HANDOFF.md (cursor, camera/shot agreement, weapon and seed).
+   Wait for human build request. Then build current Tree Continue, reticle
+   pitch-projection repair (including removal of the Karebaba +80 offset),
    short-CD, source-attached held-stick and push-block Grab repair. Human then retests
    switch landing without launch, tap aim/cursor/target quick-shot,
    scrub acquisition/cutouts/spit/reflect sounds, floor/eye clicks and enemy

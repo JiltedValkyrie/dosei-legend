@@ -32,6 +32,36 @@ class TargetReticleTests(unittest.TestCase):
         self.assertIn('kokiri_lock_reticle_draw(x,y,kind)', block)
         self.assertNotIn('kokiri_message_mark_draw', block)
 
+    def test_hud_depth_follows_live_near_rejection_and_display_level(self):
+        """SGL rejects z <= screen distance >> display level. Every HUD sprite
+        sits just past it for the LIVE distance (first person 290 broke the old
+        fixed depths: 35 and 31 were both inside its level-3 near of 36)."""
+        source = (ROOT / 'src/kokiri_sgl.c').read_text(encoding='utf-8')
+        header = (ROOT / 'src/kokiri_sgl.h').read_text(encoding='utf-8')
+        main = (ROOT / 'src/main.c').read_text(encoding='utf-8')
+        level = int(header.split('#define KOKIRI_ZDSP_LEVEL')[1].split()[0])
+        self.assertEqual(level, 5)                       # OoT zNear 10: 240>>5=7, 290>>5=9
+        self.assertIn('slZdspLevel(KOKIRI_ZDSP_LEVEL);', main)
+        body = source[source.index('int                 kokiri_hud_depth'):]
+        body = body[:body.index('}') + 1]
+        self.assertIn('demo_screen_distance() >> KOKIRI_ZDSP_LEVEL', body)
+        for path in ('src/kokiri_sgl.c', 'src/minimap.c', 'src/npc_draw.c'):
+            text = (ROOT / path).read_text(encoding='utf-8')
+            self.assertNotIn('pos[2] = 31 * 65536', text, path)
+        self.assertNotIn('cutscene_screen_distance() : 277', source)
+        for distance in (180, 208, 240, 277, 290, 320, 400):
+            for above in (1, 2, 3):
+                self.assertGreater((distance >> level) + above, distance >> level)
+
+    def test_aim_marker_has_dark_rim_and_tight_spacing(self):
+        corner = build_lock_reticle_corner(0, (255, 255, 255), outline=(16, 16, 16))
+        words = [rgb555(p) for p in corner.getdata()]
+        self.assertIn(rgb555((16, 16, 16)), words)
+        self.assertNotEqual(rgb555((16, 16, 16)), 0)        # rim is not transparent
+        self.assertIn(rgb555((255, 255, 255)), words)
+        source = (ROOT / 'src/kokiri_sgl.c').read_text(encoding='utf-8')
+        self.assertIn('kind == KOKIRI_RETICLE_AIM ? 10 : 17', source)
+
     def test_player_facing_cd_fanfares_have_short_bounded_tracks(self):
         tracks = {entry['name']: entry for entry in
                   json.loads((ROOT / 'assets/audio/cdda_tracks.json').read_text())['tracks']}

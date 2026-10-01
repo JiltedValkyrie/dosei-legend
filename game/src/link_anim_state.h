@@ -76,6 +76,10 @@ void                link_anim_blade(int32_t out[2][3]);
 void                link_anim_stick(int32_t out[2][3]);
 /* Player focus.pos (head x (1100,-700,0)), Link-local Q16. */
 void                link_anim_focus(int32_t out[3]);
+/* First-person aim: also skin the tail of the POINT table holding the
+** first-person shoulder/slingshot arm (LINK_BASE_VERTICES..). Off, only the
+** third-person vertices are skinned. Changing it forces the next pose. */
+void                link_anim_first_person(bool on);
 /* Idle analog turn: advances facing by at most 800 binang per 30 Hz step.
 ** Caller supplies only eligible grounded, unlocked light-tilt input. */
 void                link_anim_turn(bool requested, uint16_t target, uint16_t *facing);
@@ -207,6 +211,8 @@ unsigned int        link_anim_fraction(void); /* Q8 fraction toward next frame *
 ** pressing forward again after letting go restores the roll's speed, exactly
 ** as re-centring the stick and pushing it again does in the original. */
 int32_t             link_anim_roll_speed_q8(void);
+/* Z+A roll without a usable sword (Player_SetupRoll), from any ground pose. */
+void link_anim_roll_start(void);
 void                link_anim_roll_input(int32_t locomotion_speed_q8,
                                          bool forward);
 /* Drop a roll in progress. Anything that takes movement away from Link -- a

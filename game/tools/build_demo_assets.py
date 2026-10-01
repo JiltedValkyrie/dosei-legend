@@ -130,7 +130,7 @@ def build_message_prompt(source, size=MESSAGE_PROMPT_SIZE):
     return out
 
 
-def build_lock_reticle_corner(corner, colour, size=16):
+def build_lock_reticle_corner(corner, colour, size=16, outline=None):
     """Rasterize one rotation of gLockOnReticleTriangleDL.
 
     The source display list is a single untextured right triangle at
@@ -159,6 +159,17 @@ def build_lock_reticle_corner(corner, colour, size=16):
             if (area > 0 and ab >= 0 and bc >= 0 and ca >= 0) or \
                (area < 0 and ab <= 0 and bc <= 0 and ca <= 0):
                 pixels[x, y] = colour
+    if outline is not None:
+        # A one-texel dark rim keeps a light marker readable on bright scenery.
+        # Near-black, not (0,0,0): RGB555 zero is VDP1's transparent code.
+        inside = {(x, y) for y in range(size) for x in range(size)
+                  if pixels[x, y] == colour}
+        for y in range(size):
+            for x in range(size):
+                if (x, y) not in inside and any(
+                        (x + dx, y + dy) in inside
+                        for dx in (-1, 0, 1) for dy in (-1, 0, 1)):
+                    pixels[x, y] = outline
     return out
 
 
@@ -325,7 +336,10 @@ def main(oot=None):
                 ('RTPO', (0, 255, 0)), ('RTAI', (255, 255, 255)))
     for prefix, colour in reticles:
         for corner in range(4):
-            reticle = build_lock_reticle_corner(corner, colour)
+            # The first-person aim marker is white with a dark rim so it
+            # reads on both bright and dark scenery.
+            reticle = build_lock_reticle_corner(
+                corner, colour, outline=(16, 16, 16) if prefix == 'RTAI' else None)
             (ROOT / ('build/cd/%s%02d.RGB' % (prefix, corner))).write_bytes(
                 b''.join(struct.pack('>H', rgb555(pixel)) for pixel in reticle.getdata()))
 

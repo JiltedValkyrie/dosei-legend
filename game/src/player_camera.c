@@ -138,6 +138,6 @@ void player_camera_first_person(oot_follow_t *state, const bg_vec_t *focus,
     *eye = *focus;
     eye->x -= (sy / 256) * (cp / 256) * 5 / 65536;
     eye->z -= (cy / 256) * (cp / 256) * 5 / 65536;
-    eye->y += sp * 5 / 65536;
+    eye->y -= sp * 5 / 65536;   /* behind the focus along the view: up looks drop it */
     clip_eye(focus, eye);
 }

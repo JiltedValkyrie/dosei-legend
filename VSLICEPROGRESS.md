@@ -1,3 +1,18 @@
+# Title level-select timing - 2026-10-01
+
+Astra: controls unlock 150 normalized ticks (2.5 seconds) after title cheat
+opens level select. Keeps title music, uses SFX; removes CD/Fairy-bank input
+wait. Early input discarded. 18 delay/minimap tests pass. Not target-built or
+runtime-accepted; normal scene-loading time is separate.
+
+# Baba marker projection repair - 2026-10-01
+
+Human rejected low marker placement. Fixed reversed pitch in attention screen
+projection and removed Karebaba's +80 compensation; actor focus unchanged by
+this repair. 48 focused host tests pass, including pitched look-at ray checks.
+Clean target build deferred; no runtime acceptance or emulator run. Earlier
+marker placement claims below are historical, not visual acceptance.
+
 # Tree Continue, target, fanfare and torch playtest repair - 2026-09-30
 
 Code done in shared tree; 333 focused host checks pass. Human deferred usual Clean

@@ -37,4 +37,31 @@ static inline bool cheat_code_sample(cheat_code_t *c, uint16_t held)
     return false;
 }
 
+/*
+** Second human-requested cheat: Up x4, Down x4, B, A, Start refills hearts and
+** consumables. Extra Ups before the first Down are tolerated.
+*/
+static const uint16_t cheat_refill_keys[11] = {
+    CAMERA_UP, CAMERA_UP, CAMERA_UP, CAMERA_UP,
+    CAMERA_DOWN, CAMERA_DOWN, CAMERA_DOWN, CAMERA_DOWN,
+    CAMERA_B, CAMERA_A, CAMERA_START
+};
+
+static inline bool cheat_refill_sample(cheat_code_t *c, uint16_t held)
+{
+    uint16_t pressed = (uint16_t)(held & ~c->previous);
+    c->previous = held;
+    if (!pressed)
+        return false;
+    if (pressed == cheat_refill_keys[c->position]) {
+        if (++c->position == sizeof(cheat_refill_keys)/sizeof(cheat_refill_keys[0])) {
+            c->position = 0;
+            return true;
+        }
+    } else if (!(c->position == 4 && pressed == CAMERA_UP)) {
+        c->position = pressed == cheat_refill_keys[0] ? 1 : 0;
+    }
+    return false;
+}
+
 #endif

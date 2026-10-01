@@ -230,6 +230,13 @@ static void             enter_roll(int32_t speed)
     roll_speed_q8 = roll_target_q8(speed * 256, true);
 }
 
+/* Player_SetupRoll from Player_ActionHandler_10: Z+A with no melee weapon
+** (or none usable) rolls even from a standstill. */
+void                    link_anim_roll_start(void)
+{
+    enter_roll(0);
+}
+
 /* One step of Math_StepToF toward the target the pad currently asks for, up or
 ** down: letting go slows the roll to the floor, and pressing forward again
 ** brings it back up. */

@@ -1,5 +1,6 @@
 """Real shutter rules and source web collision against host DynaPoly."""
 import ctypes as C
+import math
 import os
 from pathlib import Path
 import subprocess
@@ -99,6 +100,8 @@ void flat_ground(int y) {
 }
 void baba_step(int x,int y,int z) {gameplay_input_t in={0};in.x=x;in.y=y;in.z=z;in.grounded=true;dekubaba_step(&in);}
 int baba_pos(unsigned axis) {const dekubaba_view *v=dekubaba_body(0);return v?v->head[axis]:-99999;}
+int baba_focus_err(void) {const dekubaba_view *v=dekubaba_body(0);actor_t *a=actor_sys_find(0x55,0);double ang,yaw,h,ex,ey,ez;if(!v||!a)return -1;ang=v->stem[0]*6.283185307179586/65536.0;yaw=v->yaw*6.283185307179586/65536.0;h=20*cos(ang);ex=a->x-sin(yaw)*h;ey=a->y+20*sin(ang);ez=a->z-cos(yaw)*h;return (int)(fabs(a->x+a->focus[0]-ex)+fabs(a->y+a->focus[1]-ey)+fabs(a->z+a->focus[2]-ez));}int baba_focus(unsigned axis) {actor_t *a=actor_sys_find(0x55,0);return a?(axis==0?a->x:axis==1?a->y:a->z)+a->focus[axis]:-99999;}int baba_stem0(void) {const dekubaba_view *v=dekubaba_body(0);return v?v->stem[0]:0;}
+int baba_arrow(void) {actor_t *a=actor_sys_find(0x55,0);return a?a->arrow_y:-1;}
 int baba_pruned(void) {const dekubaba_view *v=dekubaba_body(0);return v?v->pruned:0;}
 int baba_hit(unsigned dmg) {
     collider_t sword={0};actor_t *a=actor_sys_find(0x55,0);if(!a)return 0;
@@ -167,6 +170,42 @@ int switch_rider_delta(int x,int y,int z) {
 int floor_at(int x,int y,int z) {bg_vec_t p={x,y,z};return bg_floor(&p,BG_IGNORE_ENTITY,0);}
 int wall_web_hit(void) {bg_vec_t a={-1455,-740,3},b={-1255,-740,3},hit;return bg_line(&a,&b,&hit,BG_CHECK_WALL,BG_IGNORE_ENTITY,0);}
 int wall_visible(unsigned i) {int32_t x,y,z;return dungeon_walls_body(i,&x,&y,&z);}
+#include "player_camera.h"
+/* The real En_Arrow seed; renamed stick hooks keep the torch stubs above. */
+#define player_items_stick real_player_items_stick
+#define player_items_burning real_player_items_burning
+#define player_items_ignite real_player_items_ignite
+#include "../../src/player_items.c"
+#undef player_items_stick
+#undef player_items_burning
+#undef player_items_ignite
+uint16_t kokiri_camera_facing(int32_t x,int32_t z){return collide_heading(x,z);}
+void gameplay_sincos(uint16_t a,int32_t *s,int32_t *c){kokiri_camera_sincos(a,s,c);}
+bool player_items_wall(const int32_t from[3], int32_t to[3], unsigned item)
+{
+    bg_vec_t a = {from[0], from[1], from[2]}, b = {to[0], to[1], to[2]}, at;
+    bg_hit_t hit;
+    bool wall=bg_line(&a, &b, &at, BG_CHECK_ALL | BG_CHECK_ONE_FACE, BG_IGNORE_PROJECTILES, &hit);
+    if(wall){to[0] = at.x; to[1] = at.y; to[2] = at.z;}
+    if(item==PLAYER_ITEM_SEED && dungeon_puzzles_shot(from,to))return true;
+    return wall;
+}
+static oot_follow_t aim_follow;static camera_position_t aim_eye;static uint16_t aim_yaw;static int32_t aim_pitch;
+void aim_reset(void){memset(&aim_follow,0,sizeof aim_follow);player_items_reset();save_state.slingshot=1;save_state.ammo_seeds=10;}
+void aim_look(int x,int y,int z,int facing,int dyaw,int dpitch){bg_vec_t f={x,y,z};player_camera_first_person(&aim_follow,&f,(uint16_t)facing,dyaw,dpitch,&aim_eye,&aim_yaw,&aim_pitch,true);}
+int aim_fire(void){int32_t o[3]={aim_eye.x,aim_eye.y,aim_eye.z};return player_items_use_from(2,o,aim_yaw,(int16_t)aim_pitch);}
+int aim_value(int i){return i==0?aim_eye.x:i==1?aim_eye.y:i==2?aim_eye.z:i==3?aim_yaw:aim_pitch;}
+int shot_pos(int axis){int32_t p[3];if(!player_items_body(0,&p[0],&p[1],&p[2]))return -99999;return p[axis];}
+#include <stdio.h>
+#include <stdlib.h>
+#include "push_block.h"
+static bg_mesh_t tree_mesh;static void *tree_store;
+int load_tree(const char *path){FILE *f=fopen(path,"rb");long n;uint8_t *d;uint32_t need;if(!f)return 0;fseek(f,0,SEEK_END);n=ftell(f);fseek(f,0,SEEK_SET);d=malloc(n);if(fread(d,1,n,f)!=(size_t)n){fclose(f);return 0;}fclose(f);need=bg_mesh_bytes(d,n);if(!need)return 0;free(tree_store);tree_store=malloc(need);if(!bg_mesh_decode(d,n,tree_store,need,&tree_mesh))return 0;bg_scene_set(&tree_mesh);return 1;}
+int block_axis(int axis){actor_t *a=actor_sys_find(0x00FF,0);return !a?-99999:axis==0?a->x:axis==1?a->y:a->z;}
+int block_push(void){actor_t *a=actor_sys_find(0x00FF,0);return a && push_block_request(a,0x4000,1,0);}
+int block_locked(void){actor_t *a=actor_sys_find(0x00FF,0);return a && !push_block_request(a,0x4000,1,0) && !push_block_request(a,0xC000,1,0);}
+void block_tick(void){gameplay_input_t in={0};in.room=3;bg_dyna_step();actor_sys_update();dungeon_puzzles_step(&in);}
+void shot_step(void){player_items_step();collide_begin();player_items_register();collide_run();player_items_collect();}
 '''
         src=folder/'test.c';src.write_text(pre+doors+post)
         dll=folder/'test.dll'
@@ -177,9 +216,10 @@ int wall_visible(unsigned i) {int32_t x,y,z;return dungeon_walls_body(i,&x,&y,&z
             str(src),str(ROOT/'src/dungeon_webs.c'),str(ROOT/'src/dungeon_torches.c'),str(ROOT/'src/dungeon_puzzles.c'),str(ROOT/'src/save_state.c'),
             str(ROOT/'src/actor_sys.c'),str(ROOT/'src/attention.c'),str(ROOT/'src/push_block.c'),
             str(ROOT/'src/skulltula.c'),str(ROOT/'src/wall_skull.c'),str(ROOT/'src/collide.c'),str(ROOT/'src/item_drop.c'),
-            str(ROOT/'src/dekubaba.c'),str(ROOT/'src/hintnuts.c'),str(ROOT/'src/gohma_larva.c'),
+            str(ROOT/'src/dekubaba.c'),str(ROOT/'src/hintnuts.c'),str(ROOT/'src/gohma_larva.c'),str(ROOT/'src/player_camera.c'),str(ROOT.parent/'shared/lib/camera/oot_follow.c'),
             str(ROOT.parent/'shared/lib/collision/kokiri_collision.c'),'-o',str(dll),'-lm'],check=True,env=env)
         cls.lib=C.CDLL(str(dll))
+        cls.lib.load_tree.argtypes=[C.c_char_p]
         for name in ('dungeon_webs_step','dungeon_webs_land','save_get_switch','dungeon_door_open'):
             getattr(cls.lib,name).restype=C.c_bool
     @classmethod
@@ -264,6 +304,24 @@ int wall_visible(unsigned i) {int32_t x,y,z;return dungeon_walls_body(i,&x,&y,&z
         g=self.lib
         for _ in range(70):g.hint_step(9,-600,-1880,-650,0)
         self.assertEqual(g.hint_balls(),3)
+    def test_dekubaba_focus_is_first_stem_step_not_head(self):
+        """DrawStemExtended i==0: from world.pos (head) one 20-unit step toward the base."""
+        g=self.lib;g.flat_ground(0);g.baba_step(-218,0,163);g.baba_step(-218,0,163)
+        self.assertEqual(g.baba_arrow(),15)
+        seen=set();upright=False
+        for n in range(240):
+            g.baba_step(-218 if n<100 else 5000,0,163)
+            err=g.baba_focus_err()
+            head=(g.baba_pos(0),g.baba_pos(1),g.baba_pos(2))
+            focus=tuple(g.baba_focus(i) for i in range(3))
+            if focus!=head: seen.add(focus)
+            if focus!=head: self.assertLessEqual(err,3,(n,focus,head))
+            if focus!=head and g.baba_stem0()==-0x4000:
+                upright=True
+                self.assertEqual(focus,(head[0],head[1]-20,head[2]),'upright: one section below head')
+        self.assertTrue(seen,'focus never left the head origin (lunge/upright)')
+        self.assertTrue(upright,'no upright pose sampled')
+
     def test_dekubaba_closed_head_bounces_and_lethal_seed_drops_nuts(self):
         g=self.lib;g.flat_ground(0);g.baba_step(-218,0,163)
         self.assertTrue(g.baba_hit(4)&2)
@@ -331,6 +389,70 @@ int wall_visible(unsigned i) {int32_t x,y,z;return dungeon_walls_body(i,&x,&y,&z
         for _ in range(60):g.skull_step(5,-1360,-850,1179)
         self.assertLess(g.skull_y(0),y)
 
+    # --- First-person slingshot: cursor ray -> seed -> eye switch ----------
+
+    def aim(self, x, y, z, facing, pitch=0, yaw=0):
+        g=self.lib;g.aim_reset();g.aim_look(x,y,z,facing,yaw,0)
+        for _ in range(8):                            # source caps 2666 per step
+            g.aim_look(x,y,z,facing,0,g.aim_value(4)-pitch)   # stick y + looks down
+        return [g.aim_value(i) for i in range(5)]
+
+    def fly(self, steps):
+        g=self.lib;path=[]
+        for _ in range(steps):
+            p=tuple(g.shot_pos(i) for i in range(3))
+            if p[0]==-99999:break
+            path.append(p);g.shot_step()
+        return path
+
+    def assert_on_ray(self, eye, path, tolerance=2.5):
+        yaw,pitch=eye[3]*math.tau/65536,eye[4]*math.tau/65536
+        d=(math.sin(yaw)*math.cos(pitch),math.sin(pitch),math.cos(yaw)*math.cos(pitch))
+        for p in path[:8]:                            # before source gravity starts
+            v=[p[i]-eye[i] for i in range(3)]
+            t=sum(v[i]*d[i] for i in range(3))
+            off=math.sqrt(sum((v[i]-t*d[i])**2 for i in range(3)))
+            self.assertGreaterEqual(t,-1);self.assertLessEqual(off,tolerance,(p,eye))
+
+    def test_seed_leaves_along_the_centre_cursor_ray_at_any_pitch_and_yaw(self):
+        g=self.lib
+        for facing in (0,0x4000,0x9000,0xC000):
+            for pitch in (-5000,0,6000):
+                eye=self.aim(0,500,0,facing,pitch)
+                self.assertEqual(eye[4],pitch)
+                self.assertTrue(g.aim_fire())
+                path=self.fly(10)
+                self.assertGreater(len(path),8)
+                self.assert_on_ray(eye,path)
+                if pitch>0:self.assertGreater(path[6][1],path[0][1])   # looking up shoots up
+                if pitch<0:self.assertLess(path[6][1],path[0][1])
+
+    def test_look_and_fire_in_one_step_uses_the_new_look(self):
+        g=self.lib;g.aim_reset();g.aim_look(0,500,0,0,0,0)
+        g.aim_look(0,500,0,0,1200,-2000)              # same-step look, then fire
+        eye=[g.aim_value(i) for i in range(5)]
+        self.assertEqual((eye[3],eye[4]),(1200,2000))
+        self.assertTrue(g.aim_fire())
+        self.assert_on_ray(eye,self.fly(10))
+
+    def test_centre_aim_hits_eye_switch_near_far_and_from_below(self):
+        """Room 4 eye (front faces +x near (-315,-759,960)). Aim the centre at it."""
+        g=self.lib
+        for distance,height in ((120,0),(420,0),(260,-60),(260,45)):
+            g.reset();self.assertTrue(g.dungeon_puzzles_sync(2,4))
+            focus=(-315+distance,-759+height,960)
+            pitch=round(math.atan2(-height,distance)*65536/math.tau)
+            eye=self.aim(*focus,0xC000,pitch)
+            self.assertTrue(g.aim_fire())
+            self.fly(20)
+            self.assertTrue(g.save_get_switch(2,4),(distance,height,eye))
+
+    def test_aim_well_above_the_eye_misses(self):
+        g=self.lib;g.reset();self.assertTrue(g.dungeon_puzzles_sync(2,4))
+        self.aim(-55,-759,960,0xC000,pitch=round(math.atan2(60,260)*65536/math.tau))
+        self.assertTrue(g.aim_fire());self.fly(20)
+        self.assertFalse(g.save_get_switch(2,4))
+
     def test_eye_front_seed_toggles_but_rear_and_outside_miss(self):
         g=self.lib;self.assertTrue(g.dungeon_puzzles_sync(2,4))
         self.assertFalse(g.puzzle_shot(-360,-759,960,-270,-759,960))
@@ -375,6 +497,26 @@ int wall_visible(unsigned i) {int32_t x,y,z;return dungeon_walls_body(i,&x,&y,&z
         self.assertEqual(g.puzzle_y(1),280)
         g.dungeon_puzzles_sync(2,0);g.dungeon_puzzles_sync(2,2)
         self.assertEqual(g.puzzle_y(1),280)
+
+    def test_room3_block_full_route_sets_switch16_locks_and_reloads_solved(self):
+        g=self.lib;g.reset()
+        if not (ROOT/'build/cd/S7.COL').is_file(): self.skipTest('staged Tree collision missing')
+        self.assertTrue(g.load_tree(str(ROOT/'build/cd/S7.COL').encode()))
+        self.assertTrue(g.dungeon_puzzles_sync(2,3))
+        self.assertEqual([g.block_axis(i) for i in range(3)],[-605,-820,-290])
+        for push in range(12):
+            for _ in range(40):
+                if g.block_push():break
+                g.block_tick()
+            else:self.fail('push %d refused at %d'%(push,g.block_axis(0)))
+            for _ in range(20):g.block_tick()
+        for _ in range(120):g.block_tick()
+        self.assertEqual([g.block_axis(i) for i in range(3)],[-365,-905,-290])
+        self.assertTrue(g.save_get_switch(2,16))
+        self.assertTrue(g.block_locked())
+        g.dungeon_puzzles_sync(2,0);self.assertTrue(g.dungeon_puzzles_sync(2,3))   # room reload
+        self.assertEqual([g.block_axis(i) for i in range(3)],[-365,-905,-290])
+        self.assertTrue(g.block_locked())
 
     def test_water_drain_hold_restore_and_room_reset(self):
         g=self.lib;g.water_scene();g.dungeon_puzzles_sync(2,5)

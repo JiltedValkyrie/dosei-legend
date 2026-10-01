@@ -292,6 +292,11 @@ GEAR_LISTS = (
     ('right_empty', 18, 'gLinkChildRightHandClosedFarDL'),
     ('right_shield', 18, 'gLinkChildRightFistAndDekuShieldFarDL'),
     ('sheath', 19, 'gLinkChildSheathFarDL'),
+    # Player_OverrideLimbDrawGameplayFirstPerson, child (unk_6AD == 2): only
+    # sFirstPersonRightShoulderDLs[1] on R_SHOULDER and
+    # sFirstPersonRightHandHoldingWeaponDLs[1] (slingshot) on R_HAND draw.
+    ('fp_shoulder', 16, 'gLinkChildRightShoulderNearDL'),
+    ('fp_sling', 18, 'gLinkChildRightArmStretchedSlingshotDL'),
 )
 
 
@@ -334,8 +339,19 @@ def emit_equipment(out, faces):
     if not tunic:raise ValueError('Link source tunic material missing')
     mask=bytearray((len(faces)+7)//8)
     for i in tunic:mask[i//8]|=1<<(i%8)
+    # First-person groups are last, so every vertex they introduce sits at the
+    # tail of the shared POINT table. Third-person draws skin and submit only
+    # LINK_BASE_VERTICES; the aim view adds the tail.
+    first_fp = next((i for i, f in enumerate(faces) if f['group'].startswith('fp_')), len(faces))
+    if any(not f['group'].startswith('fp_') for f in faces[first_fp:]):
+        raise ValueError('first-person gear groups must be last')
+    keys = set()
+    for f in faces[:first_fp]:
+        keys.update((tuple(loc), owner) for loc, owner in
+                    zip(f['local'], f.get('vertex_limbs', [f['limb']] * 3)))
     lines += ['static const unsigned char link_tunic_faces[]={'+','.join(map(str,mask))+'};',
-              '#define LINK_VISIBLE_POLYGONS %d' % maximum, '#endif']
+              '#define LINK_VISIBLE_POLYGONS %d' % maximum,
+              '#define LINK_BASE_VERTICES %d' % len(keys), '#endif']
     (out / 'link_equipment.h').write_text('\n'.join(lines) + '\n')
 
 
@@ -699,6 +715,9 @@ CLIPS = (
     ('stone_get3','gPlayerAnim_clink_demo_get3',0,0,1),
     ('stone_stand','gPlayerAnim_clink_demo_standup',0,0,1),
     ('stone_wait','gPlayerAnim_clink_demo_standup_wait',0,0,1),
+    # func_80834D2C: the slingshot plays bow_bow_ready once on the upper body
+    # and holds its last frame while aiming (first-person arm pose).
+    ('aim_ready','gPlayerAnim_link_bow_bow_ready',0,0,1),
 
 )
 

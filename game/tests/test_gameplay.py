@@ -2607,6 +2607,40 @@ class Gameplay(unittest.TestCase):
         self.assertEqual(self.lib.gp_attack_id(), 19)
         self.assertEqual(self.lib.gp_attack_phase(), 1)
 
+    def test_jump_attack_untouchable_in_air_then_one_second(self):
+        """Human rule: no hits while the jump slash is airborne, then 30 steps."""
+        self.armed()
+        self.lib.gp_health_set(0x30, 0x30)
+        self.assertTrue(self.lib.gameplay_jump_attack_start())
+        for _ in range(20):
+            self.step(0, 0, 0)
+            self.assertGreater(self.lib.gp_intangible(), 0)
+        self.lib.gameplay_jump_attack_land()
+        self.step(0, 0, 0)
+        self.assertEqual(self.lib.gp_intangible(), 30)
+        for _ in range(29):
+            self.step(0, 0, 0)
+        self.assertGreater(self.lib.gp_intangible(), 0)
+        for _ in range(3):
+            self.step(0, 0, 0)
+        self.assertEqual(self.lib.gp_intangible(), 0)
+
+    def test_invulnerable_hit_knocks_back_without_damage_or_intangibility(self):
+        """Player_SetInvulnerability (roll): damage 0, response still plays."""
+        self.forest(0)
+        self.lib.gp_health_set(0x30, 0x30)
+        self.lib.gameplay_set_invulnerable(15)
+        self.lib.gp_hurt_set(8, 0)
+        self.step(0, 0, 0)
+        self.assertEqual(self.lib.gp_health(), 0x30)
+        self.assertTrue(self.lib.gp_events() & self.GP_EVENT_HURT)
+        self.assertEqual(self.lib.gp_intangible(), 0)
+        for _ in range(15): self.step(0, 0, 0)
+        self.assertEqual(self.lib.gp_invulnerable(), 0)
+        self.lib.gp_hurt_set(8, 0)
+        self.step(0, 0, 0)
+        self.assertEqual(self.lib.gp_health(), 0x30 - 8)
+
     def test_no_jump_slash_without_a_sword(self):
         self.forest(0)
         self.assertFalse(self.lib.gameplay_jump_attack_start())

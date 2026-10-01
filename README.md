@@ -87,7 +87,7 @@ configure Kronos or remap gameplay inputs. The table assumes default Y jump.
 | Input | Gameplay action |
 | --- | --- |
 | Digital D-pad | Camera-relative movement; steer in the air |
-| 3D pad stick (analog mode) | Proportional movement; B selects walk/run speed ceiling |
+| 3D pad stick (analog mode) | Proportional movement; Holding B selects walk speed ceiling; B tap cancels / puts away the stick |
 | B | Toggle walk/run; start in run |
 | Y | Manual jump; no double-jump |
 | X | Attack with equipped sword; cuts grass and damages enemies |

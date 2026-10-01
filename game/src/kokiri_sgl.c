@@ -1398,6 +1398,11 @@ void                kokiri_link_draw(int x, int y, int z, int yaw)
             equipped.pltbl = equipped_polygons;
             equipped.attbl = equipped_attributes;
             equipped.nbPolygon = equipped_count;
+#ifdef LINK_BASE_VERTICES
+            /* The first-person arm's vertices are the tail; never transform
+             * them for the third-person body. */
+            equipped.nbPoint = LINK_BASE_VERTICES;
+#endif
             if(!cutscene_is_playing() && gameplay.hurt_flash_timer && !gameplay.dead){
                 int32_t sn,cs;kokiri_camera_sincos(gameplay.hurt_flash_phase,&sn,&cs);
                 kokiri_hit_filter(1+(unsigned)((cs+65536)*15/131072));
@@ -1409,6 +1414,38 @@ void                kokiri_link_draw(int x, int y, int z, int yaw)
     jo_3d_pop_matrix();
 #ifdef DOSEI_ACTOR_ORDER_PROBE
     actor_order_queue();
+#endif
+}
+
+/* Player_OverrideLimbDrawGameplayFirstPerson, child with the slingshot: only
+ * the near right shoulder and the stretched slingshot arm draw. The posed head
+ * focus (link_anim_focus) is pinned to the first-person camera's focus, and
+ * the model turns by the view yaw and pitch, so the arm holds its place in the
+ * frame as OoT's does. (x, y, z) is that world focus. The caller poses the
+ * aim clip with link_anim_first_person(true). */
+void                kokiri_link_draw_first_person(int x, int y, int z, int yaw, int pitch)
+{
+#ifdef LINK_FP_SLING_FIRST
+    int32_t focus[3];
+    PDATA arm = link_pdata;
+    link_anim_focus(focus);
+    equipped_count = 0;
+    link_part(LINK_FP_SHOULDER_FIRST, LINK_FP_SHOULDER_COUNT);
+    link_part(LINK_FP_SLING_FIRST, LINK_FP_SLING_COUNT);
+    invalidate_equipped();          /* the body list is rebuilt next draw */
+    arm.pltbl = equipped_polygons;
+    arm.attbl = equipped_attributes;
+    arm.nbPolygon = equipped_count;
+    jo_3d_push_matrix();
+    jo_3d_translate_matrix(x, -y, z);
+    slRotY((ANGLE)yaw);
+    slRotX((ANGLE)pitch);
+    /* POINT tables carry Y negated; focus is +Y up. */
+    slTranslate(-focus[0], focus[1], -focus[2]);
+    submit(&arm, 2u);
+    jo_3d_pop_matrix();
+#else
+    (void)x; (void)y; (void)z; (void)yaw; (void)pitch;
 #endif
 }
 
@@ -1553,6 +1590,21 @@ void                kokiri_navi_draw(int x, int y, int z)
     }
 }
 
+/* One resident sparkle texture as a world billboard; scale is units per texel. */
+static void         world_sparkle(int32_t x, int32_t y, int32_t z, FIXED scale, ANGLE spin)
+{
+    FIXED pos[5];
+    SPR_ATTR attr = SPR_ATTRIBUTE(0, No_Palet, No_Gouraud, ECdis,
+                                  sprNoflip | FUNC_Sprite);
+    pos[0] = x * 65536;
+    pos[1] = -y * 65536;
+    pos[2] = z * 65536;
+    pos[3] = pos[4] = scale;
+    attr.texno = (Uint16)sparkle_sprite;
+    attr.atrb |= (FAIRY_COLMODE_RGB & 7) << 3;
+    if (slPutSprite(pos, &attr, spin) == FALSE) ++kokiri_rejected;
+}
+
 static void         item_billboard(unsigned int sprite, int x, int y, int z)
 {
     FIXED pos[5];
@@ -1676,11 +1728,25 @@ void                kokiri_nut_draw(void)
             if(player_items_burning())kokiri_flame_draw(tip[0],tip[1],tip[2],demo_world_clock());
         }
     }
+    /* En_Arrow ARROW_SEED draws gEffSparklesDL (28-unit quad) at scale
+     * 0.01*50: a 14-unit white billboard spun by gameplayFrames*4000. The 8
+     * texel sparkle sprite at 1.75 units per texel is that size. A thrown
+     * nut keeps the brown rod. Impact: the same sparkle, larger, fading. */
     for (i = 0; i < PLAYER_SHOTS; ++i) {
         int32_t a[3], b[3];
-        if (!player_items_body(i, &x, &y, &z)) continue;
+        unsigned item = player_items_body(i, &x, &y, &z);
+        if (!item) continue;
+        if (item == PLAYER_ITEM_SEED && sparkle_ready) {
+            world_sparkle(x, y, z, 114688, (ANGLE)(demo_world_clock() * 4000u));
+            continue;
+        }
         a[0]=b[0]=x; a[2]=b[2]=z; a[1]=y-2; b[1]=y+2;
         item_rod(a,b,2);
+    }
+    {
+        unsigned left = player_items_impact(&x, &y, &z);
+        if (left && sparkle_ready)
+            world_sparkle(x, y, z, 65536 + (int)left * 24576, (ANGLE)(left * 9000u));
     }
     if (!gameplay_nut_body(&x, &y, &z))
         return;
@@ -1752,10 +1818,9 @@ static void rupee_hud_sprite(unsigned int sprite, int x, int width)
     /* slDispSprite ignores the world matrix. Coordinates are screen-centred. */
     pos[0] = (x - JO_TV_WIDTH_2 + width/2) * 65536;
     pos[1] = (206 - JO_TV_HEIGHT_2 + 8) * 65536;
-    /* SGL SpriteEntry rejects z <= screen_distance >> display_level.
-     * Gameplay uses 240 and Jo initializes level 3: near = 30, not zero.
-     * Depth 31 gives sort key 1, ahead of the world, without near rejection. */
-    pos[2] = 31 * 65536;
+    /* SGL SpriteEntry rejects z <= screen_distance >> display level; sit
+     * just past it, ahead of every visible world polygon. */
+    pos[2] = kokiri_hud_depth(1) * 65536;
     pos[3] = pos[4] = 65536;
     attr.texno = (Uint16)sprite;
     attr.atrb |= (FAIRY_COLMODE_RGB & 7) << 3;
@@ -1854,6 +1919,19 @@ static void         menu_quad(unsigned int sprite, int x, int y, int side)
 ** this without any ordering work. A dithered fill of '#' glyphs was tried
 ** first, on the text layer itself; it looked like what it was.
 */
+/* HUD sprites sit just past SGL's near rejection (screen distance >>
+ * KOKIRI_ZDSP_LEVEL) of the LIVE projection: first person 290, owl, backdrop
+ * and cutscene views differ. */
+int                 kokiri_hud_depth(int above)
+{
+    return (int)(demo_screen_distance() >> KOKIRI_ZDSP_LEVEL) + above;
+}
+
+static FIXED        hud_sprite_depth(int above)
+{
+    return (FIXED)(kokiri_hud_depth(above) * 65536);
+}
+
 void                kokiri_message_box_draw(int x, int y, int width, int height)
 {
     FIXED    pos[5];
@@ -1864,16 +1942,14 @@ void                kokiri_message_box_draw(int x, int y, int width, int height)
         return;
     /* slDispSprite ignores the world matrix and takes screen-centred
     ** coordinates, exactly as the rupee HUD does, so the box is positioned in
-    ** plain screen pixels. Depth 31 sorts it ahead of the world without
+    ** plain screen pixels. kokiri_hud_depth sorts it ahead of the world without
     ** tripping SGL's near rejection; see rupee_hud_sprite. */
     pos[0] = (x - JO_TV_WIDTH_2) * 65536;
     pos[1] = (y - JO_TV_HEIGHT_2) * 65536;
-    /* SGL rejects a sprite nearer than screen_distance >> display_level.
-    ** Gameplay uses 240 (near 30) but Link's house sets its backdrop's own
-    ** 277 (near 34), while narrow cutscene shots go much farther. Follow the
-    ** active shot's near plane rather than using a fixed overlay depth. */
-    pos[2] = (int)((cutscene_screen_distance() > 277 ?
-                   cutscene_screen_distance() : 277) / 8 + 3) * 65536;
+    /* SGL rejects a sprite nearer than screen_distance >> display level.
+    ** Gameplay, Link's house backdrop, first person and cutscene shots each
+    ** set their own distance; follow the active shot's near plane. */
+    pos[2] = hud_sprite_depth(3);
     pos[3] = (width * 65536) / MSGBOX_WIDTH;
     pos[4] = (height * 65536) / MSGBOX_HEIGHT;
     attr.texno = (Uint16)msgbox_sprite;
@@ -1903,8 +1979,7 @@ void                kokiri_message_mark_draw(int x, int y, bool last_page)
     pos[0] = (x - JO_TV_WIDTH_2) * 65536;
     pos[1] = (y - JO_TV_HEIGHT_2) * 65536;
     /* One nearer than the panel, so it lands on top of it. */
-    pos[2] = (int)((cutscene_screen_distance() > 277 ?
-                   cutscene_screen_distance() : 277) / 8 + 2) * 65536;
+    pos[2] = hud_sprite_depth(2);
     pos[3] = pos[4] = 32768; /* Eight pixels fit the padded bottom row. */
     attr.texno = (Uint16)msgmark_sprite[last_page ? 1 : 0];
     attr.atrb |= (FAIRY_COLMODE_RGB & 7) << 3;
@@ -1924,8 +1999,7 @@ static void         reticle_corner_draw(unsigned int sprite, int x, int y)
                                   sprNoflip | FUNC_Sprite);
     pos[0] = (x - JO_TV_WIDTH_2) * 65536;
     pos[1] = (y - JO_TV_HEIGHT_2) * 65536;
-    pos[2] = (int)((cutscene_screen_distance() > 277 ?
-                   cutscene_screen_distance() : 277) / 8 + 1) * 65536;
+    pos[2] = hud_sprite_depth(1);
     pos[3] = pos[4] = 65536;
     attr.texno = (Uint16)sprite;
     attr.atrb |= (FAIRY_COLMODE_RGB & 7) << 3;
@@ -1942,10 +2016,12 @@ void                kokiri_lock_reticle_draw(int x, int y, unsigned kind)
 {
     if (!reticle_ready || kind >= KOKIRI_RETICLE_COUNT)
         return;
-    reticle_corner_draw(reticle_sprite[kind][0], x - 17, y - 17);
-    reticle_corner_draw(reticle_sprite[kind][1], x + 17, y - 17);
-    reticle_corner_draw(reticle_sprite[kind][2], x + 17, y + 17);
-    reticle_corner_draw(reticle_sprite[kind][3], x - 17, y + 17);
+    /* The first-person aim marker frames the exact screen centre tightly. */
+    int d = kind == KOKIRI_RETICLE_AIM ? 10 : 17;
+    reticle_corner_draw(reticle_sprite[kind][0], x - d, y - d);
+    reticle_corner_draw(reticle_sprite[kind][1], x + d, y - d);
+    reticle_corner_draw(reticle_sprite[kind][2], x + d, y + d);
+    reticle_corner_draw(reticle_sprite[kind][3], x - d, y + d);
 }
 
 void                kokiri_menu_draw(void)
