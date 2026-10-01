@@ -16,6 +16,13 @@
 #include "shop_score.h"
 #include "dungeon_score.h"
 #include "woods_score.h"
+#include "fairy_score.h"
+#include "boss_score.h"
+#include "bossclear_score.h"
+#include "owl_score.h"
+#include "fairyget_score.h"
+#include "field_score.h"
+#include "stone_score.h"
 
 /* Trigger tables live on the cart (MUSICTRG.BIN, BUG-043); these copies in
 ** the headers are unreferenced and dropped. */
@@ -24,11 +31,11 @@ typedef char music_trigger_is_8_bytes[sizeof(music_trigger_t) == 8 ? 1 : -1];
 
 static music_bank_t *const banks[] = {
     &music_bank_title, &music_bank_kokiri, &music_bank_navi,
-    &music_bank_deku_tree, &music_bank_nightmare, &music_bank_house, &music_bank_shop, &music_bank_dungeon, &music_bank_woods
+    &music_bank_deku_tree, &music_bank_nightmare, &music_bank_house, &music_bank_shop, &music_bank_dungeon, &music_bank_woods, &music_bank_fairy, &music_bank_boss, &music_bank_bossclear, &music_bank_owl, &music_bank_fairyget, &music_bank_field, &music_bank_stone
 };
 static const unsigned int counts[] = {
     TITLE_TRIGGER_COUNT, KOKIRI_TRIGGER_COUNT, NAVI_TRIGGER_COUNT,
-    DEKU_TREE_TRIGGER_COUNT, NIGHTMARE_TRIGGER_COUNT, HOUSE_TRIGGER_COUNT, SHOP_TRIGGER_COUNT, DUNGEON_TRIGGER_COUNT, WOODS_TRIGGER_COUNT
+    DEKU_TREE_TRIGGER_COUNT, NIGHTMARE_TRIGGER_COUNT, HOUSE_TRIGGER_COUNT, SHOP_TRIGGER_COUNT, DUNGEON_TRIGGER_COUNT, WOODS_TRIGGER_COUNT, FAIRY_TRIGGER_COUNT, BOSS_TRIGGER_COUNT, BOSSCLEAR_TRIGGER_COUNT, OWL_TRIGGER_COUNT, FAIRYGET_TRIGGER_COUNT, FIELD_TRIGGER_COUNT, STONE_TRIGGER_COUNT
 };
 #define BANK_COUNT (sizeof(banks) / sizeof(banks[0]))
 
@@ -123,4 +130,42 @@ music_bank_t music_bank_woods = {
     "WOODS.PCM", "WOODS.LVL", (const music_pcm_t *)woods_pcm, 0,
     WOODS_TRIGGER_COUNT, WOODS_FRAMES, WOODS_LOOP_FRAME, WOODS_VOICES,
     WOODS_SAMPLE_BASE, WOODS_PCM_BYTES, WOODS_LEVEL_BYTES
+};
+
+music_bank_t music_bank_fairy = {
+    "FAIRY.PCM", "FAIRY.LVL", (const music_pcm_t *)fairy_pcm, 0,
+    FAIRY_TRIGGER_COUNT, FAIRY_FRAMES, FAIRY_LOOP_FRAME, FAIRY_VOICES,
+    FAIRY_SAMPLE_BASE, FAIRY_PCM_BYTES, FAIRY_LEVEL_BYTES
+};
+
+music_bank_t music_bank_boss = {
+    "BOSS.PCM", "BOSS.LVL", (const music_pcm_t *)boss_pcm, 0,
+    BOSS_TRIGGER_COUNT, BOSS_FRAMES, BOSS_LOOP_FRAME, BOSS_VOICES,
+    BOSS_SAMPLE_BASE, BOSS_PCM_BYTES, BOSS_LEVEL_BYTES
+};
+
+music_bank_t music_bank_bossclear = {
+    "BOSSCLR.PCM", "BOSSCLR.LVL", (const music_pcm_t *)bossclear_pcm, 0,
+    BOSSCLEAR_TRIGGER_COUNT, BOSSCLEAR_FRAMES, BOSSCLEAR_LOOP_FRAME, BOSSCLEAR_VOICES,
+    BOSSCLEAR_SAMPLE_BASE, BOSSCLEAR_PCM_BYTES, BOSSCLEAR_LEVEL_BYTES
+};
+
+music_bank_t music_bank_owl = {
+    "OWL.PCM", "OWL.LVL", (const music_pcm_t *)owl_pcm, 0,
+    OWL_TRIGGER_COUNT, OWL_FRAMES, OWL_LOOP_FRAME, OWL_VOICES, OWL_SAMPLE_BASE, OWL_PCM_BYTES, OWL_LEVEL_BYTES
+};
+
+music_bank_t music_bank_fairyget = {
+    "FAIRYGET.PCM", "FAIRYGET.LVL", (const music_pcm_t *)fairyget_pcm, 0,
+    FAIRYGET_TRIGGER_COUNT, FAIRYGET_FRAMES, FAIRYGET_LOOP_FRAME, FAIRYGET_VOICES, FAIRYGET_SAMPLE_BASE, FAIRYGET_PCM_BYTES, FAIRYGET_LEVEL_BYTES
+};
+
+music_bank_t music_bank_field = {
+    "FIELD.PCM", "FIELD.LVL", (const music_pcm_t *)field_pcm, 0,
+    FIELD_TRIGGER_COUNT, FIELD_FRAMES, FIELD_LOOP_FRAME, FIELD_VOICES, FIELD_SAMPLE_BASE, FIELD_PCM_BYTES, FIELD_LEVEL_BYTES
+};
+
+music_bank_t music_bank_stone = {
+    "STONE.PCM", "STONE.LVL", (const music_pcm_t *)stone_pcm, 0,
+    STONE_TRIGGER_COUNT, STONE_FRAMES, STONE_LOOP_FRAME, STONE_VOICES, STONE_SAMPLE_BASE, STONE_PCM_BYTES, STONE_LEVEL_BYTES
 };

@@ -32,7 +32,7 @@ def source_colours(source):
     return channels
 
 
-def page_image(oot, page, gear=0, stick=False, emerald=False, slingshot=False, nut=False):
+def page_image(oot, page, gear=0, stick=False, emerald=False, slingshot=False, nut=False, ocarina=False):
     textures=oot/'extracted/ntsc-1.2/assets/textures'
     source=(oot/'src/overlays/misc/ovl_kaleido_scope/z_kaleido_scope.c').read_text(encoding='utf-8')
     colours=source_colours(source)
@@ -67,10 +67,14 @@ def page_image(oot, page, gear=0, stick=False, emerald=False, slingshot=False, n
         icon('gItemIconDekuNutTex',98,64)
     if page==0 and slingshot:
         icon('gItemIconSlingshotTex',66,96)
+    if page==0 and ocarina:
+        icon('gItemIconOcarinaFairyTex',98,96)
     if page==3:
         if gear&1: icon('gItemIconSwordKokiriTex',174,64)
         if gear&2: icon('gItemIconShieldDekuTex',174,96)
         icon('gItemIconTunicKokiriTex',174,128)
+        if gear&4: icon('gItemIconTunicZoraTex',238,128)
+        if gear&8: icon('gItemIconTunicGoronTex',206,128)
         icon('gItemIconBootsKokiriTex',174,160)
     if page==2 and emerald:
         icon('gQuestIconKokiriEmeraldTex',182,168,20)
@@ -207,11 +211,11 @@ def menu_font(sdk):
 def build(oot,cd,out,sdk=ROOT.parent.parent/'joengine'):
     cd.mkdir(parents=True,exist_ok=True);out.mkdir(parents=True,exist_ok=True)
     for page in range(6):
-        variants=range(8) if page==0 else range(4) if page==3 else range(2) if page==2 else range(1)
+        variants=range(16) if page==0 else range(16) if page==3 else range(2) if page==2 else range(1)
         for variant in variants:
-            image=page_image(oot,page,variant,page==0 and bool(variant&1),page==2 and variant==1,page==0 and bool(variant&2),page==0 and bool(variant&4))
+            image=page_image(oot,page,variant,page==0 and bool(variant&1),page==2 and variant==1,page==0 and bool(variant&2),page==0 and bool(variant&4),page==0 and bool(variant&8))
             blob=pack(image)
-            (cd/('PAUSE%d%d.BIN'%(page,variant))).write_bytes(blob)
+            (cd/('PAUSE%d%X.BIN'%(page,variant))).write_bytes(blob)
             image.save(out/('pause-%d-%d.png'%(page,variant)))
             preview=Image.new('RGBA',(WIDTH,HEIGHT))
             preview.putdata([((word&31)*255//31,((word>>5)&31)*255//31,

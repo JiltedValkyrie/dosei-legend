@@ -5,11 +5,12 @@ from pathlib import Path
 import re
 
 ROOT = Path(__file__).resolve().parents[1]
-BANKS = ('title', 'house', 'nightmare', 'kokiri', 'navi', 'deku_tree', 'shop', 'dungeon', 'woods')
+BANKS = ('title', 'house', 'nightmare', 'kokiri', 'navi', 'deku_tree', 'shop', 'dungeon', 'woods', 'fairy', 'boss', 'bossclear', 'owl', 'fairyget', 'field', 'stone')
 # These callers need data streaming, startup initialization or timed bank stops.
 # CD fanfares run only at the existing frozen-world playback sites.
 BANK_ONLY = {'NA_BGM_TITLE', 'NA_BGM_LINK_HOUSE', 'NA_BGM_OPENING_GANON',
              'NA_BGM_KOKIRI', 'NA_BGM_NAVI_OPENING', 'NA_BGM_DEKU_TREE_CS', 'NA_BGM_SHOP', 'NA_BGM_DUNGEON', 'NA_BGM_SARIA_THEME'}
+BANK_ONLY.update(('NA_BGM_GREAT_FAIRY','NA_BGM_OWL','NA_BGM_OCA_FAIRY_GET','NA_BGM_FIELD_LOGIC','NA_BGM_SPIRITUAL_STONE'))
 REQUIRED = BANK_ONLY | {'NA_BGM_GAME_OVER', 'NA_BGM_OPEN_TRE_BOX', 'NA_BGM_SMALL_ITEM_GET'}
 
 

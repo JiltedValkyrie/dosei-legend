@@ -130,6 +130,38 @@ def build_message_prompt(source, size=MESSAGE_PROMPT_SIZE):
     return out
 
 
+def build_lock_reticle_corner(corner, colour, size=16):
+    """Rasterize one rotation of gLockOnReticleTriangleDL.
+
+    The source display list is a single untextured right triangle at
+    (-31,-31), (32,-31), (-31,32), rendered four times around focus.  Saturn
+    uses compact RGB555 sprites, so preserve that geometry and the source
+    attention colour while making black texels transparent for VDP1.
+    """
+    if corner not in range(4):
+        raise ValueError('reticle corner must be 0..3')
+    vertices = ((2, 2), (12, 2), (2, 12))
+    if corner == 1:
+        vertices = tuple((size - 1 - x, y) for x, y in vertices)
+    elif corner == 2:
+        vertices = tuple((size - 1 - x, size - 1 - y) for x, y in vertices)
+    elif corner == 3:
+        vertices = tuple((x, size - 1 - y) for x, y in vertices)
+    out = Image.new('RGB', (size, size))
+    pixels = out.load()
+    (ax, ay), (bx, by), (cx, cy) = vertices
+    area = (bx - ax) * (cy - ay) - (by - ay) * (cx - ax)
+    for y in range(size):
+        for x in range(size):
+            ab = (bx - ax) * (y - ay) - (by - ay) * (x - ax)
+            bc = (cx - bx) * (y - by) - (cy - by) * (x - bx)
+            ca = (ax - cx) * (y - cy) - (ay - cy) * (x - cx)
+            if (area > 0 and ab >= 0 and bc >= 0 and ca >= 0) or \
+               (area < 0 and ab <= 0 and bc <= 0 and ca <= 0):
+                pixels[x, y] = colour
+    return out
+
+
 def build_equip_outline(source, size=32):
     """The real EQUIPPED marker, gEquippedItemOutlineTex.
 
@@ -284,6 +316,18 @@ def main(oot=None):
             mark = build_message_prompt(source)
         (ROOT / ('build/cd/%s.RGB' % name)).write_bytes(b''.join(
             struct.pack('>H', rgb555(pixel)) for pixel in mark.getdata()))
+
+    # z_actor.c draws gLockOnReticleTriangleDL four times around focus. Its
+    # vertices are source geometry, and its palette is sAttentionColors:
+    # hostile yellow, NPC blue, other/POI green. White is the first-person
+    # shot ray marker, intentionally separate from dialogue's message glyphs.
+    reticles = (('RTEN', (255, 255, 0)), ('RTNP', (150, 150, 255)),
+                ('RTPO', (0, 255, 0)), ('RTAI', (255, 255, 255)))
+    for prefix, colour in reticles:
+        for corner in range(4):
+            reticle = build_lock_reticle_corner(corner, colour)
+            (ROOT / ('build/cd/%s%02d.RGB' % (prefix, corner))).write_bytes(
+                b''.join(struct.pack('>H', rgb555(pixel)) for pixel in reticle.getdata()))
 
     outline = (Path(oot) / 'extracted/ntsc-1.2/assets/textures/parameter_static'
                / 'gEquippedItemOutlineTex.ia8.png')

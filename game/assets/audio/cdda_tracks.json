@@ -6,6 +6,7 @@
       "name": "CHEST",
       "sequence": 43,
       "soundfont": 3,
+      "max_seconds": 2.5,
       "note": "NA_BGM_OPEN_TRE_BOX, treasure chest"
     },
     {
@@ -20,7 +21,23 @@
       "name": "SMALL_ITEM",
       "sequence": 57,
       "soundfont": 35,
-      "note": "NA_BGM_SMALL_ITEM_GET, first Deku Stick"
+      "max_seconds": 2.25,
+      "note": "NA_BGM_SMALL_ITEM_GET, Gold Skulltula token and small-item fanfares"
+    },
+    {
+      "track": 5,
+      "name": "HEART_GET",
+      "sequence": 36,
+      "soundfont": 35,
+      "note": "NA_BGM_HEART_GET, frozen heart-container get-item"
+    },
+    {
+      "track": 6,
+      "name": "ITEM_GET",
+      "sequence": 34,
+      "soundfont": 35,
+      "max_seconds": 2.75,
+      "note": "NA_BGM_ITEM_GET, major chest rewards, first ammo and shop acquisitions"
     }
   ]
 }

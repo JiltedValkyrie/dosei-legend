@@ -101,7 +101,10 @@ full/empty grants, immune enemy and one effect per valid use at variable draw ra
 
 Implement equip/raise/aim/fire/put-away, first-person camera, seed ammo and projectiles.
 3D stick has deadzone and proportional aim; digital D-pad keeps reliable aim. Use
-source fire/release behavior and preserve Z targeting/first-person transitions.
+the human-approved 2026-09-30 tap controls: slot tap enters persistent aim,
+subsequent taps fire, cancel exits. Target held + slot tap shoots directly at
+the actor without first person. This overrides source hold/release behavior.
+Implementation/host checks/Clean build pass; human controller acceptance open.
 
 Projectile simulation is fixed-step, world/actor collision is swept as needed,
 and pooled entities release on impact, timeout and unload. Eye-switch acceptance

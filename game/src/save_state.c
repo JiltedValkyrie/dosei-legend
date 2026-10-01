@@ -1,11 +1,38 @@
+#pragma GCC optimize("Os") /* Flag/inventory bookkeeping: preserve fixed renderer and heap budgets. */
 /*
 ** Persistent quest state. Contract, source references and what is deliberately
 ** not modelled are all in save_state.h.
 */
 
 #include "save_state.h"
+const char *save_scene_name(unsigned scene)
+{
+    static const char *const names[SAVE_SCENE_COUNT]={"KOKIRI FOREST","LOST WOODS","DEKU TREE","GOHMA'S LAIR",
+        "KOKIRI SHOP","LINK'S HOUSE","KNOW-IT-ALL HOUSE","TWINS' HOUSE","MIDO'S HOUSE","SARIA'S HOUSE","HYRULE FIELD"};
+    return scene<SAVE_SCENE_COUNT?names[scene]:"UNKNOWN AREA";
+}
 
 save_state_t    save_state;
+static uint32_t temporary_switches[SAVE_SCENE_COUNT];
+bool save_skull_collected(unsigned group,unsigned mask) {
+    return group<32 && (save_state.skull_flags[group]&(mask&255))!=0;
+}
+bool save_collect_skull(unsigned group,unsigned mask) {
+    if(group>=32 || !(mask&255) || save_skull_collected(group,mask))return false;
+    save_state.skull_flags[group]|=mask&255;return true;
+}
+unsigned save_skull_count(void) {
+    unsigned i,n=0;for(i=0;i<32;++i){unsigned b=save_state.skull_flags[i];while(b){n+=b&1;b>>=1;}}
+    return n;
+}
+bool save_tunic_unlocked(unsigned tunic) {
+    return tunic==0 || (tunic==1 && save_skull_count()>=1) ||
+           (tunic==2 && save_skull_count()>=5);
+}
+bool save_equip_tunic(unsigned tunic) {
+    if(!save_tunic_unlocked(tunic))return false;
+    save_state.tunic=(uint8_t)tunic;return true;
+}
 
 /* The original's addressing, kept verbatim so a flag number copied out of the
 ** decomp behaves identically here: index = flag >> 4, mask = 1 << (flag & 15).
@@ -129,12 +156,36 @@ void    save_set_treasure(unsigned int scene, unsigned int flag)
 
 bool    save_get_switch(unsigned int scene, unsigned int flag)
 {
+    if (flag >= 32) return scene < SAVE_SCENE_COUNT && flag < 64 &&
+        (temporary_switches[scene] & (1u << (flag - 32))) != 0;
     return (scene_get(scene, flag, 1));
 }
 
 void    save_set_switch(unsigned int scene, unsigned int flag)
 {
+    if (flag >= 32) {
+        if (scene < SAVE_SCENE_COUNT && flag < 64) temporary_switches[scene] |= 1u << (flag - 32);
+        return;
+    }
     scene_set(scene, flag, 1);
+}
+
+void save_unset_switch(unsigned int scene, unsigned int flag)
+{
+    if (scene >= SAVE_SCENE_COUNT || flag >= 64) return;
+    if (flag >= 32) temporary_switches[scene] &= ~(1u << (flag - 32));
+    else save_state.scene[scene].swch &= ~(1u << flag);
+}
+
+void save_reset_temp_switches(unsigned int scene)
+{
+    if (scene < SAVE_SCENE_COUNT) temporary_switches[scene] = 0;
+}
+
+void save_room_changed(unsigned int scene)
+{
+    /* z_actor func_80031B14 clears only temporary flags 0x38..0x3f. */
+    if (scene < SAVE_SCENE_COUNT) temporary_switches[scene] &= 0x00ffffffu;
 }
 
 bool    save_get_clear(unsigned int scene, unsigned int flag)
@@ -209,6 +260,11 @@ bool            save_mido_demands_met(void)
 
 void            save_resume_remap(void)
 {
+    /* Sram_OpenSave restores a dead Game Over save to its source minimum.
+     * Game Over writes before its Continue fade gives Link 0x30, so a later
+     * file-select load must not begin another death cycle. */
+    if (save_state.health < SAVE_NEW_HEALTH_CAPACITY)
+        save_state.health = SAVE_NEW_HEALTH_CAPACITY;
     if (save_state.scene_id == SAVE_SCENE_DEKU_TREE ||
         save_state.scene_id == SAVE_SCENE_DEKU_TREE_BOSS) {
         save_state.scene_id = SAVE_SCENE_DEKU_TREE;
@@ -269,6 +325,11 @@ bool            save_item_give(save_item_t item)
     unsigned int    total;
 
     switch (item) {
+    case SAVE_ITEM_HEART_CONTAINER:
+        if (save_state.health_capacity < 20 * SAVE_HEART_UNIT)
+            save_state.health_capacity += SAVE_HEART_UNIT;
+        save_heal(SAVE_HEART_UNIT);
+        return true;
     case SAVE_ITEM_SLINGSHOT:
         save_state.slingshot = 1;
         save_state.ammo_seeds = 30;
@@ -320,6 +381,16 @@ bool            save_item_give(save_item_t item)
     default:
         return false;
     }
+}
+
+bool save_finish_deku_warp(void)
+{
+    if (save_state.scene_id != SAVE_SCENE_DEKU_TREE_BOSS ||
+        !save_get_clear(SAVE_SCENE_DEKU_TREE_BOSS, 1)) return false;
+    save_set_event_chk_inf(EVENTCHKINF_ENTERED_BLUE_WARP);
+    save_set_event_chk_inf(EVENTCHKINF_DEKU_TREE_CLEARED);
+    save_give_quest_item(QUEST_KOKIRI_EMERALD);
+    return true;
 }
 
 bool            save_item_first_get(save_item_t item)
@@ -391,6 +462,8 @@ bool            save_is_dead(void)
 
 void            save_new_game(void)
 {
+    unsigned int scene;
+    for (scene=0;scene<SAVE_SCENE_COUNT;++scene) temporary_switches[scene]=0;
     unsigned int    i;
 
     for (i = 0; i < SAVE_EVENTCHKINF_WORDS; ++i)
@@ -415,9 +488,11 @@ void            save_new_game(void)
     save_state.equip_sword = 0;
     save_state.equip_shield = 0;
     save_state.slingshot = 0;
+    save_state.tunic = save_state.fairy_ocarina = 0;
     save_state.ammo_seeds = 0;
     save_state.deku_dungeon_items = 0;
     save_state.deku_visited_rooms = 0;
+    for(i=0;i<32;++i)save_state.skull_flags[i]=0;
     save_state.stick_owned = 0;
     save_state.stick_ammo = 0;
     save_state.stick_upgrade = 0;

@@ -35,7 +35,7 @@ static unsigned short regs[32][16];
 #define SLOT(s,o) regs[s][(o)/2]
 #define MUSIC_MAX_VOICES 24
 static bool menu_duck,active[24];
-static unsigned char volume=15,voice_levels[24];
+static unsigned char volume=15,cdda_volume=15,voice_levels[24];
 '''
         src += re.search(r'^#define CD_SEND.*$', audio, re.M)[0]+'\n'
         src += function(audio,'faded_level')+'\n'+function(audio,'music_menu_duck')

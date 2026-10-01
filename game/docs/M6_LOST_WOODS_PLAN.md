@@ -11,16 +11,13 @@ Field. Lost Woods actors, wrong-way exits, target game and owls follow the reach
 story state. M7 owns Hyrule Field exploration; M6b owns grotto interiors/token and
 scrub-shop completion. Do not duplicate those implementations.
 
-## Open scope decision: Sacred Forest Meadow
+## Approved scope: Sacred Forest Meadow
 
-The reviewed child-day Lost Woods layer has no Mido meadow block. The source route
-is reachable. Human must choose either an explicitly acknowledged demo boundary or
-additional Meadow content; that decision remains open. Do not invent a child Mido
-or claim an absent source gate. Preparation of other rooms can proceed, but final
-reachability acceptance and release boundary documentation depend on this decision.
-If content expands, estimate scene/actor/save/audio costs and obtain scope direction
-before implementing it. Do not silently adopt the umbrella risk list's conflicting
-claim that Meadow is simply unreachable/out of scope.
+Human explicitly chose "Add Meadow gameplay too" on 2026-09-30. Include its
+source route, enemies and Saria progression in M6. The reviewed child-day Woods
+layer has no Mido meadow block; do not invent one. Budget scene, actor, save and
+audio additions as implementation proceeds. Meadow reachability and gameplay
+remain required acceptance work, not a boundary option awaiting approval.
 
 ## Dependencies and contracts
 

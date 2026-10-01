@@ -36,9 +36,25 @@
 #define RAM_LOW_ROOM_BOUNDS_BYTES   0x1000u
 #define RAM_LOW_SPRITES_OFFSET      0xB800u
 #define RAM_LOW_SPRITES_BYTES       0xC000u
-#define RAM_LOW_MUSICTRG_OFFSET     0x17800u
-#define RAM_LOW_MUSICTRG_BYTES      0x10000u
-#define RAM_LOW_USED_BYTES          0x27800u
+#define RAM_LOW_MUSICTRG_OFFSET     0x51500u
+#define RAM_LOW_MUSICTRG_BYTES      0x20000u
+/* Old 0x27800..0x2B800 directory carve is reserved, now unused. */
+#define RAM_LOW_FS_DIRECTORY_OFFSET 0x49500u
+#define RAM_LOW_FS_DIRECTORY_BYTES  0x8000u
+#define RAM_LOW_GOMA_OFFSET         0x2B800u
+#define RAM_LOW_GOMA_BYTES          0x1000u
+#define RAM_LOW_QUADS_OFFSET        0x2C800u
+#define RAM_LOW_QUADS_BYTES         0x2800u
+#define RAM_LOW_GOHMA_POSES_OFFSET  0x2F000u
+#define RAM_LOW_GOHMA_POSES_BYTES   0xB000u
+#define RAM_LOW_GOHMA_OFFSET        0x3A000u
+#define RAM_LOW_GOHMA_BYTES         0x2000u
+/* Immutable fog channel lookup, fully filled before any scene draw. */
+#define RAM_LOW_FOG_CHANNEL_OFFSET  0x3C000u
+#define RAM_LOW_FOG_CHANNEL_BYTES   0x0500u
+#define RAM_LOW_CORE_OFFSET         0x3C500u
+#define RAM_LOW_CORE_BYTES          0xD000u
+#define RAM_LOW_USED_BYTES          0x71500u
 
 #define RAM_LOW(offset)             ((void *)(RAM_LOW_ADDRESS + (offset)))
 
@@ -60,6 +76,20 @@ typedef char ram_low_ordered[RAM_LOW_EQUIP_POLY_OFFSET + RAM_LOW_EQUIP_POLY_BYTE
                              RAM_LOW_ROOM_BOUNDS_OFFSET + RAM_LOW_ROOM_BOUNDS_BYTES
                              <= RAM_LOW_SPRITES_OFFSET &&
                              RAM_LOW_SPRITES_OFFSET + RAM_LOW_SPRITES_BYTES
+                             <= RAM_LOW_GOMA_OFFSET &&
+                             RAM_LOW_GOMA_OFFSET + RAM_LOW_GOMA_BYTES
+                             <= RAM_LOW_QUADS_OFFSET &&
+                             RAM_LOW_QUADS_OFFSET + RAM_LOW_QUADS_BYTES
+                             <= RAM_LOW_GOHMA_POSES_OFFSET &&
+                             RAM_LOW_GOHMA_POSES_OFFSET + RAM_LOW_GOHMA_POSES_BYTES
+                             <= RAM_LOW_GOHMA_OFFSET &&
+                             RAM_LOW_GOHMA_OFFSET + RAM_LOW_GOHMA_BYTES
+                             <= RAM_LOW_FOG_CHANNEL_OFFSET &&
+                             RAM_LOW_FOG_CHANNEL_OFFSET + RAM_LOW_FOG_CHANNEL_BYTES
+                             <= RAM_LOW_CORE_OFFSET &&
+                             RAM_LOW_CORE_OFFSET + RAM_LOW_CORE_BYTES
+                             <= RAM_LOW_FS_DIRECTORY_OFFSET &&
+                             RAM_LOW_FS_DIRECTORY_OFFSET + RAM_LOW_FS_DIRECTORY_BYTES
                              <= RAM_LOW_MUSICTRG_OFFSET &&
                              RAM_LOW_MUSICTRG_OFFSET + RAM_LOW_MUSICTRG_BYTES
                              <= RAM_LOW_USED_BYTES ? 1 : -1];

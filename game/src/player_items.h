@@ -23,7 +23,8 @@ bool player_items_stick(void);
 void player_items_putaway(void);
 void player_items_break_stick(void);
 void player_items_ignite(void);
+void player_items_extinguish(void);
 unsigned player_items_burning(void);
 /* Swept scenery test; replaces endpoint with the first impact position. */
-bool player_items_wall(const int32_t from[3], int32_t to[3]);
+bool player_items_wall(const int32_t from[3], int32_t to[3], unsigned item);
 #endif

@@ -113,6 +113,8 @@ static void     pack_payload(const save_state_t *state, cursor *c)
     put8(c, state->nut_upgrade);
     put8(c, state->deku_dungeon_items);
     put16(c, state->deku_visited_rooms);
+    for(i=0;i<32;++i)put8(c,state->skull_flags[i]);
+    put8(c,state->tunic);put8(c,state->fairy_ocarina);
 }
 
 static void     unpack_payload(save_state_t *state, cursor *c, uint16_t version)
@@ -147,6 +149,8 @@ static void     unpack_payload(save_state_t *state, cursor *c, uint16_t version)
     state->nut_owned = state->nut_ammo = state->nut_upgrade = 0;
     state->deku_dungeon_items = 0;
     state->deku_visited_rooms = 0;
+    for(i=0;i<32;++i)state->skull_flags[i]=0;
+    state->tunic=state->fairy_ocarina=0;
     if (version < 3) {
         state->stick_owned = state->stick_ammo = state->stick_upgrade = 0;
         state->navi_timer = 0;
@@ -168,6 +172,13 @@ static void     unpack_payload(save_state_t *state, cursor *c, uint16_t version)
     }
     if (version >= 7) state->deku_dungeon_items = get8(c) & 3;
     if (version >= 8) state->deku_visited_rooms = get16(c) & 0x0FFF;
+    if(version>=9)for(i=0;i<32;++i)state->skull_flags[i]=get8(c);
+    if(version>=10){
+        unsigned n=0,j;
+        state->tunic=get8(c);state->fairy_ocarina=get8(c)!=0;
+        for(i=0;i<32;++i)for(j=state->skull_flags[i];j;j>>=1)n+=j&1;
+        if(state->tunic>2 || (state->tunic==1 && n<1) || (state->tunic==2 && n<5))state->tunic=0;
+    }
 }
 
 static unsigned int payload_bytes(uint16_t version)
@@ -176,7 +187,9 @@ static unsigned int payload_bytes(uint16_t version)
            version == 3 ? SAVE_FILE_V3_PAYLOAD_BYTES :
            version == 4 ? SAVE_FILE_V4_PAYLOAD_BYTES :
            version < 7 ? SAVE_FILE_V6_PAYLOAD_BYTES :
-           version == 7 ? SAVE_FILE_V7_PAYLOAD_BYTES : SAVE_FILE_PAYLOAD_BYTES;
+           version == 7 ? SAVE_FILE_V7_PAYLOAD_BYTES :
+           version == 8 ? SAVE_FILE_V8_PAYLOAD_BYTES :
+           version == 9 ? SAVE_FILE_V9_PAYLOAD_BYTES : SAVE_FILE_PAYLOAD_BYTES;
 }
 
 /* ---- public ------------------------------------------------------------ */
@@ -223,7 +236,7 @@ static save_file_status validate(const uint8_t *in, unsigned int bytes)
         return (SAVE_FILE_BAD_MAGIC);
     }
     version = (uint16_t)((in[4] << 8) | in[5]);
-    if (version != SAVE_FILE_VERSION && version != 7 && version != 6 && version != 5 && version != 4 && version != 3 &&
+    if (version != SAVE_FILE_VERSION && version != 9 && version != 8 && version != 7 && version != 6 && version != 5 && version != 4 && version != 3 &&
         version != 2)
         return (SAVE_FILE_BAD_VERSION);
     payload = payload_bytes(version);

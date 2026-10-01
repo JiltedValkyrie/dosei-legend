@@ -330,7 +330,12 @@ def emit_equipment(out, faces):
     counts = {g: sum(f['group'] == g for f in faces) for g in groups}
     maximum = counts['body'] + max(counts['left_empty'], counts['left_sword']) + \
         max(counts['right_empty'], counts['right_shield']) + counts['sheath']
-    lines += ['#define LINK_VISIBLE_POLYGONS %d' % maximum, '#endif']
+    tunic=[i for i,f in enumerate(faces) if tuple(f.get('prim',(0,0,0))[:3])==(80,188,8)]
+    if not tunic:raise ValueError('Link source tunic material missing')
+    mask=bytearray((len(faces)+7)//8)
+    for i in tunic:mask[i//8]|=1<<(i%8)
+    lines += ['static const unsigned char link_tunic_faces[]={'+','.join(map(str,mask))+'};',
+              '#define LINK_VISIBLE_POLYGONS %d' % maximum, '#endif']
     (out / 'link_equipment.h').write_text('\n'.join(lines) + '\n')
 
 
@@ -684,6 +689,17 @@ CLIPS = (
     ('wake_front','gPlayerAnim_link_normal_front_down_wake',    0,    0, 1),
     ('wake_back', 'gPlayerAnim_link_normal_back_down_wake',     0,    0, 1),
     ('death',     'gPlayerAnim_link_derth_rebirth',             0,   85, 1),
+    ('chest_open','gPlayerAnim_clink_demo_Tbox_open',           0,    0, 1),
+    ('ocarina_start','gPlayerAnim_link_normal_okarina_start',   0,    0, 1),
+    ('ocarina_hold','gPlayerAnim_link_normal_okarina_swing',    0,    0, 1),
+    ('ocarina_get','gPlayerAnim_om_get_mae',                    0,    0, 1),
+    ('return_idle','gPlayerAnim_nw_modoru',                    0,    0, 1),
+    ('step_back','gPlayerAnim_clink_demo_koutai',              0,    0, 1),
+    ('stone_get2','gPlayerAnim_clink_demo_get2',0,0,1),
+    ('stone_get3','gPlayerAnim_clink_demo_get3',0,0,1),
+    ('stone_stand','gPlayerAnim_clink_demo_standup',0,0,1),
+    ('stone_wait','gPlayerAnim_clink_demo_standup_wait',0,0,1),
+
 )
 
 # Child root adjustment: z_player_lib.c Player_OverrideLimbDrawGameplayCommon
@@ -716,7 +732,7 @@ PINNED_ROOT_CLIPS = frozenset((
 # raw -- DISABLE without UPDATE_Y skips the child y scaling.
 PINNED_XZ_CLIPS = frozenset(('tunnel_start', 'tunnel_end'))
 RAW_ROOT_CLIPS = frozenset(('sleeping', 'turn_over', 'sit_up', 'stand_up',
-                            'sleep_wait2', 'sit_wait3')) | PINNED_ROOT_CLIPS | PINNED_XZ_CLIPS
+                            'sleep_wait2', 'sit_wait3', 'chest_open')) | PINNED_ROOT_CLIPS | PINNED_XZ_CLIPS
 # z_player.c sSkeletonBaseTransl: SkelAnime.baseTransl for Player.
 BASE_TRANSL = (-57, 3377, 0)
 

@@ -9,9 +9,9 @@ $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'project-config.ps1')
 $project = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../..'))
 $variants = @(
-    [pscustomobject]@{ Id='normal'; Name='Dosei Legend - standard (320x240)'; Image='game/build/game.cue'; Batch='game/run-kronos.bat'; Note='Jo Engine game: Link, forest, controls and music.' },
-    [pscustomobject]@{ Id='hires'; Name='Dosei Legend - hi-res (320x480i)'; Image='game/build/game-hires.cue'; Batch='game/run-kronos-hires.bat'; Note='Same Jo game, native interlaced vertical-resolution experiment.' },
-    [pscustomobject]@{ Id='clean'; Name='Dosei Legend - clean player test'; Image='game/build/game-clean.cue'; Batch='game/run-kronos-clean.bat'; Note='320x240 player test with jump. No in-game debug overlay; safety checks retained.' }
+    [pscustomobject]@{ Id='clean'; Name='Play Dosei Legend (Standard)'; Image='game/build/game-clean.cue'; Batch='game/run-kronos-clean.bat'; Note='Play at 320x240 without the in-game debug overlay.' },
+    [pscustomobject]@{ Id='hires'; Name='Play Dosei Legend (320x480i)'; Image='game/build/game-hires.cue'; Batch='game/run-kronos-hires.bat'; Note='Play at 320x480i interlaced resolution.' },
+    [pscustomobject]@{ Id='normal'; Name='Debug Mode'; Image='game/build/game.cue'; Batch='game/run-kronos.bat'; Note='320x240 development build with diagnostic overlay.' }
 )
 
 function Get-ImagePath($entry) { Join-Path $project $entry.Image }
@@ -119,7 +119,7 @@ $list.View = 'Details'
 $list.FullRowSelect = $true
 $list.MultiSelect = $false
 $list.HideSelection = $false
-foreach ($column in @(@('Variant', 275), @('Status', 190), @('Image built (local)', 285))) {
+foreach ($column in @(@('Variant', 340), @('Status', 190), @('Image built (local)', 285))) {
     [void]$list.Columns.Add($column[0], $column[1])
 }
 $form.Controls.Add($list)
@@ -156,7 +156,7 @@ function Update-Selection {
     $launch.Enabled = (Test-Image $entry) -eq 'Ready'
 }
 function Update-List {
-    $selected = 'normal'
+    $selected = 'clean'
     if ($list.SelectedItems.Count) { $selected = $list.SelectedItems[0].Tag.Id }
     $list.Items.Clear()
     foreach ($entry in $variants) {
@@ -185,7 +185,7 @@ $runAction = {
 $launch.Add_Click($runAction)
 $list.Add_DoubleClick($runAction)
 $rebuild.Add_Click({
-    $preselect = 'normal'
+    $preselect = 'clean'
     if ($list.SelectedItems.Count) { $preselect = $list.SelectedItems[0].Tag.Id }
     try {
         $outcome = Show-BuildDialog -Owner $form -Project $project -Preselect $preselect
@@ -205,12 +205,13 @@ if ($SmokeTest) {
     # Construct real controls without showing a window or starting Kronos.
     $null = $form.Handle
     $null = $list.Handle
+    $list.Items[0].Selected = $false
     $list.Items[1].Selected = $true
     Update-Selection
     if ($list.Items.Count -ne $variants.Count) { throw 'Variant list incomplete' }
     if ($details.Text -notlike '*game-hires*') { throw 'Selection details missing' }
     $list.Items[1].Selected = $false
-    $list.Items[2].Selected = $true
+    $list.Items[0].Selected = $true
     Update-Selection
     if ($details.Text -notlike '*game-clean.cue*') { throw 'Clean selection details missing' }
     Write-Output 'GUI controls, hi-res and clean selection passed; no emulator launched.'

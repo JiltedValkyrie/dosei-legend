@@ -120,6 +120,12 @@ class DisplayLists:
         address, image_width, image_fmt, image_size = image
         width = (tile['lrs'] - tile['uls']) // 4 + 1
         height = (tile['lrt'] - tile['ult']) // 4 + 1
+        # Some actor lists use a large clamp rectangle over a smaller masked
+        # texture (owl feathers). An explicit source XML binding describes
+        # the resident image; the clamp rectangle is not its byte length.
+        dimensions = getattr(self, 'texture_dimensions', {}).get(address)
+        if dimensions is not None:
+            width, height = dimensions
         fmt, size = tile['fmt'], tile['size']
         count = width * height
         raw = self.read(address, (count * (4 << size) + 7) // 8)
@@ -184,6 +190,7 @@ class DisplayLists:
             self.external_lists.add(hex(address))
             assert address >> 24 >= 8, hex(address)
             return
+        branch_address = None
         for _ in range(100000):
             w0, w1 = struct.unpack('>II', self.read(address, 8))
             address += 8
@@ -195,6 +202,14 @@ class DisplayLists:
                 self.walk(w1, transparent, depth + 1)
                 if (w0 >> 16) & 1:
                     return
+            elif op == 0xE1 and getattr(self, 'include_depth_branches', False):
+                branch_address = w1
+            elif op == 0x04 and getattr(self, 'include_depth_branches', False):
+                # Offline near geometry: Saturn performs its own per-frame cull.
+                # F3DEX2 G_BRANCH_Z jumps, rather than pushing a return address.
+                if branch_address is None: raise ValueError('BranchZ without RDPHALF_1')
+                self.walk(branch_address, transparent, depth + 1)
+                return
             elif op == 0x01:
                 n = (w0 >> 12) & 255
                 first = ((w0 >> 1) & 127) - n

@@ -128,12 +128,30 @@ static void     reap(void)
             destroy(&pool[i]);
 }
 
+void actor_hit_filter(actor_t *a, bool blue, unsigned intensity, unsigned frames)
+{
+    if(!a)return;
+    unsigned steps=(frames*3+1)/2;
+    a->filter_timer=a->filter_duration=steps>255?255:steps;
+    a->filter_blue=blue;a->filter_intensity=intensity;
+}
+unsigned actor_filter_level(const actor_t *a)
+{
+    if(!a || !a->filter_timer || !a->filter_duration)return 0;
+    /* Saturn additive RGB offset approximates source fog tint, with its
+     * strongest tint on impact and a bounded fade over the source duration. */
+    unsigned level=(4+11*a->filter_timer/a->filter_duration)*a->filter_intensity/255;
+    return 1+level+(a->filter_blue?16:0);
+}
+
 void            actor_sys_update(void)
 {
     unsigned int    cat, i;
 
     if (!pool)
         return;
+    for(i=0;i<ACTOR_POOL_MAX;++i)
+        if(pool[i].profile && pool[i].filter_timer)--pool[i].filter_timer;
     updating = true;
     for (cat = 0; cat < ACTORCAT_MAX; ++cat)
         for (i = 0; i < ACTOR_POOL_MAX; ++i) {

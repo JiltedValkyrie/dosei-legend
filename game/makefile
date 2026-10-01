@@ -161,7 +161,12 @@ $(OBJDIR)/kokiri_sgl.o: src/scene_actor_order.h src/actor_order.h src/sgl_order_
 # cancel the inherited suffix rule so it can never fire on an SDK source.
 SRCS += src/push_block.c src/player_push.c src/player_lift.c src/player_slope.c src/player_water.c src/player_camera.c src/npc_draw.c
 SRCS += src/npc_pose.c src/interior_mask.c
-SRCS += src/player_items.c src/dungeon_doors.c src/dungeon_webs.c
+SRCS += src/player_items.c src/dungeon_doors.c src/dungeon_webs.c src/dungeon_torches.c src/dungeon_puzzles.c
+SRCS += src/skulltula.c src/wall_skull.c src/dekubaba.c
+SRCS += src/hintnuts.c
+SRCS += src/gohma_larva.c
+SRCS += src/gohma.c
+SRCS += src/level_select.c src/tree_mouth.c src/field_music.c src/story_route.c src/emerald_story.c
 MY_OBJS = $(patsubst %.c,$(OBJDIR)/%.o,$(notdir $(SRCS)))
 # Header layout changes must rebuild every consumer (save v2 otherwise wrote
 # 300 bytes into a stale 220-byte stack buffer). makefile bootstraps .d files
@@ -177,8 +182,11 @@ $(foreach s,$(SRCS),$(eval $(s:.c=.o): $(OBJDIR)/$(notdir $(s:.c=.o))))
 
 %.o: %.c
 
-$(OBJDIR)/fs.o: $(JO_ENGINE_SRC_DIR)/fs.c src/fs_capacity.h | $(OBJDIR)
-	$(CC) $< $(DFLAGS) $(CCFLAGS) $(_CCFLAGS) -include src/fs_capacity.h -MMD -MP -MF $(@:.o=.d) -MT $@ -o $@
+$(OBJDIR)/fs.o: src/fs_low.c $(JO_ENGINE_SRC_DIR)/fs.c src/fs_capacity.h src/ram_low.h | $(OBJDIR)
+	$(CC) src/fs_low.c $(DFLAGS) $(CCFLAGS) $(_CCFLAGS) -I$(JO_ENGINE_SRC_DIR) -MMD -MP -MF $(@:.o=.d) -MT $@ -o $@
+
+$(OBJDIR)/3d.o: src/quads_low.c $(JO_ENGINE_SRC_DIR)/3d.c src/ram_low.h | $(OBJDIR)
+	$(CC) src/quads_low.c $(DFLAGS) $(CCFLAGS) $(_CCFLAGS) -I$(JO_ENGINE_SRC_DIR) -MMD -MP -MF $(@:.o=.d) -MT $@ -o $@
 
 $(OBJDIR)/%.o: src/%.c src/video_mode.h | $(OBJDIR)
 	$(CC) $< $(DFLAGS) $(CCFLAGS) $(_CCFLAGS) -MMD -MP -MF $(@:.o=.d) -MT $@ -o $@
@@ -205,7 +213,8 @@ $(OBJDIR)/minimap.o: build/generated/gameplay_hud_data.h src/gameplay_hud_state.
 $(OBJDIR)/music.o: ../shared/lib/music/music.c ../shared/lib/music/music.h src/video_mode.h | $(OBJDIR)
 	$(CC) $< $(DFLAGS) $(CCFLAGS) $(_CCFLAGS) -MMD -MP -MF $(@:.o=.d) -MT $@ -o $@
 
-$(OBJDIR)/core.o: makefile
+$(OBJDIR)/core.o: src/core_low.c src/ram_low.h $(JO_ENGINE_SRC_DIR)/core.c makefile | $(OBJDIR)
+	$(CC) src/core_low.c $(DFLAGS) $(CCFLAGS) $(_CCFLAGS) -I$(JO_ENGINE_SRC_DIR) -MMD -MP -MF $(@:.o=.d) -MT $@ -o $@
 
 # Keep the shared SDK immutable; relocate only its sprite metadata.
 $(OBJDIR)/sprites.o: src/sprites_low.c src/ram_low.h $(JO_ENGINE_SRC_DIR)/sprites.c | $(OBJDIR)
@@ -246,6 +255,7 @@ $(ASSETS_DIR)/LINKTEX.BIN: build/generated/link_tex.c build/generated/link_scene
 	$(CONV) -O binary -j .rodata $(OBJDIR)/link_tex_blob.o $@
 
 $(TARGET2): $(TARGET1) $(ASSETS_DIR)/LINKMESH.BIN $(ASSETS_DIR)/LINKTEX.BIN
+	"$(PYTHON)" tools/check_disc_directory.py
 	$(CONV) -O binary $(TARGET) $(ASSETS_DIR)/0.bin
 	$(MKISOFS) -quiet -sysid "SEGA SATURN" -volid "KOKIRIJO" -volset "KOKIRIJO" 		-sectype 2352 -publisher "SEGA ENTERPRISES, LTD." 		-preparer "SEGA ENTERPRISES, LTD." -appid "KOKIRIJO" 		-abstract "$(ASSETS_DIR)/ABS.TXT" -copyright "$(ASSETS_DIR)/CPY.TXT" 		-biblio "$(ASSETS_DIR)/BIB.TXT" -generic-boot $(IPFILE) 		-full-iso9660-filenames -o $(TARGET2) $(ASSETS_DIR)
 

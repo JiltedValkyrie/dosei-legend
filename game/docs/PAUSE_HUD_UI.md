@@ -1,5 +1,9 @@
 # VDP2 pause windows and health HUD
 
+Current 2026-09-30: live items, tap slingshot aim/fire, target quick-shot and
+center/attention markers implemented and Clean-built. Historical pending-use
+notes below are superseded; see DEMO_PLAN for current evidence and gaps.
+
 ## Current renderer: full RGB and hardware carousel
 
 Readability follow-up: page text now uses Jo's native 8x8 bitmap font, without
@@ -96,7 +100,11 @@ respawn, clears when ending a session or choosing a new/load file, and is never
 serialized. Markers enumerate all active hostile enemies/bosses, not just the
 old test projectile. Completing the code consumes Start until it is released;
 another Start press remains the normal pause control. Code is still Up Up Down
-Down Left Right Left Right A Start, and repeating it switches the cheat off.
+Down Left Right Left Right B A Start, and repeating it switches the cheat off.
+The same code on the title opens area/room level select. Successful codes play
+NA_BGM_SMALL_ITEM_GET from CD with simulation and room streaming frozen until
+playback finishes. Save-slot rows and open confirmation show the saved area;
+the pause save prompt shows the current area.
 
 Latest follow-up Clean: .bss ends 0x06082B60, 5,280 B below SGL; 250 focused
 checks pass. Human Kronos check pending. PAUSE50.BIN adds one disc page using

@@ -4,6 +4,7 @@
 
 #ifndef __KOKIRI_SGL_H__
 # define __KOKIRI_SGL_H__
+#include <stdint.h>
 
 /** @brief Upload every mesh's textures/CLUTs and bind them to the SGL tables.
  *  @return true on success; on failure jo_core_error() describes the reason. */
@@ -102,6 +103,16 @@ void            kokiri_message_box_draw(int x, int y, int width, int height);
 /* The prompt on the box's bottom edge: OoT's continue triangle, or its end
 ** square on the last page. */
 void            kokiri_message_mark_draw(int x, int y, bool last_page);
+/* Four flat source-geometry lock corners in the target's source attention
+** colour. The aim variant is white and stays at the shot ray centre. */
+typedef enum {
+    KOKIRI_RETICLE_ENEMY,
+    KOKIRI_RETICLE_NPC,
+    KOKIRI_RETICLE_POI,
+    KOKIRI_RETICLE_AIM,
+    KOKIRI_RETICLE_COUNT
+} kokiri_reticle_kind_t;
+void            kokiri_lock_reticle_draw(int x, int y, unsigned kind);
 
 /** @brief Submissions SGL refused this frame. Non-zero means some faces never
  *  reached VDP1, so the picture is incomplete. */
@@ -123,11 +134,13 @@ unsigned int    kokiri_order_error(void);
 #endif
 
 void kokiri_cutscene_effects_draw(void);
+void kokiri_flame_draw(int32_t x,int32_t y,int32_t z,unsigned tick);
 /* Release only transient nightmare textures; resident Link/UI remain. */
 void kokiri_cutscene_tiles_reset(void);
 /* NPC tiles live after the current room, never over its texture bank. */
 unsigned int kokiri_actor_bank_generation(void);
 void kokiri_actor_tiles_reset(void);
+void kokiri_hit_filter(unsigned level);
 #endif /* !__KOKIRI_SGL_H__ */
 
 /*

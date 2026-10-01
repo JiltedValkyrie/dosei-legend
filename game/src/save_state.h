@@ -54,6 +54,9 @@
 #define EVENTCHKINF_OBTAINED_ZELDAS_LETTER          0x40
 #define EVENTCHKINF_BEGAN_GOHMA_BATTLE              0x70
 #define EVENTCHKINF_DEKU_TREE_INTRO_CS_SEEN         0xA8
+#define EVENTCHKINF_FIELD_INTRO_SEEN                0xA0
+#define EVENTCHKINF_FAIRY_OCARINA_RECEIVED           0xC1
+#define EVENTCHKINF_MET_FIELD_OWL                   0x6F
 
 /* ---- inf_table flags (per-NPC conversation memory) ---------------------- */
 #define INFTABLE_SARIA_GREETED_LINK                 0x00
@@ -109,6 +112,7 @@
 #define SAVE_SCENE_SARIAS_HOUSE     9   /* kokiri_home5 */
 #define SAVE_SCENE_HYRULE_FIELD     10  /* spot00       */
 #define SAVE_SCENE_COUNT            11
+const char *save_scene_name(unsigned scene);
 
 /* Per-scene flag words, mirroring SavedSceneFlags (include/save.h:96).
 ** The original keeps a persisted half and a temp half and deliberately does
@@ -161,9 +165,17 @@ typedef struct
     uint8_t             nut_ammo;
     uint8_t             nut_upgrade;
     uint16_t            deku_visited_rooms; /* persisted source room discovery */
+    uint8_t             skull_flags[32]; /* original GET_GS_FLAGS group/mask */
+    uint8_t             tunic; /* cosmetic: 0 green, 1 blue, 2 red */
+    uint8_t             fairy_ocarina;
 }                       save_state_t;
 
 extern save_state_t     save_state;
+bool save_skull_collected(unsigned group,unsigned mask);
+bool save_collect_skull(unsigned group,unsigned mask);
+unsigned save_skull_count(void);
+bool save_tunic_unlocked(unsigned tunic);
+bool save_equip_tunic(unsigned tunic);
 
 /* ---- Item_Give (z_parameter.c) subset: the one grant path (M3a) --------
 ** Chests, shop, drops and enemies all give through here so capacity, first-
@@ -179,6 +191,7 @@ typedef enum
     SAVE_ITEM_SLINGSHOT,
     SAVE_ITEM_DEKU_MAP,
     SAVE_ITEM_DEKU_COMPASS,
+    SAVE_ITEM_HEART_CONTAINER,
     SAVE_ITEM_COUNT
 }                       save_item_t;
 
@@ -194,6 +207,8 @@ typedef enum
 /* Item_Give. False for an unknown item (nothing changes). Rupees clamp at
 ** the wallet; ammo clamps at CUR_CAPACITY once owned. */
 bool            save_item_give(save_item_t item);
+/* DoorWarp1 child exit: only after a cleared Gohma room and successful load. */
+bool            save_finish_deku_warp(void);
 /* Item_CheckObtainability == ITEM_NONE: true when this is a FIRST get. */
 bool            save_item_first_get(save_item_t item);
 /* Shop check, no side effects. */
@@ -222,6 +237,10 @@ bool    save_get_treasure(unsigned int scene, unsigned int flag);
 void    save_set_treasure(unsigned int scene, unsigned int flag);
 bool    save_get_switch(unsigned int scene, unsigned int flag);
 void    save_set_switch(unsigned int scene, unsigned int flag);
+void    save_unset_switch(unsigned int scene, unsigned int flag);
+/* Source flags 0x20..0x3f live only until the scene is reloaded. */
+void    save_reset_temp_switches(unsigned int scene);
+void    save_room_changed(unsigned int scene);
 bool    save_get_clear(unsigned int scene, unsigned int flag);
 void    save_set_clear(unsigned int scene, unsigned int flag);
 bool    save_get_collectible(unsigned int scene, unsigned int flag);

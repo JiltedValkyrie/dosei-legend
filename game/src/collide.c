@@ -1,3 +1,4 @@
+#pragma GCC optimize ("Os") /* Bounded integer contacts; keep code within high RAM. */
 /* Actor-vs-actor collision check. See collide.h. Integer only. */
 #include "collide.h"
 
@@ -186,6 +187,41 @@ static bool cap_cyl(const collider_t *cap, const collider_t *cyl,
     return (true);
 }
 
+/* Closest points of two finite segments. Q12 parameters retain integer SH-2
+ * math and also cover zero-length capsules (enemy head spheres). */
+static bool __attribute__((optimize("Os"))) cap_cap(const collider_t *a, const collider_t *b, int32_t *overlap)
+{
+    int64_t u[3]={a->bx-a->ax,a->by-a->ay,a->bz-a->az};
+    int64_t v[3]={b->bx-b->ax,b->by-b->ay,b->bz-b->az};
+    int64_t w[3]={a->ax-b->ax,a->ay-b->ay,a->az-b->az};
+    int64_t aa=0,bb=0,cc=0,dd=0,ee=0,den,s=0,t=0,d2=0;
+    int32_t reach=a->radius+b->radius,dist;
+    unsigned i;
+    for(i=0;i<3;++i) {
+        /* Reject disjoint segment bounds before the divisions. */
+        int64_t amin=w[i]+(u[i]<0?u[i]:0), amax=w[i]+(u[i]>0?u[i]:0);
+        if(amin>(v[i]>0?v[i]:0)+reach || amax<(v[i]<0?v[i]:0)-reach)return false;
+        aa+=u[i]*u[i];bb+=u[i]*v[i];cc+=v[i]*v[i];dd+=u[i]*w[i];ee+=v[i]*w[i];
+    }
+    if(!aa) t=cc?ee*4096/cc:0;
+    else if(!cc) s=-dd*4096/aa;
+    else {
+        den=aa*cc-bb*bb;
+        if(den>0) s=(bb*ee-cc*dd)*4096/den;
+        if(s<0)s=0;else if(s>4096)s=4096;
+        t=(bb*s+ee*4096)/cc;
+        if(t<0) {t=0;s=-dd*4096/aa;}
+        else if(t>4096) {t=4096;s=(bb-dd)*4096/aa;}
+    }
+    if(s<0)s=0;else if(s>4096)s=4096;
+    if(t<0)t=0;else if(t>4096)t=4096;
+    for(i=0;i<3;++i) {int64_t d=w[i]*4096+u[i]*s-v[i]*t;d2+=d*d;}
+    if(d2>=(int64_t)reach*reach*4096*4096)return false;
+    dist=collide_isqrt((uint32_t)(d2/(4096*4096)));
+    *overlap=reach-dist;
+    return true;
+}
+
 /* Sword wedge vs a cylinder's base point: the slice swing's reach test. */
 static bool sector_cyl(const collider_t *sec, const collider_t *cyl,
                        int32_t *overlap)
@@ -230,7 +266,9 @@ bool        collide_overlap(const collider_t *a, const collider_t *b,
         return (sector_cyl(a, b, overlap));
     if (a->shape == COLSHAPE_CYLINDER && b->shape == COLSHAPE_SECTOR)
         return (sector_cyl(b, a, overlap));
-    return (false);                    /* capsule vs capsule: not needed */
+    if (a->shape == COLSHAPE_CAPSULE && b->shape == COLSHAPE_CAPSULE)
+        return cap_cap(a, b, overlap);
+    return false;
 }
 
 /* CollisionCheck_ApplyDamage: table index is the highest set DMG bit. */

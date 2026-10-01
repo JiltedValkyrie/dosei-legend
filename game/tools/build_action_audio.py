@@ -51,13 +51,42 @@ HALF_RATE = ('voice', 'climb', 'navi_dash', 'shield', 'equip',
 # bank loaded right after the core on scene load; bank 0 is "no area sounds".
 # A sound may appear in several banks. Scenes pick a bank by `sfx` in
 # build_scene_table.SCENES. OPENING.PCM still replaces the whole region.
+# Source channels; reduced sample renderer omits vibrato/legato/glide and the
+# shared FONTANY_INSTR_SFX layer, as with the resident combat effects.
+DUNGEON_CHANNELS = (
+    ('owl_flap','CHAN_4F7F'),
+    ('scrub_up', 'CHAN_3ECF'),
+    ('scrub_down', 'CHAN_3EE2'),
+    ('scrub_throw', 'CHAN_3EF5'),
+    ('scrub_walk', 'CHAN_3F05'),
+    ('scrub_hit', 'CHAN_3F12'),
+    ('scrub_faint', 'CHAN_4966'),
+    ('foot_switch', 'CHAN_1A8F'),
+    ('deku_hit', 'CHAN_3B76'),
+    ('deku_dead', 'CHAN_3B8E'),
+    ('skull_hit', 'CHAN_3FD0'),
+    ('skull_dead', 'CHAN_4001'),
+    ('larva_hit', 'CHAN_36B3'),
+    ('larva_dead', 'CHAN_36F9'),
+    ('gohma_hit', 'CHAN_381C'),
+    ('gohma_dead', 'CHAN_3E7F'),
+    ('correct', 'CHAN_5833'),
+    ('appear', 'CHAN_589F'),
+    ('door_open', 'CHAN_1A7E'),
+    ('door_close', 'CHAN_1B14'),
+    ('freeze', 'CHAN_4C1B'),
+    ('box_item', 'CHAN_5CB9'),
+
+)
 AREA_SOUNDS = ('cut', 'wall_hit', 'reflect', 'nut_break',
-               'baba_mouth', 'baba_dead', 'baba_awaken', 'baba_ground')
+               'baba_mouth', 'baba_dead', 'baba_awaken', 'baba_ground', 'tree_open') + tuple(n for n, _ in DUNGEON_CHANNELS)
 AREA_BANKS = (
     (None, ()),                     # 0: interiors, nothing area-specific
     # 1: outdoor forest: grass cutting and the M2c combat sounds.
     ('SFXFRST.PCM', ('cut', 'wall_hit', 'reflect', 'nut_break',
-                     'baba_mouth', 'baba_dead', 'baba_awaken', 'baba_ground')),
+                     'baba_mouth', 'baba_dead', 'baba_awaken', 'baba_ground', 'tree_open','box_item','owl_flap')),
+    ('SFXTREE.PCM', tuple(n for n in AREA_SOUNDS if n not in ('tree_open','gohma_hit','gohma_dead','owl_flap'))),
+    ('SFXBOSS.PCM', ('wall_hit','reflect','nut_break','larva_hit','larva_dead','gohma_hit','gohma_dead','door_open','door_close','freeze','correct')),
 )
 
 
@@ -141,6 +170,32 @@ def render_wave(notes, output_rate, shape):
     return bytes(out)
 
 
+def render_recovery(seq, output_rate):
+    """NA_SE_SY_HP_RECOVER: source sine layer, three rising octave glides.
+
+    Envelope 6720 attacks for 12 audio ticks and falls toward 5000 for 40;
+    retain the existing offline SFX renderer's linear portamento convention.
+    """
+    block = seq.split('.layer LAYER_5971\n', 1)[1].split('.channel', 1)[0]
+    glides = re.findall(r'portamento\s+0x81, PITCH_(\w+), 127.*?notedv\s+PITCH_(\w+), (\d+), (\d+)', block, re.S)
+    if 'FONTANY_INSTR_SINE' not in block or len(glides) != 3:
+        raise ValueError('Health recovery channel changed')
+    out = bytearray()
+    for start, end, ticks, velocity in glides:
+        count = round(int(ticks) / 96 * output_rate)
+        phase = 0.
+        for i in range(count):
+            t = i / output_rate
+            envelope = min(1., t * 180 / 12)
+            if t * 180 > 12:
+                envelope = max(5000 / 32700, 1 - (t * 180 - 12) / 40 * (1 - 5000 / 32700))
+            key = note(start) + (note(end) - note(start)) * i / max(1, count - 1)
+            gain = (int(velocity) / 127) ** 2 * envelope * min(1., (count - i) / 16)
+            out.append(round(math.sin(phase * 2 * math.pi) * 100 * gain) & 255)
+            phase += 440 * 2 ** ((key - 69) / 12) / output_rate
+    return bytes(out)
+
+
 def render_triangle(notes, output_rate):
     """FONTANY_INSTR_TRIANGLE notes (key, seconds, gain), phase continuous."""
     out, phase = bytearray(), 0.
@@ -158,6 +213,26 @@ class Unsupported(Exception):
     pass
 
 
+def layer_body(seq, label, visited=()):
+    """Follow bounded source layer calls, fallthrough and unconditional tail jumps."""
+    if label in visited: raise Unsupported('layer cycle: '+label)
+    match=re.search(r'(?m)^(?:\.layer\s+'+label+r'\b[^\n]*|'+label+r':)\n',seq)
+    if not match: raise Unsupported('missing layer: '+label)
+    body=[]
+    for line in seq[match.end():].splitlines():
+        jump=re.search(r'\*/\s*(?:rjump|jump)\s+(LAYER_\w+)',line)
+        if jump:
+            return '\n'.join(body)+'\n'+layer_body(seq,jump[1],visited+(label,))
+        call=re.search(r'\*/\s*call\s+(LAYER_\w+)',line)
+        if call:
+            nested=layer_body(seq,call[1],visited+(label,))
+            body.append(re.sub(r'(?m)^.*\*/\s*end\b.*$', '', nested))
+            continue
+        body.append(line)
+        if re.search(r'\*/\s*end\b',line): return '\n'.join(body)
+    raise Unsupported('unterminated layer: '+label)
+
+
 def channel_layers(seq, chan):
     """A simple SFX channel: channel instr/transpose + its ldlayer blocks.
     Each layer -> (instr, transpose, [(key, ticks, velocity)]). Any opcode
@@ -169,21 +244,16 @@ def channel_layers(seq, chan):
         raise Unsupported(chan)
     out = []
     for label in layers:
-        # A layer may fall through into the next labelled block: read on to
-        # its `end`.
-        rest = seq.split('.layer %s\n' % label, 1)[1]
-        block = ''
-        while True:
-            part, _, rest = rest.partition('\n.')
-            block += '\n' + part
-            if re.search(r'\]\s*\*/\s*end\b', part) or not rest:
-                break
-            rest = rest.split('\n', 1)[1] if '\n' in rest else ''
+        # The shared FONTANY_INSTR_SFX layer is a reduced-bank omission,
+        # matching the existing withered-Baba exporter (no runtime N64 synth).
+        if label == 'LAYER_4829': continue
+        block=layer_body(seq,label)
         if re.search(r'\b(call|jump|rjump|stseq)\b', block):
             raise Unsupported(label)
         instr = re.search(r'\binstr\s+(\w+)', block)
         instr = instr.group(1) if instr else (chan_instr.group(1) if chan_instr else None)
         t = re.search(r'transpose\s+(-?\d+)', block)
+        block=re.sub(r'FRAMERATE_CONST\(\s*([^,()]+),\s*[^()]+\)',lambda m:m[1],block)
         # Notes and rests in order: a rest is (None, ticks, 0).
         notes = []
         for m in re.finditer(r'notedvg?\s+PITCH_(\w+),\s*(\d+),\s*(\d+)|\bldelay\s+(\d+)', block):
@@ -222,8 +292,11 @@ def render_channel(seq, chan, fonts, source, output_rate):
                 if not path.is_file():
                     path = path.with_suffix('.half.wav')
                 pcm, rate, unity = decode(path)
-                part = render_path(pcm, rate, unity, [(key, key, tk / 96, (v / 127) ** 2)], output_rate)
-                run += part + bytes(max(0, round(tk / 96 * output_rate) - len(part)))
+                # A zero-duration note followed by END leaves its one-shot
+                # sample playing; use the full source sample at authored pitch.
+                seconds=tk/96 if tk else len(pcm)/rate/2**((key-unity)/12)
+                part = render_path(pcm, rate, unity, [(key, key, seconds, (v / 127) ** 2)], output_rate)
+                run += part + bytes(max(0, round(seconds * output_rate) - len(part)))
         mix.append(run)
     length = max(len(r) for r in mix)
     out = bytearray()
@@ -346,7 +419,7 @@ def build(oot, source, out):
         sample = font.find('.//Effect[@Name="EFFECT_%d"]' % effect).attrib['Sample']
         entries.append(('climb%d' % i, sample, 60, .6, 'ARRAY_63AB'))
     # Navi (M2d): NA_SE_VO_NA_HELLO_2 (CHAN_6520: effect = PITCH_BF2 25 +
-    # (0x5F - NA_SE_VO_TA_SLEEP 0x50) + layer transpose 1 = EFFECT_41), the
+    # (0x5F - NA_SE_VO_TA_SLEEP 0x50) + (layer transpose 1 << 6) = EFFECT_104), the
     # unlocked "Hey!"; NA_SE_VO_NAVY_CALL (CHAN_6581 -> ARRAY_65A7, one of
     # EFFECT_57/58/59 at random, velocity 100/95/105) plus layer 1, INST_69
     # portamento C5 -> F5 over 48 ticks at velocity 65 (rendered as a glide). NA_SE_VO_NAVY_HELLO/ENEMY/HEAR
@@ -355,11 +428,11 @@ def build(oot, source, out):
     if ('PITCH_BF2' not in hello or 'NA_SE_VO_TA_SLEEP' not in hello or
             'transpose   1' not in hello):
         raise ValueError('Navi hello channel changed')
-    sample = font.find('.//Effect[@Name="EFFECT_41"]').attrib['Sample']
+    sample = font.find('.//Effect[@Name="EFFECT_104"]').attrib['Sample']
     entries.append(('navi_hello', sample, 60, .6, 'CHAN_6520'))
-    # NA_SE_VO_SK_LAUGH (0x6873, same channel): 25 + 0x23 + 1 = EFFECT_61,
+    # NA_SE_VO_SK_LAUGH (0x6873, same channel): 25 + 0x23 + 64 = EFFECT_124,
     # which En_Elf plays when a C-Up talk is accepted.
-    sample = font.find('.//Effect[@Name="EFFECT_61"]').attrib['Sample']
+    sample = font.find('.//Effect[@Name="EFFECT_124"]').attrib['Sample']
     entries.append(('navi_talk', sample, 60, .8, 'CHAN_6520'))
     call = seq.split('.array ARRAY_65A7', 1)[1].split('.array', 1)[0]
     for i, effect in enumerate((57, 58, 59)):
@@ -443,7 +516,10 @@ def build(oot, source, out):
     entries.append(('down', parts[0][0], ('effects', parts), 0, 'CHAN_6424'))
     # M2e system/body sounds from simple channels (render_channel); a channel
     # this cannot follow is left out and logged rather than guessed.
-    simple = []
+    simple = [('hp_recover', render_recovery(seq, RATE / 2), 'CHAN_596D')]
+    simple.append(('tree_open',render_channel(seq,'CHAN_24A1',fonts,source,RATE/2),'CHAN_24A1'))
+    for name, chan in DUNGEON_CHANNELS:
+        simple.append((name,render_channel(seq,chan,fonts,source,RATE/2),chan))
     for name, chan in (('pl_damage', 'CHAN_076A'), ('body_hit', 'CHAN_0753'),
                        ('alarm', 'CHAN_5AA5'), ('heart_piece', 'CHAN_5B5B'),
                        ('decide', 'CHAN_58E9'), ('cursor', 'CHAN_5933')):
@@ -501,6 +577,9 @@ def build(oot, source, out):
         bank.extend(bytes(4 + (-len(bank) % 2)))
     for name, pcm, chan in simple:
         pcm = pcm.rstrip(b'\0') or bytes(1)
+        if name in AREA_SOUNDS:
+            area_pcm[name]=(pcm,dict(name=name,rate=RATE/2,source=chan,sample='channel render',trimmed_silence=0,sha256=hashlib.sha256(pcm).hexdigest()))
+            continue
         records.append(dict(name=name, offset=len(bank), length=len(pcm), rate=RATE / 2,
                             source=chan, sample='channel render', trimmed_silence=0,
                             sha256=hashlib.sha256(pcm).hexdigest()))

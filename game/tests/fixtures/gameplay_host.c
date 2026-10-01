@@ -580,9 +580,32 @@ void gp_reset_no_greeting(void)
 }
 
 #include "player_items.h"
+void dungeon_puzzles_register(void) {}
+void skulltula_register(void) {}
+void skulltula_collect(void) {}
+void skulltula_step(const gameplay_input_t *in) {(void)in;}
+void wall_skull_register(void) {}
+void wall_skull_collect(void) {}
+void wall_skull_step(const gameplay_input_t *in) {(void)in;}
+void dekubaba_register(void) {}
+void dekubaba_collect(void) {}
+void dekubaba_step(const gameplay_input_t *in) {(void)in;}
+void hintnuts_register(void) {}
+void hintnuts_collect(void) {}
+void hintnuts_step(const gameplay_input_t *in) {(void)in;}
+void gohma_larva_register(void) {}
+void gohma_larva_collect(void) {}
+void gohma_larva_step(const gameplay_input_t *in) {(void)in;}
+void gohma_register(void) {}
+void gohma_collect(void) {}
+void gohma_step(const gameplay_input_t *in) {(void)in;}
+bool gohma_cinematic(void) {return false;}
+bool gohma_warp_active(void) {return false;}
+bool gohma_defeated(void) {return save_get_clear(SAVE_SCENE_DEKU_TREE_BOSS,1);}
 static int item_test_floor;
 void gp_item_floor(int active) { item_test_floor = active; }
-bool player_items_wall(const int32_t from[3], int32_t to[3]) {
+bool player_items_wall(const int32_t from[3], int32_t to[3], unsigned item) {
+    (void)item;
     if (item_test_floor && from[1] >= 0 && to[1] <= 0) { to[1] = 0; return true; }
     return false;
 }
@@ -622,3 +645,13 @@ int gp_map_step(unsigned scene,unsigned floor,int dx,int dy,int back) {
     gameplay_step(&in);
     return gameplay.pause_window.cursor[PAUSE_MAP];
 }
+
+void gp_target_seed_step(int slot) {
+    gameplay_input_t in={0};in.c_use=slot;in.grounded=true;in.target_held=true;
+    in.focus[1]=44;gameplay_step(&in);
+}
+
+void gp_test_seed_slot(void){save_state.c_items[0]=2;}
+
+int gp_flash_timer(void){return gameplay.hurt_flash_timer;}
+int gp_flash_phase(void){return gameplay.hurt_flash_phase;}

@@ -55,6 +55,8 @@ class PushBlock(unittest.TestCase):
                                       C.POINTER(Vec),C.c_uint16,C.c_uint16,C.c_int32]
         lib.player_push_start.argtypes=[C.POINTER(Push),C.POINTER(bg.Bg),C.c_bool,
                                        C.POINTER(C.c_uint16)]
+        lib.player_push_prompt.argtypes=[C.POINTER(bg.Bg)]
+        lib.player_push_prompt.restype=C.c_bool
         lib.player_push_update.argtypes=[C.POINTER(Push),C.c_bool,C.c_int32,
                                         C.c_uint16,C.POINTER(Vec),C.c_uint16]
 
@@ -147,6 +149,7 @@ class PushBlock(unittest.TestCase):
             C.byref(at),9,2,C.byref(hit)))
         probe=bg.Bg()
         self.lib.player_bg_update(C.byref(probe),True,C.byref(hit),C.byref(feet),0,0,0)
+        self.assertTrue(self.lib.player_push_prompt(C.byref(probe)))
         state=Push()
         facing=C.c_uint16(0)
         self.assertTrue(self.lib.player_push_start(C.byref(state),C.byref(probe),True,C.byref(facing)))

@@ -99,6 +99,13 @@ def emit_rooms(args, head, actor, normal):
     portals = []
     for scene_id, entry in enumerate(SCENES):
         prefix = entry['prefix']
+        room_actor=actor
+        if prefix=='spot00':
+            from build_field_owl import build as build_owl
+            models=build_owl(args.oot,args.rom_dir,out/'owl')['models']
+            room_actor=dict(tiles=list(actor['tiles'])+[t for m in models for t in m['tiles']],
+                polygons=actor['polygons']+max(m['polygons'] for m in models),
+                vertices=actor['vertices']+max(m['vertices'] for m in models))
         if entry['shape'] != 'mesh':
             # A prerendered-backdrop interior (ROOM_SHAPE_TYPE_IMAGE) has no
             # display-list geometry to convert, so it gets no VDP1 bank. Its
@@ -113,13 +120,14 @@ def emit_rooms(args, head, actor, normal):
             from room_imports import selected, convert as convert_import
             override = selected(prefix, room_id)
             if override:
-                vertices, faces, tiles, manifest = convert_import(override, actor)
+                vertices, faces, tiles, manifest = convert_import(override, room_actor)
                 print('room import:', room, override['obj'], flush=True)
             else:
                 _, vertices, faces, tiles = hybrid.convert(
-                    args.oot, head, actor, folder, rom_dir=args.rom_dir,
+                    args.oot, head, room_actor, folder, rom_dir=args.rom_dir,
                     quad_obj=args.quad_obj, source_path=args.scene, room=room,
-                    prefix=prefix)
+                    prefix=prefix,base_tile_limit=32 if prefix=='spot00' else None,
+                    source_tessellation=prefix=='spot00')
                 manifest = json.loads((folder / 'texture_manifest.json').read_text())
             if prefix == 'spot04':
                 forest_rooms.append((vertices, faces, tiles))
@@ -138,6 +146,9 @@ def emit_rooms(args, head, actor, normal):
     sized = list(summaries)
     from build_opening_banks import emit_opening_banks
     sized.extend(emit_opening_banks(args.oot, out, forest_rooms, normal))
+
+    from build_emerald_story import emit as emit_emerald
+    sized.extend(emit_emerald(args.oot,args.rom_dir,out,head,actor,forest_rooms,normal))
 
     maximum = lambda key: max(r[key] for r in sized)
     definitions = dict(VERTEX_COUNT=maximum('vertices'),

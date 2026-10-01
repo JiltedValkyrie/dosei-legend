@@ -32,7 +32,7 @@
 
 /* v8 appends visited Deku rooms; v7 added map/compass. Versions 2-7 migrate;
 ** v6 introduced source collectible flags without changing the v5 layout. */
-#define SAVE_FILE_VERSION       8
+#define SAVE_FILE_VERSION       10
 /* v2 (M2d): v3 appends Deku Stick slot/ammo/upgrade and naviTimer. A v2
 ** block still loads; the new fields start at their new-file values. */
 #define SAVE_FILE_V2_PAYLOAD_BYTES 290
@@ -43,7 +43,9 @@
 /* v5 (M3a) appends Deku Nut owned/ammo/upgrade. */
 #define SAVE_FILE_V6_PAYLOAD_BYTES 301
 #define SAVE_FILE_V7_PAYLOAD_BYTES 302
-#define SAVE_FILE_PAYLOAD_BYTES 304 /* v8 appends visited Deku rooms */
+#define SAVE_FILE_V8_PAYLOAD_BYTES 304
+#define SAVE_FILE_V9_PAYLOAD_BYTES 336
+#define SAVE_FILE_PAYLOAD_BYTES 338 /* v10: cosmetic tunic and Fairy Ocarina */
 #define SAVE_FILE_BYTES         (8 + SAVE_FILE_PAYLOAD_BYTES + 2)
 
 /* Why a load was refused, so the file select can say something true rather

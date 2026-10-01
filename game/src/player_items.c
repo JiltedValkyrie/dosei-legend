@@ -20,7 +20,12 @@ static unsigned burn_steps;
 bool player_items_stick(void) { return stick_held; }
 unsigned player_items_burning(void) { return burn_steps; }
 void player_items_putaway(void) { stick_held = false; burn_steps = 0; }
-void player_items_ignite(void) { if (stick_held && !burn_steps) burn_steps = 315; }
+void player_items_ignite(void) {
+    if (!stick_held) return;
+    if (!burn_steps) burn_steps=315;
+    else if (burn_steps<300) burn_steps=300;
+}
+void player_items_extinguish(void) { burn_steps=0; }
 void player_items_break_stick(void)
 {
     if (stick_held && save_state.stick_ammo) --save_state.stick_ammo;
@@ -135,7 +140,7 @@ void player_items_step(void)
             s->p[axis] += delta / 768;
             s->fraction[axis] = delta % 768;
         }
-        if (player_items_wall(s->previous, s->p)) {
+        if (player_items_wall(s->previous, s->p, s->item)) {
             /* Keep the clipped seed sweep for the contact pass: an enemy in
              * front of a wall must still be hit. Nuts have no AC collider. */
             if (s->item == PLAYER_ITEM_SEED) s->wall = true;

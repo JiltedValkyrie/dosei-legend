@@ -476,3 +476,29 @@ void link_anim_blade(int32_t out[2][3])
         out[end][2] += INTEGER_FIXED(LINK_ANIM_SHIFT_Z);
     }
 }
+
+/* Player_PostLimbDrawGameplay, DEKU_STICK branch: the child stick mesh is
+ * attached to L_HAND with Translate(-428.26,267.2,-33.82) then
+ * RotateZYX(-0x8000,0,0x4000).  Its long axis is local +Y (0..5604).
+ * After the source Z rotation that becomes local -X.  Keep this separate from
+ * the sword line: the stick uses a one-hand slash, but it is not a sword. */
+void link_anim_stick(int32_t out[2][3])
+{
+    const limb_matrix_t *hand = &limb_matrices[15];
+    static const int32_t offsets[2][3] = {
+        { -428, 267, -34 }, { -6032, 267, -34 }
+    };
+    unsigned int end, axis;
+    for (end = 0; end < 2; ++end) {
+        for (axis = 0; axis < 3; ++axis) {
+            int32_t model = hand->origin[axis] +
+                (FIXED_MUL(hand->m[axis][0], INTEGER_FIXED(offsets[end][0])) +
+                 FIXED_MUL(hand->m[axis][1], INTEGER_FIXED(offsets[end][1])) +
+                 FIXED_MUL(hand->m[axis][2], INTEGER_FIXED(offsets[end][2]))) / 65536;
+            out[end][axis] = model * LINK_ANIM_SCALE_Q16;
+        }
+        out[end][0] += INTEGER_FIXED(LINK_ANIM_SHIFT_X);
+        out[end][1] += INTEGER_FIXED(LINK_ANIM_SHIFT_Y);
+        out[end][2] += INTEGER_FIXED(LINK_ANIM_SHIFT_Z);
+    }
+}

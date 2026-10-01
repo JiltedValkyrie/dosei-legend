@@ -18,5 +18,5 @@ void player_camera_update(player_camera_t *camera, oot_follow_t *follow,
  * eye behind focus. Input deltas use the mapper's 420/280 full-throw units. */
 void player_camera_first_person(oot_follow_t *state, const bg_vec_t *focus,
     uint16_t facing, int yaw_input, int pitch_input,
-    camera_position_t *eye, uint16_t *yaw, int32_t *pitch);
+    camera_position_t *eye, uint16_t *yaw, int32_t *pitch, bool aim);
 #endif

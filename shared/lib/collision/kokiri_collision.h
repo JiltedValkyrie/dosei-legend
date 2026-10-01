@@ -177,6 +177,8 @@ bool bg_line(const bg_vec_t *a, const bg_vec_t *b, bg_vec_t *at,
         uint32_t checks, uint32_t ignore, bg_hit_t *hit);
 /* BgCheck_GetWaterSurface: strict-inequality XZ bounds, infinite depth,
  * disabled boxes skipped, room must match or be 0x3F. */
+bool bg_water_set_surface(uint32_t index, int32_t surface);
+void bg_water_reset_surface(uint32_t index);
 bool bg_water_surface(int32_t x, int32_t z, uint32_t room, int32_t *surface,
         const bg_waterbox_t **box);
 

@@ -53,6 +53,10 @@
 #define RAM_CART_CURSOR_OFFSET      0x8800u
 #define RAM_CART_CURSOR_BYTES       0x2000u
 
+/* Expanded coloured cutscene page; disjoint from dialogue and cursor pools. */
+#define RAM_CART_MESSAGE_LAYOUT_OFFSET 0xA800u
+#define RAM_CART_MESSAGE_LAYOUT_BYTES  0x800u
+
 /* Fixed carve for the sword/grass/nut contact colliders (gameplay_contacts_*).
 ** Moved here when M2c's three blade capsules and the nutsball outgrew 0x1800. */
 #define RAM_CART_CONTACT_OFFSET     0xB000u
@@ -95,7 +99,7 @@
 ** 0x8000..0xAFFF is now unused. Boot reads it through a temporary heap
 ** buffer of the file's size, so keep it well below the 51,200 B arena. */
 #define RAM_CART_DIALOGUE_OFFSET    0x71000u
-#define RAM_CART_DIALOGUE_BYTES     0x5000u
+#define RAM_CART_DIALOGUE_BYTES     0x6000u
 
 #define RAM_CART_PAUSE_OFFSET 0x1D000u
 #define RAM_CART_PAUSE_BYTES  0x26000u
@@ -103,12 +107,20 @@
  * temporarily borrowed for pause. Original font and scene bitmap stay live. */
 #define RAM_CART_PAUSE_BACKUP_OFFSET 0x43000u
 #define RAM_CART_PAUSE_BACKUP_BYTES  0x29880u
+#define RAM_CART_SKULL_OFFSET       0x6C900u
+#define RAM_CART_SKULL_BYTES        0x900u
+#define RAM_CART_WALL_SKULL_OFFSET  0x6D200u
+#define RAM_CART_WALL_SKULL_BYTES   0x600u
+#define RAM_CART_DEKU_BABA_OFFSET   0x6D800u
+#define RAM_CART_DEKU_BABA_BYTES    0x1000u
+#define RAM_CART_HINTNUTS_OFFSET    0x6E800u
+#define RAM_CART_HINTNUTS_BYTES     0x1000u
 
 /* Cold constant tables moved out of work RAM (BUG-043), from disc at boot:
-** every music bank's triggers (MUSICTRG.BIN) and the title camera paths
-** (TITLEPTH.BIN). tools/build_cart_tables.py checks both limits. */
-#define RAM_CART_MUSICTRG_OFFSET    0x76000u
-#define RAM_CART_MUSICTRG_BYTES     0x6000u
+** title camera paths (TITLEPTH.BIN). MUSICTRG now uses RAM_LOW_MUSICTRG;
+** retain its old cart gap so later fixed carves keep their addresses. */
+#define RAM_CART_MUSICTRG_OFFSET    0x77000u
+#define RAM_CART_MUSICTRG_BYTES     0x5000u
 #define RAM_CART_TITLEPTH_OFFSET    0x6F800u
 #define RAM_CART_TITLEPTH_BYTES     0x1800u
 

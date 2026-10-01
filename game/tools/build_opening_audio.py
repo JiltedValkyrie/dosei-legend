@@ -75,6 +75,20 @@ def build(oot, source, output):
                         loop=True, loop_start=fairy_loop, channel='CHAN_2582', rate=11025))
     bank.extend(fairy)
     bank.extend(bytes(4 + (-len(bank) % 2)))
+    # EnDemo / CS_MISC_DEKU_TREE_DEATH: source layered creak, bounded to its
+    # 580 sequence ticks. Existing opening indices remain stable.
+    mixed=[]
+    sources=[]
+    for instrument,start,end in ((77,'D3','F3'),(80,'B0','D1')):
+        sample=font.find('.//Instrument[@ProgramNumber="%d"]'%instrument).attrib['Sample']
+        path=next((source/'samples/SampleBank_0').glob('Sample%03d*.wav'%int(sample.rsplit('_',1)[1])))
+        pcm,rate,unity=audio.decode(path)
+        data=audio.render_glide(pcm,rate,unity,audio.note(start),audio.note(end),580/96,audio.RATE)
+        mixed.append([v if v<128 else v-256 for v in data])
+        sources.append(dict(sample=sample,sha256=hashlib.sha256(path.read_bytes()).hexdigest()))
+    data=bytes(max(-127,min(127,sum(x[i] if i<len(x) else 0 for x in mixed)//2))&255 for i in range(max(map(len,mixed))))
+    records.append(dict(name='tree_death',offset=len(bank),length=len(data),loop=False,channel='CHAN_2862',samples=sources))
+    bank.extend(data);bank.extend(bytes(4+(-len(bank)%2)))
     if audio.BASE + len(bank) > 0x80000:
         raise ValueError('Opening effects exceed reserved sound RAM')
     output.mkdir(parents=True, exist_ok=True)

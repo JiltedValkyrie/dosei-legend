@@ -273,3 +273,6 @@ int     co_flood_hits(int n)
 int as_x(int slot) { return actor_sys_slot((unsigned)slot)->x; }
 
 void co_element(int i) { cols[i].ac_flags |= COL_AC_ELEMENT; }
+
+void as_filter(int slot,int blue,int frames){actor_hit_filter(actor_sys_slot(slot),blue,255,frames);}
+int as_filter_level(int slot){return actor_filter_level(actor_sys_slot(slot));}

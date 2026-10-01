@@ -41,6 +41,9 @@ def load_tracks(manifest=MANIFEST):
         for field in ('track', 'sequence', 'soundfont'):
             if type(entry.get(field)) is not int or entry[field] < 0:
                 raise SystemExit('cdda_tracks.json: %s must be a nonnegative integer' % field)
+        if 'max_seconds' in entry and (not isinstance(entry['max_seconds'], (int, float)) or
+                                       entry['max_seconds'] <= 0):
+            raise SystemExit('cdda_tracks.json: max_seconds must be positive when present')
         expected = index + 2
         if entry['track'] != expected:
             raise SystemExit(
@@ -111,7 +114,7 @@ def cached_track(target, fingerprint):
         return False
 
 
-def render(seconds, frames, levels, cooked, samples):
+def render(seconds, frames, levels, cooked, samples, fade_out=False):
     count = min(round(seconds * HZ), round(frames / audio.FPS * HZ))
     left, right = [0.0] * count, [0.0] * count
     for n in cooked:
@@ -140,7 +143,12 @@ def render(seconds, frames, levels, cooked, samples):
     peak = max(1.0, max(map(abs, left)), max(map(abs, right)))
     scale = min(1.0, 32000 / peak)
     out = bytearray()
-    for a, b in zip(left, right):
+    fade_start = max(0, count - round(HZ / 4))
+    for i, (a, b) in enumerate(zip(left, right)):
+        if fade_out and i >= fade_start:
+            gain = (count - i) / max(1, count - fade_start)
+            a *= gain
+            b *= gain
         out += struct.pack('<hh', round(a * scale), round(b * scale))
     out += bytes(-len(out) % SECTOR)
     return bytes(out)
@@ -179,14 +187,17 @@ def main():
         envelopes, instruments, samples, _, _ = audio.load_font(args.source, font)
         frames, levels, _, cooked = audio.bake(notes, times, volumes, gain, envelopes,
                                                instruments, samples, end)
-        pcm = render(times[end] + 1.0, frames + audio.FPS, levels + bytearray([255]) *
-                     (audio.FPS * audio.VOICES), cooked, samples)
+        full_seconds = times[end] + 1.0
+        seconds = min(full_seconds, entry.get('max_seconds', full_seconds))
+        pcm = render(seconds, frames + audio.FPS, levels + bytearray([255]) *
+                     (audio.FPS * audio.VOICES), cooked, samples,
+                     fade_out=seconds < full_seconds)
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(pcm)
         target.with_suffix('.json').write_text(json.dumps(dict(
             fingerprint=fingerprint, sha256=hashlib.sha256(pcm).hexdigest())) + '\n')
         print('CD-DA %s: %s, seq %d, %.2f s, %d sectors'
-              % (name, entry['name'], seq_id, times[end], len(pcm) // SECTOR))
+              % (name, entry['name'], seq_id, seconds, len(pcm) // SECTOR))
 
 
 if __name__ == '__main__':

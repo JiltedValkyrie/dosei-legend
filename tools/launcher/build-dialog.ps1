@@ -52,14 +52,14 @@ function Show-BuildDialog {
     param(
         [Parameter(Mandatory = $true)] $Owner,
         [Parameter(Mandatory = $true)] $Project,
-        [string]$Preselect = 'normal',
+        [string]$Preselect = 'clean',
         [switch]$TestOnly
     )
 
     $order = @(
-        [pscustomobject]@{ Id = 'normal'; Label = 'Standard (320x240)  ->  game.iso' }
-        [pscustomobject]@{ Id = 'clean';  Label = 'Clean player test   ->  game-clean.iso' }
-        [pscustomobject]@{ Id = 'hires';  Label = 'Hi-res (320x480i)   ->  game-hires.iso' }
+        [pscustomobject]@{ Id = 'clean'; Label = 'Play Dosei Legend (Standard)' }
+        [pscustomobject]@{ Id = 'hires'; Label = 'Play Dosei Legend (320x480i)' }
+        [pscustomobject]@{ Id = 'normal'; Label = 'Debug Mode' }
     )
 
     $dialog = New-Object Windows.Forms.Form
@@ -77,10 +77,7 @@ function Show-BuildDialog {
     $prompt.Size = New-Object Drawing.Size(400, 22)
     $dialog.Controls.Add($prompt)
 
-    # Checkboxes rather than one choice: the standing rule is that all three
-    # get rebuilt together, because a stale clean or hi-res image silently
-    # tests old code. The selected variant is ticked by default and the others
-    # are one click away.
+    # Build the selected variant by default; additional variants are explicit.
     $boxes = @{}
     $y = 38
     foreach ($entry in $order) {

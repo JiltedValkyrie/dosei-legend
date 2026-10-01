@@ -108,6 +108,8 @@ SEQUENCES = {
     'NA_BGM_OPENING_GANON': 'NIGHTMARE',
     'NA_BGM_DEKU_TREE_CS':  'DEKU_TREE',
     'NA_BGM_NAVI_OPENING':  'NAVI',
+    'NA_BGM_KOKIRI': 'KOKIRI',
+    'NA_BGM_OCA_FAIRY_GET': 'FAIRYGET',
 }
 
 # Player cue ids -> our Link clips. The originals are in z_player.c:15039-15042.
@@ -129,7 +131,42 @@ PLAYER_CUES = {
     'PLAYER_CUEID_1':  'HOLD',
     'PLAYER_CUEID_2':  'HOLD',
     'PLAYER_CUEID_4':  'HOLD',
+    'PLAYER_CUEID_17': 'OCARINA_START',
+    'PLAYER_CUEID_66': 'OCARINA_GET',
+    'PLAYER_CUEID_67': 'RETURN_IDLE',
+    'PLAYER_CUEID_40': 'STEP_BACK',
+    'PLAYER_CUEID_8': 'STONE_GET2',
+    'PLAYER_CUEID_9': 'STONE_GET3',
+    'PLAYER_CUEID_10': 'STONE_STAND',
+    'PLAYER_CUEID_11': 'STONE_WAIT',
+
 }
+
+# Bg_Treemouth installs these actor-owned scripts into the live forest.
+TREE_SCRIPT_PATH = 'src/overlays/actors/ovl_Bg_Treemouth/z_bg_treemouth_cutscene_data.c'
+for key,symbol in (('TREE_MEETING','gDekuTreeMeetingCs'),
+                   ('TREE_CHOICE','gDekuTreeChoiceCs'),
+                   ('TREE_OPEN','gDekuTreeMouthOpeningCs'),
+                   ('TREE_AGAIN','gDekuTreeAskAgainCs')):
+    CUTSCENES.append(dict(key=key,scene='SPOT04',path=OOT/TREE_SCRIPT_PATH,
+                         symbol=symbol,scene_bgm=None))
+for key,scene,path in (
+    ('SARIA_BRIDGE','SPOT10','overworld/spot10/gLostWoodsFairyOcarinaCs.csdata.inc.c'),
+    ('FIELD_INTRO','FIELD_GAMEPLAY','overworld/spot00/gHyruleFieldIntroCs.csdata.inc.c')):
+    CUTSCENES.append(dict(key=key,scene=scene,path=SCENES/path,relative_path=path,scene_bgm=None))
+
+# Complete original Kokiri Emerald story chain (z_demo.c destinations).
+for part in range(1,10):
+    path=next(SCENES.rglob('*KokiriEmeraldPart%dCs.csdata.inc.c'%part))
+    CUTSCENES.append(dict(key='EMERALD%d'%part,scene='EMERALD%d'%part,
+        path=path,relative_path=str(path.relative_to(SCENES)),scene_bgm=None))
+for dest,part in (
+ ('CS_DEST_CUTSCENE_MAP_GANON_HORSE',2),('CS_DEST_CUTSCENE_MAP_THREE_GODDESSES',3),
+ ('CS_DEST_GERUDO_VALLEY_DIN_PART_1',4),('CS_DEST_GERUDO_VALLEY_DIN_PART_2',5),
+ ('CS_DEST_DEATH_MOUNTAIN_TRAIL_NAYRU',6),('CS_DEST_KOKIRI_FOREST_FARORE',7),
+ ('CS_DEST_CUTSCENE_MAP_TRIFORCE_CREATION',8),('CS_DEST_KOKIRI_FOREST_RECEIVE_KOKIRI_EMERALD',9)):
+    DESTINATIONS[dest]='EMERALD%d'%part
+SEQUENCES['NA_BGM_SPIRITUAL_STONE']='STONE'
 
 # Commands with no Saturn meaning. Recorded in the generated header so their
 # absence is a decision on the record rather than an oversight.
@@ -160,13 +197,17 @@ def split_args(text):
     return args
 
 
-def parse_calls(path):
+def parse_calls(path, symbol=None):
     """Every CS_* macro call in the file, in order, as (name, [args])."""
     # The decomp's files carry Shift-JIS bytes in comments; the data is ASCII.
     source = path.read_text(encoding='utf-8', errors='replace')
     # Strip comments so a commented-out command cannot be read as data.
     source = re.sub(r'/\*.*?\*/', ' ', source, flags=re.S)
     source = re.sub(r'//[^\n]*', ' ', source)
+    if symbol:
+        match = re.search(r"CutsceneData\s+"+re.escape(symbol)+r"\[\]\s*=\s*\{(.*?)\};",source,re.S)
+        if not match: raise ValueError("Missing cutscene " + symbol)
+        source = match[1]
     calls, at = [], 0
     while True:
         found = CALL.search(source, at)
@@ -289,7 +330,7 @@ def clamp16(value, what):
 
 def read_cutscene(entry):
     """Parse one .csdata.inc.c into {frames, camera track, events}."""
-    calls = parse_calls(entry['path'])
+    calls = parse_calls(entry['path'],entry.get('symbol'))
     if not calls or calls[0][0] != 'CS_HEADER':
         raise ValueError('%s does not start with CS_HEADER' % entry['path'])
 
@@ -360,8 +401,11 @@ def read_cutscene(entry):
             else:
                 kind = args[0].strip()
                 if kind not in ('CS_MISC_RAIN', 'CS_MISC_LIGHTNING',
-                                'CS_MISC_SET_CSFLAG_0', 'CS_MISC_SET_LOCKED_VIEWPOINT'):
-                    raise ValueError('Unimplemented CS_MISC: ' + kind)
+                                'CS_MISC_SET_CSFLAG_0', 'CS_MISC_SET_LOCKED_VIEWPOINT',
+                                'CS_MISC_SHOW_TITLE_CARD', 'CS_MISC_UNIMPLEMENTED_4', 'CS_MISC_TIME_ADVANCE_TO_NIGHT',
+                                'CS_MISC_FADE_KOKIRI_GRASS_ENV_ALPHA', 'CS_MISC_SNOW', 'CS_MISC_DEKU_TREE_DEATH'):
+                    if kind not in entry.get('audit_misc', ()):
+                        raise ValueError('Unimplemented CS_MISC: ' + kind)
                 out['misc'].append(dict(kind=kind, start=number(args[1]), end=number(args[2])))
 
     # The header's frameCount is an allotment, not a length: every one of these
@@ -525,19 +569,23 @@ def collect_messages(cutscenes, messages):
             if item['id'] and item['id'] not in wanted:
                 wanted.append(item['id'])
     out = []
-    for text_id in sorted(wanted):
+    for text_id in wanted:
         message = messages.get(text_id)
         if not message:
             raise SystemExit('cutscene text 0x%04X is not in the message table'
                              % text_id)
+        follow=re.search(r'TEXTID\(\s*(0x[0-9A-Fa-f]+)\s*\)',message['body'])
+        next_id=int(follow[1],16) if follow else 0
+        if next_id and next_id not in wanted: wanted.append(next_id)
         pages = oot_messages.parse_pages(message['body'],
                                          max_lines=MESSAGE_LINES,
                                          max_columns=MESSAGE_COLUMNS)
         if not pages:
             raise SystemExit('cutscene text 0x%04X has no English pages'
                              % text_id)
-        out.append(dict(id=text_id, pages=pages,
-                        box=message['box'], position=message['position']))
+        out.append(dict(id=text_id, pages=pages,next_id=next_id,
+                        box=message['box'], position=message['position'],
+                        choices=3 if 'THREE_CHOICE' in message['body'] else 2 if 'TWO_CHOICE' in message['body'] else 0))
     return out
 
 
@@ -578,7 +626,7 @@ def emit_messages(messages, h, c):
           '                 unsigned char advance; unsigned short delay; }'
           ' cutscene_page_t;',
           'typedef struct { unsigned short id; unsigned short first_page;',
-          '                 unsigned char pages, box, position; }'
+          '                 unsigned char pages, box, position, choices; unsigned short next; }'
           ' cutscene_message_t;', '']
 
     runs, lines, pages, entries = [], [], [], []
@@ -594,7 +642,7 @@ def emit_messages(messages, h, c):
                           advances.index(page['advance']), page['delay']))
         entries.append((message['id'], first_page, len(message['pages']),
                         boxes.index(message['box']),
-                        positions.index(message['position'])))
+                        positions.index(message['position']),message.get('choices',0),message.get('next_id',0)))
 
     h += ['#define CUTSCENE_RUN_COUNT     %d' % len(runs),
           '#define CUTSCENE_LINE_COUNT    %d' % len(lines),
@@ -619,7 +667,7 @@ def emit_messages(messages, h, c):
     c += ['    {%d,%d,%d,%d},' % page for page in pages]
     c += ['};', '',
           'const cutscene_message_t cutscene_messages[CUTSCENE_MESSAGE_COUNT] = {']
-    c += ['    {0x%04X,%d,%d,%d,%d},' % entry for entry in entries]
+    c += ['    {0x%04X,%d,%d,%d,%d,%d,%d},' % entry for entry in entries]
     c += ['};', '']
     return len(runs), len(lines), len(pages)
 
@@ -743,7 +791,9 @@ def emit(cutscenes, header_path, source_path, cd_dir, messages):
          '#include "cutscenes.h"', '']
     emit_messages(messages, h, c)
     misc_kinds = ['CS_MISC_RAIN', 'CS_MISC_LIGHTNING', 'CS_MISC_SET_CSFLAG_0',
-                  'CS_MISC_SET_LOCKED_VIEWPOINT']
+                  'CS_MISC_SET_LOCKED_VIEWPOINT','CS_MISC_SHOW_TITLE_CARD',
+                  'CS_MISC_UNIMPLEMENTED_4','CS_MISC_TIME_ADVANCE_TO_NIGHT',
+                  'CS_MISC_FADE_KOKIRI_GRASS_ENV_ALPHA','CS_MISC_SNOW','CS_MISC_DEKU_TREE_DEATH']
     events = [(i, misc_kinds.index(e['kind']), e['start'], e['end'])
               for i, cs in enumerate(cutscenes) for e in cs['misc']]
     h += ['typedef struct { unsigned char scene, kind; short start, end; } cutscene_misc_t;',
@@ -826,6 +876,9 @@ def set_oot(root):
     SCENES = OOT / 'extracted/ntsc-1.2/assets/scenes'
     for entry, original in zip(CUTSCENES, CUTSCENE_PATHS):
         entry['path'] = SCENES / original
+    for entry in CUTSCENES:
+        if entry.get('symbol'): entry['path'] = OOT / TREE_SCRIPT_PATH
+        if entry.get('relative_path'):entry['path']=SCENES/entry['relative_path']
 
 
 def build():

@@ -33,7 +33,7 @@ def main():
     source=args.oot/'extracted/ntsc-1.2/assets/audio'
     args.out.mkdir(parents=True,exist_ok=True)
     # sequence_table.h: NA_BGM_LINK_HOUSE 31; NA_BGM_SHOP 85.
-    for name,sequence in (('HOUSE',31),('SHOP',85),('DUNGEON',24),('WOODS',62)):
+    for name,sequence in (('HOUSE',31),('SHOP',85),('DUNGEON',24),('WOODS',62),('FAIRY',40),('BOSS',27),('BOSSCLEAR',33),('OWL',90),('FAIRYGET',61),('STONE',50)):
         if copy_workshop_bank(name, args.out,
                               Path(__file__).resolve().parents[1] / 'assets/audio/interiors'):
             continue

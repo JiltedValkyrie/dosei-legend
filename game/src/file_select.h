@@ -89,6 +89,7 @@ const char         *file_select_row_label(unsigned int row);
 /* A short description of a file row: hearts and rupees, "NEW FILE", or why the
 ** slot could not be read. */
 const char         *file_select_row_detail(unsigned int row);
+const char         *file_select_row_location(unsigned int row);
 
 /* Button label on the "Open this file?" panel. Never NULL. */
 const char         *file_select_open_label(unsigned int row);

@@ -38,6 +38,40 @@ GP_EVENT_RECENTER = 1 << 21
                      and (GENERATED / 'kokiri_dialogue.c').is_file(),
                      'host compiler and generated tables required')
 class Gameplay(unittest.TestCase):
+    def test_boss_heart_grants_capacity_once_with_real_get_item_message(self):
+        g=self.lib
+        g.gameplay_boss_heart.restype=ctypes.c_bool
+        g.gp_scene(3);g.gp_health_set(16,48)
+        self.assertFalse(g.gameplay_boss_heart())
+        g.save_set_clear(3,1)
+        self.assertTrue(g.gameplay_boss_heart())
+        self.assertEqual(g.gp_get_item(),32)
+        self.assertEqual(g.gp_health(),32)
+        self.assertTrue(g.save_get_collectible(3,31))
+        self.assertFalse(g.gameplay_boss_heart())
+        g.gameplay_reset()
+        self.assertFalse(g.gameplay_boss_heart())
+        self.assertEqual(g.gp_health(),32)
+
+    def test_target_seed_quick_shot_aims_at_elevated_actor(self):
+        g=self.lib
+        g.gp_actors_clear();g.gp_scene(2)
+        g.player_items_reset();g.gp_item_floor(0);g.gp_item_inventory(5,0)
+        g.gp_test_seed_slot()
+        target=g.gp_spawn_enemy(0,90,200,0,20,0,3,26)
+        for _ in range(6):g.gp_target_seed_step(0)
+        self.assertEqual(g.gp_target_handle(),target)
+        g.gp_target_seed_step(1)
+        self.assertEqual(g.gp_item_ammo(2),4)
+        g.gp_item_victim(0,90,200,4)
+        hit=False
+        for _ in range(5):
+            g.player_items_step()
+            hit=hit or bool(g.gp_item_contacts()&4)
+        self.assertTrue(hit)
+        for _ in range(15):g.gp_target_seed_step(0)
+        self.assertEqual(g.gp_item_ammo(2),4)
+
     def test_live_seed_ammo_sweep_and_hit(self):
         g = self.lib
         g.player_items_reset(); g.gp_item_floor(0); g.gp_item_inventory(2, 2)
@@ -110,6 +144,18 @@ class Gameplay(unittest.TestCase):
         for _ in range(320): g.player_items_step()
         self.assertEqual(g.gp_stick_ammo(), 2)
 
+    def test_stick_relights_extend_fire_and_water_extinguish_keeps_ammo(self):
+        g=self.lib
+        g.player_items_reset();g.gp_sticks(1,3,1)
+        g.player_items_use(1,0,0,0,0,0);g.player_items_ignite()
+        for _ in range(100):g.player_items_step()
+        g.player_items_ignite()
+        self.assertEqual(g.player_items_burning(),300)
+        g.player_items_extinguish()
+        self.assertEqual(g.player_items_burning(),0)
+        self.assertTrue(g.player_items_stick())
+        self.assertEqual(g.gp_stick_ammo(),3)
+
     def test_dungeon_map_floor_selection_wraps_but_world_map_stays_fixed(self):
         self.assertEqual(self.lib.gp_map_step(2,0,0,-1,0),4)
         self.assertEqual(self.lib.gp_map_step(2,4,0,1,0),0)
@@ -132,9 +178,9 @@ class Gameplay(unittest.TestCase):
             self.assertTrue(g.gameplay_chest_opened(i))
             if reward == 5: self.assertEqual(g.gp_item_ammo(2), expected)
             else: self.assertTrue(g.gp_dungeon_items() & expected)
-            block = ctypes.create_string_buffer(314)
+            block = ctypes.create_string_buffer(348)
             g.gp_save_pack(block); g.save_new_game()
-            self.assertEqual(g.gp_save_unpack(block,314), 0)
+            self.assertEqual(g.gp_save_unpack(block,348), 0)
             if reward != 5: self.assertTrue(g.gp_dungeon_items() & expected)
 
     @classmethod
@@ -930,9 +976,30 @@ class Gameplay(unittest.TestCase):
         self.assertEqual(48, self.lib.gp_health())
         self.lib.gp_land(400, 0)
         self.assertEqual(40, self.lib.gp_health())       # half a heart
+        self.assertEqual(60, self.lib.gp_flash_timer())
         self.assertEqual(60, self.lib.gp_intangible())   # 40 source frames
         self.lib.gp_land(800, 0)
         self.assertEqual(24, self.lib.gp_health())       # a heart
+
+    def test_hurt_flash_advances_only_in_world_and_reset_clears_it(self):
+        self.lib.gp_health_set(48,48)
+        self.lib.gp_hurt_set(4,0)
+        self.step(*self.SPOT)
+        self.assertGreater(self.lib.gp_flash_timer(),0)
+        self.step(*self.SPOT)
+        self.assertGreater(self.lib.gp_flash_phase(),0)
+        self.lib.gp_reset_no_greeting()
+        self.assertEqual(self.lib.gp_flash_timer(),0)
+        self.assertEqual(self.lib.gp_flash_phase(),0)
+
+    def test_token_and_first_ammo_use_source_fanfare_events(self):
+        self.lib.gameplay_token_message.restype=ctypes.c_bool
+        self.assertTrue(self.lib.gameplay_token_message())
+        self.assertTrue(self.lib.gp_events2() & (1<<22))
+        self.assertFalse(self.lib.gameplay_token_message())
+        self.lib.gp_reset_no_greeting()
+        self.lib.gameplay_drop_message(12)
+        self.assertTrue(self.lib.gp_events2() & (1<<21))
 
     def test_void_respawn_costs_a_heart(self):
         self.lib.gp_health_set(48, 48)
@@ -952,6 +1019,16 @@ class Gameplay(unittest.TestCase):
         self.assertTrue(self.lib.gp_dead())
         self.assertEqual(1, seen)
         self.assertEqual(self.GO_DYING, self.lib.gp_go_state())
+
+    def test_lethal_landing_outranks_chest_and_pause(self):
+        x, y, z, _, room = self.chest()
+        self.lib.gp_health_set(8, 48)
+        self.lib.gp_land(800, 0)
+        self.forest(room)
+        self.lib.gp_step_full(x, y, z - 25, 0, 0, 0, 0, 1, 1, 0, 1, 0)
+        self.assertTrue(self.lib.gp_dead())
+        self.assertEqual(self.GO_DYING, self.lib.gp_go_state())
+        self.assertFalse(self.lib.gameplay_chest_opened(0))
 
     def die(self):
         self.lib.gp_navi_timer_set(900)
@@ -1458,7 +1535,7 @@ class Gameplay(unittest.TestCase):
         menu's SAVE does, wipe everything as returning to the title and loading
         a file would, then read the block back and re-enter the scene.
         """
-        SAVE_FILE_BYTES = 314  # v7: 8 + 304 + 2
+        SAVE_FILE_BYTES = 348  # v10: 8 + 338 + 2
         for index in range(2):
             x, y, z, _ = self.pickup(index)
             self.step(x, y, z)
@@ -1765,6 +1842,7 @@ class Gameplay(unittest.TestCase):
         self.assertTrue(self.lib.gp_talking())
         self.assertEqual(self.lib.gp_rule_text_id(), 0x00A4)
         self.assertEqual(self.lib.gp_get_item(), GP_SWORD)
+        self.assertEqual(self.lib.gp_events2() & ((1<<20)|(1<<21)),(1<<20)|(1<<21))
         while self.lib.gp_talking():
             self.step(x, y, z - 25, yaw=0, interact=1)
         self.assertEqual(self.lib.gp_get_item(), 0)
@@ -1772,6 +1850,7 @@ class Gameplay(unittest.TestCase):
         self.assertEqual(self.lib.gp_chest_prompt(), -1)
         self.step(x, y, z - 25, yaw=0, interact=1)
         self.assertFalse(self.lib.gp_events() & GP_EVENT_PICKUP)
+        self.assertFalse(self.lib.gp_events2() & ((1<<20)|(1<<21)))
         self.lib.gp_reset_no_greeting()                        # reload the scene
         self.assertTrue(self.lib.gameplay_chest_opened(0))
         self.assertEqual(self.lib.gp_owned(), GP_SWORD)
@@ -2043,6 +2122,7 @@ class Gameplay(unittest.TestCase):
         self.assertEqual(self.lib.gp_owned(), GP_SHIELD)
         self.assertEqual(self.lib.gp_equipped(), 0)
         self.assertEqual(self.lib.gp_get_item(), GP_SHIELD)
+        self.assertTrue(self.lib.gp_events2() & (1<<21))
         self.assertEqual(self.shop_step(interact=1), 0x006B)     # continue?
         self.shop_step(menu_step=1)
         self.assertEqual(self.shop_step(interact=1), None)       # quit
@@ -2057,6 +2137,7 @@ class Gameplay(unittest.TestCase):
         self.to_choice()
         self.assertEqual(self.shop_step(interact=1), 0x0085)
         self.assertEqual(self.lib.gp_rupees(), 39)
+        self.assertFalse(self.lib.gp_events2() & (1<<21))
         self.assertEqual(self.lib.gp_owned(), 0)
 
     def test_dont_buy_returns_to_the_item_text(self):
@@ -2174,7 +2255,7 @@ class Gameplay(unittest.TestCase):
         self.assertEqual(self.lib.gp_shop_state(), 0)
 
     def test_shop_purchase_survives_save_and_reload(self):
-        SAVE_FILE_BYTES = 314  # v7
+        SAVE_FILE_BYTES = 348  # v9
         self.shop(45)
         self.to_choice()
         self.shop_step(interact=1)
@@ -2369,6 +2450,26 @@ class Gameplay(unittest.TestCase):
         for stick, target, name in cases:
             self.armed()
             self.assertEqual(self.swing(stick, target), self.MWA[name], (stick, target))
+
+    def test_held_deku_stick_uses_only_source_forward_one_hand_slash(self):
+        """Player_Action_80845308 forces FORWARD_SLASH_1H for a Deku Stick."""
+        self.forest(0)
+        self.lib.gp_sticks(1, 3, 1)
+        self.lib.gp_assign_item(0, 1)
+        self.lib.gp_item_use_step(1, 0, 0)
+        self.assertTrue(self.lib.player_items_stick())
+        for direction, target in ((-1, 0), (-1, 1), (0, 0), (1, 0), (3, 1)):
+            self.lib.gp_stick(direction, 0)
+            self.step(0, 0, 0, attack=1, target=target)
+            self.assertEqual(self.lib.gp_attack_id(), self.MWA['FORWARD'])
+            self.run_attack()
+        self.lib.gp_hold_x(1)
+        self.lib.gp_stick(-1, 0)
+        self.step(0, 0, 0, attack=1)
+        for _ in range(45):
+            self.step(0, 0, 0)
+        self.assertNotIn(self.lib.gp_attack_phase(), (3, 4))
+        self.lib.gp_hold_x(0)
 
     def run_attack(self):
         for _ in range(40):

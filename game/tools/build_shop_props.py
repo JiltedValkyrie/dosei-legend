@@ -41,14 +41,22 @@ class PropLists(link.LimbLists):
         super().triangle(word,transparent)
         for face in self.faces[first:]:face['scrolling']=self.scrolling
 
-def static_mesh(oot, rom_dir, obj, symbol, dest, scale=1.0, setup=None, extra=(), flat=False, cutout=False):
+def static_mesh(oot, rom_dir, obj, symbol, dest, scale=1.0, setup=None, extra=(), flat=False, cutout=False, matrix=None, texture8=None):
     data = link.read_object(oot, obj, rom_dir)
     xml = ET.parse(oot / 'assets/xml/objects' / (obj + '.xml'))
     offsets = {e.attrib['Name']: int(e.attrib['Offset'], 16) for e in xml.iter('DList')}
     lists = PropLists(b'', b'')
     segment = int(next(xml.iter("File")).attrib.get("Segment", "6"), 0)
     lists.segments = {segment: data, 8: struct.pack('>II', 0xDF000000, 0)}
-    if symbol in ('gGiNutDL','gGiRecoveryHeartDL') or obj == 'object_kanban':
+    if texture8:
+        offset = next(int(e.attrib['Offset'], 16) for e in xml.iter('Texture') if e.attrib['Name'] == texture8)
+        lists.segments[8] = data[offset:]
+    if obj == 'object_syokudai':
+        lists.segments[5] = link.read_object(oot, 'gameplay_dangeon_keep', rom_dir)
+    # Door_Shutter's Deku geometry uses gameplay_keep's door artwork (segment
+    # 4), even though its vertices live in object_ydan_objects (segment 6).
+    if symbol in ('gGiNutDL','gGiRecoveryHeartDL', 'gDTDungeonDoor1DL',
+                  'gDTDungeonDoor2DL') or obj == 'object_kanban':
         lists.segments[4] = link.read_object(oot, 'gameplay_keep', rom_dir)
     lists.current_limb = 0
     lists.matrix_limbs = []
@@ -67,6 +75,9 @@ def static_mesh(oot, rom_dir, obj, symbol, dest, scale=1.0, setup=None, extra=()
     link.apply_primitive_colour(lists.faces)
     if flat: link.flatten_faces(lists.faces)
     faces = link.scale_faces(lists.faces, scale) if scale != 1.0 else lists.faces
+    if matrix is not None:
+        for face in faces:
+            face['vertices']=[tuple(round(n) for n in link.transform(matrix,(0,0,0),v[:3]))+tuple(v[3:]) for v in face['vertices']]
     positions, tiles, _owners, _locals = link.write_model(faces, dest, character=False)
     if not flat and symbol in ('gGiNutDL', 'gGiRecoveryHeartDL'):
         # Bake the source scrolling UVs per face, preserving its UV mapping;

@@ -54,6 +54,31 @@ class WorldPropAssets(unittest.TestCase):
             self.assertEqual(struct.unpack_from('>H',data,texture+clut)[0],0)
             self.assertTrue(flags&1)  # loader must leave SPdis off
 
+    def test_scrub_models_skip_transparent_palette_zero(self):
+        for name in ('HINTNUT','HINTFLOW','HINTBALL'):
+            data=(self.out/(name+'.BIN')).read_bytes()
+            _,_,_,faces,_,records,texture,_,_=struct.unpack_from('>9I',data)
+            cutouts=0
+            for i in range(faces):
+                pixel,clut,size,flags=struct.unpack_from('>IIHH',data,records+i*20+8)
+                packed=data[texture+pixel:texture+pixel+(size>>8)*8*(size&255)//2]
+                indices=[n for b in packed for n in (b>>4,b&15)]
+                if 0 in indices:
+                    cutouts+=1
+                    self.assertTrue(flags&1,name)
+                    self.assertEqual(struct.unpack_from('>H',data,texture+clut)[0],0)
+            self.assertGreater(cutouts,0,name)
+
+    def test_dungeon_door_keeps_shared_source_artwork(self):
+        data=(self.out/'DTDOOR.BIN').read_bytes()
+        _,_,_,faces,_,records,texture,_,_=struct.unpack_from('>9I',data)
+        colours=set()
+        for i in range(faces):
+            clut=struct.unpack_from('>I',data,records+i*20+12)[0]
+            colours.update(struct.unpack_from('>16H',data,texture+clut))
+        # Missing segment 4 formerly baked white front/back and a gray edge.
+        self.assertGreater(len(colours-{0,0x8000,0xffff}),8)
+
     def test_counter_preserves_backdrop_material_variation(self):
         from build_interior_masks import build_shop_counter
         backdrop=ROOT/'build/cd/S2R0.RGB'

@@ -218,7 +218,7 @@ void npc_draw_free(void)
     previous_step = demo_world_clock() / 3;
 }
 
-bool npc_draw_load(unsigned int scene)
+bool __attribute__((optimize("Os"))) npc_draw_load(unsigned int scene)
 {
     unsigned int i;
     npc_draw_free();

@@ -100,7 +100,7 @@ bool pause_windows_text_ready(void)
 {
     const pause_window_state_t *s=&gameplay.pause_window;
     unsigned page=s->system_confirm ? PAUSE_EXTRA : s->save_prompt ? PAUSE_SAVE : s->page;
-    return active && !failed && phase!=1 && loaded/8==(int)page;
+    return active && !failed && phase!=1 && loaded/32==(int)page;
 }
 static void pixel(int x,int y,unsigned colour)
 {
@@ -159,7 +159,7 @@ static void paint(void)
         x=(tile%40)*8; y=(tile/40)*8;
         for (i=0;i<64;++i) {
             unsigned colour=data[(y+i/8)*320+x+i%8];
-            if (loaded/8==PAUSE_MAP && loaded%8 && colour>=0x10 && colour<=0x1F)
+            if (loaded/32==PAUSE_MAP && loaded%32 && colour>=0x10 && colour<=0x1F)
                 colour=map_colour(colour);
             dst[i]=colour;
         }
@@ -183,7 +183,7 @@ void pause_windows_print(int x,int y,const char *text)
 static bool load_page(int key)
 {
     char name[]="PAUSE00.BIN";
-    name[5]+=key/8; name[6]+=key%8;
+    name[5]+=key/32; name[6]="0123456789ABCDEF"[key%32];
     failed=!read_file(name,cache(),PAGE_BYTES);
     loaded=key; drawn=-1;
     return !failed;
@@ -209,21 +209,21 @@ bool pause_windows_update(void)
 {
     pause_window_state_t *s=&gameplay.pause_window;
     unsigned page=s->system_confirm ? PAUSE_EXTRA : s->save_prompt ? PAUSE_SAVE : s->page;
-    unsigned variant=page==PAUSE_EQUIPMENT ? gameplay.owned&3 :
-        page==PAUSE_ITEMS ? ((!!save_state.stick_owned) | ((!!save_state.slingshot)<<1) | ((!!save_state.nut_owned)<<2)) :
+    unsigned variant=page==PAUSE_EQUIPMENT ? (gameplay.owned&3) | (save_tunic_unlocked(1)?4:0) | (save_tunic_unlocked(2)?8:0) :
+        page==PAUSE_ITEMS ? ((!!save_state.stick_owned) | ((!!save_state.slingshot)<<1) | ((!!save_state.nut_owned)<<2) | ((!!save_state.fairy_ocarina)<<3)) :
         page==PAUSE_QUEST ? !!(save_state.quest_items&(1u<<QUEST_KOKIRI_EMERALD)) :
         page==PAUSE_MAP && dungeon_map() ? 1+s->cursor[PAUSE_MAP]%5 : 0;
-    int key=page*8+variant;
+    int key=page*32+variant;
     int cursor=s->save_prompt ? s->save_choice : s->cursor[s->page];
-    int stamp=cursor+(gameplay.equipped<<8)+(s->system_confirm<<16);
+    int stamp=cursor+(gameplay.equipped<<8)+(s->system_confirm<<16)+(save_state.tunic<<12);
     unsigned now=demo_clock(),t;
     if (page==PAUSE_ITEMS) stamp += (save_state.c_items[0] + 4*save_state.c_items[1] + 16*save_state.c_items[2]) << 18;
     if (failed) return false;
     if (!active && !begin()) { failed=true; return false; }
     if (loaded<0) { if (!load_page(key)) goto fail; }
     if (!phase && key!=loaded) {
-        if (key/8!=loaded/8 && page!=PAUSE_SAVE && loaded/8!=PAUSE_SAVE && !s->system_confirm) {
-            int from=loaded/8==PAUSE_EXTRA ? 4 : loaded/8;
+        if (key/32!=loaded/32 && page!=PAUSE_SAVE && loaded/32!=PAUSE_SAVE && !s->system_confirm) {
+            int from=loaded/32==PAUSE_EXTRA ? 4 : loaded/32;
             int to=page==PAUSE_EXTRA ? 4 : page;
             direction=((to-from+5)%5)<=2 ? 1 : -1;
             phase=1; started=now;
@@ -254,6 +254,7 @@ bool pause_windows_update(void)
             static const short columns[4]={46,172,204,236};
             if (gameplay.equipped&GP_SWORD) frame(173,63,29,0x83FF);
             if (gameplay.equipped&GP_SHIELD) frame(173,95,29,0x83FF);
+            frame(save_state.tunic==1?237:save_state.tunic==2?205:173,127,29,0x83FF);
             frame(columns[cursor%4],62+(cursor/4)*32,31,0xFF50);
         } else if (page==PAUSE_SAVE) frame(cursor ? 168 : 100,118,47,0xFF50);
         else if (page==PAUSE_QUEST && variant) frame(179,165,25,0xFF50);

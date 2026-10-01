@@ -35,6 +35,9 @@ fi
 
 export PATH="$compiler/Other Utilities:$compiler/bin:$PATH"
 mkdir -p "$here/build/cd" "$here/build/generated"
+# Retired overlength filenames cannot be addressed by Saturn GFS.
+rm -f "$here/build/cd/TREEMOUTH.BIN" "$here/build/cd/BOSSHEART.BIN" \
+      "$here/build/cd/BOSSCLEAR.PCM" "$here/build/cd/BOSSCLEAR.LVL"
 # Freeze the chosen layout once so mid-build GUI changes cannot mix versions.
 "$python" "$here/tools/layout_variants.py" --snapshot "$here/build/generated/layout-build.json" --oot "$oot" --rom-dir "$roms"
 export DOSEI_LAYOUT_SNAPSHOT="$(cygpath -w "$here/build/generated/layout-build.json")"
@@ -89,6 +92,7 @@ if [ -n "${AUTHORED_OBJ:-}" ]; then
     "$python" "$here/tools/build_authored_scene.py" --obj "$AUTHORED_OBJ" ${AUTHORED_UV_FROM:+--uv-from "$AUTHORED_UV_FROM"} ${AUTHORED_ATLAS:+--atlas "$AUTHORED_ATLAS"}          ${AUTHORED_UNITS_PER_TEXEL:+--units-per-texel "$AUTHORED_UNITS_PER_TEXEL"}         ${AUTHORED_MAX_TILE:+--max-tile "$AUTHORED_MAX_TILE"}         ${AUTHORED_SPLIT_SPAN:+--split-span "$AUTHORED_SPLIT_SPAN"}         ${AUTHORED_MAX_DEPTH:+--max-depth "$AUTHORED_MAX_DEPTH"}         ${AUTHORED_POLYGON_CAP:+--polygon-cap "$AUTHORED_POLYGON_CAP"}
 fi
 "$python" "$here/tools/build_scene_table.py" --oot "$oot" --rom-dir "$roms"
+cp "$here"/build/generated/owl/OWL*.BIN "$here"/build/generated/owl/OWL*.ANM "$here/build/cd/"
 "$python" "$here/tools/build_npc_models.py" --oot "$oot" --rom-dir "$roms"
 cp "$here"/build/generated/npcs/NPC*.BIN "$here"/build/generated/npcs/NPC*.ANM "$here"/build/generated/npcs/NPC*.TRK "$here/build/cd/"
 # Surface bits now live inside S<n>.COL (KBG2); drop the retired .SUR files.
@@ -128,11 +132,16 @@ cp "$here/build/generated/BRIDGE.BIN" "$here/build/cd/BRIDGE.BIN"
 cp "$here/build/generated/CHAINS.BIN" "$here/build/cd/CHAINS.BIN"
 cp "$here/build/generated/GATEFIRE.BIN" "$here/build/cd/GATEFIRE.BIN"
 "$python" "$here/tools/build_cutscenes.py" --oot "$oot"
+cp "$here/build/generated/"{GODBODY,GODAURA,TRIFORCE,EMERALD}.BIN "$here/build/cd/"
 "$python" "$here/tools/build_title_paths.py"
 "$python" "$here/tools/build_interior_audio.py" --oot "$oot"
-for area_bank in HOUSE SHOP DUNGEON WOODS; do
-    cp "$here/build/generated/${area_bank}_PCM.RAW" "$here/build/cd/$area_bank.PCM"
-    cp "$here/build/generated/${area_bank}_LEVELS.RAW" "$here/build/cd/$area_bank.LVL"
+"$python" "$here/tools/build_gohma.py" --oot "$oot"
+"$python" "$here/tools/build_field_audio.py" --oot "$oot"
+for area_bank in HOUSE SHOP DUNGEON WOODS FAIRY BOSS BOSSCLEAR OWL FAIRYGET FIELD STONE; do
+    disc_bank="$area_bank"
+    [ "$area_bank" != BOSSCLEAR ] || disc_bank=BOSSCLR
+    cp "$here/build/generated/${area_bank}_PCM.RAW" "$here/build/cd/$disc_bank.PCM"
+    cp "$here/build/generated/${area_bank}_LEVELS.RAW" "$here/build/cd/$disc_bank.LVL"
 done
 "$python" "$here/tools/build_cart_tables.py"
 if [ "${STREAM_ROOMS:-1}" = 1 ]; then

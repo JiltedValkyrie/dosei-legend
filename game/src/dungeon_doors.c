@@ -5,18 +5,21 @@
 #include "kokiri_scene.h"
 #include "dungeon_doors.h"
 #include "save_state.h"
+#include "scene_flow.h"
 #include "kokiri_camera.h"
 #include <string.h>
 static uint8_t lift[KOKIRI_PORTAL_COUNT],hold[KOKIRI_PORTAL_COUNT];
 static int32_t previous_x,previous_z;
-static int current_room=-1;
+static int current_room=-1, current_scene=-1;
+static bool prompt;
+bool dungeon_doors_prompt(void) { return prompt; }
 void dungeon_doors_reset(void) {
-    memset(lift,0,sizeof(lift));memset(hold,0,sizeof(hold));current_room=-1;
+    memset(lift,0,sizeof(lift));memset(hold,0,sizeof(hold));current_room=-1;current_scene=-1;prompt=false;
 }
 unsigned dungeon_door_height(unsigned i) {return i<KOKIRI_PORTAL_COUNT ? lift[i] : 0;}
 bool dungeon_door_open(unsigned i) {return dungeon_door_height(i)>=100;}
 static bool relevant(const kokiri_portal *p) {
-    return save_state.scene_id==SAVE_SCENE_DEKU_TREE && p->kind>=8 &&
+    return p->scene==scene_flow_scene() && p->kind>=8 &&
         (p->front==current_room || p->back==current_room);
 }
 static void local(const kokiri_portal *p,int32_t x,int32_t z,int *side,int *depth) {
@@ -34,8 +37,12 @@ static bool allowed(const kokiri_portal *p) {
     if(type==2 || type==7) return save_get_switch(save_state.scene_id,p->flag);
     return type==0;
 }
-bool dungeon_doors_step(const gameplay_input_t *in) {
-    unsigned i;bool consumed=false;
+unsigned dungeon_doors_step(const gameplay_input_t *in) {
+    unsigned i,consumed=0;
+    if(current_scene!=(int)scene_flow_scene()) {
+        dungeon_doors_reset();current_scene=scene_flow_scene();
+    }
+    prompt=false;
     current_room=in->room;previous_x=in->x;previous_z=in->z;
     for(i=0;i<KOKIRI_PORTAL_COUNT;++i) {
         const kokiri_portal *p=&kokiri_portals[i];int side,depth,dy;
@@ -43,16 +50,18 @@ bool dungeon_doors_step(const gameplay_input_t *in) {
         local(p,in->x,in->z,&side,&depth);dy=in->y-p->y;
         if(side>-50 && side<50 && dy>=-10 && dy<100 && depth>-65 && depth<65) {
             int16_t facing=(int16_t)(in->yaw-p->yaw-(depth>0 ? 0x8000 : 0));
-            if(in->interact && in->grounded && facing>-0x3000 && facing<0x3000) {
-                consumed=true;
-                if(allowed(p)) hold[i]=90;
-                else gameplay.events|=GP_EVENT_DENIED;
+            bool usable=in->grounded && !in->shield && !gameplay.attack_phase &&
+                facing>-0x3000 && facing<0x3000;
+            if(usable && allowed(p) && !dungeon_door_open(i)) prompt=true;
+            if(in->interact && usable) {
+                if(allowed(p)) {hold[i]=90;consumed=1;}
+                else consumed=2;
             }
             /* Do not lower onto Link, including after changing rooms. */
             if(lift[i]>=100) hold[i]=30;
         }
-        if(hold[i]) {--hold[i];if(lift[i]<120) lift[i]+=5;}
-        else if(lift[i]) lift[i]-=5;
+        if(hold[i]) {--hold[i];if(lift[i]<120){if(!lift[i])gameplay.world_sfx|=1u<<GP_SFX_DOOR_OPEN;lift[i]+=5;}}
+        else if(lift[i]) {lift[i]-=5;if(!lift[i])gameplay.world_sfx|=1u<<GP_SFX_DOOR_CLOSE;}
     }
     return consumed;
 }

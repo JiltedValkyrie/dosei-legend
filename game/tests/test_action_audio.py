@@ -14,6 +14,14 @@ GCC = Path('C:/msys64/mingw64/bin/gcc.exe')
 
 
 class AudioBank(unittest.TestCase):
+    def test_navi_uses_effect_bank_transpose_instead_of_link_voices(self):
+        samples = {s['name']: s for s in json.loads((GEN/'action_audio.json').read_text())['samples']}
+        # seqplayer.c: (layer transposition << 6) + semitone. CHAN_6520
+        # therefore selects effects 104/124, never Link's effects 41/61.
+        self.assertEqual(samples['navi_hello']['sample'], 'SAMPLE_0_212')
+        self.assertEqual(samples['navi_talk']['sample'], 'SAMPLE_0_213')
+        self.assertEqual(samples['hp_recover']['source'], 'CHAN_596D')
+
     def test_samples_fit_reserved_tail_and_have_silent_guards(self):
         manifest = json.loads((GEN/'action_audio.json').read_text())
         blob = (GEN/'ACTIONS.PCM').read_bytes()
@@ -31,6 +39,13 @@ class AudioBank(unittest.TestCase):
             self.assertTrue(any(blob[start:start+length]))
             self.assertEqual(blob[start+length:start+length+4], bytes(4))
 
+
+    def test_tree_and_boss_select_the_dungeon_bank(self):
+        import sys
+        sys.path.insert(0,str(ROOT/'tools'))
+        from build_scene_table import SCENES
+        for name,bank in (('SCENE_DEKU_TREE',2),('SCENE_DEKU_TREE_BOSS',3)):
+            self.assertEqual(next(s for s in SCENES if s['scene']==name)['sfx'],bank)
 
     def test_area_banks_fit_after_core_and_match_header(self):
         manifest = json.loads((GEN/'action_audio.json').read_text())
@@ -97,6 +112,8 @@ void set_busy(bool b) { busy = b; }
 void tick(void) { rupee_vblank(); }
 void refresh(unsigned int hz) { sound_refresh = hz; }
 void set_baba(unsigned int e) { baba_ev = e; gameplay.baba_events = e; }
+void set_world(unsigned int e) { gameplay.world_sfx = e; }
+unsigned world_pending(void) { return gameplay.world_sfx; }
 void set_events2(unsigned int e) { gameplay.events2 = e; }
 '''
         env = dict(os.environ, PATH=str(GCC.parent)+os.pathsep+os.environ.get('PATH',''))
@@ -117,6 +134,27 @@ void set_events2(unsigned int e) { gameplay.events2 = e; }
     def keyed(self, slot):
         return self.lib.reg(slot, 0) & 0x1800 == 0x1800
 
+    def test_dungeon_events_play_once_from_tree_bank_without_touching_music(self):
+        manifest=json.loads((GEN/'action_audio.json').read_text())
+        bank=manifest['area_banks'][2]
+        self.assertEqual(bank['file'],'SFXTREE.PCM')
+        names=['scrub_up','scrub_down','scrub_throw','scrub_walk','scrub_hit','scrub_faint',
+               'foot_switch','deku_hit','deku_dead','skull_hit','skull_dead','larva_hit',
+               'larva_dead','gohma_hit','gohma_dead','correct','appear','door_open','door_close','freeze','box_item']
+        samples={s['name']:s for s in bank['samples']}
+        for i,name in enumerate(names):
+            bank=manifest['area_banks'][3 if name.startswith('gohma') else 2]
+            samples={s['name']:s for s in bank['samples']}
+            self.lib.reset(); self.lib.set_area(3 if name.startswith('gohma') else 2,True)
+            self.lib.set_world(1<<i);self.lib.action_audio_events(0)
+            slot=30 if i in (15,16) else 26 if i>=17 or i<6 else 27 if i==6 else 28
+            self.assertTrue(self.keyed(slot),name)
+            self.assertEqual(self.lib.reg(slot,6),samples[name]['length'],name)
+            self.assertEqual(self.lib.world_pending(),0)
+            for music in range(24): self.assertEqual(self.lib.reg(music,0),0)
+            self.lib.reset();self.lib.action_audio_events(0)
+            self.assertFalse(self.keyed(slot),name)
+
     def test_lock_on_plays_human_or_hostile_on_slot_29(self):
         self.lib.action_audio_events(1 << 3)            # GP_EVENT_TARGET_ON
         self.assertTrue(self.keyed(29))
@@ -134,6 +172,16 @@ void set_events2(unsigned int e) { gameplay.events2 = e; }
         self.lib.set_events2(2)
         self.lib.action_audio_events(0)
         self.assertTrue(self.keyed(31) and self.keyed(30))
+
+    def test_heart_recovery_overrides_generic_pickup_and_uses_own_sound(self):
+        self.lib.action_audio_events(1)  # generic pickup
+        generic = self.lib.reg(27, 2)
+        self.lib.reset()
+        self.lib.set_events2(1 << 18)
+        self.lib.action_audio_events(1)
+        self.assertTrue(self.keyed(27))
+        self.assertNotEqual(generic, self.lib.reg(27, 2))
+        self.assertFalse(self.keyed(25))  # never Link's voice slot
 
     def test_pickup_sound_is_consumed_once_even_if_actor_events_are_stale(self):
         self.lib.set_baba(64)

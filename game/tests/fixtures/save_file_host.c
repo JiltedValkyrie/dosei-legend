@@ -47,6 +47,13 @@ void sf_set_sticks(int owned, int ammo, int upgrade, int timer)
 int sf_stick_ammo(void) { return save_state.stick_ammo; }
 int sf_stick_upgrade(void) { return save_state.stick_upgrade; }
 int sf_navi_timer(void) { return save_state.navi_timer; }
+void sf_set_health(int health, int capacity)
+{
+    save_state.health = (uint16_t)health;
+    save_state.health_capacity = (uint16_t)capacity;
+}
+int sf_health(void) { return save_state.health; }
+void sf_resume_remap(void) { save_resume_remap(); }
 unsigned int sf_checksum(const unsigned char *p, unsigned int n) { return save_file_checksum(p, n); }
 
 unsigned int sf_quest_items(void)
@@ -74,3 +81,9 @@ void sf_set_nuts(int owned, int ammo, int upgrade)
     save_state.nut_upgrade = upgrade;
 }
 int sf_nut_ammo(void) { return save_state.nut_owned * 1000 + save_state.nut_ammo * 10 + save_state.nut_upgrade; }
+
+int sf_tunic(void){return save_state.tunic;}
+int sf_ocarina(void){return save_state.fairy_ocarina;}
+void sf_ocarina_give(void){save_state.fairy_ocarina=1;}
+int sf_tunic_equip(int value){return save_equip_tunic(value);}
+void sf_skull_set(int bank,int mask){save_state.skull_flags[bank]=mask;}

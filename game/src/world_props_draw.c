@@ -16,7 +16,26 @@
 #include "kokiri_scene.h"
 #include "dungeon_doors.h"
 #include "dungeon_webs.h"
-static actor_mesh_t *door,*web;
+#include "dungeon_torches.h"
+#include "dungeon_puzzles.h"
+#include "skulltula.h"
+#include "wall_skull.h"
+#include "dekubaba.h"
+#include "hintnuts.h"
+#include "gohma_larva.h"
+#include "gohma.h"
+#include "tree_mouth.h"
+static actor_mesh_t *door,*web,*tree_mouth;
+static actor_mesh_t *torches[3];
+static actor_mesh_t *walls[5];
+static actor_mesh_t *puzzles[14];
+static actor_mesh_t *skull;
+static actor_mesh_t *gold_skull,*skull_token;
+static actor_mesh_t *baba_head;
+static actor_mesh_t *hint,*hint_flower,*hint_ball;
+static actor_mesh_t *goma,*goma_egg;
+static actor_mesh_t *gohma;
+static actor_mesh_t *boss_heart,*blue_warp;
 static actor_mesh_t *rock, *pot, *chest, *bush, *gossip, *sign[11];
 static uint16_t chest_age[KOKIRI_CHEST_COUNT];
 static unsigned int last_tick;
@@ -30,17 +49,33 @@ static unsigned int last_tick;
 volatile int dosei_draw_mask = 0;
 void world_props_draw_free(void)
 {
+    actor_mesh_free(tree_mouth);tree_mouth=0;tree_mouth_reset();
     unsigned int i;for(i=0;i<11;++i) { actor_mesh_free(sign[i]);sign[i]=0; }
     actor_mesh_free(rock);actor_mesh_free(pot);actor_mesh_free(chest);
     actor_mesh_free(bush);actor_mesh_free(gossip);
     actor_mesh_free(door);door=0;actor_mesh_free(web);web=0;
-    dungeon_doors_reset();dungeon_webs_reset();
+    /* Shutter state survives adjacent room asset reloads. */
+    dungeon_webs_reset();
+    dungeon_torches_reset();
+    dungeon_puzzles_reset();
+    skulltula_reset();actor_mesh_free(skull);skull=0;
+    wall_skull_reset();actor_mesh_free(gold_skull);actor_mesh_free(skull_token);gold_skull=skull_token=0;
+    dekubaba_reset();actor_mesh_free(baba_head);baba_head=0;
+    hintnuts_reset();actor_mesh_free(hint);actor_mesh_free(hint_flower);actor_mesh_free(hint_ball);hint=hint_flower=hint_ball=0;
+    gohma_larva_reset();actor_mesh_free(goma);actor_mesh_free(goma_egg);goma=goma_egg=0;
+    gohma_reset();actor_mesh_free(gohma);gohma=0;
+    actor_mesh_free(boss_heart);actor_mesh_free(blue_warp);boss_heart=blue_warp=0;
+    for(i=0;i<14;++i) {actor_mesh_free(puzzles[i]);puzzles[i]=0;}
+    for(i=0;i<3;++i) {actor_mesh_free(torches[i]);torches[i]=0;}
+    for(i=0;i<5;++i) {actor_mesh_free(walls[i]);walls[i]=0;}
     rock=pot=chest=bush=gossip=0;
 }
 bool world_props_draw_load(unsigned int scene)
 {
     unsigned int i; bool rocks=false,pots=false,chests=false;
     world_props_draw_free();
+    save_reset_temp_switches(scene);
+    if(scene==SAVE_SCENE_KOKIRI_FOREST && !(tree_mouth=actor_mesh_load_static("TREEMTH.BIN")))return false;
     for(i=0;i<KOKIRI_WORLD_PROP_COUNT;++i) {
         const kokiri_world_prop_t *p=&kokiri_world_props[i];
         if(p->scene!=scene) continue;
@@ -59,13 +94,54 @@ bool world_props_draw_load(unsigned int scene)
             if(!(sign[i]=actor_mesh_load_static(name))) return false;
         }
     }
-    if(scene==SAVE_SCENE_DEKU_TREE && (!(door=actor_mesh_load_static("DTDOOR.BIN")) ||
-       !(web=actor_mesh_load_static("DTWEB.BIN")))) return false;
+    if((scene==SAVE_SCENE_DEKU_TREE || scene==SAVE_SCENE_DEKU_TREE_BOSS) &&
+       !(door=actor_mesh_load_static("DTDOOR.BIN"))) return false;
+    if(scene==SAVE_SCENE_DEKU_TREE && !(web=actor_mesh_load_static("DTWEB.BIN"))) return false;
+    if(scene==SAVE_SCENE_DEKU_TREE) for(i=0;i<3;++i) {
+        char file[]="DTTORCH0.BIN";file[7]='0'+i;
+        if(!(torches[i]=actor_mesh_load_static(file)))return false;
+    }
+    if(scene==SAVE_SCENE_DEKU_TREE) {
+        if(!(skull=actor_mesh_load_animated("SKULL.BIN")))return false;
+        if(!(gold_skull=actor_mesh_load_animated("GOLDSK.BIN")) || !(skull_token=actor_mesh_load_static("SKTOKEN.BIN")))return false;
+        if(!(baba_head=actor_mesh_load_animated("DHEAD.BIN")))return false;
+        if(!(hint=actor_mesh_load_animated("HINTNUT.BIN")) || !(hint_flower=actor_mesh_load_static("HINTFLOW.BIN")) || !(hint_ball=actor_mesh_load_static("HINTBALL.BIN")))return false;
+        for(i=0;i<14;++i) {
+            if(i>0 && i<4)continue; /* Floor switch shares its up-pose artwork. */
+            char file[16];sprintf(file,"DTPZ%02u.BIN",i);
+            if(!(puzzles[i]=actor_mesh_load_static(file)))return false;
+        }
+        if(dungeon_walls_count()>5)return false;
+        for(i=0;i<dungeon_walls_count();++i) {
+            char file[]="DTWALL0.BIN";file[6]='0'+i;
+            if(!(walls[i]=actor_mesh_load_static(file)))return false;
+        }
+    }
+    if(scene==SAVE_SCENE_DEKU_TREE || scene==SAVE_SCENE_DEKU_TREE_BOSS)
+        if(!(goma=actor_mesh_load_animated("GOMALAR.BIN")) || !(goma_egg=actor_mesh_load_static("GOMAEGG.BIN")))return false;
+    if(scene==SAVE_SCENE_DEKU_TREE_BOSS && !(gohma=actor_mesh_load_animated("GOHMA.BIN")))return false;
+    if(scene==SAVE_SCENE_DEKU_TREE_BOSS &&
+       (!(boss_heart=actor_mesh_load_static("BOSSHRT.BIN")) ||
+        !(blue_warp=actor_mesh_load_static("BLUEWARP.BIN"))))return false;
     last_tick=demo_world_clock();return true;
 }
 bool world_props_draw_upload(void)
 {
+    if(tree_mouth && kokiri_scene_room()==1 && !actor_mesh_upload(tree_mouth))return false;
+    unsigned wall_models=wall_skull_models(kokiri_scene_room());
+    if(gohma && kokiri_scene_room()==1 && !actor_mesh_upload(gohma))return false;
+    if(boss_heart && kokiri_scene_room()==1 &&
+       (!actor_mesh_upload(boss_heart)||!actor_mesh_upload(blue_warp)))return false;
+    if(goma && gohma_larva_room(save_state.scene_id,kokiri_scene_room()) && (!actor_mesh_upload(goma) || !actor_mesh_upload(goma_egg)))return false;
+    if(hint && hintnuts_room(kokiri_scene_room()) && (!actor_mesh_upload(hint) || !actor_mesh_upload(hint_flower) || !actor_mesh_upload(hint_ball)))return false;
+    if(baba_head && dekubaba_room(kokiri_scene_room()) && !actor_mesh_upload(baba_head))return false;
+    if(skull && (skulltula_room(kokiri_scene_room()) || (wall_models&1)) && !actor_mesh_upload(skull))return false;
+    if(gold_skull && (wall_models&2) && !actor_mesh_upload(gold_skull))return false;
+    if(skull_token && (wall_models&4) && !actor_mesh_upload(skull_token))return false;
     unsigned int i;for(i=0;i<11;++i) if(sign[i] && !actor_mesh_upload(sign[i])) return false;
+    for(i=0;i<3;++i)if(torches[i] && (dungeon_torches_room_models(kokiri_scene_room())&(1u<<i)) && !actor_mesh_upload(torches[i]))return false;
+    for(i=0;i<5;++i)if(walls[i] && (dungeon_walls_room_mask(kokiri_scene_room())&(1u<<i)) && !actor_mesh_upload(walls[i]))return false;
+    for(i=0;i<14;++i)if(puzzles[i] && (dungeon_puzzles_models(kokiri_scene_room())&(1u<<i)) && !actor_mesh_upload(puzzles[i]))return false;
     return (!web || actor_mesh_upload(web)) && (!door || actor_mesh_upload(door)) && (!rock || actor_mesh_upload(rock)) && (!pot || actor_mesh_upload(pot)) &&
            (!chest || actor_mesh_upload(chest)) && (!bush || actor_mesh_upload(bush)) &&
            (!gossip || actor_mesh_upload(gossip));
@@ -82,6 +158,9 @@ void world_props_draw(unsigned int tick)
 {
     actor_t *a=0; unsigned int i,delta=tick-last_tick;last_tick=tick;
     if(delta>12) delta=12;
+    if(tree_mouth && kokiri_scene_room()==1) {
+        int32_t x,y,z;tree_mouth_position(&x,&y,&z);actor_mesh_draw_static(tree_mouth,x,y,z,0);
+    }
     while((a=actor_sys_find(WORLD_PROP_ID,a))) {
         if(a->scene!=save_state.scene_id || (a->room!=ACTOR_ROOM_NONE && a->room!=(int)(scene_flow_is_interior()?0:kokiri_scene_room()))) continue;
         {
@@ -120,20 +199,111 @@ void world_props_draw(unsigned int tick)
             if(a->scene==save_state.scene_id && a->room==kokiri_scene_room())
                 draw_sign(a->params,a->x,a->y,a->z,a->yaw,a->data[3]!=0);
     }
+    if(boss_heart){int32_t p[3];uint16_t yaw;
+        if(gameplay.get_item==GP_GET_CONTAINER)
+            actor_mesh_draw_static(boss_heart,demo_link.x,demo_link.y-DEMO_LINK_EYE_HEIGHT+70,demo_link.z,(uint16_t)(tick*512));
+        else if(gohma_reward_body(0,p,&yaw))actor_mesh_draw_static(boss_heart,p[0],p[1],p[2],yaw);
+        if(gohma_reward_body(1,p,&yaw))actor_mesh_draw_static(blue_warp,p[0],p[1]+1,p[2],0);
+    }
+    if(gohma){int32_t p[3];uint16_t yaw;int16_t pitch;unsigned frame;
+        if(gohma_body(p,&yaw,&pitch,&frame)){
+            jo_3d_push_matrix();jo_3d_translate_matrix(p[0],-p[1],p[2]);slRotY(yaw);slRotX((uint16_t)-pitch);
+            kokiri_hit_filter(gohma_filter());
+            actor_mesh_draw(gohma,frame,0,0,0,0,0,0,0);kokiri_hit_filter(0);jo_3d_pop_matrix();
+        }
+    }
+    for(i=0;goma && i<GOHMA_LARVA_MAX;++i) {
+        int32_t p[3],scale;uint16_t yaw;unsigned frame,kind=gohma_larva_body(i,p,&yaw,&frame,&scale);
+        if(!kind)continue;
+        jo_3d_push_matrix();jo_3d_translate_matrix(p[0],-p[1],p[2]);slScale(scale,scale,scale);
+        kokiri_hit_filter(gohma_larva_filter(i));
+        if(kind==1)actor_mesh_draw_static(goma_egg,0,0,0,yaw);
+        else actor_mesh_draw(goma,frame,0,0,0,yaw,0,0,0);
+        kokiri_hit_filter(0);
+        jo_3d_pop_matrix();
+    }
+    for(i=0;hint && i<HINTNUTS_MAX;++i) {
+        int32_t p[3];uint16_t yaw;unsigned frame;
+        if(hintnuts_flower(i,p,&yaw))actor_mesh_draw_static(hint_flower,p[0],p[1],p[2],yaw);
+        if(hintnuts_body(i,p,&yaw,&frame)){kokiri_hit_filter(hintnuts_filter(i));actor_mesh_draw(hint,frame,p[0],p[1],p[2],yaw,0,0,0);kokiri_hit_filter(0);}
+    }
+    for(i=0;hint_ball && i<HINTNUTS_BALLS;++i) {
+        int32_t p[3];uint16_t roll;if(!hintnuts_ball(i,p,&roll))continue;
+        jo_3d_push_matrix();jo_3d_translate_matrix(p[0],-p[1],p[2]);slRotY(demo_yaw);slRotZ(roll);
+        actor_mesh_draw_static(hint_ball,0,0,0,0);jo_3d_pop_matrix();
+    }
+    for(i=0;baba_head && i<DEKUBABA_MAX;++i) {
+        const dekubaba_view *v=dekubaba_body(i);if(!v)continue;
+        kokiri_hit_filter(dekubaba_filter(i));
+        kokiri_dekubaba_stem(v);
+        if(!v->stick) {
+            jo_3d_push_matrix();jo_3d_translate_matrix(v->head[0],-v->head[1],v->head[2]);slRotY(v->yaw);slRotX((uint16_t)-v->pitch);
+            slScale(v->scale,v->scale,v->scale);
+            actor_mesh_draw(baba_head,v->frame,0,0,0,0,0,0,0);jo_3d_pop_matrix();
+        }
+    }
+    kokiri_hit_filter(0);
+    for(i=0;skull && i<WALL_SKULL_MAX;++i) {
+        int32_t p[3];uint16_t yaw,roll;unsigned frame,kind=wall_skull_body(i,p,&yaw,&roll,&frame);
+        if(kind) {
+            jo_3d_push_matrix();jo_3d_translate_matrix(p[0],-p[1],p[2]);slRotY(yaw);slRotZ(roll);
+            if(kind==3)actor_mesh_draw_static(skull_token,0,0,0,0);
+            else {
+                if(kind==1)slScale(32768,32768,32768);
+                kokiri_hit_filter(wall_skull_filter(i));
+                actor_mesh_draw(kind==1?skull:gold_skull,frame,0,0,0,0,0,0,0);kokiri_hit_filter(0);
+            }
+            jo_3d_pop_matrix();
+        }
+    }
+    for(i=0;skull && i<SKULLTULA_MAX;++i) {
+        int32_t p[3];uint16_t yaw,roll;unsigned frame;bool big;
+        if(skulltula_body(i,p,&yaw,&roll,&frame,&big)) {
+            jo_3d_push_matrix();jo_3d_translate_matrix(p[0],-p[1],p[2]);slRotY(yaw);slRotX(roll);
+            if(big)slScale(91750,91750,91750);
+            kokiri_hit_filter(skulltula_filter(i));
+            actor_mesh_draw(skull,frame,0,0,0,0,0,0,0);kokiri_hit_filter(0);jo_3d_pop_matrix();
+        }
+    }
+    for(i=0;puzzles[0] && i<dungeon_puzzles_count();++i) {
+        int32_t x,y,z;uint16_t yaw,roll;unsigned model=dungeon_puzzles_body(i,&x,&y,&z,&yaw,&roll);
+        if(model) {
+            jo_3d_push_matrix();jo_3d_translate_matrix(x,-y,z);slRotY(yaw);slRotX(roll);
+            if(model<=4) {
+                static const int32_t heights[]={65536,45875,26214,6554};
+                slScale(65536,heights[model-1],65536);model=1;
+            }
+            actor_mesh_draw_static(puzzles[model-1],0,0,0,0);jo_3d_pop_matrix();
+        }
+    }
     for(i=0;web && i<dungeon_webs_count();++i) {
         int32_t x,y,z;uint16_t yaw;
         if(dungeon_webs_body(i,&x,&y,&z,&yaw)) actor_mesh_draw_static(web,x,y,z,yaw);
     }
+    for(i=0;i<5;++i) {
+        int32_t x,y,z;
+        if(walls[i] && dungeon_walls_body(i,&x,&y,&z))actor_mesh_draw_static(walls[i],x,y,z,0);
+    }
+    for(i=0;torches[0] && i<dungeon_torches_count();++i) {
+        int32_t x,y,z;uint16_t yaw;bool lit;
+        unsigned type=dungeon_torches_body(i,&x,&y,&z,&yaw,&lit);
+        if(type) {
+            actor_mesh_draw_static(torches[type-1],x,y,z,yaw);
+            if(lit)kokiri_flame_draw(x,y+67,z,tick);
+        }
+    }
     for(i=0;door && i<KOKIRI_PORTAL_COUNT;++i) {
         const kokiri_portal *p=&kokiri_portals[i];
-        if(p->kind<8 || (p->front!=kokiri_scene_room() && p->back!=kokiri_scene_room())) continue;
+        if(p->scene!=scene_flow_scene() || p->kind<8 ||
+           (p->front!=kokiri_scene_room() && p->back!=kokiri_scene_room())) continue;
         actor_mesh_draw_static(door,p->x,p->y+dungeon_door_height(i),p->z,p->yaw);
     }
     for(i=0;chest && i<KOKIRI_CHEST_COUNT;++i) {
         const kokiri_chest_t *c=&kokiri_chests[i];
         unsigned int frame;int32_t focus[3];
         if(c->scene!=save_state.scene_id || c->room!=(scene_flow_is_interior() ? 0 : kokiri_scene_room())) continue;
-        if(gameplay_chest_opened(i) && chest_age[i]<WORLD_CHEST_FRAMES*3)
+        if(demo_chest_index()==(int)i)chest_age[i]=(uint16_t)(demo_chest_frame()*9/2);
+        else if(gameplay_chest_opened(i) && chest_age[i]<WORLD_CHEST_FRAMES*3)
             chest_age[i]=(uint16_t)(chest_age[i]+delta);
         frame=chest_age[i]/3;
         if(frame>=WORLD_CHEST_FRAMES) frame=WORLD_CHEST_FRAMES-1;

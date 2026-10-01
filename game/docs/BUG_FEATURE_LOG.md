@@ -1,14 +1,106 @@
 # Bug and feature log
 
+## BUG-070: Tree Continue spawns over wrong room bank (2026-09-30)
+
+P1 crash, Codex. Human died in the circular-web Tree room, chose Save/Continue,
+then spawned in sky and crashed. Continue skipped `scene_flow_load()` whenever
+the scene id already matched the resident Tree scene. Tree has twelve streamed
+room banks, so the saved room spawn could land over a different room's old
+collision/backdrop. Fixed: Continue validates the saved spawn and always reloads
+its scene/spawn bank; a failed destination retry reloads resident spawn 0 and
+stops at a core error if that recovery also fails. 333 focused host checks pass,
+including a regression that requires the unconditional saved-bank load. Clean
+build and human reproduction remain pending by human instruction.
+
+## BUG-052 follow-up: Game Over saved health stays at zero (2026-09-30)
+
+P0 recovery, Codex. Game Over Save Yes serializes the death health before the
+Continue choice. The N64 handles that on `Sram_OpenSave`: any health below
+`0x30` becomes three hearts; Kaleido Continue also sets exact `0x30` before
+respawn. Port now does both: `save_resume_remap()` raises a loaded save to the
+source minimum, while Tree Continue keeps the same minimum at respawn. This
+stops reload death loops. 333 focused host checks pass, including a serialized
+zero-heart Game Over save opening at three hearts. Clean/human retest pending.
+
+## BUG-069: Target glyphs / long CD lock / stick, torch and push-block handling (2026-09-30)
+
+P1 playability, Codex. Human saw message glyphs at enemy feet, no clear seed
+ray point, long token/chest CD lock, a stick that required a jump/swing to
+ignite torches, and no Grab prompt on a movable Tree block. Implemented and
+host-checked in shared tree; Clean build deferred by human.
+Four source reticle triangles replace target/aim glyph reuse; Baba display anchor
+rises only for the reticle. Chest/small/major CD tracks cap at 2.50/2.25/2.75s
+with fade. C-stick selection now holds the stick; ROM has no touch prompt, so
+its tip contacts a lit flame. Stick now uses the source left-hand attachment and
+forward one-hand slash rather than sword direction/combo/charge/spin behavior.
+Close front-facing push-block contact
+feeds A: Grab; held A starts push/pull and unsupported blocks fall. The original
+repair set had 67 checks; 333 focused current checks now pass. Animated hover
+arrow remains open; runtime acceptance awaits build.
+
+## BUG-068: Missing acquisition songs / weak hit feedback (2026-09-30)
+
+P2, Codex/Astra. Chest opening track existed but had no runtime call; shop
+fanfare transaction did not request music. Implemented chest pose/camera/song
+then item fanfare, shop/first-ammo/token songs, minor chest chime, enemy/Link
+hurt filters and extra source mechanism effects. 346 focused checks and usual
+Clean build pass; human visual/listening retest pending. See
+FEEDBACK_AUDIO_AUDIT.md for source references, budgets and remaining required
+camera/model/particles/ambient/boss/story audio parity work. Aim pitch/projection
+sign correction included. No emulator launched; no full 1:1 acceptance claimed.
+
+
+## BUG-067: Switch launch / item aim / scrub targeting and silent dungeon (2026-09-30)
+
+P1 switch launch; P2 controls/presentation/audio. Codex/Astra. Implemented,
+host-tested, usual Clean rebuilt; human runtime acceptance pending.
+Floor-switch mesh replacement no longer carries Link by world position.
+Tap aim/fire, center cursor and target quick-shot/markers implemented.
+Hint Scrub range corrected from 70 to source 350; transparent pixels culled.
+Tree/boss bank 0 replaced by dungeon SFX bank with scrub/switch/hit/death
+triggers. 285 focused checks and memory/ISO checks pass. Current handoff
+records evidence and remaining source-fidelity gaps.
+
+## BUG-066: First Tree shutter still blocks slingshot route (2026-09-30)
+
+P1, Codex/Astra. Human confirms prior door fix insufficient. Real S7 collision
+reproduces stop at +/-24 from door plane: static rectangular seals remain.
+Exporter now transfers player blocking for those seals to the shutter actor;
+only entity-ignore flags change. Real 0<->1<->2 crossing tests pass both ways,
+frames and closed/clear/switch gates remain blocking. Usual Clean rebuilt;
+human route retest pending. Climb target also increased 1.5x per human request.
+46 focused checks pass; see latest OPUS_HANDOFF for build and evidence.
+
+## BUG-065: Human Tree playtest regressions (2026-09-30)
+
+P1 death softlock; P2 climb visibility and cutscene text/controller labels.
+Codex/Astra. Human reports Skulltula knock-off/fatal fall onto chest with no
+Game Over, close/clipped climbing view, Tree first-camera text obscured by
+panel, and [C-Up] despite Xbox labels. Code changes and 310 focused checks
+complete; usual Clean rebuilt. Exact runtime reproduction/retest pending.
+Held death now survives loss of floor; lethal landing wins over chest/pause;
+climb holds farther distance; cutscene text retains rows and expands shared
+labels before wrapping. See latest OPUS_HANDOFF for evidence and limits.
+
+## BUG-064: White Ydan doors / fire dependencies (2026-09-30)
+
+P1, Codex/Astra. White door asset traced to unbound gameplay_keep texture
+segment 4; exporter repaired with source artwork regression. Door A no longer
+also requests a roll, and Open/refusal feedback is wired. Torches, floor/wall
+web fire, rotated wall collision and temporary switch 60 added. 276 focused
+checks pass. Visual/controller acceptance remains pending; see the newest
+M5_M6_IMPLEMENTATION checkpoint for target results and exact remaining gaps.
+
 ## BUG-063: Dungeon route completion (2026-09-30)
 
 P1, Codex/Astra, open. User requires a completely playable route by deadline.
 All 12 Tree rooms, nine source-gated shutters and two breakable floor webs now
 integrated; 245 focused checks and Clean build pass. Boss scene remains isolated.
-Missing wall webs/fire, torches/switches/platforms, dungeon enemies and source
-scrub sequence still prevent normal completion; no debug clear flags added.
+Wall webs/fire and torch-switch hooks were added in BUG-064. Other switches,
+platforms, dungeon enemies and source scrub sequence still prevent normal
+completion; no debug clear flags added.
 Door controls are A while facing within reach. Opening camera/animation/SFX and
-HUD prompt, web edge deformation and particles need follow-up. Foreground boot
+web edge deformation and particles need follow-up. HUD Open added in BUG-064. Foreground boot
 observed; room-by-room controller traversal and full fresh-file clear unverified.
 See the latest M5_M6_IMPLEMENTATION.md entry for files and evidence.
 
@@ -195,7 +287,7 @@ whether work stops. Optional features stay in backlog until assigned.
 | BUG-049 | Continue Yes spawns Link in sky/nowhere and freezes | `bug`, `priority: P0` | Claude | M2e blocker | Fixed (probable cause); human Kronos pending |
 | BUG-050 | Child Link death voice sounds like adult Link | `bug`, `priority: P3` | Claude | M8 audio polish / next death-audio work | Open: deferred by human |
 | BUG-051 | Maze boulder slides as static mesh, no rolling spin | `bug`, `priority: P2` | Claude | M8 polish / En_Goroiwa visual | Open |
-| BUG-052 | Loading a Game Over save starts Link dying | `bug`, `priority: P0` | Claude | M2e save/load regression; before further M3 expansion | Open |
+| BUG-052 | Loading a Game Over save starts Link dying | `bug`, `priority: P0` | Codex | M2e save/load regression | Fixed in tree; Clean/human retest pending |
 | BUG-053 | Pause corruption after Continue with rebuilt mounted ISO | `bug`, `priority: P1` | Codex | Cold-boot Continue retest; keep mounted image unchanged | Open: live wrong-sector reads confirmed |
 | BUG-054 | Fresh-boot title hangs in full-work-heap callback allocation | `bug`, `priority: P0` | Astra | Cold boot title | Code fixed; Clean build passes; runtime retest pending |
 | BUG-055 | M5/M6 source rooms not yet connected to complete gameplay | `bug`, `priority: P1` | Codex/Astra | M5/M6 integration | Open |
@@ -1380,7 +1472,7 @@ Game Over record; no change to either issue's status.
 ### BUG-048: Death Save prompt cannot select No
 
 **Labels:** `bug`, `priority: P1`. **Assignee:** Claude (M2e owner).
-**State:** Open. **Reported:** human gameplay review, 2026-09-27.
+**State:** Fixed in tree; Clean/human retest pending. **Reported:** human gameplay review, 2026-09-27.
 **Milestone:** M2e regression; investigate with BUG-049.
 
 Reproduction reported: die, reach the Save Yes / No prompt, attempt to choose
@@ -1466,11 +1558,12 @@ valid spawn. Blocks normal recovery through the saved adventure. Repeated
 reload/death loop and permanent save corruption are not established.
 Scene, slot, exact build and intervening Continue/Title choices not supplied.
 
-Cause unverified: inspect saved health, load-time health restoration and reset
-of transient death/reaction state against the original game. Do not assume
-zero health was serialized or label the save corrupt without evidence.
-Separate from BUG-049 (Continue spawn/freeze); test both paths after repair.
-No agent reproduction, runtime check or fix claimed in this logging turn.
+Cause found 2026-09-30: Game Over Save Yes writes before its Continue choice,
+so health zero is serialized. `Sram_OpenSave` raises any health below `0x30` to
+that source three-heart minimum; this port now does the same in
+`save_resume_remap()` before entering the world. Continue also retains the
+source `0x30` guard at respawn. Separate from BUG-049/070 bank reload; both
+paths have focused host coverage.
 
 Acceptance: Game Over Save Yes -> load the same slot produces a living,
 controllable Link; repeat after forest/interior deaths. Verify inventory/flags
@@ -1595,3 +1688,20 @@ RAM figures below describe earlier checkpoints.
 - Clean rebuilt: extra handle costs 256 B, BSS 0x06083c30, 976 B below SGL.
   12 focused tests pass (filesystem handle regression, cutscene skip, NPC bank).
   Permanent prevention rule recorded in DOSEI-LEGEND-BIBLE.md by user request.
+
+## Human Tree route blockers (2026-09-30, Codex)
+
+P1 human reports: no Tree meeting/mouth cutscene, normal Baba unresponsive to
+sword, shutter opens but passage fails. Also missing C-item HUD icons.
+Root causes/fixes and 342-check evidence are in the current OPUS_HANDOFF.md
+checkpoint. Clean game-clean.cue rebuilt; human runtime retest pending. Outside
+withered Baba combat was human-confirmed. Original Baba types intentionally
+differ; retained textures have a human-approved VRAM-budget exception.
+
+## P1 boot: TREEMOUTH.BIN not found (2026-09-30)
+
+Human confirmed blue error before title. Asset existed on disc but exceeded
+Saturn GFS filename limit. Renamed four affected assets to 8.3 and added
+pre-master guards. Replacement game-clean-bootfix.cue built and ISO payloads
+checked; original mounted image unchanged. Four regression tests pass. Human
+cold-boot retest pending. Owner Codex; do not mark runtime accepted yet.

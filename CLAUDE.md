@@ -7,6 +7,25 @@ Always use caveman talk. No waste human tokens. Bad. You caveman talking? Good g
 
 # Project handoff - 2026-09-16
 
+## Permanent human rule: keep the whole game plan current (2026-09-30)
+
+Every agent must read `game/docs/DEMO_PLAN.md` before game work and update it
+in the same task as implementation, scope, ownership, blocker or verification
+changes. Reconcile the whole document, replacing stale status and conflicting
+next steps; appending a checkpoint alone is insufficient. Distinguish code
+implemented, host tests, target builds and runtime/human acceptance. Preserve
+unfinished requirements. Keep history in handoff/checkpoint records; before
+handoff, ensure the plan matches the actual shared working tree.
+
+## Human rule: use the usual Clean image (2026-09-30)
+
+Rebuild the usual `game/build/game-clean.cue` / `.iso` for player fixes. Do not
+create alternate image names unless explicitly requested. Do not overwrite a
+mounted image; resolve that blocker while preserving the usual output path.
+Launcher order: Play Dosei Legend (Standard) = clean/default;
+Play Dosei Legend (320x480i) = hires; Debug Mode = normal.
+Human owns runtime testing; do not launch an emulator or inject test input.
+
 ## Human rule: playable progress, severity-first bug/feature triage
 
 For future work: fix severe current blockers immediately; log small bugs,

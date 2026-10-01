@@ -41,6 +41,21 @@ class SourceGraphTests(unittest.TestCase):
         cls.graph = {p: manifest.scene_manifest(p, manifest.scenes.source.extract(OOT, prefix=p),
                      names, objects, entrances) for p in manifest.SPECS}
 
+    def test_field_source_graph_preserves_return_and_all_owls(self):
+        names=manifest.actors.table(OOT/'include/tables/actor_table.h','DEFINE_ACTOR')
+        objects=manifest.actors.table(OOT/'include/tables/object_table.h','DEFINE_OBJECT')
+        field=manifest.scene_manifest('spot00',manifest.scenes.source.extract(OOT,prefix='spot00'),
+            names,objects,manifest.scenes.entrance_table(OOT),('SCENE_HYRULE_FIELD',1))
+        self.assertEqual(field['collision']['triangles'],1579)
+        self.assertEqual(len(field['rooms']),1)
+        self.assertEqual(len(field['exits']),15)
+        return_exit=next(e for e in field['exits'] if e['scene']=='SCENE_LOST_WOODS')
+        self.assertEqual((return_exit['slot'],return_exit['spawn']),(4,8))
+        owls=[a for a in field['rooms'][0]['actors'] if a['name']=='En_Owl']
+        self.assertEqual([a['params'] for a in owls],[0x4c,0xff,0x13f,0x14b])
+        self.assertEqual(owls[0]['position'],[4284,182,7877])
+        self.assertNotIn('spot00',manifest.SPECS) # audit must not alter existing bake selection
+
     def test_all_rooms_and_upper_room_ids(self):
         self.assertEqual([len(self.graph[p]['rooms']) for p in manifest.SPECS], [12, 2, 10])
         self.assertEqual(self.graph['ydan']['rooms'][-1]['id'], 11)

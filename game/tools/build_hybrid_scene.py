@@ -18,7 +18,7 @@ import build_kokiri_scene as source
 import build_quads as quads
 from vdp1_budget import (Budget, tile_bytes, MAX_POLYGONS, MAX_VERTICES,
                          RUNTIME_SPRITE_BYTES, FOREST_VRAM_MARGIN,
-                         FOREST_ACTOR_BYTES)
+                         FOREST_ACTOR_BYTES, ACTOR_SCENES)
 
 OOT_DEFAULT = pathlib.Path('D:/Workspace-Claude/game-decomps/n64/oot')
 
@@ -34,6 +34,7 @@ def load_faces(oot, rom_dir=None, prefix='spot04'):
     for name, data in segments.items():
         if 'room' in name:
             display = source.DisplayLists(segments[prefix + '_scene'], data)
+            if prefix in ('spot09','spot16'): display.include_depth_branches = True
             if prefix == 'ydan':
                 # Scene_DrawConfigDekuTree binds segment 8 to the day entrance
                 # texture (not a display list). Night is outside this slice.
@@ -195,7 +196,7 @@ def render_tile(group, width, height, shared=False):
 
 
 def convert(oot, head, actor, out_dir, patches_only=False, rom_dir=None,
-            quad_obj=None, source_path=None, room=None, prefix='spot04', layout=None):
+            quad_obj=None, source_path=None, room=None, prefix='spot04', layout=None, base_tile_limit=None, source_tessellation=False):
     source_faces = load_faces(oot, rom_dir, prefix=prefix)
     from layout_variants import build_document
     document = build_document() if layout is None else layout
@@ -251,7 +252,7 @@ def convert(oot, head, actor, out_dir, patches_only=False, rom_dir=None,
                 candidates.append(((center[0]+300)**2+center[2]**2, i))
     selected = {i for _,i in sorted(candidates)[:50]}
     if room is not None:
-        groups = [part for g in groups for part in room_ground(g)]
+        groups = [part for g in groups for part in ([g] if source_tessellation else room_ground(g))]
         # Isolated near-camera split experiment, opt-in only. DOSEI_SPLIT_TEST
         # holds source triangle ids ("580,581"); the one group built from
         # exactly those triangles is replaced by its 2x2 children. Everything
@@ -283,6 +284,10 @@ def convert(oot, head, actor, out_dir, patches_only=False, rom_dir=None,
     positions, position_ids, faces, tiles, tile_ids, records = [], {}, [], collections.OrderedDict(), {}, []
 
     def add_tile(group, w, h, shared):
+        # Explicit offline policy for large scenes. Resample the same UV patch;
+        # geometry, winding, source object identity and collision stay intact.
+        if shared and base_tile_limit is not None:
+            w, h = min(w, base_tile_limit), min(h, base_tile_limit)
         w, h = flat_tile_size(group, w, h)
         clut, pixels = render_tile(group, w, h, shared)
         key = (w, h, clut, pixels)
@@ -330,7 +335,7 @@ def convert(oot, head, actor, out_dir, patches_only=False, rom_dir=None,
 
     budget = Budget()
     budget.add('link', actor['tiles'], actor['polygons'], actor['vertices'])
-    if prefix == 'spot04':
+    if prefix in ACTOR_SCENES:
         budget.reserve_forest_actors()
     budget.add('shared', [(t['width'], t['height']) for t in tiles.values()], 0, 0)
     if room is not None:
@@ -373,7 +378,7 @@ def convert(oot, head, actor, out_dir, patches_only=False, rom_dir=None,
     remaining = (budget.vram_limit - sum(tile_bytes(t['width'], t['height'])
                                          for t in tiles.values())
                  - actor_bytes(actor) - RUNTIME_SPRITE_BYTES - FOREST_VRAM_MARGIN
-                 - (FOREST_ACTOR_BYTES if prefix == 'spot04' else 0))
+                 - (FOREST_ACTOR_BYTES if prefix in ACTOR_SCENES else 0))
     floors = []
     for i, (group, tile) in enumerate(pieces):
         if flat_surface(group):
@@ -426,7 +431,7 @@ def convert(oot, head, actor, out_dir, patches_only=False, rom_dir=None,
     budget = Budget()
     budget.add('forest', [(t['width'],t['height']) for t in tiles.values()], len(faces), len(positions))
     budget.add('link', actor['tiles'], actor['polygons'], actor['vertices'])
-    if prefix == 'spot04':
+    if prefix in ACTOR_SCENES:
         budget.reserve_forest_actors()
     print(budget.report(), flush=True)
     if budget.failures():

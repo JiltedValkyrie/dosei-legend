@@ -12,7 +12,7 @@ import build_cart_tables as tables
 
 class InteriorAudio(unittest.TestCase):
     def test_house_and_shop_score_bounds(self):
-        for name, sequence in (('HOUSE', 31), ('SHOP', 85), ('DUNGEON', 24), ('WOODS', 62)):
+        for name, sequence in (('HOUSE', 31), ('SHOP', 85), ('DUNGEON', 24), ('WOODS', 62), ('FAIRY', 40), ('BOSS',27), ('BOSSCLEAR',33)):
             with self.subTest(bank=name):
                 gen = ROOT / 'build/generated'
                 header = (gen / (name.lower() + '_score.h')).read_text()

@@ -4,7 +4,7 @@ import os
 from pathlib import Path
 from PIL import Image
 import build_authored_scene as authored
-from vdp1_budget import Budget
+from vdp1_budget import Budget, ACTOR_SCENES
 
 DEFAULT_CONFIG = Path(__file__).resolve().parents[1] / 'assets/room_imports.json'
 
@@ -23,6 +23,7 @@ def selected(prefix, room):
         return None
     entry = dict(entry)
     entry['forest'] = prefix == 'spot04'
+    entry['actors'] = prefix in ACTOR_SCENES
     for key in ('obj', 'atlas', 'uv_from'):
         if key in entry:
             entry[key] = (config.parent / entry[key]).resolve()
@@ -104,13 +105,13 @@ def convert(entry, actor):
     budget = Budget()
     budget.add('import', [(t['width'], t['height']) for t in tiles.values()],len(faces),len(vertices))
     budget.add('link', actor['tiles'], actor['polygons'], actor['vertices'])
-    if entry.get('forest'):
+    if entry.get('forest') or entry.get('actors'):
         budget.reserve_forest_actors()
     failures = budget.failures()
-    if entry.get('forest'):
+    if entry.get('forest') or entry.get('actors'):
         from vdp1_budget import FOREST_VRAM_MARGIN
         if budget.vram_bytes + FOREST_VRAM_MARGIN > budget.vram_limit:
-            failures.append('Forest import must leave 32 KiB spare after resident actors')
+            failures.append('Gameplay room import must leave 32 KiB spare after resident actors')
     if failures:
         raise ValueError('; '.join(failures))
     return vertices, faces, tiles, dict(faces=records, budget=budget.parts,

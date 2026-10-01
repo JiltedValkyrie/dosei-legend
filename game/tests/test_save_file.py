@@ -19,11 +19,11 @@ import unittest
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 GCC = pathlib.Path('C:/msys64/mingw64/bin/gcc.exe')
 
-SAVE_FILE_PAYLOAD_BYTES = 304
+SAVE_FILE_PAYLOAD_BYTES = 338
 SAVE_FILE_V4_PAYLOAD_BYTES = 298
 SAVE_FILE_V2_PAYLOAD_BYTES = 290
 SAVE_FILE_BYTES = 8 + SAVE_FILE_PAYLOAD_BYTES + 2
-SAVE_FILE_VERSION = 8
+SAVE_FILE_VERSION = 10
 
 SAVE_FILE_OK = 0
 SAVE_FILE_EMPTY = 1
@@ -91,6 +91,47 @@ class SaveFile(unittest.TestCase):
 
     def setUp(self):
         self.lib.save_new_game()
+
+    def test_tunic_thresholds_and_persistent_selection(self):
+        self.assertFalse(self.lib.sf_tunic_equip(1))
+        self.assertFalse(self.lib.sf_tunic_equip(2))
+        self.lib.sf_skull_set(0,1)
+        self.assertTrue(self.lib.sf_tunic_equip(1))
+        self.assertFalse(self.lib.sf_tunic_equip(2))
+        self.lib.sf_skull_set(0,15)
+        self.assertFalse(self.lib.sf_tunic_equip(2))
+        self.lib.sf_skull_set(1,1)
+        self.assertTrue(self.lib.sf_tunic_equip(2))
+        self.lib.sf_ocarina_give()
+        block=self.pack()
+        self.lib.save_new_game()
+        self.assertEqual(self.lib.sf_tunic(),0)
+        self.assertEqual(self.lib.sf_ocarina(),0)
+        self.assertEqual(self.lib.sf_unpack(bytes(block),len(block)),SAVE_FILE_OK)
+        self.assertEqual(self.lib.sf_tunic(),2)
+        self.assertEqual(self.lib.sf_ocarina(),1)
+        self.assertFalse(self.lib.sf_tunic_equip(3))
+
+    def test_v9_migration_preserves_tokens_without_equipping_new_tunic(self):
+        self.lib.sf_skull_set(0,31)
+        block=self.pack()[:8+336]
+        block[5]=9
+        total=self.lib.sf_checksum(bytes(block[8:]),336)
+        block+=bytes([total>>8,total&255])
+        self.assertEqual(self.lib.sf_unpack(bytes(block),len(block)),SAVE_FILE_OK)
+        self.assertEqual(self.lib.sf_tunic(),0)
+        self.assertEqual(self.lib.sf_ocarina(),0)
+        self.assertTrue(self.lib.sf_tunic_equip(2))
+
+    def test_game_over_save_reloads_at_source_three_heart_minimum(self):
+        """Sram_OpenSave raises a dead save to 0x30 before the world loads."""
+        self.lib.sf_set_health(0, 0x30)
+        dead = self.pack()
+        self.lib.save_new_game()
+        self.assertEqual(self.unpack(dead), SAVE_FILE_OK)
+        self.assertEqual(self.lib.sf_health(), 0)
+        self.lib.sf_resume_remap()
+        self.assertEqual(self.lib.sf_health(), 0x30)
 
     # ---- helpers -------------------------------------------------------
 
@@ -222,11 +263,26 @@ class SaveFile(unittest.TestCase):
         self.assertFalse(self.lib.save_check_quest_item(QUEST_KOKIRI_EMERALD))
         self.assertFalse(self.lib.save_is_dead())
 
+    def test_skull_flags_round_trip_no_duplicate_and_v8_migrate(self):
+        g=self.lib
+        self.assertTrue(g.save_collect_skull(0,2))
+        self.assertFalse(g.save_collect_skull(0,2))
+        self.assertTrue(g.save_collect_skull(31,128))
+        self.assertEqual(g.save_skull_count(),2)
+        block=self.pack();g.save_new_game()
+        self.assertEqual(g.save_skull_count(),0)
+        self.assertEqual(self.unpack(block),SAVE_FILE_OK)
+        self.assertEqual(g.save_skull_count(),2)
+        old=bytearray(block[:312]);old[5]=8
+        total=g.sf_checksum(bytes(old[8:]),304);old+=bytes((total>>8,total&255))
+        self.assertEqual(self.unpack(old),SAVE_FILE_OK)
+        self.assertEqual(g.save_skull_count(),0)
+
     def test_visited_rooms_round_trip_and_v7_migration(self):
         block = self.pack()
         block[310:312] = bytes((0x08, 0x05))
-        total = self.lib.sf_checksum(bytes(block[8:312]), 304)
-        block[312:314] = bytes((total >> 8, total & 255))
+        total = self.lib.sf_checksum(bytes(block[8:-2]), SAVE_FILE_PAYLOAD_BYTES)
+        block[-2:] = bytes((total >> 8, total & 255))
         self.assertEqual(SAVE_FILE_OK, self.unpack(block))
         self.assertEqual(bytes((0x08, 0x05)), bytes(self.pack()[310:312]))
         old = block[:310]

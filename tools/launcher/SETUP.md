@@ -81,7 +81,7 @@ Alternatively use `./build.sh` or `./build.sh --hires` from `game/` in MSYS2;
 that shell needs a working Windows Python on PATH to read the config initially
 (or set `DOSEI_PYTHON` to its full path).
 
-Open `launch-game.bat`, select standard, hi-res or clean player test, then **Run selected**.
+Open `launch-game.bat`, select Play Dosei Legend (Standard), Play Dosei Legend (320x480i), or Debug Mode, then **Run selected**.
 Clean hides the in-game diagnostic overlay. Build it with `game/build.bat -Variant clean`.
 Reopen an already-running launcher after updating its variant list.
 The selector launches existing images; it does not build them. Direct launchers
@@ -107,3 +107,13 @@ Trigger**. Keep bumpers on real buttons (for example Z and C). The
 standard-build debug row `pad ... R### L###` shows 0 at rest and 176 or
 more on a pull. Without the patch, use the pad's digital mode or a
 Standard Pad, where R is shield as usual.
+
+## Missing libopenal-1.dll
+
+Use the project launcher with `kronos_dlls` set to the matching Kronos runtime
+directory (this workstation: `C:/msys64/mingw64/bin`). Opening a bare executable
+does not inherit the launcher's configured DLL path. A locally built Kronos may
+also need its matching runtime DLL dependencies beside the executable and Qt's
+`platforms/qwindows.dll` plugin. Keep these from the same installed toolchain;
+do not fetch individual DLLs from download sites. The local `kronos-draw-fix`
+copy now has these dependencies staged beside it.

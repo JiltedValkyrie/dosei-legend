@@ -8,6 +8,7 @@
 static int requested_track, active_track;
 static bool saw_play;
 static unsigned int last_play_tick;
+bool cdda_busy(void) {return requested_track!=0 || active_track!=0;}
 
 /* CDC_CdPlay one track once (jo_audio_play_cd_track without the audio module). */
 void    cdda_play(int track)
@@ -30,7 +31,11 @@ void cdda_service(void)
         CDC_PLY_STYPE(&ply) = CDC_PTYPE_TNO;
         CDC_PLY_STNO(&ply) = track;
         CDC_PLY_SIDX(&ply) = 1;
-        CDC_PLY_ETYPE(&ply) = CDC_PTYPE_TNO;
+        /* The final track ends at the disc lead-out. Kronos resolves a track
+         * end through the NEXT track's TOC entry, which is unused for the last
+         * track; it then reports PLAY forever. The drive's default end is the
+         * lead-out on both hardware and emulator. */
+        CDC_PLY_ETYPE(&ply) = track == CDDA_TRACK_LAST ? CDC_PTYPE_DFL : CDC_PTYPE_TNO;
         CDC_PLY_ETNO(&ply) = track;
         CDC_PLY_EIDX(&ply) = 99;
         CDC_PLY_PMODE(&ply) = CDC_PM_DFL;

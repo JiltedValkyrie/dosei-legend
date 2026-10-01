@@ -1,4 +1,8 @@
 /* Music owns 0..23, actions 24..30, Navi 31. No CD reads in play. */
+/* Event dispatch / bank setup: size-oriented, outside geometry and mixing loops. */
+#ifdef __GNUC__
+#pragma GCC optimize ("Os")
+#endif
 #include <jo/jo.h>
 #include "action_audio.h"
 #include "action_audio_data.h"
@@ -337,8 +341,7 @@ void action_audio_events(uint32_t events)
     }
     if (events2 & GP2_EVENT_NAVI_TALK) play(ACTION_NAVI_TALK, 31);
     /* M2e: func_80837C0C NA_SE_PL_DAMAGE + NA_SE_VO_LI_DAMAGE_S_KID (rand 3);
-    ** knockdown NA_SE_VO_LI_FALL_L_KID; func_80843E64 landing voice (the
-    ** BODY_HIT channel is not rendered: PL_DAMAGE stands in, logged);
+    ** knockdown NA_SE_VO_LI_FALL_L_KID; func_80843E64 landing voice + original BODY_HIT;
     ** func_80836448 NA_SE_VO_LI_DOWN_KID; Health_IsCritical alarm. */
     if (events & GP_EVENT_HURT) {
         play(ACTION_PL_DAMAGE, 24);
@@ -346,7 +349,7 @@ void action_audio_events(uint32_t events)
     }
     if (events & GP_EVENT_KNOCKDOWN) play(ACTION_FALL_L0, 25);
     if (events2 & GP2_EVENT_LAND_DAMAGE) {
-        play(ACTION_PL_DAMAGE, 24);
+        play(ACTION_BODY_HIT, 24);
         play(ACTION_LAND_HURT0, 25);
     }
     if (events2 & GP2_EVENT_DEATH) play(ACTION_DOWN, 25);
@@ -390,8 +393,23 @@ void action_audio_events(uint32_t events)
     if (events & GP_EVENT_ROLL_VOICE) play(ACTION_VOICE0 + (voice++ & 3), 25);
     if (events & GP_EVENT_ROLL) play(ACTION_ROLL, 28);
     else if (events & GP_EVENT_FOOTSTEP) play(ACTION_FOOTSTEP, 28);
-    if (events & (GP_EVENT_PICKUP | GP_EVENT_EQUIP)) play(ACTION_EQUIP, 27);
+    if (events2 & GP2_EVENT_HP_RECOVER) play(ACTION_HP_RECOVER, 27);
+    else if (events2 & GP2_EVENT_GET_ITEM) play(ACTION_GET_ITEM, 27);
+    else if (events & (GP_EVENT_PICKUP | GP_EVENT_EQUIP)) play(ACTION_EQUIP, 27);
     else if (events & (GP_EVENT_TALK_OPEN | GP_EVENT_TALK_PAGE | GP_EVENT_TALK_CLOSE |
                        GP_EVENT_MENU_OPEN | GP_EVENT_MENU_CLOSE | GP_EVENT_MENU_MOVE))
         play(ACTION_MESSAGE, 27);
+    {
+        static const unsigned char sounds[GP_SFX_COUNT] = {AREA_SFX_SCRUB_UP, AREA_SFX_SCRUB_DOWN, AREA_SFX_SCRUB_THROW, AREA_SFX_SCRUB_WALK, AREA_SFX_SCRUB_HIT, AREA_SFX_SCRUB_FAINT, AREA_SFX_FOOT_SWITCH, AREA_SFX_DEKU_HIT, AREA_SFX_DEKU_DEAD, AREA_SFX_SKULL_HIT, AREA_SFX_SKULL_DEAD, AREA_SFX_LARVA_HIT, AREA_SFX_LARVA_DEAD, AREA_SFX_GOHMA_HIT, AREA_SFX_GOHMA_DEAD, AREA_SFX_CORRECT, AREA_SFX_APPEAR, AREA_SFX_DOOR_OPEN, AREA_SFX_DOOR_CLOSE, AREA_SFX_FREEZE, AREA_SFX_BOX_ITEM};
+        uint32_t pending=gameplay.world_sfx; unsigned i;
+        gameplay.world_sfx=0;
+        /* Scrub motion, switch clicks and combat use separate existing slots.
+         * Later (death) events override hit/movement from the same step. */
+        for(i=0;i<GP_SFX_COUNT;++i) if(pending & (1u<<i))
+            play_area(sounds[i],i==GP_SFX_CORRECT || i==GP_SFX_APPEAR?30:i>=GP_SFX_DOOR_OPEN?26:i<GP_SFX_FOOT_SWITCH?26:i==GP_SFX_FOOT_SWITCH?27:28);
+    }
 }
+
+void action_audio_tree_open(void) {play_area(AREA_SFX_TREE_OPEN,30);}
+
+void action_audio_owl_flap(void){play_area(AREA_SFX_OWL_FLAP,26);}

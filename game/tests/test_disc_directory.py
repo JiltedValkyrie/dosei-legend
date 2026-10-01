@@ -17,6 +17,20 @@ class DiscDirectoryTests(unittest.TestCase):
                 check(root, 256)
             check(root, 288)
 
+    def test_rejects_names_mastering_accepts_but_saturn_cannot_find(self):
+        for name in ('TREEMOUTH.BIN','BOSSHEART.BIN','BOSSCLEAR.PCM','BOSSCLEAR.LVL'):
+            with tempfile.TemporaryDirectory() as tmp:
+                root=Path(tmp);(root/name).touch()
+                with self.assertRaisesRegex(ValueError,'Saturn GFS 8.3'):
+                    check(root,384)
+
+    def test_short_asset_names_and_boot_binary_are_valid(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp)
+            for name in ('TREEMTH.BIN','BOSSHRT.BIN','BOSSCLR.PCM','BOSSCLR.LVL','0.bin'):
+                (root/name).touch()
+            check(root,384)
+
     def test_subdirectory_also_checked(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

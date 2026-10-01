@@ -96,6 +96,9 @@ int music_step(int is_busy) {
         subprocess.run([str(GCC), '-shared', '-O2', '-I' + str(GEN),
                         '-I' + str(ROOT / 'src'), str(path / 'test.c'),
                         str(ROOT / 'src/message.c'), str(ROOT / 'src/text_pool.c'),
+                        str(ROOT / 'src/ui_preferences.c'),
+                        '-I' + str(ROOT.parent / 'shared/lib/camera'),
+                        '-I' + str(ROOT.parent / 'shared/lib/collision'),
                         str(GEN / 'cutscenes.c'),
                         '-o', str(path / 'test.dll')], check=True, env=env)
         cls.lib = ctypes.CDLL(str(path / 'test.dll'))

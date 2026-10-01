@@ -54,8 +54,8 @@ def room_records(data, names, object_names):
     return result
 
 
-def scene_manifest(prefix, segments, names, object_names, entrances):
-    scene_name, expected_rooms = SPECS[prefix]
+def scene_manifest(prefix, segments, names, object_names, entrances, spec=None):
+    scene_name, expected_rooms = SPECS[prefix] if spec is None else spec
     scene = segments[prefix + '_scene']
     room_names = sorted((n for n in segments if n.startswith(prefix + '_room_')),
                         key=lambda n: int(n.rsplit('_', 1)[1]))

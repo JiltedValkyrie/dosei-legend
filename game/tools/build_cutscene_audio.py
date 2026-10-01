@@ -64,7 +64,7 @@ def loop_label_of(seq_path):
     return found.group(1) if found else None
 
 
-def build_one(source, output, name, sequence, stem, preserve_intro=False):
+def build_one(source, output, name, sequence, stem, preserve_intro=False,pitch_automation=False):
     seq = source / ('sequences/seq_%d.seq' % sequence)
     if not seq.is_file():
         raise SystemExit('missing sequence: %s' % seq)
@@ -72,7 +72,7 @@ def build_one(source, output, name, sequence, stem, preserve_intro=False):
 
     loop_label = loop_label_of(seq)
     notes, tempo, volumes, gain, intro, end, omitted = audio.interpret(
-        seq, loop_label or 'SEQ_0000', stop_at_loop=loop_label is not None)
+        seq, loop_label or 'SEQ_0000', stop_at_loop=loop_label is not None,pitch_automation=pitch_automation)
     times = audio.timeline(tempo, end)
     envelopes, instruments, samples, pcm, hashes = audio.load_font(
         source, font_id)

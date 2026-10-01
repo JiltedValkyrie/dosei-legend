@@ -27,9 +27,17 @@ BANKS = (
     ('shop_triggers', 'SHOP', HERE / 'build/generated/shop_score.h'),
     ('dungeon_triggers', 'DUNGEON', HERE / 'build/generated/dungeon_score.h'),
     ('woods_triggers', 'WOODS', HERE / 'build/generated/woods_score.h'),
+    ('fairy_triggers', 'FAIRY', HERE / 'build/generated/fairy_score.h'),
+    ('boss_triggers', 'BOSS', HERE / 'build/generated/boss_score.h'),
+    ('bossclear_triggers', 'BOSSCLEAR', HERE / 'build/generated/bossclear_score.h'),
+    ('owl_triggers', 'OWL', HERE / 'build/generated/owl_score.h'),
+    ('fairyget_triggers', 'FAIRYGET', HERE / 'build/generated/fairyget_score.h'),
+    ('field_triggers', 'FIELD', HERE / 'build/generated/field_score.h'),
+    ('stone_triggers', 'STONE', HERE / 'build/generated/stone_score.h'),
+
 )
 # Must match RAM_CART_MUSICTRG_BYTES / RAM_CART_TITLEPTH_BYTES (ram_cart.h).
-MUSICTRG_LIMIT = 0x10000  # RAM_LOW_MUSICTRG_BYTES; loaded before music starts
+MUSICTRG_LIMIT = 0x20000  # RAM_LOW_MUSICTRG_BYTES; loaded before music starts
 TITLEPTH_LIMIT = 0x1800
 
 

@@ -18,9 +18,18 @@
 #include "cdda.h"
 #include "music_songs.h"
 #include "music_banks.h"
+#include "field_music.h"
+#include "story_route.h"
+#include "emerald_story.h"
 #include "action_audio.h"
 #include "demo.h"
 #include "karebaba.h"
+#include "skulltula.h"
+#include "wall_skull.h"
+#include "dekubaba.h"
+#include "hintnuts.h"
+#include "gohma_larva.h"
+#include "gohma.h"
 #include "game_over.h"
 #include "navi.h"
 #include "gameplay.h"
@@ -42,6 +51,7 @@
 #include "npc_draw.h"
 #include "save_device.h"
 #include "file_select.h"
+#include "level_select.h"
 #include "scene_flow.h"
 #include "message.h"
 #include "cutscene.h"
@@ -66,12 +76,12 @@ static bool         scene_ready;
 static bool         music_ready;
 static bool         debug_visible;
 static unsigned int rejected_total;
-static void         viewer_hud(void);
-static void         dialogue_box(void);
-static void         inventory_menu(void);
-static void         game_over_screen(void);
-static void         file_select_screen(void);
-static void         cutscene_text(void);
+static void __attribute__((optimize("Os"))) viewer_hud(void);
+static void __attribute__((optimize("Os"))) dialogue_box(void);
+static void __attribute__((optimize("Os"))) inventory_menu(void);
+static void __attribute__((optimize("Os"))) game_over_screen(void);
+static void __attribute__((optimize("Os"))) file_select_screen(void);
+static void __attribute__((optimize("Os"))) cutscene_text(void);
 static void         cutscene_fade(void);
 
 /* Read DIALOG.TXT into its cart carve and bind it. jo_fs_read_file holds a
@@ -122,6 +132,8 @@ static bool     dialogue_text_load(void)
                            RAM_CART_MINIMAP_BYTES, minimap_bind) &&
             table_file_load("MUSICTRG.BIN", RAM_LOW(RAM_LOW_MUSICTRG_OFFSET),
                            RAM_LOW_MUSICTRG_BYTES, music_banks_bind) &&
+            table_file_load("GOHMAPOS.BIN", RAM_LOW(RAM_LOW_GOHMA_POSES_OFFSET),
+                           RAM_LOW_GOHMA_POSES_BYTES, gohma_bind) &&
             text_file_load("TITLEPTH.BIN", RAM_CART_TITLEPTH_OFFSET,
                            RAM_CART_TITLEPTH_BYTES, demo_title_paths_bind));
 }
@@ -160,6 +172,7 @@ static void texture_probe(void)
 ** renderer and attention's on-screen test. */
 int32_t             demo_screen_distance(void)
 {
+    if(story_owl_talking())return story_owl_screen_distance();
     if (cutscene_screen_distance() > 0)
         return (int32_t)cutscene_screen_distance();
     if (kokiri_scene_backdrop_active() && scene_flow_entry()->cam_dist > 0)
@@ -194,7 +207,7 @@ static void         viewer_draw(void)
     frame_timer_frame_begin();
     frame_timer_begin(FRAME_PHASE_MOVEMENT);
     demo_update();
-    if (!kokiri_scene_update()) {
+    if (!demo_code_fanfare_active() && !kokiri_scene_update()) {
         scene_ready = false;
         jo_printf(2, 2, "room load FAILED");
         return;
@@ -373,7 +386,9 @@ static void         viewer_draw(void)
         frame_timer_begin(FRAME_PHASE_LINK);
         /* shape.yOffset: a ledge step-up draws him from where he stood
          * while the actor is already on the ledge. */
-        if (gameplay.get_item) {
+        if(demo_chest_opening()) {
+            link_anim_pose(LINK_CLIP_CHEST_OPEN,demo_chest_frame(),0);
+        } else if (gameplay.get_item) {
             unsigned int frame = gameplay.get_item_age * 2u / 3u;
             if (frame >= LINK_FRAMES_GET_ITEM) frame = LINK_FRAMES_GET_ITEM - 1;
             link_anim_pose(LINK_CLIP_GET_ITEM, frame, 0);
@@ -401,12 +416,13 @@ static void         viewer_draw(void)
         kokiri_grass_draw();
         kokiri_rupees_draw(demo_world_clock());
         kokiri_boulder_draw();
-        kokiri_babas_draw();
     }
     if (demo_link_active && !demo_title_is_visible() &&
           (!cutscene_is_playing() || cutscene_is_in_scene())) {
         kokiri_nut_draw();
+        kokiri_babas_draw();
         npc_draw(demo_world_clock());
+        story_route_draw(demo_world_clock());
         kokiri_items_draw(demo_world_clock());
         kokiri_fairies_draw(demo_world_clock());
     }
@@ -415,9 +431,17 @@ static void         viewer_draw(void)
         action_audio_navi_flight(0, false);
     if (cutscene_is_playing() && !cutscene_hides_scene())
         kokiri_cutscene_effects_draw();
+    if(!cutscene_hides_scene())emerald_story_draw();
     rejected_total += kokiri_scene_rejected();
     cutscene_fade();
+    dialogue_box(); /* Clear outgoing dialogue before cutscene writes its rows. */
     cutscene_text();
+    { static bool field_card;
+      bool show=cutscene_is_playing() && cutscene_id()==CUTSCENE_FIELD_INTRO && cutscene_frame()>=40 && cutscene_frame()<160;
+      if(show)jo_printf(13,19,"HYRULE FIELD");
+      else if(field_card)jo_printf(13,19,"            ");
+      field_card=show;
+    }
     /* Persistent development readout, independent of auto-start probes. */
     {
         static bool debug_visible;
@@ -444,7 +468,6 @@ static void         viewer_draw(void)
             debug_visible = false;
         }
     }
-    dialogue_box();
     inventory_menu();
     game_over_screen();
     file_select_screen();
@@ -461,6 +484,13 @@ static void         viewer_draw(void)
     if (!demo_title_is_visible() && !demo_file_select_is_visible() &&
         !cutscene_is_playing())
     {
+        if (!gameplay_blocks_world() && !gameplay.dead) {
+            int32_t x,y; bool locked; unsigned kind;
+            if (demo_slingshot_aiming()) {
+                kokiri_lock_reticle_draw(160,120,KOKIRI_RETICLE_AIM);
+            } else if (demo_target_marker(&x,&y,&locked,&kind))
+                kokiri_lock_reticle_draw(x,y,kind);
+        }
         kokiri_rupee_hud_draw();
         minimap_draw(demo_link.x, demo_link.z, demo_link_yaw);
     }
@@ -589,10 +619,11 @@ static void         cutscene_box_clear(int top, int rows)
         jo_printf(0, top + row, "%-40s", "");
 }
 
-static void         cutscene_text(void)
+static void __attribute__((optimize("Os"))) cutscene_text(void)
 {
     static bool     was_active;
     static int      last_top, last_rows;
+    static uint32_t last_text_hash;
     unsigned int    line, run, lines;
     int             top, rows, text_row, prompt_row;
 
@@ -601,6 +632,7 @@ static void         cutscene_text(void)
             cutscene_box_clear(last_top, last_rows);
             jo_set_printf_palette_color(JO_COLOR_INDEX_Blue, JO_COLOR_Blue);
             was_active = false;
+            last_text_hash = 0;
         }
         return;
     }
@@ -628,7 +660,18 @@ static void         cutscene_text(void)
         (top * 8 + (top + rows) * 8) / 2,
         CUTSCENE_BOX_WIDTH * 8, rows * 8);
 
-    for (line = 0; line < lines; ++line) {
+    /* Retained VDP2 rows: avoid blanking/repainting every active scanout.
+     * The panel still submits each frame, but unchanged text stays in place. */
+    uint32_t hash = 2166136261u;
+    hash = (hash ^ message_state.message) * 16777619u;
+    hash = (hash ^ message_state.page) * 16777619u;
+    hash = (hash ^ message_state.revealed) * 16777619u;
+    hash = (hash ^ message_choice()) * 16777619u;
+    hash = (hash ^ ui_text_revision()) * 16777619u;
+    bool repaint = hash != last_text_hash;
+    last_text_hash = hash;
+
+    for (line = 0; repaint && line < lines; ++line) {
         /* The original's SHIFT, which is what centres the narration, measured
         ** from inside the box rather than from the screen edge. */
         int column = CUTSCENE_BOX_LEFT + 1 + (int)message_line_indent(line);
@@ -639,8 +682,8 @@ static void         cutscene_text(void)
         jo_printf(0, text_row + (int)line, "%-40s", "");
 
         for (run = 0; run < message_line_runs(line); ++run) {
-            const char  *text = message_run_text(line, run);
             unsigned int shown = message_run_visible(line, run);
+            const char  *text = message_run_text(line, run);
             unsigned int length = 0;
 
             while (text[length])
@@ -665,6 +708,8 @@ static void         cutscene_text(void)
     /* OoT's own prompt, on the box's bottom edge: the continue triangle, or
     ** the end square on the last page. Drawn only when the page is genuinely
     ** waiting -- never while it is still typing itself out. */
+    if (message_choices())
+        jo_printf(1,text_row+(int)lines-(int)message_choices()+(int)message_choice(),">");
     if (message_waits_for_button())
         kokiri_message_mark_draw(160, prompt_row * 8 + 4,
                                  message_is_last_page());
@@ -736,7 +781,7 @@ static volatile uint8_t *probe_cell(unsigned int x, unsigned int y, unsigned int
     return text_cell(x, y);
 }
 
-static void         print_bold(unsigned int x, unsigned int y, const char *name)
+static void __attribute__((optimize("Os"))) print_bold(unsigned int x, unsigned int y, const char *name)
 {
     char out[40], lower[40];
     unsigned int i;
@@ -798,7 +843,7 @@ static uint32_t dialogue_row_hash(const char *text, unsigned marker)
     return hash;
 }
 
-static void         dialogue_box(void)
+static void __attribute__((optimize("Os"))) dialogue_box(void)
 {
     static bool was_talking;
     static uint32_t row_hash[DIALOGUE_MAX_LINES + 1];
@@ -809,7 +854,7 @@ static void         dialogue_box(void)
      * VDP2 text too, so returning here cannot leave an old prompt or page on
      * screen -- and so a stale prompt cannot print over the file list. */
     if (gameplay_is_paused() || demo_title_is_visible() || demo_file_select_is_visible() ||
-        cutscene_is_playing()) {
+        cutscene_is_playing() || demo_chest_opening()) {
         if (was_talking) {
             for (i = 0; i < DIALOGUE_ROWS; ++i)
                 jo_printf(0, DIALOGUE_ROW + i, "%-40s", "");
@@ -881,7 +926,7 @@ static void         dialogue_box(void)
 
 /* Kaleido's Game Over prompts, as VDP2 text (menus are VDP2, never VDP1
 ** sprites). The source's rotating prompt windows and fades are not drawn. */
-static void         game_over_screen(void)
+static void __attribute__((optimize("Os"))) game_over_screen(void)
 {
     static game_over_state_t shown = GAME_OVER_OFF;
     game_over_state_t st = game_over_state();
@@ -916,7 +961,7 @@ static void         game_over_screen(void)
     }
 }
 
-static void         inventory_menu(void)
+static void __attribute__((optimize("Os"))) inventory_menu(void)
 {
     static bool was_paused;
     static int last_window = -1;
@@ -983,11 +1028,14 @@ static void         inventory_menu(void)
                 if (cursor == 1 && (gameplay.owned & GP_SWORD)) name = "Kokiri Sword";
                 if (cursor == 5 && (gameplay.owned & GP_SHIELD)) name = "Deku Shield";
                 if (cursor == 9) name = "Kokiri Tunic";
+                if (cursor == 10) name = save_tunic_unlocked(2) ? "Red Tunic" : "Need 5 Gold Tokens";
+                if (cursor == 11) name = save_tunic_unlocked(1) ? "Blue Tunic" : "Need 1 Gold Token";
                 if (cursor == 13) name = "Kokiri Boots";
             } else if (p->page == PAUSE_ITEMS) {
                 if (cursor == 0 && save_state.stick_owned) name = "Deku Stick";
                 if (cursor == 1 && save_state.nut_owned) name = "Deku Nut";
                 if (cursor == 6 && save_state.slingshot) name = "Fairy Slingshot";
+                if (cursor == 7 && save_state.fairy_ocarina) name = "Fairy Ocarina";
             } else if (p->page == PAUSE_MAP) name =
                 (save_state.scene_id == SAVE_SCENE_DEKU_TREE || save_state.scene_id == SAVE_SCENE_DEKU_TREE_BOSS)
                 ? "Deku Tree" : "Kokiri Forest";
@@ -1012,6 +1060,7 @@ static void         inventory_menu(void)
     }
     /* Backup writes remain the real demo/save-device path. */
     if (gameplay.pause_window.save_prompt) {
+        pause_windows_printf(6,20,"%-28s",save_scene_name(save_state.scene_id));
         int report = demo_save_report();
         pause_windows_printf(10, 22, "%-24s", !save_device_ready() ? "NO BACKUP RAM" :
             report < 0 ? "" : report ? "SAVED" : "SAVE FAILED");
@@ -1019,7 +1068,7 @@ static void         inventory_menu(void)
 
 }
 
-static void         viewer_hud(void)
+static void __attribute__((optimize("Os"))) viewer_hud(void)
 {
 #ifdef DOSEI_CLEAN_TEST
     /* Player-test disc: no debug text, even if L+R is pressed.
@@ -1244,7 +1293,7 @@ static void         viewer_hud(void)
 #define FS_ROW      6
 #define FS_ROWS     (FILE_SELECT_ROWS * 2 + 6)
 
-static void         file_select_screen(void)
+static void __attribute__((optimize("Os"))) file_select_screen(void)
 {
     static bool   was_visible;
     /* True while the "Open this file?" panel is up, so the list behind it is
@@ -1262,6 +1311,18 @@ static void         file_select_screen(void)
         return;
     }
     was_visible = true;
+    if(level_select.visible) {
+        for(row=0;row<FS_ROWS;++row)jo_printf(0,FS_ROW+row,"                                      ");
+        jo_printf(8,FS_ROW,"LEVEL SELECT");
+        jo_printf(4,FS_ROW+2,"AREA: %-24s",save_scene_name(scene_entries[level_select.scene].save_scene));
+        jo_printf(4,FS_ROW+4,"ROOM: %u / %u",level_select.room,scene_entries[level_select.scene].rooms-1);
+        jo_printf(4,FS_ROW+6,"UP/DOWN: AREA  LEFT/RIGHT: ROOM");
+        jo_printf(4,FS_ROW+8,"A: ENTER  B: TITLE");
+        jo_printf(4,FS_ROW+10,"SWORD, SHIELD, C ITEMS READY");
+        jo_printf(4,FS_ROW+11,"TEST RUN - NO SAVE SLOT");
+        if(level_select.failed)jo_printf(4,FS_ROW+12,"ROOM ENTRY UNAVAILABLE");
+        was_open=true;return;
+    }
 
     /* "Open this file?" takes over the whole panel, as it does on N64: the
     ** list is not left visible behind it, so the file being opened is the only
@@ -1281,6 +1342,7 @@ static void         file_select_screen(void)
         jo_printf(4, FS_ROW, "OPEN THIS FILE?");
         jo_printf(4, FS_ROW + 2, "%-12s", file_select_row_label(slot));
         jo_printf(4, FS_ROW + 3, "%-32s", file_select_row_detail(slot));
+        jo_printf(4, FS_ROW + 4, "%-32s", file_select_row_location(slot));
         for (line = 0; line < FILE_SELECT_OPEN_ROWS; ++line)
             jo_printf(4, (int)(FS_ROW + 5 + line), "%s %-6s",
                       file_select.open_row == line ? ">" : " ",
@@ -1307,8 +1369,8 @@ static void         file_select_screen(void)
         if (file_select.mode == FILE_SELECT_ERASE_PICK &&
             row == FILE_SELECT_ROW_ERASE)
             here = false;
-        jo_printf(2, line, "%s %-12s", here ? ">" : " ",
-                  file_select_row_label(row));
+        jo_printf(2, line, "%s %-7s %-24s", here ? ">" : " ",
+                  file_select_row_label(row),file_select_row_location(row));
         jo_printf(2, line + 1, "     %-32s", file_select_row_detail(row));
     }
 
@@ -1340,9 +1402,14 @@ static void         file_select_screen(void)
         jo_printf(2, (int)row + 3, "NO BACKUP MEMORY: CANNOT SAVE");
 }
 
-void                jo_main(void)
+/* Boot setup is cold; retain the full heap and SGL pools. */
+void __attribute__((optimize("Os"))) jo_main(void)
 {
     extern void sprites_low_init(void);
+    extern void fs_low_init(void);
+    extern void core_low_init(void);
+    core_low_init();
+    fs_low_init();
     sprites_low_init();
     jo_core_init(JO_COLOR_Black);
     frame_timer_init();
@@ -1379,6 +1446,18 @@ void                jo_main(void)
         jo_core_error("Actor pool does not fit its cart carve");
         return;
     }
+    if(!skulltula_init(ram_cart_fixed(RAM_CART_SKULL_OFFSET,RAM_CART_SKULL_BYTES),RAM_CART_SKULL_BYTES))
+        jo_core_error("Skulltula state exceeds cart carve");
+    if(!wall_skull_init(ram_cart_fixed(RAM_CART_WALL_SKULL_OFFSET,RAM_CART_WALL_SKULL_BYTES),RAM_CART_WALL_SKULL_BYTES))
+        jo_core_error("Wall Skulltula state exceeds cart carve");
+    if(!dekubaba_init(ram_cart_fixed(RAM_CART_DEKU_BABA_OFFSET,RAM_CART_DEKU_BABA_BYTES),RAM_CART_DEKU_BABA_BYTES))
+        jo_core_error("Deku Baba state exceeds cart carve");
+    if(!hintnuts_init(ram_cart_fixed(RAM_CART_HINTNUTS_OFFSET,RAM_CART_HINTNUTS_BYTES),RAM_CART_HINTNUTS_BYTES))
+        jo_core_error("Hint Scrub state exceeds cart carve");
+    if(!gohma_larva_init(RAM_LOW(RAM_LOW_GOMA_OFFSET),RAM_LOW_GOMA_BYTES))
+        jo_core_error("Gohma larva state exceeds low RAM carve");
+    if(!gohma_init(RAM_LOW(RAM_LOW_GOHMA_OFFSET),RAM_LOW_GOHMA_BYTES))
+        jo_core_error("Gohma state exceeds low RAM carve");
     if (!karebaba_init(ram_cart_fixed(RAM_CART_KAREBABA_OFFSET, RAM_CART_KAREBABA_BYTES),
                        RAM_CART_KAREBABA_BYTES)) {
         jo_core_error("Karebaba state does not fit its cart carve");
@@ -1412,6 +1491,7 @@ void                jo_main(void)
 
     scene_ready = kokiri_scene_load();
     scene_ready = scene_ready && demo_init();
+    field_music_init();
     music_ready = scene_ready && music_init(music_song_bank(NA_BGM_TITLE));
     if (scene_ready && !music_ready)
         jo_printf(2, 3, "music load FAILED");

@@ -3,6 +3,8 @@
 ** 0.01, so a part is scaled by (its source scale / 0.01). */
 #include <jo/jo.h>
 #include "karebaba.h"
+#include "dekubaba.h"
+#include "kokiri_camera.h"
 #include "kokiri_sgl.h"
 #include "ram_cart.h"
 #include "demo.h"
@@ -87,6 +89,22 @@ static void     submit(unsigned int part, unsigned int frame)
 static FIXED    k_of(int scale)             /* (scale / 20000) / 0.01, FIXED */
 {
     return (FIXED)((int32_t)scale * 65536 / 200);
+}
+void kokiri_dekubaba_stem(const dekubaba_view *v)
+{
+    unsigned i;int32_t x=v->head[0],y=v->head[1],z=v->head[2],sn,cs;
+    if(!ready)return;
+    if(v->stick) {
+        jo_3d_push_matrix();jo_3d_translate_matrix(x,-y-30,z);slRotY(v->yaw);
+        slScale(3*65536,3*65536,3*65536);submit(PART_STICK,0);jo_3d_pop_matrix();return;
+    }
+    for(i=0;i<(v->pruned?2u:3u);++i) {
+        int32_t h;kokiri_camera_sincos(v->stem[i],&sn,&cs);y+=20*sn/65536;h=20*cs/65536;
+        kokiri_camera_sincos(v->yaw,&sn,&cs);x-=h*sn/65536;z-=h*cs/65536;
+        jo_3d_push_matrix();jo_3d_translate_matrix(x,-y,z);slRotY(v->yaw);slRotX((uint16_t)-v->stem[i]);
+        submit(1+i,0);jo_3d_pop_matrix();
+    }
+    jo_3d_push_matrix();jo_3d_translate_matrix(v->home[0],-v->home[1],v->home[2]);submit(PART_LEAVES,0);jo_3d_pop_matrix();
 }
 
 void            kokiri_babas_draw(void)

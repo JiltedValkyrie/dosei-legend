@@ -96,7 +96,7 @@ static void free_actor(cutscene_actor_t *actor)
 ** 63 KB of tables, which does not fit below the SGL work area but is nothing
 ** against the 4 MB cart that src/ram_cart.c registers.
 */
-static bool load_actor(cutscene_actor_t *actor, const char *file, bool animated)
+static bool __attribute__((optimize("Os"))) load_actor(cutscene_actor_t *actor, const char *file, bool animated)
 {
     unsigned char *data;
     const unsigned char *records;
@@ -411,7 +411,7 @@ void actor_mesh_scroll(actor_mesh_t *mesh,unsigned int frame)
     mesh->scroll_frame=frame;
 }
 
-actor_mesh_t *actor_mesh_load(const char *file)
+actor_mesh_t * __attribute__((optimize("Os"))) actor_mesh_load(const char *file)
 {
     char name[] = "NPC00.TRK";
     int bytes;
@@ -533,6 +533,15 @@ void actor_mesh_draw_static(actor_mesh_t *mesh, int32_t x, int32_t y, int32_t z,
     jo_3d_pop_matrix();
 }
 
+void actor_mesh_draw_transform(actor_mesh_t *mesh,int32_t x,int32_t y,int32_t z,
+    uint16_t yaw,uint16_t pitch,uint16_t roll,int32_t scale)
+{
+    if(!mesh || !mesh->loaded)return;
+    jo_3d_push_matrix();jo_3d_translate_matrix(x,-y,z);
+    slRotY((ANGLE)yaw);slRotZ((ANGLE)roll);slRotX((ANGLE)pitch);
+    slScale(scale,scale,scale);kokiri_submit_pdata(&mesh->pdata);jo_3d_pop_matrix();
+}
+
 void actor_mesh_free(actor_mesh_t *mesh)
 {
     if (mesh) { free_actor(mesh); jo_free(mesh); }
@@ -638,7 +647,7 @@ void cutscene_actor_draw(cutscene_actor_id id, int32_t x, int32_t y, int32_t z,
         /* Same convention as Link: the mesh carries its own Y negation, and
         ** the cue's yaw is binang where Jo's helper takes degrees. */
         jo_3d_translate_matrix(x, -y, z);
-        jo_3d_rotate_matrix_y((yaw * 360) >> 16);
+        slRotY((ANGLE)yaw);
         if (id == CUTSCENE_ACTOR_BRIDGE)
             slRotX((ANGLE)(0u - cutscene_bridge_angle()));
         if (id == CUTSCENE_ACTOR_CHAINS) {

@@ -16,7 +16,9 @@ bool action_audio_set_opening(bool opening);
 bool action_audio_set_area(unsigned int bank);
 enum { OPENING_CUT, OPENING_THUNDER, OPENING_BRIDGE, OPENING_BRIDGE_STOP,
        OPENING_HOOVES, OPENING_NEIGH, OPENING_DUST, OPENING_DASH, OPENING_RAIN,
-       OPENING_NAVI_FLY };
+       OPENING_NAVI_FLY, OPENING_TREE_DEATH };
 void action_audio_opening_play(unsigned int sound, unsigned int channel, bool loop);
 void action_audio_opening_stop(unsigned int channel);
+void action_audio_tree_open(void);
+void action_audio_owl_flap(void);
 #endif

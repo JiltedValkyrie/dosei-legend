@@ -18,6 +18,7 @@ static int32_t scale(const actor_t *a) { return scales[a->params & 3]; }
 static int32_t half(const actor_t *a) { return (300 * scale(a) + 32768) / 65536; }
 unsigned push_block_bg(const actor_t *a) { return (unsigned)a->data[SLOT]; }
 bool push_block_moving(const actor_t *a) { return a && a->data[DIRECTION] != 0; }
+void push_block_lock(actor_t *a) {if(a && a->profile && a->profile->id==PUSH_ID)a->data[TIMER]=-1;}
 
 static void place(actor_t *a)
 {

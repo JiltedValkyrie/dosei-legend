@@ -71,6 +71,9 @@ void                link_anim_trail_update(int x, int y, int z, int yaw, bool ac
 void                link_anim_trail_draw(void);
 void                link_anim_trail_reset(void);
 void                link_anim_blade(int32_t out[2][3]);
+/* Child Deku Stick attachment on PLAYER_LIMB_L_HAND.  This uses the source
+ * model attach transform, while blade remains the Kokiri-sword line. */
+void                link_anim_stick(int32_t out[2][3]);
 /* Player focus.pos (head x (1100,-700,0)), Link-local Q16. */
 void                link_anim_focus(int32_t out[3]);
 /* Idle analog turn: advances facing by at most 800 binang per 30 Hz step.

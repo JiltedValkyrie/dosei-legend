@@ -38,7 +38,9 @@ def main():
         scene_id = SCENE_IDS[prefix]
         segments = hybrid.source.extract(args.oot, args.rom_dir, prefix=prefix)
         collision = manifest.scenes.collision_file(
-            hybrid.source.collision_data(segments[prefix + '_scene']))
+            hybrid.source.collision_data(segments[prefix + '_scene']),
+            rooms.transitions(args.oot, args.rom_dir, prefix=prefix,
+                              room_count=manifest.SPECS[prefix][1]))
         (args.out / asset_names.scene_asset(scene_id, 'COL')).write_bytes(collision)
         for room_id in range(manifest.SPECS[prefix][1]):
             folder = args.out / ('%s_room_%d' % (prefix, room_id))

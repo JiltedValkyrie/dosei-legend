@@ -74,8 +74,30 @@ def dungeon_webs(oot,rom_dir,out):
     header+='typedef struct {short room,x,y,z,yaw,flag;} dungeon_web_spawn;\n'
     header+='static const dungeon_web_spawn dungeon_webs[] = {\n'+',\n'.join('{'+','.join(map(str,row))+'}' for row in spawns)+'\n};\n'
     header+='#define DUNGEON_WEB_COUNT %d\n'%len(spawns)
+    (out.parent/'generated').mkdir(parents=True,exist_ok=True)
     (out.parent/'generated/dungeon_web_data.h').write_text(header)
     static_mesh(oot,rom_dir,'object_ydan_objects','gDTWebFloorDL',out/'DTWEB.BIN',.1,cutout=True)
+
+def dungeon_torches(oot,rom_dir,out):
+    import build_kokiri_scene as source
+    from build_progression_manifest import room_records
+    import build_actor_manifest as actors
+    names=actors.table(oot/'include/tables/actor_table.h','DEFINE_ACTOR')
+    segments=source.extract(oot,rom_dir,prefix='ydan')
+    rows=[]
+    for room in range(12):
+        for a in room_records(segments['ydan_room_%d'%room],names,{})['actors']:
+            if a['name']=='Obj_Syokudai':
+                if a['params']>>12>2: raise ValueError('Unknown torch type')
+                rows.append((room,*a['position'],a['rotation'][1],a['params']))
+    header='/* Obj_Syokudai child-day spawns. This actor has no drops. */\n'
+    header+='typedef struct {short room,x,y,z,yaw;unsigned short params;} dungeon_torch_spawn;\n'
+    header+='static const dungeon_torch_spawn dungeon_torches[] = {\n'
+    header+=',\n'.join('{'+','.join(map(str,row))+'}' for row in rows)+'\n};\n'
+    header+='#define DUNGEON_TORCH_COUNT %d\n'%len(rows)
+    (out.parent/'generated/dungeon_torch_data.h').write_text(header)
+    for i,symbol in enumerate(('gGoldenTorchDL','gTimedTorchDL','gWoodenTorchDL')):
+        static_mesh(oot,rom_dir,'object_syokudai',symbol,out/('DTTORCH%d.BIN'%i))
 
 
 def main():
@@ -84,6 +106,7 @@ def main():
     ap.add_argument('--rom-dir',type=pathlib.Path)
     ap.add_argument('--out',type=pathlib.Path,default=pathlib.Path(__file__).resolve().parents[1]/'build/cd')
     args=ap.parse_args();args.out.mkdir(parents=True,exist_ok=True)
+    (args.out.parent/'generated').mkdir(parents=True,exist_ok=True)
     static_mesh(args.oot,args.rom_dir,'gameplay_field_keep','gFieldKakeraDL',args.out/'ROCK.BIN',.1)
     static_mesh(args.oot,args.rom_dir,'object_tsubo','object_tsubo_DL_0017C0',args.out/'POT.BIN',.15)
     # EnKanban sDisplayLists order corresponds to bits 0..10.
@@ -92,7 +115,18 @@ def main():
     static_mesh(args.oot,args.rom_dir,'gameplay_field_keep','gFieldBushDL',args.out/'BUSH.BIN',.4,cutout=True)
     static_mesh(args.oot,args.rom_dir,'object_gs','gGossipStoneDL',args.out/'GOSSIP.BIN',.1,setup='gGossipStoneMaterialDL',extra=('gGossipStoneSquishedDL',))
     static_mesh(args.oot,args.rom_dir,'object_ydan_objects','gDTDungeonDoor1DL',args.out/'DTDOOR.BIN',1.0)
+    from build_tree_mouth import build as build_tree_mouth
+    build_tree_mouth(args.oot,args.rom_dir,args.out)
     dungeon_webs(args.oot,args.rom_dir,args.out)
+    dungeon_torches(args.oot,args.rom_dir,args.out)
+    from build_dungeon_walls import build as walls
+    walls(args.oot,args.rom_dir,args.out)
+    from build_dungeon_puzzles import build as puzzles
+    puzzles(args.oot,args.rom_dir,args.out)
+    from build_dungeon_enemies import build as enemies
+    enemies(args.oot,args.rom_dir,args.out)
+    from build_boss_rewards import build as boss_rewards
+    boss_rewards(args.oot,args.rom_dir,args.out)
     frames=chest(args.oot,args.rom_dir,args.out)
     (args.out.parent/'generated').mkdir(parents=True,exist_ok=True)
     (args.out.parent/'generated/world_prop_assets.h').write_text(

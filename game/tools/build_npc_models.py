@@ -64,7 +64,9 @@ SHOPKEEPER = 15    # EnOssan OSSAN_TYPE_KOKIRI: km1 body + masterkokiri head/ani
 SARIA_CS_CLIPS = {16: 'gSariaLookUpArmExtendedAnim',   # cue 1
                   17: 'gSariaWaveAnim',                # cue 2
                   18: 'gSariaRunAnim'}                 # cue 3
-MODEL_COUNT = 19
+SARIA_CS_CLIPS.update({19:'gSariaWaitOnBridgeAnim',20:'gSariaHoldOcarinaAnim',
+                      21:'gSariaGiveLinkOcarinaAnim',22:'gSariaHoldOutOcarinaAnim'})
+MODEL_COUNT = 23
 
 
 def build(oot, rom_dir, out, model):
@@ -103,6 +105,9 @@ def build(oot, rom_dir, out, model):
             _, _, animation_offsets = xml(oot, 'object_os_anime')
         limbs[head]['near'] = limbs[head]['far'] = 0x06000000 + offsets[
             'object_kw1_DL_002C10' if girl else 'gKm1DL']
+    if slot in (20,21,22):
+        hand=addresses.index(offsets['gSariaRightHandLimb'])
+        limbs[hand]['near']=limbs[hand]['far']=0x06000000+offsets['gSariaRightHandAndOcarinaDL']
     head_data, head_path, head_offsets = data, path, offsets
     if ko == 12:
         head_path, _, head_offsets = xml(oot, 'object_fa')
@@ -118,6 +123,8 @@ def build(oot, rom_dir, out, model):
                     10: 'gSariaMouthClosedTex'} if model == 1 else
                    {10: 'gFaEyeOpenTex' if ko == 12 else 'gKw1EyeOpenTex'} if girl else
                    {10: 'gKokiriShopkeeperEyeDefaultTex'} if model == SHOPKEEPER else {})
+    if slot == 19:
+        expressions[8]=expressions[9]='gSariaEyeSadTex'
     link.HEAD_LIMB, link.LIMB_NONE = head, 0xFF
     anim_offset = animation_offsets[clip]
     frames, root, rotations = actor.read_animation(animation_data, anim_offset, count, static or 0)

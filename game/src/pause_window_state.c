@@ -61,6 +61,8 @@ unsigned pause_window_step(pause_window_state_t *s, int dx, int dy,
     }
     if (!confirm) return PAUSE_NONE;
     if (s->page == PAUSE_EQUIPMENT) {
+        if(s->cursor[s->page]>=9 && s->cursor[s->page]<=11)
+            return PAUSE_TUNIC_GREEN+s->cursor[s->page]-9;
         if (s->cursor[s->page] == 1 && (owned & 1)) return PAUSE_EQUIP_SWORD;
         if (s->cursor[s->page] == 5 && (owned & 2)) return PAUSE_EQUIP_SHIELD;
     }

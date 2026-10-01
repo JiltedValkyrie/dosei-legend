@@ -13,12 +13,17 @@ void player_push_cancel(player_push_t *p)
     p->phase=OFF;
 }
 
+bool player_push_prompt(const player_bg_t *bg)
+{
+    if (!bg->interact || bg->shape_yaw_to_wall>=0x3000 ||
+        !(bg->touched_flags&BG_WALL_FLAG_6) || bg->y_dist_to_ledge<39) return false;
+    return bg->wall_hit.bg_id==BG_SCENE || push_block_from_bg(bg->wall_hit.bg_id)!=0;
+}
+
 bool player_push_start(player_push_t *p,const player_bg_t *bg,bool held,uint16_t *facing)
 {
     actor_t *a;
-    if (!held || !bg->interact || bg->shape_yaw_to_wall>=0x3000 ||
-        !(bg->touched_flags&BG_WALL_FLAG_6) || bg->y_dist_to_ledge<39) return false;
-    if (bg->wall_hit.bg_id!=BG_SCENE && !push_block_from_bg(bg->wall_hit.bg_id)) return false;
+    if (!held || !player_push_prompt(bg)) return false;
     p->bg_id=bg->wall_hit.bg_id;
     p->phase=WAIT; p->direction=0;
     *facing=(uint16_t)(bg->wall_yaw+0x8000);

@@ -18,7 +18,7 @@ class OpeningAudio(unittest.TestCase):
         cs = (ROOT / 'src/cutscene.c').read_text()
         sounds = cs[cs.index('static void step_sounds('):cs.index('static void step_events(')]
         music = (ROOT.parent / 'shared/lib/music/music.c').read_text()
-        volume = music[music.index('static unsigned int faded_level('):music.index('static void stop_all(')]
+        volume = music[music.index('static unsigned int faded_level('):music.index('void music_cdda_mute(')]
         harness = '''#include <stdbool.h>
 #include <stdint.h>
 #include <string.h>
@@ -26,16 +26,21 @@ class OpeningAudio(unittest.TestCase):
 #include "action_audio.h"
 static struct { unsigned short sound_frame,frame; unsigned int id;
  const cutscene_cue_t *actor_cues[10]; int actor_pos[10][3];
- int sound_bridge_angle,sound_navi_y; bool sound_hooves,sound_navi_falling; } state;
-static int plays[9], stops[7], bridge;
+ int sound_bridge_angle,sound_navi_y,sound_eye[3];
+ bool sound_hooves,sound_navi_falling,sound_eye_valid; } state;
+static struct { int x,y,z; } demo_camera;
+static int plays[12], stops[7], bridge;
 void action_audio_opening_play(unsigned int s,unsigned int c,bool loop){ ++plays[s]; }
 void action_audio_opening_stop(unsigned int c){ ++stops[c]; }
+void action_audio_navi_flight(unsigned int speed,bool active){ (void)speed; (void)active; }
+void action_audio_navi_dash(void){}
 static int cutscene_bridge_angle(void){ return bridge; }
 ''' + sounds + '''
 void reset(void) { memset(&state,0,sizeof(state)); memset(plays,0,sizeof(plays));
  memset(stops,0,sizeof(stops)); state.sound_frame=65535; state.id=CUTSCENE_NIGHTMARE;
  state.sound_bridge_angle=bridge=-16384; }
 void step(int frame,int angle){ state.frame=frame; bridge=angle; step_sounds(); }
+void scene(int id){ state.id=id; }
 int played(int sound){ return plays[sound]; }
 int stopped(int channel){ return stops[channel]; }
 #define MUSIC_MAX_VOICES 24
@@ -43,6 +48,8 @@ static unsigned short regs[32];
 #define SLOT(s,o) regs[s]
 static bool active[24];
 static unsigned char voice_levels[24],volume;
+static unsigned char cdda_volume=15;
+static bool menu_duck;
 ''' + volume + '''
 int fade(int level,int slot) { active[0]=true; voice_levels[0]=12;
  regs[24]=77; set_volume(level); return regs[slot]; }
@@ -55,6 +62,12 @@ int fade(int level,int slot) { active[0]=true; voice_levels[0]=12;
                         '-I'+str(ROOT/'build/generated'), str(path/'test.c'),
                         '-o', str(path/'test.dll')], check=True, env=env)
         cls.lib = ctypes.CDLL(str(path/'test.dll'))
+
+    def test_tree_death_sound_once_at_source_frame(self):
+        g=self.lib;g.reset();g.scene(19);g.step(782,0)
+        self.assertEqual(g.played(10),0)
+        g.step(783,0);g.step(783,0)
+        self.assertEqual(g.played(10),1)
 
     def test_held_frame_never_retriggers_shot_accent(self):
         self.lib.reset()
@@ -92,7 +105,7 @@ int fade(int level,int slot) { active[0]=true; voice_levels[0]=12;
         self.assertGreaterEqual(data['base'],0x50000)
         self.assertLessEqual(data['base']+len(pcm),0x80000)
         self.assertEqual([s['name'] for s in data['samples']],
-                         ['cut','thunder','bridge','bridge_stop','hooves','neigh','dust','dash','rain'])
+                         ['cut','thunder','bridge','bridge_stop','hooves','neigh','dust','dash','rain','navi_fly','tree_death'])
         for sample in data['samples']:
             self.assertLessEqual(sample['offset']+sample['length'],len(pcm))
             self.assertTrue(any(pcm[sample['offset']:sample['offset']+sample['length']]))

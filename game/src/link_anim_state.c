@@ -441,10 +441,12 @@ void                    link_anim_update(int32_t speed, bool grounded,
         ++landings;
     }
 
+    /* Held death reactions must finish even if collision briefly loses the floor.
+     * Otherwise FALL replaces DEATH and Game Over waits forever for react_done. */
     /* A one-shot owns Link until it finishes, so a landing or roll is not cut
     ** off by the first step of movement. It still yields immediately if he
     ** leaves the ground again, which is what makes rolling off a ledge fall. */
-    if (is_one_shot(state) && grounded)
+    if (is_one_shot(state) && (grounded || (state == LINK_STATE_REACT && react_hold)))
     {
         if (state == LINK_STATE_ROLL)
             advance_roll_speed();

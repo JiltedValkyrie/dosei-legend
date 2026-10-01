@@ -65,9 +65,11 @@ RUNTIME_SPRITES = (
     ('pause icons', 3, 32, 32, 2),
     ('message panel', 1, 32, 16, 2),
     ('message marks', 2, 16, 16, 2),
+    ('target reticle corners', 16, 16, 16, 2),
     ('minimap markers', 9, 8, 8, 1),
 )
-RUNTIME_SPRITE_BYTES = sum(n * ((w * h * bpp + 7) // 8 * 8)
+HIT_FILTER_BYTES = 32 * 8  # resident Gouraud tables, no sprite slots
+RUNTIME_SPRITE_BYTES = HIT_FILTER_BYTES + sum(n * ((w * h * bpp + 7) // 8 * 8)
                            for _, n, w, h, bpp in RUNTIME_SPRITES)
 RUNTIME_SPRITE_SLOTS = sum(n for _, n, _, _, _ in RUNTIME_SPRITES)
 
@@ -80,6 +82,8 @@ FOREST_VRAM_MARGIN = 32 * 1024
 # staged meshes and all visibility-box intersections against this allowance.
 FOREST_ACTOR_BYTES = 64 * 1024
 FOREST_ACTOR_SLOTS = 576
+# Live gameplay actors share the same upload bank in these mesh scenes.
+ACTOR_SCENES = ('spot04', 'ydan', 'ydan_boss', 'spot10', 'spot05')
 
 
 def tile_bytes(width, height):

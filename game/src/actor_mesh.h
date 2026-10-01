@@ -10,6 +10,8 @@ actor_mesh_t *actor_mesh_load_animated(const char *file);
 actor_mesh_t *actor_mesh_load_static(const char *file);
 void actor_mesh_draw_static(actor_mesh_t *mesh, int32_t x, int32_t y, int32_t z,
                             uint16_t yaw);
+void actor_mesh_draw_transform(actor_mesh_t *mesh, int32_t x,int32_t y,int32_t z,
+    uint16_t yaw,uint16_t pitch,uint16_t roll,int32_t scale);
 bool actor_mesh_upload(actor_mesh_t *mesh);
 bool actor_mesh_load_scroll(actor_mesh_t *mesh, const char *file);
 /* Replace only the clip on a loaded mesh: same geometry, same uploaded

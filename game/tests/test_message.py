@@ -46,8 +46,11 @@ class Message(unittest.TestCase):
         env['PATH'] = str(GCC.parent) + os.pathsep + env.get('PATH', '')
         subprocess.run([str(GCC), '-shared', '-O2', '-o', str(output),
                         '-I' + str(ROOT / 'src'), '-I' + str(GENERATED),
+                        '-I' + str(ROOT.parent / 'shared/lib/camera'),
+                        '-I' + str(ROOT.parent / 'shared/lib/collision'),
                         str(ROOT / 'src/message.c'),
                         str(ROOT / 'src/text_pool.c'),
+                        str(ROOT / 'src/ui_preferences.c'),
                         str(GENERATED / 'cutscenes.c')],
                        check=True, env=env, cwd=str(ROOT))
         cls.lib = ctypes.CDLL(str(output))
@@ -74,6 +77,66 @@ class Message(unittest.TestCase):
 
     def setUp(self):
         self.lib.message_stop()
+        self.lib.ui_preferences_reset()
+        self.lib.ui_preferences_cycle(False)
+        self.lib.ui_preferences_cycle(False)
+        self.lib.ui_text_set_analog(True)
+
+    def test_tree_choice_waits_for_reveal_and_preserves_answer_on_close(self):
+        g=self.lib
+        self.assertTrue(g.message_start(0x1015))
+        for _ in range(100):
+            if g.message_choices():break
+            g.message_step(True)
+        self.assertEqual(g.message_choices(),2)
+        self.assertEqual(g.message_choice(),0)
+        g.message_choose(1)
+        self.assertEqual(g.message_choice(),1)
+        g.message_step(True)
+        self.assertFalse(g.message_is_active())
+        self.assertEqual(g.message_choice(),1)
+        self.assertTrue(g.message_start(0x1016))
+        self.assertEqual(g.message_choice(),0)
+
+    def test_tree_tokens_follow_every_preset_pad_and_jump_binding(self):
+        token_ids = [m['id'] for m in self.messages if any(
+            '[' in run[0] for page in m['pages'] for line in page['lines']
+            for run in line['runs'])]
+        self.assertTrue(token_ids)
+        for preset in range(5):
+            for analog in (False, True):
+                for jump in range(8):
+                    self.lib.ui_preferences_reset()
+                    for _ in range(preset): self.lib.ui_preferences_cycle(False)
+                    for _ in range(jump): self.lib.ui_preferences_cycle(True)
+                    self.lib.ui_text_set_analog(analog)
+                    expected = ctypes.create_string_buffer(128)
+                    self.lib.ui_text_expand(b'[C-Up]', expected, len(expected))
+                    for text_id in token_ids:
+                        self.lib.message_start(text_id)
+                        pages = self.run_until_done(confirm=True)
+                        text = ' '.join(' '.join(page) for page in pages)
+                        import re
+                        source = ' '.join(''.join(run[0] for run in line['runs'])
+                                          for page in self.by_id[text_id]['pages'] for line in page['lines'])
+                        full_source = source
+                        follow = self.by_id[text_id].get('next_id', 0)
+                        while follow:
+                            next_message = self.by_id[follow]
+                            full_source += ' ' + ' '.join(''.join(run[0] for run in line['runs'])
+                                for page in next_message['pages'] for line in page['lines'])
+                            follow = next_message.get('next_id', 0)
+                        full_expected = ctypes.create_string_buffer(4096)
+                        self.lib.ui_text_expand(full_source.encode(), full_expected, len(full_expected))
+                        self.assertEqual(' '.join(text.split()), ' '.join(full_expected.value.decode().split()))
+                        for token in re.findall(r'\[[^]]+\]', source):
+                            self.lib.ui_text_expand(token.encode(), expected, len(expected))
+                            self.assertIn(expected.value.decode(), text)
+                        for page in pages:
+                            self.assertLessEqual(len(page), 16)
+                            for line in page:
+                                self.assertLessEqual(len(line), 38)
+                                self.assertEqual(line.count('['), line.count(']'))
 
     # ---- helpers -------------------------------------------------------
 
@@ -167,6 +230,11 @@ class Message(unittest.TestCase):
             seen = self.run_until_done(confirm=True)
             expected = [bake.oot_messages.plain(page)
                         for page in message['pages']]
+            follow=message.get('next_id',0)
+            while follow:
+                next_message=self.by_id[follow]
+                expected.extend(bake.oot_messages.plain(page) for page in next_message['pages'])
+                follow=next_message.get('next_id',0)
             self.assertEqual(seen, expected, '0x%04X' % message['id'])
 
     def test_no_line_overflows_the_text_layer(self):

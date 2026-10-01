@@ -430,9 +430,11 @@ void            oot_follow_update_profile(oot_follow_t *camera,
 
     /* Distance eases between distMin and distMax rather than being fixed: the
     ** camera trails out to distMax while he runs and draws back in to distMin
-    ** as he slows. */
+    ** as he slows. Climbing retains the far end of the same source range:
+    ** stopping on vines must not pull the eye into Link and the wall. */
     if (!(camera->targeting && camera->aim_active && !profile->yaw_policy)) {
         camera->distance = approach(camera->distance,
+                                    profile->yaw_policy == 1 ? OOT_CAM_DIST_MAX * 3 / 2 :
                                     moving ? OOT_CAM_DIST_MAX : OOT_CAM_DIST_MIN,
                                     XZ_RATE);
         camera->pitch = approach(camera->pitch, profile->pitch_target, profile->pitch_rate);

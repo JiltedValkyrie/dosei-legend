@@ -1,4 +1,4 @@
-﻿"""Permanent shot skip: real VBlank input and production seek/cleanup code."""
+"""Permanent shot skip: real VBlank input and production seek/cleanup code."""
 import ctypes
 import os
 from pathlib import Path
@@ -49,6 +49,11 @@ static void update_cues(const cutscene_t *cs) { (void)cs; ++cue_steps; }
 static void message_stop(void) { message=false; }
 static bool cutscene_start(unsigned id) { next_id=id; state.id=id;
  state.active=true; state.finished=false; state.frame=state.applied_frame=0; return true; }
+void tree_mouth_prepare_choice(void) {}
+static unsigned choice;
+unsigned message_choice(void) {return choice;}
+bool cutscene_start_in_scene(unsigned id) {return cutscene_start(id);}
+static void emerald_story_free(void) {}
 static void cutscene_actors_free(void) { ++freed; }
 static void asset_loading(const char *s) { (void)s; }
 static void asset_loading_done(void) {}
@@ -81,6 +86,7 @@ void reset(void) { memset(&input,0,sizeof(input)); memset(&state,0,sizeof(state)
  state.track=track; busy=false; state.active=true; state.frame=6; state.applied_frame=5; state.text_cursor=1;
  state.bridge_start=-1; next_id=applied=-1; stopped=freed=restored=flag=cue_steps=0;
  mode=track_freed=0; message=true; }
+void tree_branch(int answer) {choice=answer;state.in_scene=true;state.id=CUTSCENE_TREE_MEETING;finish_cutscene(&cutscenes[CUTSCENE_TREE_MEETING]);}
 void set_in_scene(int v) { state.in_scene=v; }
 void set_busy(int b) { busy=b; }
 void at(int id,int frame) { state.id=id; state.frame=frame+1; state.applied_frame=frame; }
@@ -101,6 +107,15 @@ int value(int which) { switch(which) {
         cls.lib=ctypes.CDLL(str(out))
 
     def setUp(self): self.lib.reset()
+
+    def test_tree_yes_opens_and_no_preserves_closed_flag(self):
+        self.lib.tree_branch(1)
+        self.assertEqual(self.lib.value(2),8) # TREE_AGAIN, appended stable ID
+        self.assertEqual(self.lib.value(5),0)
+        self.lib.reset()
+        self.lib.tree_branch(0)
+        self.assertEqual(self.lib.value(2),7) # TREE_OPEN
+        self.assertEqual(self.lib.value(5),0x05)
 
     def test_first_press_prompts_hold_does_not_skip(self):
         self.lib.sample(1,1,10,0)

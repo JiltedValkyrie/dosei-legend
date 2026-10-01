@@ -1,3 +1,4 @@
+#pragma GCC optimize("Os") /* Cold death/menu flow: preserve high RAM. */
 /* Game Over flow: see game_over.h. */
 #include "game_over.h"
 #include "save_state.h"

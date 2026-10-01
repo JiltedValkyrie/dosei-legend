@@ -72,11 +72,17 @@ SCENES = (
          save='SAVE_SCENE_SARIAS_HOUSE', name="Saria's House"),
     # M5: all source room banks; shutters retain their actual gate conditions.
     dict(prefix='ydan', rooms=12, shape='mesh',
-         scene='SCENE_DEKU_TREE', sfx=0,
+         scene='SCENE_DEKU_TREE', sfx=2,
          save='SAVE_SCENE_DEKU_TREE', name='Inside the Deku Tree'),
     dict(prefix='spot10', rooms=10, shape='mesh',
          scene='SCENE_LOST_WOODS', sfx=1,
          save='SAVE_SCENE_LOST_WOODS', name='Lost Woods'),
+    dict(prefix='ydan_boss', rooms=2, shape='mesh',
+         scene='SCENE_DEKU_TREE_BOSS', sfx=3,
+         save='SAVE_SCENE_DEKU_TREE_BOSS', name="Gohma's Lair"),
+    dict(prefix='spot00', rooms=1, shape='mesh',
+         scene='SCENE_HYRULE_FIELD', sfx=1,
+         save='SAVE_SCENE_HYRULE_FIELD', name='Hyrule Field'),
 )
 
 # A new file begins here: Link's house, spawn 0 (the bed).
@@ -168,7 +174,36 @@ COLLISION_TRIANGLES_MAX = 2321      # scene_flow.c SCENE_COLLISION_MAX
 COLLISION_SURFACES_MAX = 256        # info keeps an 8-bit surface index
 
 
-def collision_file(data):
+def shutter_cap(poly, doors):
+    """Recognize only the ROM's rectangular seals inside shutter apertures.
+
+    Free walking replaces the source's scripted door traversal. The shutter
+    actor owns closed-door player blocking; these static seals must not block
+    the same aperture after it lifts. Keep camera/projectile flags and every
+    frame, lintel, floor and unrelated wall unchanged.
+    """
+    import math
+    if abs(poly['normal'][1]) > 100:
+        return False
+    for door in doors:
+        if door['kind'] < 8:
+            continue
+        angle = door['yaw'] * math.pi / 32768
+        sn, cs = math.sin(angle), math.cos(angle)
+        points = [((v[0]-door['x'])*cs-(v[2]-door['z'])*sn,
+                   v[1]-door['y'],
+                   (v[0]-door['x'])*sn+(v[2]-door['z'])*cs)
+                  for v in poly['vertices']]
+        xs, ys, zs = zip(*points)
+        if (min(xs) < -25 and max(xs) > 25 and
+                all(abs(x) <= 72 for x in xs) and min(ys) == 0 and
+                max(ys) in (100, 160) and all(y in (0, max(ys)) for y in ys) and
+                all(abs(z) <= 12 for z in zs) and max(zs)-min(zs) < 2):
+            return True
+    return False
+
+
+def collision_file(data, doors=()):
     polys = data['polys']
     if len(polys) > COLLISION_TRIANGLES_MAX:
         sys.exit('collision: %d triangles > %d' % (len(polys), COLLISION_TRIANGLES_MAX))
@@ -186,7 +221,7 @@ def collision_file(data):
         out += struct.pack('>18h', *([n for v in abc for n in v] + poly['normal']
                                      + minimum + maximum))
     for poly in polys:
-        out += struct.pack('>H', poly['surface'] | (poly['ignore'] << 8)
+        out += struct.pack('>H', poly['surface'] | ((poly['ignore'] | (2 if shutter_cap(poly, doors) else 0)) << 8)
                            | (poly['conveyor'] << 11))
     if len(polys) & 1:
         out += b'\0\0'
@@ -255,12 +290,12 @@ def scene_doors(index, prefix, scene, entrances, by_scene_name, report):
         target, spawn = entrances[entrance]
         if target not in by_scene_name:
             report.append('%s exitIndex %d leads to %s, which this slice does '
-                          'not contain -- door left inert'
+                          'not contain -- boundary for Field, inert elsewhere'
                           % (prefix, slot, target))
-            continue
+            if prefix != 'spot00': continue
         abc = poly['vertices']
         doors.append(dict(scene=index, entrance=entrance,
-                          target=by_scene_name[target], spawn=spawn,
+                          target=by_scene_name.get(target,255), spawn=spawn,
                           y=sum(v[1] for v in abc) // 3,
                           xz=[(v[0], v[2]) for v in abc],
                           target_name=target))
@@ -277,6 +312,8 @@ def main():
     ap.add_argument('--rom-dir', default=None)
     args = ap.parse_args()
 
+    from build_room_scene import transitions
+
     entrances = entrance_table(args.oot)
     by_scene_name = {entry['scene']: i for i, entry in enumerate(SCENES)}
 
@@ -291,7 +328,8 @@ def main():
         surfaces = source.collision_surfaces(scene)
         collision = source.collision_data(scene)
         (args.cd / asset_names.scene_asset(index, 'COL')).write_bytes(
-            collision_file(collision))
+            collision_file(collision, transitions(
+                args.oot, args.rom_dir, prefix=entry['prefix'], room_count=entry['rooms'])))
         flags = [wall_flags(collision, poly) for poly in collision['polys']]
         first_spawn = len(spawns)
         entrance = source.scene_header(scene)[0x06][0]

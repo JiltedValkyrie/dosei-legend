@@ -1,7 +1,8 @@
 # Jo game launcher
 
-Double-click `../../launch-game.bat`. Choose standard **320x240** or experimental
-**320x480i**, then Run selected. Only Jo builds are offered.
+Double-click `../../launch-game.bat`. Choose **Play Dosei Legend (Standard)** (default), **Play Dosei Legend
+(320x480i)**, or **Debug Mode**, then Run selected. Standard play uses the
+Clean build at `game/build/game-clean.cue`.
 
 **Config > Paths...** selects the local Jo SDK, MSYS2, Python, Kronos, runtime
 DLL folder, Saturn BIOS, OoT decomp and US 1.2 ROM directory. Save writes the
@@ -11,7 +12,7 @@ for the exact ROM, decomp revision and build instructions.
 
 The selector launches configured Kronos directly, checking the CUE and referenced
 data first. Direct `game/run-kronos*.bat` shortcuts call the same selector.
-This is an explicit two-entry catalog, not arbitrary batch discovery. Add variants
+This is an explicit three-entry catalog, not arbitrary batch discovery. Add variants
 to `$variants` in `kronos-launcher.ps1`, with Image paths relative to the repository
 root. Missing images disable launch.
 

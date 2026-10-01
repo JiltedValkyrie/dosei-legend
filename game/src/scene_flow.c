@@ -13,6 +13,9 @@
 #include "ram_cart.h"
 #include "actor_sys.h"
 #include "npc_draw.h"
+#include "tree_mouth.h"
+#include "story_route.h"
+#include "dungeon_doors.h"
 #include "vdp1_draw_wait.h"
 
 static unsigned int current_scene;
@@ -176,6 +179,7 @@ static bool     collision_load(unsigned int scene)
                      RAM_CART_DYNA_BYTES);
         dyna_ready = true;
     }
+    tree_mouth_reset();dungeon_doors_reset();
     actor_sys_scene_unload();
     bg_dyna_clear();
     if (!collision_index)
@@ -195,6 +199,7 @@ bool            scene_flow_load(unsigned int scene, unsigned int spawn)
         return (false);
     entry = &scene_entries[scene];
     if (scene_flow_spawn(scene, spawn)->room >= entry->rooms) return false;
+    story_route_free();
     npc_draw_free();
     if (!collision_load(scene))
         return (false);
@@ -214,7 +219,7 @@ bool            scene_flow_load(unsigned int scene, unsigned int spawn)
     current_scene = scene;
     loaded = true;
     door_armed = false;
-    if (!npc_draw_load(entry->save_scene)) {
+    if (!story_route_load(entry->save_scene) || !npc_draw_load(entry->save_scene)) {
         jo_core_error("NPC model load failed: scene %u", entry->save_scene);
         return false;
     }

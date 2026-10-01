@@ -368,6 +368,9 @@ choice boxes, signs, item messages, cutscenes, HUD prompts, menus and help.
 - Resolve labels before text wrapping/pagination and width checks. Multi-word
   labels and button combinations must remain complete and readable; never
   show an empty label, clipped instruction or unresolved token.
+- Cutscene `message.c` is a separate renderer from NPC `dialogue_text.c`;
+  verify both paths. `test_message.py` covers actual cutscene button-bearing
+  pages across presets/pad modes/jump bindings, including wrapping and colour.
 - Existing dialogue and newly added text follow the same rule. Changing the
   preset must update subsequent displayed instructions without rebuilding
   assets or starting a new adventure. Persist preferences as already specified.
@@ -405,3 +408,22 @@ All shop item models use flat face colours, not texture artwork. Preserve origin
 geometry and material colour; do not restore nut/heart scrolling textures. Shelves,
 room backdrops and the counter keep their original materials. This rule applies to
 merchandise, not the shopkeeper's permitted facial artwork.
+
+## Deku Baba texture exception (2026-09-30)
+
+Human approves keeping existing Deku Baba textures when the complete room VRAM
+budget fits. Do not flatten these textures merely to match the outside withered
+Baba renderer. Retain room/resident actor budget checks. This scoped exception
+does not change unrelated character texture rules.
+
+## Saturn disc filenames: enforce 8.3 before mastering (2026-09-30)
+
+SEGA_GFS.H defines GFS_FNAME_LEN as 12. Use at most eight basename characters
+and three extension characters, ASCII letters/digits/underscore. ISO mastering
+with -full-iso9660-filenames accepts longer names but Saturn GFS cannot address
+them reliably. Keep runtime strings, exporters, staging and budget readers
+synchronized. Run check_disc_directory.py on every mastering path (build.sh
+and the makefile ISO recipe), including directory capacity checks. Remove only
+explicit obsolete generated names. For a missing-file report, inspect the actual
+ISO directory and payloads, not only build/cd. TREEMOUTH.BIN caused a P1 boot
+failure; shipped names are TREEMTH.BIN, BOSSHRT.BIN and BOSSCLR.PCM/.LVL.

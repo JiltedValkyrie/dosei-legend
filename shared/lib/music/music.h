@@ -42,6 +42,10 @@ typedef struct {
 
 /** @brief Load @p bank and start playing it. Installs the vblank driver. */
 bool music_init(const music_bank_t *bank);
+/* Resident musical phrases. Selector runs at the phrase boundary in VBlank;
+ * it must use integer state only, with no allocation or file I/O. */
+void music_set_sections(const music_bank_t *bank,const unsigned short (*ranges)[2],
+                        unsigned count,unsigned (*next)(unsigned));
 
 /** @brief Fade the current bank out, swap to @p bank, and fade it back in.
  *
@@ -63,6 +67,8 @@ bool music_silence(unsigned int fade_frames);
  *  RAM a few chunks per frame. Call once per rendered frame. Never call from a
  *  vblank callback -- it reads the CD and allocates. */
 void music_service(void);
+/* One-shot score completion; resume is serviced on main thread, never VBlank. */
+void music_once(const music_bank_t *one_shot,const music_bank_t *resume);
 /* Pause ducking: half amplitude (-6 dB), composed with fades; SFX unchanged. */
 void music_menu_duck(bool enabled);
 

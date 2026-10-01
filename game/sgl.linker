@@ -41,7 +41,7 @@ SECTIONS {
 	.bss ALIGN(0x10) (NOLOAD):			
 	{			
 		__bstart = . ;			
-		*(.bss)			
+		*(EXCLUDE_FILE (*core.o) .bss)
 		* ( COMMON )			
 		__bend = . ;			
 	_end = .;			
@@ -53,4 +53,16 @@ SECTIONS {
         __lowmeta_end = .;
     }
     ASSERT(SIZEOF(.lowmeta) <= 0xC000, "Low RAM sprite tables exceed carve")
+    .lowfs 0x00249500 (NOLOAD) : {
+        *(.lowfs)
+    }
+    ASSERT(SIZEOF(.lowfs) <= 0x8000, "Low RAM CD directory exceeds carve")
+    .lowcore 0x0023C500 (NOLOAD) : {
+        *core.o(.bss)
+    }
+    ASSERT(SIZEOF(.lowcore) <= 0xD000, "Low RAM core heap exceeds carve")
+    .lowquad 0x0022C800 (NOLOAD) : {
+        *(.lowquad)
+    }
+    ASSERT(SIZEOF(.lowquad) <= 0x2800, "Low RAM quad directory exceeds carve")
 }

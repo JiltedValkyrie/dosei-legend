@@ -86,19 +86,22 @@ class CheatCode(unittest.TestCase):
         self.lib.reset()
 
     def test_code_completes_on_start(self):
-        code = [UP, UP, DOWN, DOWN, LEFT, RIGHT, LEFT, RIGHT, A]
+        code = [UP, UP, DOWN, DOWN, LEFT, RIGHT, LEFT, RIGHT, B, A]
         self.assertFalse(self.press(code))
         self.assertTrue(self.press([START]))
 
     def test_wrong_press_breaks_it_and_extra_up_is_kept(self):
-        self.assertFalse(self.press([UP, UP, DOWN, B, DOWN, LEFT, RIGHT, LEFT, RIGHT, A, START]))
-        self.assertTrue(self.press([UP, UP, UP, DOWN, DOWN, LEFT, RIGHT, LEFT, RIGHT, A, START]))
+        self.assertFalse(self.press([UP, UP, DOWN, B, DOWN, LEFT, RIGHT, LEFT, RIGHT, B, A, START]))
+        self.assertTrue(self.press([UP, UP, UP, DOWN, DOWN, LEFT, RIGHT, LEFT, RIGHT, B, A, START]))
 
     def test_holding_does_not_repeat(self):
         self.lib.feed(UP)
         self.lib.feed(UP)           # still held: not a second press
         self.lib.feed(0)
-        self.assertFalse(self.press([DOWN, DOWN, LEFT, RIGHT, LEFT, RIGHT, A, START]))
+        self.assertFalse(self.press([DOWN, DOWN, LEFT, RIGHT, LEFT, RIGHT, B, A, START]))
+
+    def test_old_code_without_b_does_not_unlock(self):
+        self.assertFalse(self.press([UP,UP,DOWN,DOWN,LEFT,RIGHT,LEFT,RIGHT,A,START]))
 
 
 @unittest.skipUnless(GCC.is_file(), 'host compiler required')
@@ -145,7 +148,7 @@ class CheatSession(unittest.TestCase):
         self.lib.minimap_session_reset()
         self.lib.tick(0)
     def code(self):
-        for button in (UP,UP,DOWN,DOWN,LEFT,RIGHT,LEFT,RIGHT,A):
+        for button in (UP,UP,DOWN,DOWN,LEFT,RIGHT,LEFT,RIGHT,B,A):
             self.lib.tick(button)
             self.lib.tick(0)
         return self.lib.tick(START)

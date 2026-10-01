@@ -32,6 +32,8 @@
 #include "minimap.h"
 #include "vdp1_layout.h"
 static unsigned int texture_base = GAME_TEXTURE_BASE;
+static unsigned int hit_table_offset, hit_filter;
+void kokiri_hit_filter(unsigned level){hit_filter=level<=32?level:0;}
 #define TEXTURE_CAPACITY (0x7fef8u - texture_base)
 #define CUTSCENE_TEXTURE_BASE ((3750u * 32 + 8192 + 255) & ~255u)
 #include "demo.h"
@@ -44,6 +46,7 @@ static unsigned int texture_base = GAME_TEXTURE_BASE;
 #include "gameplay.h"
 #include "player_items.h"
 #include "dungeon_doors.h"
+#include "save_state.h"
 
 /* Original forest renderer: radius (4367) * 60%, halved for the room banks.
 ** The authored single-mesh scene spans the whole town in one list, so that
@@ -134,7 +137,8 @@ static void actor_order_queue(void);
 #endif
 static unsigned short prepared_yaw;
 static unsigned int prepared_visible;
-static unsigned char fog_channel[2][17][32];
+#define fog_channel ((unsigned char (*)[17][32])RAM_LOW(RAM_LOW_FOG_CHANNEL_OFFSET))
+typedef char fog_channel_fits[2*17*32 <= RAM_LOW_FOG_CHANNEL_BYTES ? 1 : -1];
 
 static void forest_fog_init(void)
 {
@@ -190,6 +194,10 @@ static unsigned char forest_face_flags(unsigned int i)
 #define MSGEND_FILE         "MSGEND.RGB"
 #define MSGMARK_SIZE        16
 #define MSGMARK_PIXEL_BYTES (MSGMARK_SIZE * MSGMARK_SIZE * 2)
+/* gLockOnReticleTriangleDL's one 64x64 triangle is rasterized into a compact
+** 16px VDP1 corner. Four rotations form the source lock bracket. */
+#define RETICLE_SIZE         16
+#define RETICLE_PIXEL_BYTES  (RETICLE_SIZE * RETICLE_SIZE * 2)
 #define MENU_PIXEL_BYTES    (MENU_TEX_SIZE * MENU_TEX_SIZE * 2)
 #define FAIRY_WIDTH         16
 #define FAIRY_HEIGHT        16
@@ -241,6 +249,8 @@ static unsigned int  msgbox_sprite;
 static bool          msgbox_ready;
 static unsigned int  msgmark_sprite[2];     /* 0 continue, 1 end */
 static bool          msgmark_ready;
+static unsigned int  reticle_sprite[KOKIRI_RETICLE_COUNT][4];
+static bool          reticle_ready;
 
 /* SGL addresses sprite character data in 8-byte units. */
 #define VRAM_UNITS(bytes)   ((bytes) >> 3)
@@ -254,7 +264,7 @@ static bool          msgmark_ready;
 static unsigned char *opening_pixel_pool;
 static int opening_pixel_pool_bytes;
 
-static bool         mesh_load(const char *file, unsigned int pixel_bytes,
+static bool __attribute__((optimize("Os"))) mesh_load(const char *file, unsigned int pixel_bytes,
                               const kokiri_tile *tiles, unsigned int tile_count,
                               const unsigned short (*cluts)[16],
                               PDATA *pdata, unsigned int polygons, const void *cached_pixels)
@@ -358,7 +368,7 @@ static bool         mesh_load(const char *file, unsigned int pixel_bytes,
 /* Upload one 16x16 RGB555 billboard and hand back its sprite slot.
 ** Shared by the fairies and the gear pickups: same size, same colour mode,
 ** same budget check, so there is one place that can get the VRAM wrong. */
-static bool         sprite_load_rect(const char *file, unsigned int *slot,
+static bool __attribute__((optimize("Os"))) sprite_load_rect(const char *file, unsigned int *slot,
                                 unsigned int width, unsigned int height, unsigned int bytes)
 {
     unsigned char *pixel_vram = (unsigned char *)JO_VDP1_VRAM
@@ -429,7 +439,7 @@ static bool         billboard_load(const char *file, unsigned int *slot)
     return sprite_load(file, slot, FAIRY_WIDTH, FAIRY_PIXEL_BYTES);
 }
 
-static bool         fairy_load(void)
+static bool __attribute__((optimize("Os"))) fairy_load(void)
 {
     unsigned int i;
     if (!billboard_load(FAIRY_PIXEL_FILE, &fairy_sprite) ||
@@ -507,6 +517,20 @@ static bool         fairy_load(void)
                     MSGMARK_PIXEL_BYTES) &&
         sprite_load(MSGEND_FILE, &msgmark_sprite[1], MSGMARK_SIZE,
                     MSGMARK_PIXEL_BYTES);
+    {
+        static const char *const files[KOKIRI_RETICLE_COUNT][4] = {
+            {"RTEN00.RGB", "RTEN01.RGB", "RTEN02.RGB", "RTEN03.RGB"},
+            {"RTNP00.RGB", "RTNP01.RGB", "RTNP02.RGB", "RTNP03.RGB"},
+            {"RTPO00.RGB", "RTPO01.RGB", "RTPO02.RGB", "RTPO03.RGB"},
+            {"RTAI00.RGB", "RTAI01.RGB", "RTAI02.RGB", "RTAI03.RGB"}
+        };
+        reticle_ready = true;
+        for (i = 0; i < KOKIRI_RETICLE_COUNT; ++i)
+            for (unsigned corner = 0; corner < 4; ++corner)
+                reticle_ready = reticle_ready && sprite_load_rect(files[i][corner],
+                    &reticle_sprite[i][corner], RETICLE_SIZE, RETICLE_SIZE,
+                    RETICLE_PIXEL_BYTES);
+    }
     return true;
 }
 
@@ -527,7 +551,7 @@ void kokiri_opening_cache_free(void)
     }
 }
 
-bool kokiri_opening_cache_load(void)
+bool __attribute__((optimize("Os"))) kokiri_opening_cache_load(void)
 {
     unsigned int i;
     kokiri_opening_cache_free();
@@ -571,7 +595,7 @@ static bool room_read(jo_file *file, void *target, unsigned int bytes,
 ** The names carry the scene now because the slice has more than one. Only a
 ** ROOM_SHAPE_TYPE_NORMAL scene has banks at all -- OoT's interiors are
 ** prerendered backdrops with no geometry, so they have none. */
-static bool room_load_bank(unsigned int scene, unsigned int room);
+static bool __attribute__((optimize("Os"))) room_load_bank(unsigned int scene, unsigned int room);
 static void relocate_resident(unsigned int next_base);
 
 /* True while a prerendered interior's backdrop is on screen. The geometry
@@ -613,7 +637,7 @@ static void screens_for_backdrop(bool interior)
 /* The backdrop shares NBG1 with the title artwork -- they are never both on
 ** screen -- so whichever was uploaded last is what NBG1 holds. demo.c reloads
 ** the title image when it returns to the title for that reason. */
-bool kokiri_scene_load_backdrop(unsigned int scene, unsigned int room)
+bool __attribute__((optimize("Os"))) kokiri_scene_load_backdrop(unsigned int scene, unsigned int room)
 {
     relocate_resident(GAME_TEXTURE_BASE);
     char        name[] = "S0R0.RGB";
@@ -653,7 +677,7 @@ bool kokiri_scene_load_backdrop(unsigned int scene, unsigned int room)
     return true;
 }
 
-bool kokiri_scene_load_bank(unsigned int scene, unsigned int room)
+bool __attribute__((optimize("Os"))) kokiri_scene_load_bank(unsigned int scene, unsigned int room)
 {
     if (backdrop_active) {
         backdrop_active = false;
@@ -696,7 +720,7 @@ static void relocate_resident(unsigned int next_base)
     invalidate_equipped();
 }
 
-static bool room_load_bank(unsigned int scene, unsigned int room)
+static bool __attribute__((optimize("Os"))) room_load_bank(unsigned int scene, unsigned int room)
 {
     unsigned int header[8], expected, i;
     char mesh_name[] = "S0R0.MSH", pixel_name[] = "S0R0.TEX";
@@ -778,7 +802,7 @@ static bool room_load_bank(unsigned int scene, unsigned int room)
     requested_room = (int)room;
     forest_scene = (unsigned char)scene;
     forest_far_current = scene == KOKIRI_FIELD_SCENE ? FIELD_FAR :
-                         (scene == 2 ? 2620 : FOREST_FAR_DEFAULT);
+                         (scene == 2 || scene>=20 ? 2620 : FOREST_FAR_DEFAULT);
     actor_vram_base = vram_used;
     actor_sprite_base = sprite_next;
     ++actor_bank_generation;
@@ -786,7 +810,7 @@ static bool room_load_bank(unsigned int scene, unsigned int room)
 }
 #endif
 
-bool                kokiri_scene_load(void)
+bool __attribute__((optimize("Os"))) kokiri_scene_load(void)
 {
     forest_prepared = false;
     forest_fog_init();
@@ -824,6 +848,21 @@ bool                kokiri_scene_load(void)
     }
     if (!fairy_load()) return (false);
     (void)karebaba_draw_load();
+    /* Immutable 16 red + 16 blue RGB-offset tables, shared by all actors.
+     * Stored in the resident allocation so scene/cutscene relocation carries
+     * them with textures; never use the SDK's overlapping 0x70000 scratch. */
+    hit_table_offset=vram_used;
+    if(vram_used+256>TEXTURE_CAPACITY)return false;
+    {
+        volatile unsigned short *table=(volatile unsigned short *)(JO_VDP1_VRAM+texture_base+vram_used);
+        unsigned i,j;
+        for(i=0;i<32;++i){
+            unsigned k=i%16+1,lo=16-k,hi=k==16?31:16+k;
+            unsigned colour=i<16?C_RGB(hi,lo,lo):C_RGB(lo,lo,hi);
+            for(j=0;j<4;++j)table[i*4+j]=colour;
+        }
+        vram_used+=256;
+    }
     /* Minimap markers are resident too (before the first bank). */
     if (!minimap_init()) return (false);
 #ifdef KOKIRI_STREAM_ROOMS
@@ -883,6 +922,7 @@ bool kokiri_scene_update(void)
          * A timed-out draw leaves the bank untouched for the next callback. */
         if (!vdp1_wait_for_draw_end()) return true;
         if (!room_load_bank(forest_scene, (unsigned int)target)) return false;
+        save_room_changed(save_state.scene_id);
         player_items_room_changed();
         return true;
     }
@@ -941,12 +981,22 @@ static void         submit(PDATA *pdata, unsigned int bit)
     /* slPutPolygon returns FALSE when SGL cannot accept the list, e.g. the
     ** frame's polygon or vertex budget is exhausted. Ignoring it is how a
     ** partially drawn scene could look complete, so every refusal is recorded. */
+    unsigned i;
+    if(hit_filter)for(i=0;i<(unsigned)pdata->nbPolygon;++i){
+        pdata->attbl[i].atrb|=CL_Gouraud;
+        pdata->attbl[i].gstb=(texture_base+hit_table_offset)/8+hit_filter-1;
+    }
     if (slPutPolygon(pdata) == FALSE)
         ++kokiri_rejected;
     else
     {
         kokiri_accepted_mask |= bit;
         submitted += pdata->nbPolygon;
+    }
+    /* These imported meshes use No_Gouraud. Restore shared attributes after
+     * SGL copied the command, so the next instance/room never inherits tint. */
+    if(hit_filter)for(i=0;i<(unsigned)pdata->nbPolygon;++i){
+        pdata->attbl[i].atrb&=~CL_Gouraud;pdata->attbl[i].gstb=No_Gouraud;
     }
 }
 
@@ -965,10 +1015,14 @@ static void invalidate_equipped(void) { equipped_mask = 255; }
 
 static void link_part(unsigned int first, unsigned int count)
 {
+    static const ATTR tunics[2]={
+        ATTRIBUTE(Dual_Plane,SORT_CEN|UseNearClip,0,C_RGB(0,0,31),No_Gouraud,CL32KRGB|ECdis,sprPolygon,No_Option),
+        ATTRIBUTE(Dual_Plane,SORT_CEN|UseNearClip,0,C_RGB(25,0,0),No_Gouraud,CL32KRGB|ECdis,sprPolygon,No_Option)};
     unsigned int i;
     for (i = 0; i < count; ++i) {
         equipped_polygons[equipped_count] = link_pdata.pltbl[first+i];
-        equipped_attributes[equipped_count++] = link_pdata.attbl[first+i];
+        equipped_attributes[equipped_count++] = save_state.tunic>0 && save_state.tunic<=2 &&
+            (link_tunic_faces[(first+i)/8]&(1u<<((first+i)%8))) ? tunics[save_state.tunic-1] : link_pdata.attbl[first+i];
     }
 }
 
@@ -1325,7 +1379,7 @@ void                kokiri_link_draw(int x, int y, int z, int yaw)
                                     -LINK_ANIM_SHIFT_Z);
         }
         unsigned visible_gear = player_items_stick() ? gameplay.equipped & ~GP_SWORD : gameplay.equipped;
-        if (equipped_mask != visible_gear) {
+        if (equipped_mask != (visible_gear | (save_state.tunic<<8))) {
             equipped_count = 0;
             link_part(LINK_BODY_FIRST, LINK_BODY_COUNT);
             if (visible_gear & GP_SWORD) {
@@ -1335,7 +1389,7 @@ void                kokiri_link_draw(int x, int y, int z, int yaw)
             if (gameplay.equipped & GP_SHIELD)
                 link_part(LINK_RIGHT_SHIELD_FIRST, LINK_RIGHT_SHIELD_COUNT);
             else link_part(LINK_RIGHT_EMPTY_FIRST, LINK_RIGHT_EMPTY_COUNT);
-            equipped_mask = visible_gear;
+            equipped_mask = visible_gear | (save_state.tunic<<8);
         }
         /* One submission: submitting each variant separately would transform
          * the full POINT table repeatedly and exhaust SGL's vertex work area. */
@@ -1344,7 +1398,12 @@ void                kokiri_link_draw(int x, int y, int z, int yaw)
             equipped.pltbl = equipped_polygons;
             equipped.attbl = equipped_attributes;
             equipped.nbPolygon = equipped_count;
+            if(!cutscene_is_playing() && gameplay.hurt_flash_timer && !gameplay.dead){
+                int32_t sn,cs;kokiri_camera_sincos(gameplay.hurt_flash_phase,&sn,&cs);
+                kokiri_hit_filter(1+(unsigned)((cs+65536)*15/131072));
+            }
             submit(&equipped, 2u);
+            kokiri_hit_filter(0);
         }
     }
     jo_3d_pop_matrix();
@@ -1532,7 +1591,7 @@ void kokiri_drop_draw(unsigned int item, int x, int y, int z, unsigned int tick)
 /* Item held up during get-item text; chests use original animated models. */
 void                kokiri_items_draw(unsigned int tick)
 {
-    if (gameplay.get_item) {
+    if (!demo_chest_opening() && gameplay.get_item && gameplay.get_item != GP_GET_CONTAINER && gameplay.get_item != GP_GET_CHEST_ITEM) {
         unsigned int sprite = gameplay.get_item == GP_SWORD ? item_sprite[0] :
             gameplay.get_item == GP_SHIELD ? item_sprite[1] :
             gameplay.get_item == GP_GET_NUT ? drop_sprite[1] :
@@ -1583,6 +1642,28 @@ static void item_rod(const int32_t a[3], const int32_t b[3], int width)
     kokiri_submit_pdata(&item_mesh);
 }
 
+/* Small flat flame silhouette pending the source scrolling effect import.
+ * Separate attributes leave stick/projectile colours unchanged. No VRAM. */
+void kokiri_flame_draw(int32_t x,int32_t y,int32_t z,unsigned tick)
+{
+    static POINT points[8];
+    static ATTR attrs[]={
+        ATTRIBUTE(Dual_Plane,SORT_CEN | UseNearClip,0,C_RGB(31,12,1),No_Gouraud,CL32KRGB | ECdis,sprPolygon,No_Option),
+        ATTRIBUTE(Dual_Plane,SORT_CEN | UseNearClip,0,C_RGB(31,27,5),No_Gouraud,CL32KRGB | ECdis,sprPolygon,No_Option)
+    };
+    static PDATA mesh={points,8,item_polys,2,attrs};
+    unsigned i;int32_t sn,cs;
+    kokiri_camera_sincos(demo_yaw,&sn,&cs);
+    for(i=0;i<8;++i) {
+        int k=i%4,width=i<4?7:4,height=i<4?22+(tick%4):14;
+        int side=k==1?-width:k==3?width:0;
+        points[i][X]=x*65536+side*cs;
+        points[i][Y]=-(y+(k==0?height:k==2?-5:5))*65536;
+        points[i][Z]=z*65536-side*sn;
+    }
+    kokiri_submit_pdata(&mesh);
+}
+
 /* M2c nutsball test: the boulder's sphere scaled to the ball's radius. */
 void                kokiri_nut_draw(void)
 {
@@ -1590,7 +1671,10 @@ void                kokiri_nut_draw(void)
     unsigned i;
     if (player_items_stick()) {
         int32_t base[3], tip[3];
-        if (gameplay_blade_points(base, tip)) item_rod(base, tip, 1);
+        if (gameplay_blade_points(base, tip)) {
+            item_rod(base, tip, 1);
+            if(player_items_burning())kokiri_flame_draw(tip[0],tip[1],tip[2],demo_world_clock());
+        }
     }
     for (i = 0; i < PLAYER_SHOTS; ++i) {
         int32_t a[3], b[3];
@@ -1831,6 +1915,37 @@ void                kokiri_message_mark_draw(int x, int y, bool last_page)
 #else
     if (slDispSprite(pos, &attr, 0) == FALSE) ++kokiri_rejected;
 #endif
+}
+
+static void         reticle_corner_draw(unsigned int sprite, int x, int y)
+{
+    FIXED pos[5];
+    SPR_ATTR attr = SPR_ATTRIBUTE(0, No_Palet, No_Gouraud, ECdis,
+                                  sprNoflip | FUNC_Sprite);
+    pos[0] = (x - JO_TV_WIDTH_2) * 65536;
+    pos[1] = (y - JO_TV_HEIGHT_2) * 65536;
+    pos[2] = (int)((cutscene_screen_distance() > 277 ?
+                   cutscene_screen_distance() : 277) / 8 + 1) * 65536;
+    pos[3] = pos[4] = 65536;
+    attr.texno = (Uint16)sprite;
+    attr.atrb |= (FAIRY_COLMODE_RGB & 7) << 3;
+#ifdef DOSEI_HIRES
+    pos[1] = (y * 2 - JO_TV_HEIGHT_2) * 65536;
+    pos[4] = 2 * 65536;
+    if (slDispSpriteHV(pos, &attr, 1) == FALSE) ++kokiri_rejected;
+#else
+    if (slDispSprite(pos, &attr, 0) == FALSE) ++kokiri_rejected;
+#endif
+}
+
+void                kokiri_lock_reticle_draw(int x, int y, unsigned kind)
+{
+    if (!reticle_ready || kind >= KOKIRI_RETICLE_COUNT)
+        return;
+    reticle_corner_draw(reticle_sprite[kind][0], x - 17, y - 17);
+    reticle_corner_draw(reticle_sprite[kind][1], x + 17, y - 17);
+    reticle_corner_draw(reticle_sprite[kind][2], x + 17, y + 17);
+    reticle_corner_draw(reticle_sprite[kind][3], x - 17, y + 17);
 }
 
 void                kokiri_menu_draw(void)

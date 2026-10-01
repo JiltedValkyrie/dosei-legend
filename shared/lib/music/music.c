@@ -56,6 +56,19 @@ static bool swap_file_open;
 static unsigned short *swap_staging;
 static unsigned int swap_offset;
 static bool swap_failed;
+static const music_bank_t *once_bank,*once_resume;
+static volatile bool once_done;
+void music_once(const music_bank_t *one_shot,const music_bank_t *resume)
+{once_bank=one_shot;once_resume=resume;once_done=false;}
+static const music_bank_t *section_bank;
+static const unsigned short (*section_ranges)[2];
+static unsigned section_count,section_current;
+static unsigned (*section_next)(unsigned);
+void music_set_sections(const music_bank_t *target,const unsigned short (*ranges)[2],
+                        unsigned count,unsigned (*next)(unsigned))
+{
+    section_bank=target;section_ranges=ranges;section_count=count;section_next=next;section_current=0;
+}
 
 /* SCSP TL is 0.375 dB/step. Fade only the music slots: master volume also
  * controls resident effects, which must remain audible during silent scenes. */
@@ -116,6 +129,7 @@ static void stop_all(void)
 static void start_note(const music_trigger_t *event)
 {
     unsigned int s = event->slot;
+    if(event->sample==255){if(s<MUSIC_MAX_VOICES && active[s])SLOT(s,16)=event->pitch;return;}
     const music_pcm_t *sample = &bank->pcm[event->sample];
     unsigned int address = bank->sample_base + sample->offset;
     SLOT(s,12) = 255;
@@ -141,6 +155,16 @@ static void start_note(const music_trigger_t *event)
 static void score_tick(void)
 {
     unsigned int i;
+    if(bank==section_bank && section_count){
+        if(frame==0)section_current=0;
+        if(frame>=section_ranges[section_current][1]){
+            unsigned next=section_next?section_next(section_current):1;
+            if(next>=section_count)next=0;
+            stop_all();section_current=next;frame=section_ranges[next][0];cursor=0;
+            while(cursor<bank->trigger_count && bank->triggers[cursor].frame<frame)++cursor;
+        }
+    }
+    if(frame==bank->frames && bank==once_bank){stop_all();playing=false;once_done=true;return;}
     if (frame == bank->frames) {
         stop_all();
         frame = (unsigned short)bank->loop_frame;
@@ -239,6 +263,7 @@ bool music_silence(unsigned int fade_frames)
 {
     if (cdda_muted || state != MUSIC_IDLE || !bank)
         return (false);
+    once_bank=once_resume=JO_NULL;once_done=false;
     incoming = JO_NULL;
     fade_length = fade_frames ? fade_frames : 1;
     transition_start = vblanks;
@@ -258,6 +283,7 @@ bool music_fade_to(const music_bank_t *target, unsigned int fade_frames)
         target->pcm_bytes > MUSIC_SAMPLE_LIMIT - target->sample_base ||
         target->voices > MUSIC_MAX_VOICES ||
         cdda_muted || state != MUSIC_IDLE || bank == target) return false;
+    if(target!=once_bank){once_bank=once_resume=JO_NULL;once_done=false;}
     incoming = target;
     fade_length = fade_frames ? fade_frames : 1;
     transition_start = vblanks;
@@ -281,6 +307,11 @@ void music_service(void)
     /* Do not seek the drive back to data while a Red Book track owns it. */
     if (cdda_muted) return;
     unsigned int chunk;
+    if(once_done && state==MUSIC_IDLE){
+        const music_bank_t *resume=once_resume;
+        once_done=false;once_bank=once_resume=JO_NULL;
+        if(resume)music_fade_to(resume,10);else music_silence(1);
+    }
 
     /* Called once per rendered frame, so the gap between calls is the frame
      * time; the largest one during a switch is the worst stall it caused. */

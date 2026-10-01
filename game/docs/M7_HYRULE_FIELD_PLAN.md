@@ -1,6 +1,22 @@
-# M7 draft: Hyrule Field exploration and ocarina free play
+# M7: Hyrule Field exploration and ocarina free play
 
-Astra side draft, 2026-09-25. Expands DEMO_PLAN M7 after reviewed M6b.
+Active assignment: Codex/Astra, authorized by human 2026-09-30.
+Integrated boss-to-Field route is implemented and built in usual Clean.
+Nine-part Tree aftermath, Saria bridge grant/destination, Field intro, outside-
+Kokiri owl repeat/departure and resident Field phrase music are connected.
+334 focused checks pass; save v10 persists Ocarina and cosmetic tunic selection.
+Field+Link+owl: 411,520/445,432 VRAM bytes, 2,487 polygons/2,305 vertices.
+Final BSS end 0x0607b640 leaves 35,264 bytes below SGL. ISO audit: all 453 files
+match staging; 455/768 directory entries. Thirteen changed target objects have
+no software-float helper matches. No emulator run; human route acceptance open.
+
+M7 is NOT declared complete: free-play instrument/input/staff/audio still remain.
+Fairy Ocarina is awarded, saved and shown in inventory. Presentation parity gaps
+and token reachability are explicit in DEMO_PLAN; this build does not certify
+full original-game cinematic/material/particle behavior. Other Field owls
+00FF, 013F and 014B are omitted in the current child-day endpoint. Registered
+non-Woods exits show the demo-boundary message; grotto/actor destinations remain
+side-content work. Full prior preflight measurements: M7_FIELD_PREFLIGHT.md.
 
 ## Playable result and scope
 
@@ -10,7 +26,7 @@ return to Lost Woods, and play the Fairy Ocarina freely. Other exits show the ag
 demo-boundary message. No Field enemies, day/night simulation, new song progression
 or destinations past the demo endpoint. Drawbridge remains static per scope.
 
-The umbrella plan says "6 notes"; do not invent six independent note buttons.
+The umbrella plan now clarifies its earlier "6 notes" wording; do not invent six independent note buttons.
 Verified `include/ocarina.h` defines A plus four basic C buttons and a special
 C_RIGHT_OR_C_LEFT case. Trace source pitch/modifier handling before specifying the
 supported notes. Treat any intended simplification or extra-note request explicitly.
@@ -117,8 +133,8 @@ held notes, cancel, hot unplug, pause/scene/death transitions and music restorat
 
 ## Review and verification rules
 
-Planning only; no implementation owner assigned here. Start code after preceding
-milestone review and human owner assignment. Recheck current source and working
+Human explicitly assigned M7; proceed with independent implementation now.
+Natural story acceptance still requires the unfinished M6 handoff. Recheck current source and working
 diff before taking files; M1/other active work stays with its owner. Dependencies
 below describe required behavior, not permission for a parallel rewrite.
 
@@ -127,8 +143,7 @@ At each implementation checkpoint: focused host tests in separate processes,
 VDP1 budget, cart bounds/heap high-water and audio bank bytes. Inspect changed
 runtime hot paths for software float. Do not cut the malloc arena by guesswork.
 Runtime checks use the project's non-focus-stealing workflow or human play;
-report observed versus pending checks separately. No build/runtime checks were
-performed for this draft. Source references are implementation research targets
+report observed versus pending checks separately. Current checks and measurements recorded below; runtime remains human-owned. Source references are implementation research targets
 unless explicitly marked verified; umbrella-plan actor lists are not spawn proof.
 
 Record changed files, source parity, approximations, save compatibility, measured

@@ -7,6 +7,10 @@ bool demo_init(void);
 bool demo_title_paths_bind(const uint8_t *blob, uint32_t bytes);
 void demo_update(void);
 bool demo_title_is_visible(void);
+bool demo_code_fanfare_active(void);
+bool demo_chest_opening(void);
+unsigned demo_chest_frame(void);
+int demo_chest_index(void);
 /* Live screen distance in pixels (main.c; slSetScreenDist uses it). */
 int32_t demo_screen_distance(void);
 /* True while the file select owns the pad. The world does not step and the
@@ -53,4 +57,8 @@ bool demo_lift_hold_actionable(void);
 /* True while Link is holding a prop and speed is high enough to throw (>= 282 Q8)
  * or the prop is throw-only.  Read-only; no side effects. */
 bool demo_lift_throw_ready(void);
+/* A close, front-facing push block can start A: Grab. */
+bool demo_push_prompt(void);
+bool demo_slingshot_aiming(void);
+bool demo_target_marker(int32_t *x, int32_t *y, bool *locked, unsigned *kind);
 #endif
