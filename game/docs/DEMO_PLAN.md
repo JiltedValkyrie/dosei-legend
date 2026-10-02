@@ -104,9 +104,29 @@ switched to the new policy. Worst-view/runtime acceptance remains open.
 
 Field per-mesh LOD (Claude, 2026-10-01): Map Workshop per-mesh LOD0 import /
 remove and LOD0/cull distances; bank LOD rows in cart carve; runtime integer
-Link-distance select (LOD0 / original / skip). Code + host tests only; no
-human LOD0 meshes authored yet. Clean target build BLOCKED at HEAD by BUG-071
-(Field 2,714 > 2,600 table polygons), so no new image; Kronos check pending.
+Link-distance select (LOD0 / original / skip). Code + host tests only.
+BUG-071 fixed in tree (wall split limit restored from reset 494b9b4): Field
+bakes 1,258 polys again; Clean image rebuilt OK after the BUG-074 fix.
+BUG-074 (P0) fixed in tree: LINKMESH.BIN (791 polys) overran its 0x4800 cart
+carve and broke Link drawing; carve moved to 0x7C000 (0x6400) with size guards.
+Human Kronos check pending (full Link, Navi glow, Deku Baba, LOD).
+Slingshot first-person arm removed again, VDP2 "+" crosshair, ZDSP level 3.
+Field distance streaming (Claude, 2026-10-01, plan approved by human): Field
+is no longer a KRM1 bank. tools/build_field_chunks.py bakes SAR0.STM (KRM2):
+2048-unit cells, each a full piece (<1536 XZ to cell) or LOD2 far piece (2x2
+top-down baked quads); Workshop LOD objects become LOD0/LOD1 pieces. Whole file
+in one cart block; runtime (field_stream.h + kokiri_sgl.c) swaps pieces with 384
+hysteresis while VDP1 idle, fixed per-size VRAM tile pools, tables rebuilt from
+cart. Owl mode keeps LOD0 off while the owl is out. Bake sweeps every 256 units
+and fails the build over 2,600 polys / 2,500 verts / VRAM, both modes. Field
+draw distance now 9,000 (was FOREST_FAR 2,600) through LOD2.
+Status: code + host tests (test_field_stream) + Clean image built 20:17 with
+selection `original`: 116 pieces, worst 721 polys / 1,157 verts, 267 KB VRAM.
+hyrule-alt (human 994-face KokiriExit LOD0) host bake fits: 2,354 polys with
+Link, 2,471 verts, 409 KB; not the selected layout in this image. Kronos
+pending (human): cell-edge pops/hitch, far LOD2 look, fog at 9,000, owl
+intro/leave, interiors and exits, Continue in Field.
+Not done: Map Workshop chunk overlay/budget heatmap (optional, P3).
 
 The integrated route is implemented, host-tested and target-built in the usual
 Clean image: Gohma death/optional heart/blue warp -> all nine Tree aftermath
@@ -351,7 +371,7 @@ these do not certify every preset, pad mode or progression path.
 | M5 Tree/Gohma/Emerald | Codex/Astra | Boss/warp/rewards and nine-part aftermath integrated; presentation parity and human fresh-file clear remain |
 | M6 Woods/Meadow/bridge | Codex/Astra | Woods streaming/music and aftermath rules exist; finish actors, games, Woods owls and Meadow; bridge/Ocarina story integrated |
 | M6b side content | Unassigned | Dungeon Gold Skulltula foundation exists; reachable grottos and scrub shops remain |
-| M7 Field | Codex/Astra | Live route/intro/owl/music built; human traversal/listening acceptance and ocarina free play remain. Per-mesh LOD code (Claude) awaits BUG-071 Clean build fix + Kronos check |
+| M7 Field | Codex/Astra | Live route/intro/owl/music built; human traversal/listening acceptance and ocarina free play remain. Per-mesh LOD code (Claude) Clean built (BUG-071 + BUG-074 fixed in tree); awaits Kronos check |
 | M8 polish | Unassigned | Required presentation/audio/help/release diagnostics remain |
 | M9 release | Unassigned | Complete playthrough, second-emulator check and package remain |
 

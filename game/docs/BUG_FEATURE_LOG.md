@@ -79,6 +79,12 @@ test_pause_renderer setUpClass compile fails with or without this change.
 
 ## BUG-071: Clean build fails Field table budget at HEAD (2026-10-01)
 
+FIXED in tree (Claude, 2026-10-01 evening): cause = commit 494b9b4 (Field
+`wall_split_limit=3`) was reset away at 14:27. Wall split restored alone, plus
+its slingshot arm removal / VDP2 crosshair / ZDSP level 3. Host probe: Field
+1,258 polys, 2,569 total with Link + owls. Clean image rebuilt OK (with
+BUG-074 fix); Kronos pending (human).
+
 P0 build blocker, unowned, found by Claude during Field LOD work. `build.bat
 -Variant clean` fails at HEAD `cd5de84` with the LOD diff stashed (same error with
 it): `2714 polygons exceed the 2600-polygon table budget` while baking spot00.
@@ -87,6 +93,13 @@ add 1,311. Earlier 14:17 Clean build that day recorded spot00 at 1,258
 polygons, cause of the +145 not traced. Guard kept, not raised. No new
 game-clean image from this task. Revisit: next Field/owl or converter change;
 must fix before any Clean rebuild.
+
+## FEATURE: Hyrule Field distance streaming (2026-10-01)
+
+Claude. Required (human). Field streams pieces from one RAM-cart KRM2 file
+(SAR0.STM); see DEMO_PLAN. Code + host tests + Clean image; Kronos pending.
+Risks to watch: one-frame hitch on swap (tables rebuilt from cart), LOD2 seams
+vs full cells, fog now reaching 9,000. Revisit: first human Field run.
 
 ## FEATURE: Hyrule Field per-mesh LOD + cull (2026-10-01)
 

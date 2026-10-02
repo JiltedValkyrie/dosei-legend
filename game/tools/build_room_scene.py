@@ -169,6 +169,28 @@ def emit_rooms(args, head, actor, normal):
             folder = out / ('s%dr%d' % (scene_id, room_id))
             from room_imports import selected, convert as convert_import
             override = selected(prefix, room_id)
+            if prefix == 'spot00' and room_id == 0 and not override:
+                # Hyrule Field streams pieces by distance from the RAM cart
+                # (build_field_chunks.py, runtime field_stream.h): no KRM1 bank.
+                import build_field_chunks as field
+                from layout_variants import build_document
+                owl_actor = dict(tiles=[t for m in models for t in m['tiles']],
+                                 polygons=max(m['polygons'] for m in models),
+                                 vertices=max(m['vertices'] for m in models))
+                stale = [out / asset_names.room_asset(scene_id, room_id, ext) for ext in ('MSH', 'TEX')]
+                for path in stale:
+                    path.unlink(missing_ok=True)
+                result = field.bake(args.oot, args.rom_dir, head, actor, owl_actor,
+                                    build_document(),
+                                    out / asset_names.room_asset(scene_id, room_id, 'STM'),
+                                    out / 'field_stream_report.json', room=room)
+                summaries.append(dict(scene=scene_id, prefix=prefix, id=room_id,
+                                      vertices=max(result['worst']['points'], result['owl_worst']['points']),
+                                      polygons=max(result['worst']['polys'], result['owl_worst']['polys']),
+                                      tiles=result['slots'], pixel_bytes=0,
+                                      objects=max(result['worst']['pieces'], result['owl_worst']['pieces']),
+                                      budget=[], workshop=None, streamed=True))
+                continue
             if override:
                 vertices, faces, tiles, manifest = convert_import(override, room_actor)
                 print('room import:', room, override['obj'], flush=True)
@@ -177,7 +199,8 @@ def emit_rooms(args, head, actor, normal):
                     args.oot, head, room_actor, folder, rom_dir=args.rom_dir,
                     quad_obj=args.quad_obj, source_path=args.scene, room=room,
                     prefix=prefix,base_tile_limit=32 if prefix=='spot00' else None,
-                    source_tessellation=prefix=='spot00')
+                    source_tessellation=prefix=='spot00',
+                    wall_split_limit=3 if prefix=='spot00' else None)
                 manifest = json.loads((folder / 'texture_manifest.json').read_text())
             if prefix == 'spot04':
                 forest_rooms.append((vertices, faces, tiles))

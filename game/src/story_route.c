@@ -24,6 +24,7 @@ static actor_handle_t owl_handle;
 static unsigned talk_started,talk_camera_step;
 static int32_t talk_eye[3],talk_at[3];
 static const actor_profile_t owl_profile={0x14d,ACTORCAT_NPC,ACTOR_FLAG_TARGETABLE,0,0,0,0};
+bool story_route_owl_active(void){return owl_phase!=0;}
 void story_route_free(void)
 {
     unsigned i;

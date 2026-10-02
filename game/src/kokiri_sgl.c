@@ -48,6 +48,8 @@ void kokiri_hit_filter(unsigned level){hit_filter=level<=32?level:0;}
 #include "dungeon_doors.h"
 #include "save_state.h"
 #include "mesh_lod.h"
+#include "field_stream.h"
+#include "story_route.h"
 
 /* Original forest renderer: radius (4367) * 60%, halved for the room banks.
 ** The authored single-mesh scene spans the whole town in one list, so that
@@ -603,6 +605,7 @@ static bool room_read(jo_file *file, void *target, unsigned int bytes,
 ** prerendered backdrops with no geometry, so they have none. */
 static bool __attribute__((optimize("Os"))) room_load_bank(unsigned int scene, unsigned int room);
 static void relocate_resident(unsigned int next_base);
+static void field_stream_free(void);
 
 /* True while a prerendered interior's backdrop is on screen. The geometry
 ** draw is skipped entirely then: an interior HAS no geometry, and the resident
@@ -645,6 +648,8 @@ static void screens_for_backdrop(bool interior)
 ** the title image when it returns to the title for that reason. */
 bool __attribute__((optimize("Os"))) kokiri_scene_load_backdrop(unsigned int scene, unsigned int room)
 {
+    /* An interior reuses the Field's tile pools: stop streaming into them. */
+    field_stream_free();
     relocate_resident(GAME_TEXTURE_BASE);
     char        name[] = "S0R0.RGB";
     jo_file     file;
@@ -726,9 +731,357 @@ static void relocate_resident(unsigned int next_base)
     invalidate_equipped();
 }
 
+/* ---- Hyrule Field distance streaming (field_stream.h, KRM2) ----------------
+** One cart block holds the whole Field. Swaps run only while VDP1 is idle:
+** freed tiles return to their bucket, new tiles upload into fixed slots, then
+** the room tables are rebuilt from the resident pieces in group order. */
+static unsigned char *field_blob;
+static const field_header_t *field_head;
+static const field_bucket_t *field_buckets;
+static const field_tile_t *field_tiles;
+static const unsigned short (*field_cluts)[16];
+static const field_piece_t *field_pieces;
+static const unsigned char *field_pool;
+static uint16_t *field_tile_slot, *field_current, *field_want, *field_stack;
+static unsigned char *field_tile_ref;
+static field_slots_t field_slots;
+static unsigned int field_bucket_vram[FIELD_MAX_BUCKETS];  /* VRAM offset of a bucket's first slot */
+static unsigned char *field_clut_vram;
+static bool field_active, field_owl;
+static unsigned int field_tick, field_overflow, field_swaps;
+
+static void field_stream_free(void)
+{
+    if (field_blob) jo_free(field_blob);
+    if (field_tile_slot) jo_free(field_tile_slot);
+    if (field_tile_ref) jo_free(field_tile_ref);
+    if (field_current) jo_free(field_current);
+    if (field_want) jo_free(field_want);
+    if (field_stack) jo_free(field_stack);
+    field_blob = 0; field_tile_slot = field_current = field_want = field_stack = 0;
+    field_tile_ref = 0;
+    field_active = false;
+}
+
+static const uint16_t *field_refs(const field_piece_t *p)
+{
+    return (const uint16_t *)(field_blob + p->data + p->points * sizeof(POINT) +
+                              p->polys * (sizeof(POLYGON) + sizeof(ATTR)));
+}
+
+/* Every offset, count and index the streamer will follow, checked once. */
+static bool __attribute__((optimize("Os"))) field_validate(unsigned int length)
+{
+    const field_header_t *h = field_head;
+    unsigned int i, j, k, at;
+    if (length < sizeof(*h) || h->magic != FIELD_STREAM_MAGIC ||
+        h->version != FIELD_STREAM_VERSION || h->total != length ||
+        !h->pieces || h->pieces > 255 || !h->groups || h->groups > h->pieces ||
+        h->buckets > FIELD_MAX_BUCKETS || !h->slots || h->slots > KOKIRI_TILE_COUNT ||
+        h->max_points > KOKIRI_VERTEX_COUNT || h->max_polys > KOKIRI_POLYGON_COUNT ||
+        h->max_pieces > KOKIRI_OBJECT_COUNT || h->tiles > 0xFFFE)
+        return false;
+    at = sizeof(*h) + h->buckets * sizeof(field_bucket_t) + h->tiles * sizeof(field_tile_t) +
+         h->tiles * 32 + h->pieces * sizeof(field_piece_t);
+    if (at > h->pool_offset || h->pool_offset > length ||
+        h->pixel_bytes != length - h->pool_offset)
+        return false;
+    for (i = 0, k = 0; i < h->buckets; ++i) {
+        if (field_buckets[i].size > 0x8000u || (field_buckets[i].size & 7)) return false;
+        k += field_buckets[i].slots;
+    }
+    if (k != h->slots) return false;
+    for (i = 0; i < h->tiles; ++i) {
+        const field_tile_t *t = &field_tiles[i];
+        if (t->bucket >= h->buckets || t->length > field_buckets[t->bucket].size ||
+            t->offset > h->pixel_bytes || t->length > h->pixel_bytes - t->offset ||
+            (t->length & 3) || !t->width || !t->height)
+            return false;
+    }
+    for (i = 0; i < h->pieces; ++i) {
+        const field_piece_t *p = &field_pieces[i];
+        const POLYGON *poly;
+        const ATTR *attr;
+        const uint16_t *refs;
+        unsigned int end;
+        if (p->group >= h->groups || p->data < at || (p->data & 3)) return false;
+        end = p->data + p->points * sizeof(POINT) + p->polys * (sizeof(POLYGON) + sizeof(ATTR)) +
+              p->refs * 2;
+        if (end > h->pool_offset || p->points > h->max_points || p->polys > h->max_polys)
+            return false;
+        poly = (const POLYGON *)(field_blob + p->data + p->points * sizeof(POINT));
+        attr = (const ATTR *)(poly + p->polys);
+        refs = field_refs(p);
+        for (j = 0; j < p->refs; ++j) if (refs[j] >= h->tiles) return false;
+        for (j = 0; j < p->polys; ++j) {
+            for (k = 0; k < 4; ++k) if (poly[j].Vertices[k] >= p->points) return false;
+            if ((attr[j].dir & 7) == 4) continue;
+            for (k = 0; k < p->refs && refs[k] != attr[j].texno; ++k) {}
+            if (k == p->refs) return false;   /* face tile missing from its piece */
+        }
+    }
+    return true;
+}
+
+static void field_upload(unsigned int tile, unsigned int slot)
+{
+    const field_tile_t *t = &field_tiles[tile];
+    unsigned int bucket = t->bucket;
+    unsigned int addr = field_bucket_vram[bucket] +
+                        (slot - field_slots.first[bucket]) * field_buckets[bucket].size;
+    volatile unsigned short *clut = (volatile unsigned short *)(field_clut_vram + slot * 32);
+    jo_texture_definition *texture = &__jo_sprite_def[forest_sprite_base + slot];
+    unsigned int i;
+    jo_dma_copy((void *)(field_pool + t->offset), (void *)(JO_VDP1_VRAM + addr), t->length);
+    for (i = 0; i < 16; ++i) {
+        clut[i] = field_cluts[tile][i];
+        kokiri_cluts[slot][i] = field_cluts[tile][i];
+    }
+    kokiri_tiles[slot].width = t->width;
+    kokiri_tiles[slot].height = t->height;
+    kokiri_tiles[slot].offset = addr;
+    kokiri_tiles[slot].length = t->length;
+    texture->width = t->width;
+    texture->height = t->height;
+    texture->adr = (unsigned short)VRAM_UNITS(addr);
+    texture->size = JO_MULT_BY_32(t->width & 0x1f8) | t->height;
+    tile_fog[slot] = 255;
+}
+
+/* Copy resident pieces into the room tables, in group order. */
+static void __attribute__((optimize("O2"))) field_rebuild(void)
+{
+    unsigned int g, v = 0, p = 0, o = 0, i;
+    for (g = 0; g < field_head->groups; ++g) {
+        const field_piece_t *piece;
+        const POINT *points;
+        const POLYGON *polys;
+        const ATTR *attrs;
+        unsigned int c = field_current[g];
+        if (c == FIELD_NONE) continue;
+        piece = &field_pieces[c];
+        if (v + piece->points > KOKIRI_VERTEX_COUNT || p + piece->polys > KOKIRI_POLYGON_COUNT ||
+            o >= KOKIRI_OBJECT_COUNT) {
+            ++field_overflow;     /* the bake proves this unreachable; never write past */
+            continue;
+        }
+        points = (const POINT *)(field_blob + piece->data);
+        polys = (const POLYGON *)(points + piece->points);
+        attrs = (const ATTR *)(polys + piece->polys);
+        for (i = 0; i < piece->points; ++i) {
+            kokiri_pdata.pntbl[v + i][0] = points[i][0];
+            kokiri_pdata.pntbl[v + i][1] = points[i][1];
+            kokiri_pdata.pntbl[v + i][2] = points[i][2];
+        }
+        for (i = 0; i < piece->polys; ++i) {
+            POLYGON *q = &kokiri_pdata.pltbl[p + i];
+            ATTR *a = &kokiri_pdata.attbl[p + i];
+            *q = polys[i];
+            q->Vertices[0] += v; q->Vertices[1] += v;
+            q->Vertices[2] += v; q->Vertices[3] += v;
+            *a = attrs[i];
+            if ((a->dir & 7) != 4) {
+                unsigned int slot = field_tile_slot[a->texno];
+                a->texno = (unsigned short)(forest_sprite_base + slot);
+                a->colno = (unsigned short)VRAM_UNITS((unsigned int)(field_clut_vram + slot * 32) -
+                                                      JO_VDP1_VRAM);
+            }
+            kokiri_objects[p + i] = (unsigned char)o;
+            forest_mesh[p + i] = forest_face_flags(p + i);
+        }
+        for (i = 0; i < 3; ++i) {
+            kokiri_bounds[o].minimum[i] = piece->bounds[i];
+            kokiri_bounds[o].maximum[i] = piece->bounds[3 + i];
+        }
+        v += piece->points; p += piece->polys; ++o;
+    }
+    forest_vertex_count = kokiri_pdata.nbPoint = v;
+    forest_polygon_count = kokiri_pdata.nbPolygon = p;
+    forest_object_count = o;
+    forest_prepared = false;
+}
+
+/* Release leaving pieces' tiles, then acquire entering ones, then rebuild.
+** A piece whose tile cannot get a slot is dropped (the bake rules it out). */
+static void field_apply(void)
+{
+    unsigned int g, j;
+    for (g = 0; g < field_head->groups; ++g) {
+        unsigned int c = field_current[g];
+        const uint16_t *refs;
+        if (c == FIELD_NONE || c == field_want[g]) continue;
+        refs = field_refs(&field_pieces[c]);
+        for (j = 0; j < field_pieces[c].refs; ++j) {
+            unsigned int t = refs[j];
+            if (field_tile_ref[t] && !--field_tile_ref[t]) {
+                field_slot_free(&field_slots, field_tiles[t].bucket, field_tile_slot[t]);
+                field_tile_slot[t] = FIELD_NONE;
+            }
+        }
+        field_current[g] = FIELD_NONE;
+    }
+    for (g = 0; g < field_head->groups; ++g) {
+        unsigned int w = field_want[g];
+        const uint16_t *refs;
+        if (w == FIELD_NONE || w == field_current[g]) continue;
+        refs = field_refs(&field_pieces[w]);
+        for (j = 0; j < field_pieces[w].refs; ++j) {
+            unsigned int t = refs[j];
+            if (!field_tile_ref[t]) {
+                unsigned int slot = field_slot_alloc(&field_slots, field_tiles[t].bucket);
+                if (slot == FIELD_NONE) break;
+                field_tile_slot[t] = (uint16_t)slot;
+                field_upload(t, slot);
+            }
+            ++field_tile_ref[t];
+        }
+        if (j < field_pieces[w].refs) {
+            /* Undo this piece's references; it stays out this swap. */
+            while (j--) {
+                unsigned int t = refs[j];
+                if (!--field_tile_ref[t]) {
+                    field_slot_free(&field_slots, field_tiles[t].bucket, field_tile_slot[t]);
+                    field_tile_slot[t] = FIELD_NONE;
+                }
+            }
+            ++field_overflow;
+            continue;
+        }
+        field_current[g] = (uint16_t)w;
+    }
+    slDMAWait();
+    field_rebuild();
+    ++field_swaps;
+}
+
+static void field_position(int *x, int *z)
+{
+    *x = demo_link_active ? demo_link.x : demo_camera.x;
+    *z = demo_link_active ? demo_link.z : demo_camera.z;
+}
+
+static bool __attribute__((optimize("Os"))) field_stream_load(unsigned int scene, unsigned int room)
+{
+    char name[] = "S0R0.STM";
+    int length = 0;
+    unsigned int i, at, pools = 0, required, capacity;
+    int x, z;
+    field_stream_free();
+    name[1] = asset_name_digit(scene); name[3] = asset_name_digit(room);
+    asset_loading(name);
+    field_blob = (unsigned char *)jo_fs_read_file_ptr(name, 0, &length);
+    asset_loading_done();
+    if (!field_blob) { jo_core_error("%s does not fit RAM cart", name); return false; }
+    field_head = (const field_header_t *)field_blob;
+    at = sizeof(field_header_t);
+    field_buckets = (const field_bucket_t *)(field_blob + at);
+    at += field_head->buckets * sizeof(field_bucket_t);
+    field_tiles = (const field_tile_t *)(field_blob + at);
+    at += field_head->tiles * sizeof(field_tile_t);
+    field_cluts = (const unsigned short (*)[16])(field_blob + at);
+    at += field_head->tiles * 32;
+    field_pieces = (const field_piece_t *)(field_blob + at);
+    if (length <= 0 || (field_head->buckets <= FIELD_MAX_BUCKETS && !field_validate((unsigned int)length)) ||
+        field_head->buckets > FIELD_MAX_BUCKETS) {
+        field_stream_free();
+        jo_core_error("%s is malformed", name);
+        return false;
+    }
+    field_pool = field_blob + field_head->pool_offset;
+    for (i = 0; i < field_head->buckets; ++i)
+        pools += field_buckets[i].size * field_buckets[i].slots;
+    relocate_resident(GAME_TEXTURE_BASE);
+    capacity = 0x7fef8u - GAME_TEXTURE_BASE;
+    required = resident_bytes + pools + field_head->slots * 32;
+    if (required > capacity || resident_sprites + field_head->slots > JO_MAX_SPRITE) {
+        field_stream_free();
+        jo_core_error("%s: VRAM %d/%d, sprites %d/%d", name, (int)required, (int)capacity,
+                      (int)(resident_sprites + field_head->slots), (int)JO_MAX_SPRITE);
+        return false;
+    }
+    field_tile_slot = jo_malloc(field_head->tiles * sizeof(uint16_t));
+    field_tile_ref = jo_malloc(field_head->tiles);
+    field_current = jo_malloc(field_head->groups * sizeof(uint16_t));
+    field_want = jo_malloc(field_head->groups * sizeof(uint16_t));
+    field_stack = jo_malloc(field_head->slots * sizeof(uint16_t));
+    if (!field_tile_slot || !field_tile_ref || !field_current || !field_want || !field_stack ||
+        !field_slots_init(&field_slots, field_buckets, field_head->buckets, field_stack,
+                          field_head->slots)) {
+        field_stream_free();
+        jo_core_error("%s: no RAM for stream tables", name);
+        return false;
+    }
+    for (i = 0; i < field_head->tiles; ++i) { field_tile_slot[i] = FIELD_NONE; field_tile_ref[i] = 0; }
+    for (i = 0; i < field_head->groups; ++i) field_current[i] = FIELD_NONE;
+    vram_used = resident_bytes;
+    sprite_next = resident_sprites;
+    forest_sprite_base = sprite_next;
+    at = texture_base + vram_used;
+    for (i = 0; i < field_head->buckets; ++i) {
+        field_bucket_vram[i] = at;
+        at += field_buckets[i].size * field_buckets[i].slots;
+    }
+    field_clut_vram = (unsigned char *)JO_VDP1_VRAM + at;
+    forest_palette = field_clut_vram;
+    vram_used += pools + field_head->slots * 32;
+    sprite_next += field_head->slots;
+    if (sprite_next > kokiri_sprite_peak) kokiri_sprite_peak = sprite_next;
+    forest_tile_count = field_head->slots;
+    for (i = 0; i < forest_tile_count; ++i) tile_fog[i] = 255;
+    forest_lods = (mesh_lod_t *)ram_cart_fixed(RAM_CART_MESH_LOD_OFFSET, RAM_CART_MESH_LOD_BYTES);
+    forest_lod_count = 0;
+    field_active = true;
+    field_owl = story_route_owl_active();
+    field_position(&x, &z);
+    field_choose(field_pieces, field_head->pieces, field_current, field_want,
+                 field_head->groups, x, z, (int)field_head->hysteresis, field_owl);
+    field_apply();
+    forest_room = (int)room;
+    requested_room = (int)room;
+    forest_scene = (unsigned char)scene;
+    forest_far_current = (int)field_head->far;
+    actor_vram_base = vram_used;
+    actor_sprite_base = sprite_next;
+    ++actor_bank_generation;
+    return true;
+}
+
+/* Per frame: re-choose every 4th frame or on an owl change; swap when VDP1 is
+** idle. A busy VDP1 just retries next frame, like a room-bank swap. */
+static void field_stream_step(void)
+{
+    int x, z;
+    bool owl;
+    if (!field_active || forest_scene != SCENE_SPOT00) return;
+    owl = story_route_owl_active();
+    if (owl == field_owl && (++field_tick & 3)) return;
+    field_position(&x, &z);
+    if (!field_choose(field_pieces, field_head->pieces, field_current, field_want,
+                      field_head->groups, x, z, (int)field_head->hysteresis, owl))
+        { field_owl = owl; return; }
+    if (!vdp1_wait_for_draw_end()) return;
+    field_owl = owl;
+    field_apply();
+}
+
+unsigned int kokiri_field_stream_stat(unsigned int which)
+{
+    switch (which) {
+    case 0: return field_active ? forest_object_count : 0;
+    case 1: return field_swaps;
+    case 2: return field_overflow;
+    default: return field_owl;
+    }
+}
+
 static bool __attribute__((optimize("Os"))) room_load_bank(unsigned int scene, unsigned int room)
 {
     unsigned int header[8], expected, i;
+    if (field_active) field_stream_free();
+    if (scene == SCENE_SPOT00 && room == 0) {
+        if (!kokiri_bank_allocate()) return false;
+        return field_stream_load(scene, room);
+    }
     char mesh_name[] = "S0R0.MSH", pixel_name[] = "S0R0.TEX";
     jo_file file;
     bool ok;
@@ -917,6 +1270,9 @@ bool kokiri_scene_update(void)
 #ifdef KOKIRI_STREAM_ROOMS
     unsigned int i;
     int target = requested_room;
+    /* Field streaming follows the camera through cutscenes too: it never
+    ** loads another bank, it only reshuffles the Field's own pieces. */
+    field_stream_step();
     /* A cutscene owns the resident bank. Room streaming follows Link through
     ** the forest's portals, and during the dream it would happily load a
     ** Kokiri room straight over the Hyrule Field bank the cutscene asked for.

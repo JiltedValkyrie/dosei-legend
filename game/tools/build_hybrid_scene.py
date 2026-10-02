@@ -196,7 +196,8 @@ def render_tile(group, width, height, shared=False):
 
 
 def convert(oot, head, actor, out_dir, patches_only=False, rom_dir=None,
-            quad_obj=None, source_path=None, room=None, prefix='spot04', layout=None, base_tile_limit=None, source_tessellation=False):
+            quad_obj=None, source_path=None, room=None, prefix='spot04', layout=None, base_tile_limit=None, source_tessellation=False,
+            wall_split_limit=None):
     source_faces = load_faces(oot, rom_dir, prefix=prefix)
     from layout_variants import build_document
     document = build_document() if layout is None else layout
@@ -222,6 +223,16 @@ def convert(oot, head, actor, out_dir, patches_only=False, rom_dir=None,
             group['kind'] = quads.BAKE
     if room is not None:
         groups = [g for g in groups if g['tri']['room'] == room]
+    # Table budget policy for big scenes: a wall/cliff repeating texture split
+    # into more than `wall_split_limit` pieces is baked as one face instead.
+    # Ground keeps its splits (affine warp is worst underfoot).
+    if wall_split_limit is not None:
+        for g in groups:
+            n = quads.normal(g['points'])
+            ru, rv = g['repeat']
+            if (g['kind'] == quads.SPLIT and ru * rv > wall_split_limit and
+                    abs(n[1]) <= .85 * math.sqrt(sum(x*x for x in n))):
+                g['kind'], g['repeat'] = quads.BAKE, (1, 1)
     split = max((g for g in groups if g['kind'] == quads.SPLIT),
                 key=lambda g:g['size'], default=max(groups,key=lambda g:g['size']))
     # Diagnostic landmark only: the flattest quad nearest the village

@@ -155,7 +155,16 @@ def check(root=ROOT):
     from asset_names import room_asset
     for scene,room,loaded,drawn in stories:
         path=cd/room_asset(scene,room,'MSH')
-        _,vertices,polygons,tiles,pixels,_,_,_=struct.unpack_from('>8I',path.read_bytes())
+        stream=cd/room_asset(scene,room,'STM')
+        if not path.exists() and stream.exists():
+            # Streamed Field (KRM2): fixed tile pools and the worst resident set.
+            blob=stream.read_bytes()
+            h=struct.unpack_from('>16I',blob)
+            pixels=sum(struct.unpack_from('>2I',blob,64+8*i)[0]*struct.unpack_from('>2I',blob,64+8*i)[1]
+                       for i in range(h[5]))
+            vertices,polygons,tiles=h[8],h[9],h[6]
+        else:
+            _,vertices,polygons,tiles,pixels,_,_,_=struct.unpack_from('>8I',path.read_bytes())
         costs=[mesh_cost(cd/(n+'.BIN')) for n in loaded]
         used=resident+pixels+tiles*32+sum(c[0] for c in costs)
         slots=1+link_slots+budget.RUNTIME_SPRITE_SLOTS+tiles+sum(c[1] for c in costs)

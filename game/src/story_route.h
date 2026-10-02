@@ -8,6 +8,8 @@ void story_route_finish(void);
 void story_route_step(void);
 void story_route_draw(unsigned tick);
 bool story_owl_talking(void);
+/* Field owl present: the Field streamer keeps LOD0 close-ups off meanwhile. */
+bool story_route_owl_active(void);
 void story_owl_camera(void);
 unsigned story_owl_screen_distance(void);
 #endif
