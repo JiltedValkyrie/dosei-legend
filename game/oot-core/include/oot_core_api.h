@@ -17,7 +17,7 @@
 #include "oot_core_host.h"
 
 #define OOT_CORE_MAGIC 0x4F4F5443u /* 'OOTC' */
-#define OOT_CORE_VERSION 4u
+#define OOT_CORE_VERSION 5u
 
 /* PlayState (~78 KB with Fx) + TwoHeadArena + ZeldaArena come from one block
  * the host allocates, so they never take the blob's fixed cart carve. */
@@ -44,6 +44,9 @@ typedef struct OotCoreEntry {
     /* Player entered another room: z_room room change (kills the old
      * room's actors, spawns the new room's list). No-op if unchanged. */
     void (*set_room)(int room);
+    /* C sword -> player proxy melee quad (AT, DMG_SLASH_KOKIRI). base/tip
+     * = blade line in world units; active 0 = blade not live. Before update. */
+    void (*set_sword)(int active, const int* base, const int* tip);
     /* One game frame: collision checks, Actor_UpdateAll, effects. */
     void (*update)(void);
     /* Actor_DrawAll into the blob's display lists (Phase 2 shim reads them). */

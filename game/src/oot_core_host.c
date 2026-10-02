@@ -4,6 +4,7 @@
 #include "action_audio.h"
 #include "demo.h"
 #include "frame_timer.h"
+#include "gameplay.h"
 #include "kokiri_sgl.h"
 #include "ram_cart.h"
 #include "ram_low.h"
@@ -121,6 +122,11 @@ void oot_core_frame(void)
     }
     sync_player();
     ENTRY->set_room((int)kokiri_scene_room());
+    {
+        int32_t base[3], tip[3];
+        int live = gameplay_sword_active() && gameplay_blade_points(base, tip);
+        ENTRY->set_sword(live, (const int *)base, (const int *)tip);
+    }
     /* Decomp actors are written for 20 Hz; gameplay steps run at 30 Hz. */
     step_phase += 2;
     if (step_phase >= 3) {

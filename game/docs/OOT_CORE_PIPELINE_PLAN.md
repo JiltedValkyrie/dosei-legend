@@ -135,6 +135,12 @@ Step 5 progress (2026-10-02, Debug build OK; tasks 1-3 runtime CONFIRMED by huma
   give_item maps decomp ItemId -> save_item_give; health_change -> save_heal/save_damage.
   En_Item00 seeds/nuts/stick use GetItem offer (Actor_OfferGetItem), not Item_Give: task 5.
 - Human confirmed 2026-10-02: Debug, Kokiri, L+R row 15 `oc p1 pl1 pr12 mi0`, no freeze.
+- DONE 6 (build only, runtime NOT checked): entry set_sword (API v5). Host sends
+  gameplay_sword_active() + gameplay_blade_points() each step; player proxy (bridge_player.cpp)
+  owns meleeWeaponQuads[0] (z_player D_80854650), sweeps prev->cur line with a copy of
+  Player_UpdateWeaponInfo, dmgFlags DMG_SLASH_KOKIRI. APPROXIMATE: one blade line, one quad
+  (real: two lines/quads); jump/spin dmg flags not passed. Human check: cut Kokiri grass,
+  row 15 `mi` should rise above 0 when a drop spawns (drops are invisible, not collectable yet).
 - Task 4 choice: keep C grass drawn AND interactive until task 6 (decomp grass is invisible and
   cannot be cut yet, so no double drop). When task 6 lands, C grass goes draw-only.
 

@@ -22,6 +22,9 @@ void oot_core_bench_run(OotCoreBench* out, unsigned int (*ticks)(void),
 extern const OotCoreHost* gOotCoreHost;
 extern Vec3f gOotCorePlayerPos;
 extern s16 gOotCorePlayerYaw;
+extern s32 gOotCoreSwordActive;
+extern Vec3f gOotCoreSwordBase;
+extern Vec3f gOotCoreSwordTip;
 
 /* Linker-script symbols: first address past the blob's .bss; ctor table. */
 extern "C" char oot_core_end[];
@@ -130,6 +133,18 @@ static void oot_core_set_player(int x, int y, int z, short yaw) {
     gOotCorePlayerYaw = yaw;
 }
 
+static void oot_core_set_sword(int active, const int* base, const int* tip) {
+    gOotCoreSwordActive = active && base != NULL && tip != NULL;
+    if (gOotCoreSwordActive) {
+        gOotCoreSwordBase.x = base[0];
+        gOotCoreSwordBase.y = base[1];
+        gOotCoreSwordBase.z = base[2];
+        gOotCoreSwordTip.x = tip[0];
+        gOotCoreSwordTip.y = tip[1];
+        gOotCoreSwordTip.z = tip[2];
+    }
+}
+
 /* Room_RequestNewRoom + Room_ProcessRoomRequest (actor list) +
  * Room_FinishRoomChange (old room's actors die), done at once: the C game
  * has already swapped the room geometry. */
@@ -196,6 +211,7 @@ extern "C" const OotCoreEntry oot_core_entry __attribute__((section(".oot_entry"
     oot_core_play_init,
     oot_core_set_player,
     oot_core_set_room,
+    oot_core_set_sword,
     oot_core_update,
     oot_core_draw,
     oot_core_spawn,
