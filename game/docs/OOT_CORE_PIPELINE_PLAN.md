@@ -121,7 +121,7 @@ sections above). Step 4 runtime CONFIRMED by human 2026-10-02 (Kronos kronos-fix
 row 15 `oc p1 pl1 pr0 mi0` in Kokiri Forest, no freeze. Gate speed numbers are slow
 (ma 8582 ns); human said fix later, do not block on them.
 
-Step 5 progress (2026-10-02, Debug build OK, runtime NOT yet checked):
+Step 5 progress (2026-10-02, Debug build OK; tasks 1-3 runtime CONFIRMED by human):
 - DONE 1: importer cuts each room's main-header ActorEntryList into the scene blob (SPT04COL.BIN
   now starts with OotSceneBlob, oot-core/include/oot_scene_blob.h; section .scene_header).
   load_room_actors (oot_core_api.cpp) copies only ids in sRoomActorIds (= ACTOR_EN_KUSA) into
@@ -134,7 +134,7 @@ Step 5 progress (2026-10-02, Debug build OK, runtime NOT yet checked):
   GET_ITEM, HP_RECOVER; others silent); Audio_PlaySfxGeneral (SFX_PLAY_CENTERED) now routes too.
   give_item maps decomp ItemId -> save_item_give; health_change -> save_heal/save_damage.
   En_Item00 seeds/nuts/stick use GetItem offer (Actor_OfferGetItem), not Item_Give: task 5.
-- Human check: Debug, Kokiri, L+R: row 15 expect `oc p1 pl1 pr12 mi0`, no freeze.
+- Human confirmed 2026-10-02: Debug, Kokiri, L+R row 15 `oc p1 pl1 pr12 mi0`, no freeze.
 - Task 4 choice: keep C grass drawn AND interactive until task 6 (decomp grass is invisible and
   cannot be cut yet, so no double drop). When task 6 lands, C grass goes draw-only.
 
