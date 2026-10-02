@@ -32,7 +32,9 @@ OMITTED = {'mutebhv', 'mutescale', 'initchan', 'freechan', 'notepri',
            'panweight',
            # All-scenes area themes: SCSP has no comb filter or reverb index;
            # 'env' (channel envelope override) falls back to the instrument's.
-           'combfilter', 'reverbidx', 'env'}
+           'combfilter', 'reverbidx', 'env',
+           # Channel release-rate override: the instrument's own release used.
+           'releaserate'}
 
 
 def pitch(name):
@@ -122,6 +124,9 @@ def interpret(path, loop_label='SEQ_0027', stop_at_loop=False, pitch_automation=
             if op in ('delay', 'cdelay', 'ldelay'):
                 script.wake = tick + a[0]
                 return
+            if op == 'delay1':
+                script.wake = tick + 1
+                return
             if op == 'call':
                 script.stack.append(script.pc)
                 script.pc = labels[a[0]]
@@ -145,13 +150,14 @@ def interpret(path, loop_label='SEQ_0027', stop_at_loop=False, pitch_automation=
             elif op == 'ldi':
                 script.value = (a[0] + 128) % 256 - 128
             elif op == 'ldio':
-                assert kind == 'sequence'
-                script.value = io[a[0]]
+                # Channels have their own soundScriptIO ports (seqplayer.c);
+                # nothing writes them from outside here, so unset reads -1.
+                ports = io if kind == 'sequence' else channel.setdefault('io', {})
+                script.value = ports[a[0]] if kind == 'sequence' else ports.get(a[0], -1)
                 if a[0] < 2:
-                    io[a[0]] = -1
+                    ports[a[0]] = -1
             elif op == 'stio':
-                assert kind == 'sequence'
-                io[a[0]] = script.value
+                (io if kind == 'sequence' else channel.setdefault('io', {}))[a[0]] = script.value
             elif op == 'sub':
                 script.value = (script.value - a[0] + 128) % 256 - 128
             elif op in ('beqz', 'rbeqz', 'rbltz'):
@@ -201,7 +207,14 @@ def interpret(path, loop_label='SEQ_0027', stop_at_loop=False, pitch_automation=
                     key, delay, velocity = a[:3]
                     gate = a[3] if op == 'notedvg' else 0
                     script.last_delay = delay
-                assert delay > 0 and channel['program'] is not None
+                if delay <= 0 or channel['program'] is None:
+                    # No instrument yet (or zero length): the N64 plays
+                    # nothing audible here either. Skip, keep the timing.
+                    ignored.add('note_without_instrument')
+                    script.wake = tick + max(delay, 1) if delay > 0 else tick
+                    if delay > 0:
+                        return
+                    continue
                 notes.append(dict(tick=tick, end_tick=tick + delay - ((delay * gate) >> 8),
                                   program=channel['program'],
                                   key=key + script.transpose, velocity=velocity,

@@ -125,9 +125,7 @@ Shadow rooms, Barinade, Zora's/Lake/Gerudo/Desert/Lon Lon/Death Mountain/Kakarik
 etc.), moribossroom/hiral_demo converter errors.
 Area music (2026-10-02): scene header seqId per scene (scene_entry_t.seq). Generic scenes play a
 songs.json route or a disc bank M<seq>.HDR/.PCM/.LVL (tools/build_area_music.py, runtime
-src/music_area.c, tables in jo heap). 14 baked. Blocked (converter): GANON_TOWER 0x2E (seq-only
-op used in channel), LONLON 0x2F (releaserate opcode), TEMPLE_OF_TIME 0x3A (note before instr).
-Effects omitted (build_title_audio OMITTED): combfilter, reverbidx, env. Slice scenes keep their
+src/music_area.c, tables in jo heap). All 17 baked (converter now: channel io ports, delay1, notes before instr skipped). Effects omitted (build_title_audio OMITTED): combfilter, reverbidx, env, releaserate. Slice scenes keep their
 hand music. Work RAM spare (Debug) 304 B. Next: raise caps (RAM cost) to admit the
 near-misses; multi-bg camera selection; per-scene music; En_Door room switches.
 
