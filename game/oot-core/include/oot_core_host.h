@@ -9,7 +9,7 @@
 #define OOT_CORE_HOST_H
 
 typedef struct OotCoreHost {
-    /* Decomp sfxId (include/tables/sfx/*.h) at world position, Q0 units. */
+    /* Decomp sfxId (include/tables/sfx/<bank>_table.h) at world position, Q0 units. */
     void (*play_sfx)(unsigned short sfx_id, int x, int y, int z);
     /* z_parameter Item_Give: returns ITEM_NONE (0xFF) when given. Owned by the
      * C save until z_parameter is imported. */

@@ -17,7 +17,7 @@
 #include "oot_core_host.h"
 
 #define OOT_CORE_MAGIC 0x4F4F5443u /* 'OOTC' */
-#define OOT_CORE_VERSION 3u
+#define OOT_CORE_VERSION 4u
 
 /* PlayState (~78 KB with Fx) + TwoHeadArena + ZeldaArena come from one block
  * the host allocates, so they never take the blob's fixed cart carve. */
@@ -34,13 +34,16 @@ typedef struct OotCoreEntry {
     void (*init)(const OotCoreHost* host);
     /* Bytes play_init needs from the host block. */
     unsigned int (*play_bytes)(void);
-    /* Per scene. scene_id = decomp SceneId; col_header = decomp-format
-     * CollisionHeader for the scene (pointers already absolute). Player
-     * proxy spawns at (x, y, z) facing yaw. Returns 0 on failure. */
-    int (*play_init)(void* block, unsigned int bytes, int scene_id, const void* col_header,
+    /* Per scene. scene_id = decomp SceneId; scene = OotSceneBlob
+     * (oot_scene_blob.h, pointers already absolute); room = current room.
+     * Player proxy spawns at (x, y, z) facing yaw. Returns 0 on failure. */
+    int (*play_init)(void* block, unsigned int bytes, int scene_id, const void* scene, int room,
                      short x, short y, short z, short yaw);
     /* C Link -> player proxy (Q0 world units). Call before update. */
     void (*set_player)(int x, int y, int z, short yaw);
+    /* Player entered another room: z_room room change (kills the old
+     * room's actors, spawns the new room's list). No-op if unchanged. */
+    void (*set_room)(int room);
     /* One game frame: collision checks, Actor_UpdateAll, effects. */
     void (*update)(void);
     /* Actor_DrawAll into the blob's display lists (Phase 2 shim reads them). */

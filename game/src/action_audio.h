@@ -21,4 +21,7 @@ void action_audio_opening_play(unsigned int sound, unsigned int channel, bool lo
 void action_audio_opening_stop(unsigned int channel);
 void action_audio_tree_open(void);
 void action_audio_owl_flap(void);
+/* oot-core OotCoreHost.play_sfx: decomp sfxId (NA_SE_*) -> loaded PCM.
+** Ids without a Saturn sample are ignored. */
+void action_audio_decomp_sfx(unsigned int sfx_id);
 #endif

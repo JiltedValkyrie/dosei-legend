@@ -413,3 +413,15 @@ void action_audio_events(uint32_t events)
 void action_audio_tree_open(void) {play_area(AREA_SFX_TREE_OPEN,30);}
 
 void action_audio_owl_flap(void){play_area(AREA_SFX_OWL_FLAP,26);}
+
+/* Decomp sfxIds (include/tables/sfx/<bank>_table.h) the oot-core actors play. */
+void action_audio_decomp_sfx(unsigned int sfx_id)
+{
+    switch (sfx_id) {
+    case 0x284E: play_area(AREA_SFX_CUT, 26); break;   /* NA_SE_EV_PLANT_BROKEN */
+    case 0x4803: rupee_start(); break;                 /* NA_SE_SY_GET_RUPY */
+    case 0x4824: play(ACTION_GET_ITEM, 27); break;     /* NA_SE_SY_GET_ITEM */
+    case 0x480B: play(ACTION_HP_RECOVER, 27); break;   /* NA_SE_SY_HP_RECOVER */
+    default: break;
+    }
+}

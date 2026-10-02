@@ -7,6 +7,7 @@
 #include "oot_prelude.h"
 #include "ultra64.h"
 #include "actor.h"
+#include "array_count.h"
 #include "effect.h"
 #include "play_state.h"
 #include "regs.h"
@@ -14,6 +15,7 @@
 #include "z_actor_dlftbls.h"
 #include "zelda_arena.h"
 #include "oot_core_api.h"
+#include "oot_scene_blob.h"
 
 void oot_core_bench_run(OotCoreBench* out, unsigned int (*ticks)(void),
                         unsigned int (*ticks_to_us)(unsigned int));
@@ -29,6 +31,36 @@ extern "C" OotCoreCtor oot_core_ctors_start[], oot_core_ctors_end[];
 static RegEditor sRegEditor; /* *REG macros read gRegEditor->data */
 static PlayState* sPlay;
 static ActorEntry sPlayerEntry;
+static const OotSceneBlob* sScene;
+
+/* Room-list actor ids the blob owns; every other id stays with the C game
+ * until its overlay is imported (plan Phase 1 step 6). */
+static const s16 sRoomActorIds[] = { ACTOR_EN_KUSA };
+#define ROOM_ENTRIES_MAX 64
+static ActorEntry sRoomEntries[ROOM_ENTRIES_MAX];
+
+/* Scene_CommandActorEntryList for the room's main header, filtered to the
+ * imported ids. Actor_UpdateAll spawns play->actorEntryList next frame. */
+static void load_room_actors(PlayState* play, int room) {
+    const ActorEntry* list;
+    u32 i, k, n = 0;
+
+    play->numActorEntries = 0;
+    if (sScene == NULL || room < 0 || (u32)room >= sScene->num_rooms) {
+        return;
+    }
+    list = (const ActorEntry*)sScene->rooms[room].actors;
+    for (i = 0; i < sScene->rooms[room].num_actors && n < ROOM_ENTRIES_MAX; i++) {
+        for (k = 0; k < ARRAY_COUNT(sRoomActorIds); k++) {
+            if ((list[i].id & 0x1FFF) == sRoomActorIds[k]) {
+                sRoomEntries[n++] = list[i];
+                break;
+            }
+        }
+    }
+    play->actorEntryList = sRoomEntries;
+    play->numActorEntries = n;
+}
 
 static void oot_core_init(const OotCoreHost* host) {
     for (OotCoreCtor* c = oot_core_ctors_start; c != oot_core_ctors_end; ++c) {
@@ -44,8 +76,8 @@ static unsigned int oot_core_play_bytes(void) {
     return ALIGN16(sizeof(PlayState)) + OOT_CORE_PLAY_THA_BYTES + OOT_CORE_PLAY_ARENA_BYTES;
 }
 
-static int oot_core_play_init(void* block, unsigned int bytes, int scene_id, const void* col_header, short x,
-                              short y, short z, short yaw) {
+static int oot_core_play_init(void* block, unsigned int bytes, int scene_id, const void* scene, int room,
+                              short x, short y, short z, short yaw) {
     u8* mem = (u8*)(((uintptr_t)block + 15u) & ~(uintptr_t)15u);
     PlayState* play;
 
@@ -68,9 +100,12 @@ static int oot_core_play_init(void* block, unsigned int bytes, int scene_id, con
     Effect_InitContext(play);
     EffectSs_InitInfo(play, 0x55);
     CollisionCheck_InitContext(play, &play->colChkCtx);
-    if (col_header != NULL) {
-        BgCheck_Allocate(&play->colCtx, play, (CollisionHeader*)col_header);
+    sScene = (const OotSceneBlob*)scene;
+    if (sScene != NULL && sScene->col_header != NULL) {
+        BgCheck_Allocate(&play->colCtx, play, (CollisionHeader*)sScene->col_header);
     }
+    play->roomCtx.curRoom.num = room;
+    play->roomCtx.prevRoom.num = -1;
 
     sPlayerEntry.id = ACTOR_PLAYER;
     sPlayerEntry.pos.x = x;
@@ -82,6 +117,7 @@ static int oot_core_play_init(void* block, unsigned int bytes, int scene_id, con
     sPlayerEntry.params = 0;
     play->playerEntry = &sPlayerEntry;
     Actor_InitContext(play, &play->actorCtx, play->playerEntry);
+    load_room_actors(play, room);
 
     sPlay = play;
     return GET_PLAYER(play) != NULL;
@@ -92,6 +128,23 @@ static void oot_core_set_player(int x, int y, int z, short yaw) {
     gOotCorePlayerPos.y = y;
     gOotCorePlayerPos.z = z;
     gOotCorePlayerYaw = yaw;
+}
+
+/* Room_RequestNewRoom + Room_ProcessRoomRequest (actor list) +
+ * Room_FinishRoomChange (old room's actors die), done at once: the C game
+ * has already swapped the room geometry. */
+static void oot_core_set_room(int room) {
+    PlayState* play = sPlay;
+
+    if (play == NULL || room == play->roomCtx.curRoom.num) {
+        return;
+    }
+    play->roomCtx.prevRoom = play->roomCtx.curRoom;
+    play->roomCtx.curRoom.num = room;
+    load_room_actors(play, room);
+    play->roomCtx.prevRoom.num = -1;
+    play->roomCtx.prevRoom.segment = NULL;
+    func_80031B14(play, &play->actorCtx);
 }
 
 static void oot_core_update(void) {
@@ -142,6 +195,7 @@ extern "C" const OotCoreEntry oot_core_entry __attribute__((section(".oot_entry"
     oot_core_play_bytes,
     oot_core_play_init,
     oot_core_set_player,
+    oot_core_set_room,
     oot_core_update,
     oot_core_draw,
     oot_core_spawn,

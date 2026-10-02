@@ -117,9 +117,26 @@ system by hand that the decomp already has. Our C code stays only as the Saturn 
 gotchas 20-29 are oot-core). Run git from Windows. Human runs Kronos (`build/kronos-fix`).
 
 State at handoff (commit 8bfdb92, branch oot-core, not pushed): steps 2-4 done (see status
-sections above). Step 4 runtime NOT yet confirmed: first ask the human for debug row 15 in
-Kokiri Forest (expect `oc p1 pl1 pr0 mi0`, no freeze). Gate speed numbers are slow
+sections above). Step 4 runtime CONFIRMED by human 2026-10-02 (Kronos kronos-fix, Debug):
+row 15 `oc p1 pl1 pr0 mi0` in Kokiri Forest, no freeze. Gate speed numbers are slow
 (ma 8582 ns); human said fix later, do not block on them.
+
+Step 5 progress (2026-10-02, Debug build OK, runtime NOT yet checked):
+- DONE 1: importer cuts each room's main-header ActorEntryList into the scene blob (SPT04COL.BIN
+  now starts with OotSceneBlob, oot-core/include/oot_scene_blob.h; section .scene_header).
+  load_room_actors (oot_core_api.cpp) copies only ids in sRoomActorIds (= ACTOR_EN_KUSA) into
+  play->actorEntryList; Actor_UpdateAll spawns them. API version 4.
+- DONE 2: play_init takes room; entry set_room(room) = Room_RequestNewRoom + FinishRoomChange
+  (func_80031B14 kills old-room actors). Host calls it each frame with kokiri_scene_room().
+  NOTE: KOKIRI_STREAM_ROOMS is not defined, so room is always 0 -> room 2 grass (4) never spawns
+  (same as C grass, which also filters room 0).
+- DONE 3 (partial): OotCoreHost wired. play_sfx -> action_audio_decomp_sfx (PLANT_BROKEN, GET_RUPY,
+  GET_ITEM, HP_RECOVER; others silent); Audio_PlaySfxGeneral (SFX_PLAY_CENTERED) now routes too.
+  give_item maps decomp ItemId -> save_item_give; health_change -> save_heal/save_damage.
+  En_Item00 seeds/nuts/stick use GetItem offer (Actor_OfferGetItem), not Item_Give: task 5.
+- Human check: Debug, Kokiri, L+R: row 15 expect `oc p1 pl1 pr12 mi0`, no freeze.
+- Task 4 choice: keep C grass drawn AND interactive until task 6 (decomp grass is invisible and
+  cannot be cut yet, so no double drop). When task 6 lands, C grass goes draw-only.
 
 Step 5 tasks, in order:
 1. Room actor lists: importer cuts each Kokiri room's ActorEntryList verbatim out of
