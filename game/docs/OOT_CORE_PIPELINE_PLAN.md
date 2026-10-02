@@ -122,7 +122,13 @@ no actors, Kokiri music/sfx defaults. Not registered (26): see build/all-scenes/
 collision over 2321 tris (Forest/Fire/Spirit Temple, Ice Cavern, Ganon's Tower/Castle, GTG,
 Ganon's Castle, hakasitarelay), small cap overflows (pixels/tiles/verts: Dodongo, Jabu, Water,
 Shadow rooms, Barinade, Zora's/Lake/Gerudo/Desert/Lon Lon/Death Mountain/Kakariko field?,
-etc.), moribossroom/hiral_demo converter errors. Next: raise caps (RAM cost) to admit the
+etc.), moribossroom/hiral_demo converter errors.
+Area music (2026-10-02): scene header seqId per scene (scene_entry_t.seq). Generic scenes play a
+songs.json route or a disc bank M<seq>.HDR/.PCM/.LVL (tools/build_area_music.py, runtime
+src/music_area.c, tables in jo heap). 14 baked. Blocked (converter): GANON_TOWER 0x2E (seq-only
+op used in channel), LONLON 0x2F (releaserate opcode), TEMPLE_OF_TIME 0x3A (note before instr).
+Effects omitted (build_title_audio OMITTED): combfilter, reverbidx, env. Slice scenes keep their
+hand music. Work RAM spare (Debug) 304 B. Next: raise caps (RAM cost) to admit the
 near-misses; multi-bg camera selection; per-scene music; En_Door room switches.
 
 ## NEXT SESSION: Phase 1 step 5 (first live decomp actor)

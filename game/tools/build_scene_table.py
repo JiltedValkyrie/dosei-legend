@@ -414,7 +414,10 @@ def main():
         scene_doors_found = scene_doors(index, entry['prefix'], scene,
                                         entrances, by_scene_name, report)
         doors.extend(scene_doors_found)
-        summaries.append(dict(index=index, prefix=entry['prefix'],
+        # SCENE_CMD_SOUND_SETTINGS (0x15): byte 7 = seqId (NA_BGM_*), 0x7F none.
+        sound = source.scene_header(scene).get(0x15)
+        seq = sound[0][7] if sound else 0x7F
+        summaries.append(dict(index=index, prefix=entry['prefix'], seq=seq,
                               climbable=sum(1 for b in flags if b & 0x0E),
                               ladders=sum(1 for b in flags if b & 0x08),
                               crawlspaces=sum(1 for b in flags if b & 0x30),
@@ -497,6 +500,7 @@ def main():
                '    uint8_t  spawns;',
                '    uint8_t  save_scene;  /* SAVE_SCENE_* for the flag store */',
                '    uint8_t  sfx_bank;    /* build_action_audio AREA_BANKS index */',
+               '    uint8_t  seq;         /* scene header seqId (NA_BGM_*), 0x7F none */',
                '} scene_entry_t;', '',
                'typedef struct {',
                '    int16_t  x, y, z;',
@@ -534,12 +538,12 @@ def main():
         dist = 0
         if half > 0:
             dist = int(round(120.0 / math.tan(math.radians(half))))
-        body.append('    { %d, %d, %d, %d, 0x%04X, 0x%04X, %d, %d, %d, %d, %d, %s, %d },'
+        body.append('    { %d, %d, %d, %d, 0x%04X, 0x%04X, %d, %d, %d, %d, %d, %s, %d, %d },'
                     % (1 if entry['shape'] == 'image' else 0,
                        cam['x'], cam['y'], cam['z'],
                        cam['pitch'] & 0xFFFF, cam['yaw'] & 0xFFFF, cam['fov'],
                        dist, entry['rooms'], summary['first_spawn'],
-                       summary['spawns'], entry['save'], entry['sfx']))
+                       summary['spawns'], entry['save'], entry['sfx'], summary['seq']))
     # Big-endian records in the C struct layout (SH-2 is big-endian):
     # scene_spawn_t 10 bytes, scene_door_t 17 + 1 pad.
     blob = bytearray()

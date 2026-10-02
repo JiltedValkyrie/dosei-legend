@@ -29,7 +29,10 @@ MUSIC_SAMPLE_BUDGET = 159600   # +33% over the 120000-sample music budget
 # first in the opening cutscene sequences.
 OMITTED = {'mutebhv', 'mutescale', 'initchan', 'freechan', 'notepri',
            'reverb', 'vibdepth', 'ldfilter', 'filter', 'freefilter', 'noshort',
-           'panweight'}
+           'panweight',
+           # All-scenes area themes: SCSP has no comb filter or reverb index;
+           # 'env' (channel envelope override) falls back to the instrument's.
+           'combfilter', 'reverbidx', 'env'}
 
 
 def pitch(name):

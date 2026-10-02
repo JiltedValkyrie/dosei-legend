@@ -113,6 +113,7 @@ if [ -n "${AUTHORED_OBJ:-}" ]; then
     "$python" "$here/tools/build_authored_scene.py" --obj "$AUTHORED_OBJ" ${AUTHORED_UV_FROM:+--uv-from "$AUTHORED_UV_FROM"} ${AUTHORED_ATLAS:+--atlas "$AUTHORED_ATLAS"}          ${AUTHORED_UNITS_PER_TEXEL:+--units-per-texel "$AUTHORED_UNITS_PER_TEXEL"}         ${AUTHORED_MAX_TILE:+--max-tile "$AUTHORED_MAX_TILE"}         ${AUTHORED_SPLIT_SPAN:+--split-span "$AUTHORED_SPLIT_SPAN"}         ${AUTHORED_MAX_DEPTH:+--max-depth "$AUTHORED_MAX_DEPTH"}         ${AUTHORED_POLYGON_CAP:+--polygon-cap "$AUTHORED_POLYGON_CAP"}
 fi
 "$python" "$here/tools/build_scene_table.py" --oot "$oot" --rom-dir "$roms"
+"$python" "$here/tools/build_area_music.py" --oot "$oot"
 cp "$here"/build/generated/owl/OWL*.BIN "$here"/build/generated/owl/OWL*.ANM "$here/build/cd/"
 "$python" "$here/tools/build_npc_models.py" --oot "$oot" --rom-dir "$roms"
 cp "$here"/build/generated/npcs/NPC*.BIN "$here"/build/generated/npcs/NPC*.ANM "$here"/build/generated/npcs/NPC*.TRK "$here/build/cd/"

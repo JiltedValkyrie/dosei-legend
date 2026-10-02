@@ -164,7 +164,7 @@ $(OBJDIR)/kokiri_sgl.o: src/scene_actor_order.h src/actor_order.h src/sgl_order_
 # Instead declare our own link/convert targets against an obj/ object list and
 # cancel the inherited suffix rule so it can never fire on an SDK source.
 SRCS += src/push_block.c src/player_push.c src/player_lift.c src/player_slope.c src/player_water.c src/player_camera.c src/npc_draw.c
-SRCS += src/npc_pose.c src/interior_mask.c
+SRCS += src/npc_pose.c src/interior_mask.c src/music_area.c
 SRCS += src/player_items.c src/dungeon_doors.c src/dungeon_webs.c src/dungeon_torches.c src/dungeon_puzzles.c
 SRCS += src/skulltula.c src/wall_skull.c src/dekubaba.c
 SRCS += src/hintnuts.c
