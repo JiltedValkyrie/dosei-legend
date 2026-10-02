@@ -110,41 +110,53 @@ Open / next:
   Grow it (src/ram_cart.h OOTCORE + FIXED bytes, makefile LOAD_ADDR/MAX_BYTES together; ram_cart.c
   checks the address) as actors are added. Each 64 KB taken shrinks bank-2 jo_malloc space.
 
-## NEXT SESSION: Phase 1 start (do in this order; stop hand-porting)
+## NEXT SESSION: Phase 1 step 5 (first live decomp actor)
 Rule: game logic comes from decomp source via `tools/oot_core_import.py`. Do not rewrite a
 system by hand that the decomp already has. Our C code stays only as the Saturn backend
-(render, audio, VDP2 UI, file IO). Read game/docs/BUILD.md first (Linux/WSL build only).
+(render, audio, VDP2 UI, file IO). Read game/docs/BUILD.md first (Linux/WSL build only;
+gotchas 20-29 are oot-core). Run git from Windows. Human runs Kronos (`build/kronos-fix`).
 
-1. Gate numbers: the human runs the Debug build (`./build.sh OOT_CORE=1`, game/build/game.cue) and
-   reads rows 13-14. A large ns/call (e.g. dv or at) gets fixed before bulk import: SaturnMath++
-   LUT/DIVU.
-2. DONE 2026-10-02 (see Phase 1 status). Grow the cart carve to 256 KB+. Add z_actor, z_collision_check, z_bgcheck, z_en_item00,
-   En_Kusa to OOT_CORE_SRCS. The link fails on undefined symbols: that list IS the Phase 1 backend
-   work list. `--gc-sections` keeps only what's reached.
-3. FIRST PASS DONE 2026-10-02 (links, 0 undefined; stubs listed in status). Next: wire
-   `OotCoreHost` from C, then replace stubs as files get imported. Write `oot-core/src/bridge_*.cpp` for each undefined group. Keep them thin:
-   - PlayState/ActorContext/ObjectContext: one global PlayState owned by oot-core; Object_* =
-     "always loaded" for imported objects.
-   - Gfx_*, gSPDisplayList, OPEN/CLOSE_DISPS: record DL segment address + current MtxF -> a draw
-     list the C side submits as prebuilt Saturn meshes (Phase 2 shim; start with a stub cube).
-   - Audio_PlaySfx*/SfxSource_*: map sfxId -> our existing action_audio PCM bank.
-   - EffectSs*_Spawn: stub (count calls) first, then port the effects that are needed.
-   - BgCheck: decide between z_bgcheck over our converted collision (preferred; needs the
-     CollisionHeader in decomp format from the ROM) and a bridge to kokiri_collision.
-4. BUILT 2026-10-02 (see step 4 status; runtime pending). Entry table grows (v2 already has `init` = ctor runner; add the proxy Player) (oot_core_bench.h -> oot_core_api.h): init(play), update(), draw(list),
-   spawn(actorId, params, pos). The C main loop calls them for scenes flagged "decomp actors".
-5. First live actor: En_Kusa in Kokiri Forest with its real drop table via z_en_item00. Replace
-   world_props grass for that scene only. Human verifies in Kronos.
-6. Then bulk: import every Kokiri actor overlay the scene spawns (scene actor list from the ROM),
-   one per commit, each with a drop check (CLAUDE.md drop rule comes free from real code).
-7. Phase 2 draw shim in parallel: build_actor_model.py converts object DLs to KFR1, keyed by DL
-   segment address so the bridge can look them up. Faces textured only (VRAM rule).
-8. Music bulk (independent): run shared/tools/build_title_audio.py over all sequences, list
-   unsupported opcodes, implement them once in shared/lib/music/music.c.
+State at handoff (commit 8bfdb92, branch oot-core, not pushed): steps 2-4 done (see status
+sections above). Step 4 runtime NOT yet confirmed: first ask the human for debug row 15 in
+Kokiri Forest (expect `oc p1 pl1 pr0 mi0`, no freeze). Gate speed numbers are slow
+(ma 8582 ns); human said fix later, do not block on them.
 
-Known hazards: ROM IEEE-float data must be converted to Fx at load. Keep every Fx op
-constexpr (no .ctors). Stock Kronos freezes over 2048 VDP1 cmds; use the patched build
-(BUILD.md 17). WSL git can't read this worktree; run git from Windows.
+Step 5 tasks, in order:
+1. Room actor lists: importer cuts each Kokiri room's ActorEntryList verbatim out of
+   extracted `spot04_room_<n>.c` (main header lists `spot04_room_0_03000094`,
+   `spot04_room_1_03000088`, `spot04_room_2_03000084`; AltHeaders = other scene setups, later),
+   same way as SCENE_COLLISION. Put them in the SPT04COL blob (data, fixed address) or the
+   oot-core blob. Spawn via `play->actorEntryList`/`numActorEntries` (Actor_UpdateAll spawns
+   them, real behaviour) or entry `spawn`. Start with ACTOR_EN_KUSA entries only; leave all
+   other ids to the C game until imported (step 6).
+2. Rooms: actors carry `room`; set `play->roomCtx.curRoom.num` from `kokiri_scene_room()` so
+   room-bound actors behave (check z_actor Actor_Spawn/room kill logic).
+3. Wire `OotCoreHost` (`oot-core/include/oot_core_host.h`) in `src/oot_core_host.c`:
+   play_sfx -> action_audio (map decomp NA_SE_* ids used by En_Kusa/En_Item00), give_item and
+   health_change -> save_state / existing item_drop pickup code. En_Item00 calls Item_Give.
+4. Hide the C grass that the decomp now owns: world_props grass in Kokiri Forest only
+   (world_props.c / world_props_draw.c). Grass is invisible until Phase 2 draw shim, so for
+   testing either keep C grass drawn but non-interactive, or add a debug marker. Pick the
+   option that keeps the slice playable; record it in DEMO/plan.
+5. Collectibles: En_Item00 spawned by Item_DropCollectibleRandom must be picked up by the
+   player proxy (needs player cylinder / Actor_HasParent etc. — check what En_Item00 tests;
+   bridge only what is missing). Drops must match the real table (CLAUDE.md drop rule).
+6. Debug row 15 shows prop/misc counts; human cuts grass with sword: grass needs the C sword
+   to hit decomp colliders -> C sword AT must enter `play->colChkCtx` (CollisionCheck_SetAT)
+   via a host->blob call (add entry `set_sword(...)`). This is the first C->decomp combat link.
+
+After step 5:
+6. Bulk: import every Kokiri actor overlay the scene spawns, one per commit, each with a drop
+   check. Stand-in player and stub list (bridge_play.cpp STUB tags) shrink as files import.
+7. Phase 2 draw shim: real GraphicsContext + Actor_DrawAll; gSPDisplayList(seg addr) ->
+   prebuilt Saturn mesh (build_actor_model.py, keyed by bridge_assets.cpp symbols). Faces
+   textured only (VRAM rule).
+8. Music bulk (independent): shared/tools/build_title_audio.py over all sequences.
+
+Known hazards: ROM IEEE-float data must be converted to Fx at load. Keep Fx ops constexpr.
+Blob code runs from the cart only on build/kronos-fix Kronos (BUILD.md 26). Blob 200 KB of
+256 KB carve: grow carve (ram_cart.h + makefile together) before it overflows. Work RAM spare
+5,696 B: new C host code must stay small. Boot markers on row 20 (oot_core_host.c).
 
 ## Approach (phased, each phase gate)
 ### Phase 0 — spike, prove or kill (do first)
