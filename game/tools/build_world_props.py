@@ -97,7 +97,7 @@ def dungeon_torches(oot,rom_dir,out):
     header+='#define DUNGEON_TORCH_COUNT %d\n'%len(rows)
     (out.parent/'generated/dungeon_torch_data.h').write_text(header)
     for i,symbol in enumerate(('gGoldenTorchDL','gTimedTorchDL','gWoodenTorchDL')):
-        static_mesh(oot,rom_dir,'object_syokudai',symbol,out/('DTTORCH%d.BIN'%i))
+        static_mesh(oot,rom_dir,'object_syokudai',symbol,out/('DTTORCH%d.BIN'%i),cutout=True)
 
 
 def main():
