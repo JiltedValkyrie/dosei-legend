@@ -9,7 +9,7 @@ ENTRY(_oot_core_entry)
 SECTIONS
 {
     . = OOT_CORE_LOAD_ADDR;
-    .oot_entry : { KEEP(*(.oot_entry)) KEEP(*(.oot_entry.roots)) }
+    .oot_entry : { KEEP(*(.oot_entry)) }
     .text : { *(.text .text.*) }
     .rodata : { *(.rodata .rodata.*) }
     .data : {

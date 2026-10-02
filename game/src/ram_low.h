@@ -54,7 +54,15 @@
 #define RAM_LOW_FOG_CHANNEL_BYTES   0x0500u
 #define RAM_LOW_CORE_OFFSET         0x3C500u
 #define RAM_LOW_CORE_BYTES          0xD000u
+#ifdef DOSEI_OOT_CORE
+/* oot-core play block (oot_core_host.c): PlayState + TwoHeadArena + ZeldaArena,
+** OotCoreEntry.play_bytes() must fit (checked at boot). Faster than the cart. */
+#define RAM_LOW_OOTPLAY_OFFSET      0x71500u
+#define RAM_LOW_OOTPLAY_BYTES       0x64000u
+#define RAM_LOW_USED_BYTES          0xD5500u
+#else
 #define RAM_LOW_USED_BYTES          0x71500u
+#endif
 
 #define RAM_LOW(offset)             ((void *)(RAM_LOW_ADDRESS + (offset)))
 

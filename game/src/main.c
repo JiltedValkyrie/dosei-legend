@@ -140,34 +140,8 @@ static bool     dialogue_text_load(void)
 }
 
 #ifdef DOSEI_OOT_CORE
-/* oot-core Phase 0: decomp math on the SH-2, timed once at boot. The code is
-** OOTCORE.BIN, linked to run from the cart carve (makefile OOT_CORE_LOAD_ADDR). */
-#include "oot_core_bench.h"
-static OotCoreBench oot_core_bench;
-static bool oot_core_loaded;
-
-static bool oot_core_load(void)
-{
-    unsigned char *carve = (unsigned char *)ram_cart_fixed(RAM_CART_OOTCORE_OFFSET,
-                                                           RAM_CART_OOTCORE_BYTES);
-    const OotCoreEntry *entry = (const OotCoreEntry *)OOT_CORE_LOAD_ADDR;
-    jo_file probe;
-    int length = 0;
-    unsigned int i;
-    if (!carve || !jo_fs_open(&probe, "OOTCORE.BIN")) return false;
-    length = probe.size;
-    jo_fs_close(&probe);
-    /* jo_fs_read_file_ptr writes the whole file: refuse one larger than the carve. */
-    if (length <= 0 || length > (int)RAM_CART_OOTCORE_BYTES) return false;
-    /* .bss is not in the file: zero the whole carve first (cache-through alias). */
-    for (i = 0; i < RAM_CART_OOTCORE_BYTES; ++i) carve[i] = 0;
-    if (!jo_fs_read_file_ptr("OOTCORE.BIN", carve, &length)) return false;
-    /* Code runs from the cached alias: drop any stale cache lines first. */
-    slCashPurge();
-    if (entry->magic != OOT_CORE_MAGIC || entry->version != OOT_CORE_VERSION ||
-        (unsigned int)entry->end > OOT_CORE_LOAD_ADDR + RAM_CART_OOTCORE_BYTES) return false;
-    return true;
-}
+/* oot-core: decomp code in OOTCORE.BIN (oot_core_host.c). */
+#include "oot_core_host.h"
 #endif
 
 #ifdef DOSEI_TEXTURE_PROBE
@@ -1252,13 +1226,17 @@ static void __attribute__((optimize("Os"))) viewer_hud(void)
 #ifdef DOSEI_OOT_CORE
         /* ns per call: ma=Fx mul-add dv=divide ss=SmoothStepToF
         ** ds=3D distance sn=SinS+sinf at=Atan2S. */
-        if (!oot_core_loaded) jo_printf(0, 13, "oc OOTCORE.BIN not loaded ");
-        else jo_printf(0, 13, "oc ma%u dv%u ss%u   ",
-                  oot_core_bench.ns[OOT_BENCH_MULADD], oot_core_bench.ns[OOT_BENCH_DIV],
-                  oot_core_bench.ns[OOT_BENCH_SMOOTHSTEP]);
-        if (oot_core_loaded) jo_printf(0, 14, "oc ds%u sn%u at%u   ",
-                  oot_core_bench.ns[OOT_BENCH_DIST], oot_core_bench.ns[OOT_BENCH_SIN],
-                  oot_core_bench.ns[OOT_BENCH_ATAN2]);
+        /* Row 15: play state on (p1), actor counts player/prop/misc. */
+        if (!oot_core_is_loaded()) jo_printf(0, 13, "oc OOTCORE.BIN not loaded ");
+        else {
+            const OotCoreBench *b = oot_core_bench_result();
+            jo_printf(0, 13, "oc ma%u dv%u ss%u   ", b->ns[OOT_BENCH_MULADD],
+                      b->ns[OOT_BENCH_DIV], b->ns[OOT_BENCH_SMOOTHSTEP]);
+            jo_printf(0, 14, "oc ds%u sn%u at%u   ", b->ns[OOT_BENCH_DIST],
+                      b->ns[OOT_BENCH_SIN], b->ns[OOT_BENCH_ATAN2]);
+            jo_printf(0, 15, "oc p%d pl%d pr%d mi%d   ", (int)oot_core_is_playing(),
+                      oot_core_actors(2), oot_core_actors(6), oot_core_actors(8));
+        }
 #endif
         /* Marked when stale: on a cache hit these hold the last rebuild's
         ** figures, not this frame's work. */
@@ -1497,18 +1475,7 @@ void __attribute__((optimize("Os"))) jo_main(void)
         return;
     }
 #ifdef DOSEI_OOT_CORE
-    /* Boot progress: a hang here leaves the last marker on screen. */
-    jo_printf(0, 20, "oc 1 load ");
-    oot_core_loaded = oot_core_load();
-    /* Diagnostic order: bench (no ctor data) before init, to tell a cart-exec
-    ** failure from a ctor failure. */
-    jo_printf(0, 20, "oc 2 bench %d ", (int)oot_core_loaded);
-    if (oot_core_loaded)
-        ((const OotCoreEntry *)OOT_CORE_LOAD_ADDR)->bench(&oot_core_bench, frame_timer_ticks,
-                                                          frame_timer_ticks_to_us);
-    jo_printf(0, 20, "oc 3 init         ");
-    if (oot_core_loaded) ((const OotCoreEntry *)OOT_CORE_LOAD_ADDR)->init();
-    jo_printf(0, 20, "oc 4 done        ");
+    oot_core_boot();
 #endif
 
     /* Actor pool lives in the cart's fixed carve, never in work RAM. */

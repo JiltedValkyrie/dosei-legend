@@ -1,5 +1,6 @@
 #include <jo/jo.h>
 #include "demo.h"
+#include "oot_core_host.h"
 #include "pause_windows.h"
 #include "music.h"
 #include "music_banks.h"
@@ -1898,6 +1899,7 @@ void demo_update(void)
                 field_music_motion(action.moving);
                 if(story_owl_talking()) action.cancel=false;
                 gameplay_step(&action);
+                oot_core_frame();
                 story_route_step();
                 tree_mouth_step();
                 if (finish_boss_warp()) { walk=0; jump_pending=false; break; }

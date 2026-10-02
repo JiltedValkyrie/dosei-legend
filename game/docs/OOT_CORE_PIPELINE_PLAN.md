@@ -65,6 +65,30 @@ Code in place (host-verified, target compile-verified; runtime numbers pending h
 - **Step 4/5 hazard:** Actor_UpdateAll and most actors read GET_PLAYER(play). Our Link is C,
   so step 4 needs a proxy Player actor in the PLAYER category, synced from C Link each frame.
 
+## Status — Phase 1 step 4 (2026-10-02): built, runtime pending
+- Kronos fix: Kronos fetched code only from 0x020xxxxx in CS0 -> blob hung after SEGA logo.
+  `build/kronos-fix/kronos.exe` (BUILD.md 26). Boot now reaches title (human, 2026-10-02).
+- API `oot-core/include/oot_core_api.h` (entry v3): init(host), play_bytes, play_init(block,
+  scene, colHeader, player pos/yaw), set_player, update, draw (no-op until Phase 2), spawn
+  (refuses non-imported ids), actor_count. `oot-core/src/oot_core_api.cpp` follows z_play
+  Play_Init/Play_Update order for systems we have (lights, effects, effect-ss, colchk,
+  bgcheck, actor ctx; AT/OC/Damage/Clear, Actor_UpdateAll, Effect/EffectSs_UpdateAll).
+  gRegEditor now points at a real RegEditor (REG macros deref it).
+- Player proxy `oot-core/src/bridge_player.cpp`: Player_Profile with real header, update copies
+  C Link feet pos/yaw. Focus height 40 is APPROXIMATE. Yaw convention C vs OoT not verified.
+- Play block (PlayState 78 KB + THA 192 KB + ZeldaArena 128 KB) in low work RAM carve
+  RAM_LOW_OOTPLAY (0x71500, 0x64000; OOT_CORE builds only).
+- Scene collision: importer SCENE_COLLISION cuts the CollisionHeader + arrays verbatim out of
+  extracted `spot04_scene.c` -> `SPT04COL.BIN` (34 KB, 1692 polys) linked at 0x02780000
+  (`oot-core/scenecol.ld`, carve RAM_CART_SCENECOL 256 KB before OOTCORE; OOTCORE address
+  unchanged). Passed to BgCheck_Allocate.
+- Host `src/oot_core_host.c`: boot loads both blobs, init, bench. `oot_core_frame()` after
+  gameplay_step (30 Hz): in Kokiri Forest only, play_init on entry, set_player, update on 2 of
+  every 3 steps (decomp = 20 Hz). Debug row 15: `oc p<playing> pl pr mi` actor counts.
+  Expected in Kokiri: `oc p1 pl1 pr0 mi0`. Host callbacks still NULL.
+- Next = step 5: spawn En_Kusa from Kokiri's room actor list, wire OotCoreHost (sfx,
+  give_item, health) to action_audio/save, hide the matching world_props grass.
+
 **Gate numbers (human, Kronos kronos-fix, Debug, -Os, blob in cart) 2026-10-02:** ns/call
 ma 8582, dv 20901, ss 15864, ds 59799, sn 49818, at 28630. ~240 cycles for one Fx mul-add:
 far too slow for bulk actors. Unknown split: cart (A-bus) code fetch / Kronos timing vs Fx
@@ -107,7 +131,7 @@ system by hand that the decomp already has. Our C code stays only as the Saturn 
    - EffectSs*_Spawn: stub (count calls) first, then port the effects that are needed.
    - BgCheck: decide between z_bgcheck over our converted collision (preferred; needs the
      CollisionHeader in decomp format from the ROM) and a bridge to kokiri_collision.
-4. NEXT. Entry table grows (v2 already has `init` = ctor runner; add the proxy Player) (oot_core_bench.h -> oot_core_api.h): init(play), update(), draw(list),
+4. BUILT 2026-10-02 (see step 4 status; runtime pending). Entry table grows (v2 already has `init` = ctor runner; add the proxy Player) (oot_core_bench.h -> oot_core_api.h): init(play), update(), draw(list),
    spawn(actorId, params, pos). The C main loop calls them for scenes flagged "decomp actors".
 5. First live actor: En_Kusa in Kokiri Forest with its real drop table via z_en_item00. Replace
    world_props grass for that scene only. Human verifies in Kronos.

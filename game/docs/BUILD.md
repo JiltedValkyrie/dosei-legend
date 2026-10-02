@@ -141,6 +141,12 @@ sudo apt-get install -y python3-pil genisoimage   # Pillow + mkisofs
     `tools/build_kronos_draw_fix.py` now also patches `sh2int.c` (0x020-0x027 -> CS0 cache).
     Built to `build/kronos-fix/` on top of the old draw-fix `libkronos.a` (`--archive`), DLLs,
     `platforms/` and `kronos.ini` copied from it; `config.ini` points there.
+27. **`sources.mk` list ends in `\`.** Anything the importer appends after it must start with a
+    blank line, or make glues it onto the list (`No rule to make target 'OOT_SCENECOL_NAMES'`).
+28. **Scene collision blobs include the scene header by bare name.** The importer rewrites
+    `#include "spot04_scene.h"` to the asset-root path; new scenes get the same rewrite.
+29. **PlayState is 78 KB with Fx** (floats doubled). It lives in low work RAM
+    (`RAM_LOW_OOTPLAY`), never in the blob .bss or the 256 KB blob carve.
 
 ## Playtest package
 

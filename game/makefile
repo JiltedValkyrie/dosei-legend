@@ -170,7 +170,8 @@ SRCS += src/skulltula.c src/wall_skull.c src/dekubaba.c
 SRCS += src/hintnuts.c
 SRCS += src/gohma_larva.c
 SRCS += src/gohma.c
-SRCS += src/level_select.c src/tree_mouth.c src/field_music.c src/story_route.c src/emerald_story.c
+SRCS += src/level_select.c src/tree_mouth.c src/field_music.c src/story_route.c src/emerald_story.c \
+	src/oot_core_host.c
 MY_OBJS = $(patsubst %.c,$(OBJDIR)/%.o,$(notdir $(SRCS)))
 
 # --- oot-core (fork Phase 0): real decomp code compiled as C++ ---------------
@@ -178,7 +179,7 @@ MY_OBJS = $(patsubst %.c,$(OBJDIR)/%.o,$(notdir $(SRCS)))
 # OOTCORE.BIN: a self-contained blob linked at a fixed RAM-cart address
 # (oot-core/oot-core.ld), loaded at boot and run from the cart, so decomp code
 # never costs work RAM. The game reaches it only through its entry table
-# (oot-core/include/oot_core_bench.h). Run tools/oot_core_import.py first
+# (oot-core/include/oot_core_api.h). Run tools/oot_core_import.py first
 # (build.sh does). Flags mirror oot-core/oot-core-flags.sh. See
 # docs/OOT_CORE_PIPELINE_PLAN.md and docs/BUILD.md.
 OOT_CORE ?= 0
@@ -199,6 +200,10 @@ OOT_CORE_OBJDIR = $(OBJDIR)/oot-core
 # checks the carve sits here). 0x2xxxxxxx is cache-through: never run code there.
 OOT_CORE_LOAD_ADDR = 0x027C0000
 OOT_CORE_MAX_BYTES = 0x40000
+# Scene collision blobs (RAM_CART_SCENECOL carve, cached alias). One per scene in
+# tools/oot_core_import.py SCENE_COLLISION; data only, nothing executes there.
+OOT_SCENECOL_ADDR = 0x02780000
+OOT_SCENECOL_MAX_BYTES = 0x40000
 OOT_CORE_CXXFLAGS = -x c++ -std=gnu++17 -fno-exceptions -fno-rtti -fpermissive -funsigned-char -w \
 	-fno-threadsafe-statics -fno-use-cxa-atexit -Os -m2 -ffunction-sections -fdata-sections \
 	-include oot_prelude.h \
@@ -213,15 +218,16 @@ OOT_CORE_CXXFLAGS = -x c++ -std=gnu++17 -fno-exceptions -fno-rtti -fpermissive -
 OOT_CORE_SRCS = $(OOT_CORE_DECOMP_SRCS) \
 	oot-core/src/oot_math.cpp oot-core/src/oot_rand.cpp \
 	oot-core/src/oot_core_bench.cpp oot-core/src/oot_core_link_stubs.cpp \
-	oot-core/src/oot_core_roots.cpp oot-core/src/bridge_tables.cpp oot-core/src/bridge_libc.cpp \
-	oot-core/src/bridge_play.cpp oot-core/src/bridge_assets.cpp
+	oot-core/src/oot_core_api.cpp oot-core/src/bridge_tables.cpp oot-core/src/bridge_libc.cpp \
+	oot-core/src/bridge_play.cpp oot-core/src/bridge_assets.cpp oot-core/src/bridge_player.cpp
 OOT_CORE_OBJS = $(patsubst %.cpp,$(OOT_CORE_OBJDIR)/%.o,$(notdir $(OOT_CORE_SRCS)))
-_CCFLAGS += -DDOSEI_OOT_CORE -DOOT_CORE_LOAD_ADDR=$(OOT_CORE_LOAD_ADDR)u -Ioot-core/include
+_CCFLAGS += -DDOSEI_OOT_CORE -DOOT_CORE_LOAD_ADDR=$(OOT_CORE_LOAD_ADDR)u \
+	-DOOT_SCENECOL_ADDR=$(OOT_SCENECOL_ADDR)u -Ioot-core/include
 vpath %.cpp $(sort $(dir $(OOT_CORE_SRCS)))
 $(OOT_CORE_OBJDIR):
 	mkdir -p $@
 # Static ctors are fine: OotCoreEntry.init runs the blob's ctor table.
-$(OOT_CORE_OBJDIR)/%.o: %.cpp oot-core/include/fx.h oot-core/include/oot_prelude.h oot-core/include/oot_core_bench.h | $(OOT_CORE_OBJDIR)
+$(OOT_CORE_OBJDIR)/%.o: %.cpp oot-core/include/fx.h oot-core/include/oot_prelude.h oot-core/include/oot_core_bench.h oot-core/include/oot_core_api.h oot-core/include/oot_core_host.h | $(OOT_CORE_OBJDIR)
 	$(OOT_CORE_CXX) $(OOT_CORE_CXXFLAGS) -c $< -o $@
 build/oot-core/oot-core.elf: $(OOT_CORE_OBJS) oot-core/oot-core.ld
 	$(OOT_CORE_CXX) -m2 -nostdlib -nostartfiles -T oot-core/oot-core.ld \
@@ -231,7 +237,15 @@ build/oot-core/oot-core.elf: $(OOT_CORE_OBJS) oot-core/oot-core.ld
 		$(OOT_CORE_OBJS) -lgcc -o $@
 $(ASSETS_DIR)/OOTCORE.BIN: build/oot-core/oot-core.elf
 	$(CONV) -O binary $< $@
-$(TARGET2): $(ASSETS_DIR)/OOTCORE.BIN
+build/oot-core/scenecol/%COL.elf: build/oot-core/scenecol/%COL.cpp oot-core/scenecol.ld
+	$(OOT_CORE_CXX) $(OOT_CORE_CXXFLAGS) -c $< -o build/oot-core/scenecol/$*COL.o
+	$(OOT_CORE_CXX) -m2 -nostdlib -nostartfiles -T oot-core/scenecol.ld \
+		-Wl,--defsym,OOT_SCENECOL_ADDR=$(OOT_SCENECOL_ADDR) \
+		-Wl,--defsym,OOT_SCENECOL_MAX_BYTES=$(OOT_SCENECOL_MAX_BYTES) \
+		build/oot-core/scenecol/$*COL.o -o $@
+$(ASSETS_DIR)/%COL.BIN: build/oot-core/scenecol/%COL.elf
+	$(CONV) -O binary $< $@
+$(TARGET2): $(ASSETS_DIR)/OOTCORE.BIN $(patsubst %,$(ASSETS_DIR)/%COL.BIN,$(OOT_SCENECOL_NAMES))
 endif
 # Header layout changes must rebuild every consumer (save v2 otherwise wrote
 # 300 bytes into a stale 220-byte stack buffer). makefile bootstraps .d files

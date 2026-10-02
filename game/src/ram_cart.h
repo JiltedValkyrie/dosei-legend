@@ -32,9 +32,13 @@
 /* oot-core blob (OOTCORE.BIN): decomp code linked at a fixed cart address and
 ** run from the cart (oot-core/oot-core.ld, makefile OOT_CORE_LOAD_ADDR). It is
 ** the last carve, so its address is BANK2 end - RAM_CART_OOTCORE_BYTES. */
-#define RAM_CART_OOTCORE_OFFSET 0x82400u
+/* Scene collision blob (<scene>COL.BIN): decomp CollisionHeader + arrays,
+** linked at the cached alias OOT_SCENECOL_ADDR (makefile). One scene at a time. */
+#define RAM_CART_SCENECOL_OFFSET 0x82400u
+#define RAM_CART_SCENECOL_BYTES  0x40000u
+#define RAM_CART_OOTCORE_OFFSET 0xC2400u
 #define RAM_CART_OOTCORE_BYTES  0x40000u
-#define RAM_CART_FIXED_BYTES    0xC2400u
+#define RAM_CART_FIXED_BYTES    0x102400u
 #else
 #define RAM_CART_FIXED_BYTES    0x82400u
 #endif
