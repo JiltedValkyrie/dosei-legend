@@ -37,9 +37,12 @@ static unsigned char host_give_item(unsigned char item)
     case 0x8A: give = SAVE_ITEM_DEKU_STICKS_5; break;   /* ITEM_DEKU_STICKS_5 */
     case 0x8C: give = SAVE_ITEM_DEKU_NUTS_5; break;     /* ITEM_DEKU_NUTS_5 */
     case 0x8D: give = SAVE_ITEM_DEKU_NUTS_10; break;    /* ITEM_DEKU_NUTS_10 */
+    case 0x58: give = SAVE_ITEM_SEEDS_5; break;         /* ITEM_DEKU_SEEDS (+5) */
     default: return item; /* not in the C save yet: not given */
     }
-    return save_item_give(give) ? 0xFF : item;
+    if (!save_item_give(give)) return item;
+    gameplay.rupees = (uint8_t)save_state.rupees; /* HUD counter */
+    return 0xFF;
 }
 
 /* Health_ChangeBy: 1/16 heart units; nonzero = still alive. */
@@ -121,6 +124,19 @@ void oot_core_frame(void)
         if (!playing) return;
     }
     sync_player();
+    {
+        OotCoreSave mirror;
+        mirror.health = save_state.health;
+        mirror.health_capacity = save_state.health_capacity;
+        mirror.rupees = save_state.rupees;
+        mirror.stick_owned = save_state.stick_owned;
+        mirror.stick_ammo = save_state.stick_ammo;
+        mirror.nut_owned = save_state.nut_owned;
+        mirror.nut_ammo = save_state.nut_ammo;
+        mirror.slingshot_owned = save_state.slingshot;
+        mirror.seed_ammo = save_state.ammo_seeds;
+        ENTRY->set_save(&mirror);
+    }
     ENTRY->set_room((int)kokiri_scene_room());
     {
         int32_t base[3], tip[3];
@@ -139,4 +155,8 @@ bool oot_core_is_loaded(void) { return loaded; }
 bool oot_core_is_playing(void) { return playing; }
 const OotCoreBench *oot_core_bench_result(void) { return &bench; }
 int oot_core_actors(int category) { return playing ? ENTRY->actor_count(category) : 0; }
+int oot_core_view(int category, OotCoreActorView *out, int max)
+{
+    return playing ? ENTRY->actor_view(category, out, max) : 0;
+}
 #endif

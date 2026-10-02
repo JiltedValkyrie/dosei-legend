@@ -1,4 +1,5 @@
 #include "gameplay.h"
+#include "oot_core_host.h"
 #include "player_items.h"
 #include "dungeon_puzzles.h"
 #include "skulltula.h"
@@ -1317,7 +1318,8 @@ static void collect_rupees(const gameplay_input_t *in)
     if (!in_forest()) return;
     for (i = 0; i < KOKIRI_RUPEE_COUNT; ++i) {
         const kokiri_rupee_t *r = &kokiri_rupees[i];
-        if (!gameplay_rupee_taken(i) && rupee_near(in, r->x, r->y, r->z, r->room)) {
+        if (!gameplay_rupee_taken(i) && !oot_core_owns_kokiri_props() &&
+            rupee_near(in, r->x, r->y, r->z, r->room)) {
             gameplay.rupee_taken |= (uint16_t)(1u << i);
             /* Per-scene collectible flag, where OoT keeps them, so a rupee
             ** already picked up does not reappear after a save and reload. */
@@ -1688,7 +1690,8 @@ targets:
     for (i = 0; i < KOKIRI_GRASS_COUNT; ++i) {
         const kokiri_prop_t *tuft = &kokiri_grass[i];
         collider_t *c = &contacts->tufts[i];
-        if (!in_forest() || in->room != tuft->room || (gameplay.grass_cut & (1u << i)))
+        if (!in_forest() || in->room != tuft->room || (gameplay.grass_cut & (1u << i)) ||
+            oot_core_owns_kokiri_props())
             continue;
         c->shape = COLSHAPE_CYLINDER;
         c->actor = 0;

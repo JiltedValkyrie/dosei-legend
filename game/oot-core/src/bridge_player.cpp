@@ -16,6 +16,9 @@
 #include "play_state.h"
 #include "collision_check.h"
 #include "z_lib.h"
+#include "item.h"
+#include "sfx.h"
+#include "interface.h"
 
 /* Set by oot_core_set_player (oot_core_api.cpp), read in update. */
 Vec3f gOotCorePlayerPos;
@@ -119,8 +122,42 @@ static void PlayerProxy_Destroy(Actor* thisx, PlayState* play) {
     Collider_DestroyQuad(play, &((Player*)thisx)->meleeWeaponQuads[0]);
 }
 
+/* Player's get-item handling (func_8083E5A8) for the drops En_Item00 offers
+ * with Actor_OfferGetItemNearby. APPROXIMATE: given at once, no hold-up
+ * animation or first-get text; itemId from z_player sGetItemTable. */
+static void PlayerProxy_GetItem(Player* this, PlayState* play) {
+    u8 item;
+
+    if (this->getItemId == GI_NONE || this->interactRangeActor == NULL) {
+        return;
+    }
+    switch (this->getItemId) {
+        case GI_DEKU_NUTS_5:
+            item = ITEM_DEKU_NUTS_5;
+            break;
+        case GI_DEKU_STICKS_1:
+            item = ITEM_DEKU_STICK;
+            break;
+        case GI_DEKU_SEEDS_5:
+            item = ITEM_DEKU_SEEDS;
+            break;
+        default:
+            item = ITEM_NONE; /* not in the C save yet */
+            break;
+    }
+    if (item != ITEM_NONE && Item_Give(play, item) == ITEM_NONE) {
+        this->interactRangeActor->parent = &this->actor;
+        Audio_PlaySfxGeneral(NA_SE_SY_GET_ITEM, &gSfxDefaultPos, 4, &gSfxDefaultFreqAndVolScale,
+                             &gSfxDefaultFreqAndVolScale, &gSfxDefaultReverb);
+    }
+    this->getItemId = GI_NONE;
+    this->interactRangeActor = NULL;
+    this->getItemDirection = 0x8000;
+}
+
 static void PlayerProxy_Update(Actor* thisx, PlayState* play) {
     PlayerProxy_Sync(thisx);
+    PlayerProxy_GetItem((Player*)thisx, play);
     PlayerProxy_UpdateSword((Player*)thisx, play);
 }
 

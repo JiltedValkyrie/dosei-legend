@@ -50,6 +50,7 @@ void kokiri_hit_filter(unsigned level){hit_filter=level<=32?level:0;}
 #include "mesh_lod.h"
 #include "field_stream.h"
 #include "story_route.h"
+#include "oot_core_host.h"
 
 /* Original forest renderer: radius (4367) * 60%, halved for the room banks.
 ** The authored single-mesh scene spans the whole town in one list, so that
@@ -2208,9 +2209,63 @@ static void rupee_world(int x, int y, int z, unsigned int room,
     if (slPutSprite(pos, &attr, 0) == FALSE) ++kokiri_rejected;
 }
 
+#ifdef DOSEI_OOT_CORE
+/* Decomp En_Item00 drops and floor rupees (ACTORCAT_MISC), drawn with the
+** C pickup billboards until the Phase 2 draw shim. ITEM00 type = params. */
+#define OOT_ACTOR_EN_ITEM00 0x0015
+#define OOT_ACTOR_EN_KUSA   0x0125
+static OotCoreActorView core_view[32];
+
+static void core_drops_draw(unsigned int tick)
+{
+    int i, n = oot_core_view(8 /* ACTORCAT_MISC */, core_view, 32);
+    for (i = 0; i < n; ++i) {
+        const OotCoreActorView *a = &core_view[i];
+        int dx = a->x - demo_camera.x, dz = a->z - demo_camera.z;
+        if (a->id != OOT_ACTOR_EN_ITEM00 || !(a->flags & OOT_CORE_VIEW_DRAWN)) continue;
+        if (dx * dx + dz * dz > FOREST_FAR * FOREST_FAR) continue;
+        kokiri_drop_draw((unsigned int)(a->params & 0xFF), a->x, a->y + 14, a->z, tick);
+    }
+}
+
+static void core_grass_draw(void)
+{
+    int i, n = oot_core_view(6 /* ACTORCAT_PROP */, core_view, 32);
+    for (i = 0; i < n; ++i) {
+        const OotCoreActorView *a = &core_view[i];
+        int32_t dx = a->x - demo_camera.x, dz = a->z - demo_camera.z;
+        FIXED pos[5];
+        SPR_ATTR attr = SPR_ATTRIBUTE(0, No_Palet, No_Gouraud, ECdis,
+                                      sprNoflip | FUNC_Sprite);
+        if (a->id != OOT_ACTOR_EN_KUSA || (a->flags & OOT_CORE_VIEW_GRASS_CUT) ||
+            !(a->flags & OOT_CORE_VIEW_DRAWN)) continue;
+        if (dx * dx + dz * dz > FOREST_FAR * FOREST_FAR) continue;
+        pos[0] = a->x * 65536;
+        pos[1] = -(a->y + 20) * 65536;
+        pos[2] = a->z * 65536;
+        pos[3] = 98304;
+        pos[4] = 81920;
+        attr.texno = (Uint16)grass_sprite;
+        attr.atrb |= (FAIRY_COLMODE_RGB & 7) << 3;
+        if (slPutSprite(pos, &attr, 0) == FALSE) ++kokiri_rejected;
+    }
+}
+#endif
+
 void kokiri_rupees_draw(unsigned int tick)
 {
     unsigned int i;
+#ifdef DOSEI_OOT_CORE
+    if (oot_core_owns_kokiri_props()) {
+        core_drops_draw(tick);
+        for (i = 0; i < KOKIRI_WONDER_COUNT; ++i) {
+            const kokiri_wonder_t *w = &kokiri_wonders[i];
+            if (gameplay.wonder_drop[i])
+                rupee_world(w->x,w->y,w->z,w->room,gameplay.wonder_drop[i],gameplay.wonder_age[i],tick);
+        }
+        return;
+    }
+#endif
     for (i = 0; i < KOKIRI_RUPEE_COUNT; ++i) {
         const kokiri_rupee_t *r = &kokiri_rupees[i];
         if (!gameplay_rupee_taken(i))
@@ -2263,6 +2318,9 @@ void kokiri_rupee_hud_draw(void)
 void                kokiri_grass_draw(void)
 {
     unsigned int i;
+#ifdef DOSEI_OOT_CORE
+    if (oot_core_owns_kokiri_props()) { core_grass_draw(); return; }
+#endif
     for (i = 0; i < KOKIRI_GRASS_COUNT; ++i) {
         const kokiri_prop_t *grass = &kokiri_grass[i];
         int32_t dx = grass->x - demo_camera.x;

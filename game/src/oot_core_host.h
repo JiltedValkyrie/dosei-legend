@@ -22,8 +22,14 @@ bool oot_core_is_loaded(void);
 bool oot_core_is_playing(void);
 const OotCoreBench *oot_core_bench_result(void);
 int oot_core_actors(int category);
+/* Live actors of a category, for C drawing (see OotCoreActorView). */
+int oot_core_view(int category, OotCoreActorView *out, int max);
+/* Kokiri Forest grass (En_Kusa) and floor rupees (En_Item00) belong to the
+** decomp while it plays: the C copies stop drawing, cutting and collecting. */
+static inline bool oot_core_owns_kokiri_props(void) { return oot_core_is_playing(); }
 #else
 static inline void oot_core_frame(void) {}
+static inline bool oot_core_owns_kokiri_props(void) { return false; }
 #endif
 
 #endif

@@ -14,6 +14,8 @@
 #include "segmented_address.h"
 #include "z_actor_dlftbls.h"
 #include "zelda_arena.h"
+#include "item.h"
+#include "save.h"
 #include "oot_core_api.h"
 #include "oot_scene_blob.h"
 
@@ -38,7 +40,7 @@ static const OotSceneBlob* sScene;
 
 /* Room-list actor ids the blob owns; every other id stays with the C game
  * until its overlay is imported (plan Phase 1 step 6). */
-static const s16 sRoomActorIds[] = { ACTOR_EN_KUSA };
+static const s16 sRoomActorIds[] = { ACTOR_EN_ITEM00, ACTOR_EN_KUSA };
 #define ROOM_ENTRIES_MAX 64
 static ActorEntry sRoomEntries[ROOM_ENTRIES_MAX];
 
@@ -145,6 +147,41 @@ static void oot_core_set_sword(int active, const int* base, const int* tip) {
     }
 }
 
+/* The C save owns these until z_sram/z_parameter are imported. Child
+ * Link, no magic, no bomb bag or bow (M3 scope). */
+static void oot_core_set_save(const OotCoreSave* in) {
+    SavePlayerData* pd = &gSaveContext.save.info.playerData;
+    Inventory* inv = &gSaveContext.save.info.inventory;
+    u32 i;
+
+    if (in == NULL) {
+        return;
+    }
+    gSaveContext.save.linkAge = LINK_AGE_CHILD;
+    pd->health = in->health;
+    pd->healthCapacity = in->health_capacity;
+    pd->rupees = in->rupees;
+    pd->magicLevel = 0;
+    pd->magic = 0;
+    for (i = 0; i < ARRAY_COUNT(inv->items); i++) {
+        inv->items[i] = ITEM_NONE;
+    }
+    if (in->stick_owned) {
+        inv->items[SLOT_DEKU_STICK] = ITEM_DEKU_STICK;
+    }
+    if (in->nut_owned) {
+        inv->items[SLOT_DEKU_NUT] = ITEM_DEKU_NUT;
+    }
+    if (in->slingshot_owned) {
+        inv->items[SLOT_SLINGSHOT] = ITEM_SLINGSHOT;
+    }
+    inv->ammo[SLOT_DEKU_STICK] = in->stick_ammo;
+    inv->ammo[SLOT_DEKU_NUT] = in->nut_ammo;
+    inv->ammo[SLOT_SLINGSHOT] = in->seed_ammo;
+    inv->ammo[SLOT_BOMB] = 0;
+    inv->ammo[SLOT_BOW] = 0;
+}
+
 /* Room_RequestNewRoom + Room_ProcessRoomRequest (actor list) +
  * Room_FinishRoomChange (old room's actors die), done at once: the C game
  * has already swapped the room geometry. */
@@ -200,6 +237,29 @@ static int oot_core_actor_count(int category) {
     return sPlay->actorCtx.actorLists[category].length;
 }
 
+static int oot_core_actor_view(int category, OotCoreActorView* out, int max) {
+    Actor* actor;
+    int n = 0;
+
+    if (sPlay == NULL || out == NULL || category < 0 || category >= ACTORCAT_MAX) {
+        return 0;
+    }
+    for (actor = sPlay->actorCtx.actorLists[category].head; actor != NULL && n < max; actor = actor->next) {
+        if (actor->update == NULL) {
+            continue; /* killed, removed next frame */
+        }
+        out[n].id = actor->id;
+        out[n].params = actor->params;
+        out[n].x = (s32)actor->world.pos.x;
+        out[n].y = (s32)actor->world.pos.y;
+        out[n].z = (s32)actor->world.pos.z;
+        out[n].flags = (actor->draw != NULL ? OOT_CORE_VIEW_DRAWN : 0u) |
+                       ((actor->flags & ACTOR_FLAG_GRASS_DESTROYED) ? OOT_CORE_VIEW_GRASS_CUT : 0u);
+        n++;
+    }
+    return n;
+}
+
 /* First bytes of OOTCORE.BIN (oot-core.ld KEEPs .oot_entry at the load address). */
 extern "C" const OotCoreEntry oot_core_entry __attribute__((section(".oot_entry"), used)) = {
     OOT_CORE_MAGIC,
@@ -212,8 +272,10 @@ extern "C" const OotCoreEntry oot_core_entry __attribute__((section(".oot_entry"
     oot_core_set_player,
     oot_core_set_room,
     oot_core_set_sword,
+    oot_core_set_save,
     oot_core_update,
     oot_core_draw,
     oot_core_spawn,
     oot_core_actor_count,
+    oot_core_actor_view,
 };

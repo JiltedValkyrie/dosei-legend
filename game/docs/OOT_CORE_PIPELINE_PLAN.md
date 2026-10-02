@@ -141,8 +141,25 @@ Step 5 progress (2026-10-02, Debug build OK; tasks 1-3 runtime CONFIRMED by huma
   Player_UpdateWeaponInfo, dmgFlags DMG_SLASH_KOKIRI. APPROXIMATE: one blade line, one quad
   (real: two lines/quads); jump/spin dmg flags not passed. Human check: cut Kokiri grass,
   row 15 `mi` should rise above 0 when a drop spawns (drops are invisible, not collectable yet).
-- Task 4 choice: keep C grass drawn AND interactive until task 6 (decomp grass is invisible and
-  cannot be cut yet, so no double drop). When task 6 lands, C grass goes draw-only.
+- Human confirmed 2026-10-02: sword cuts decomp grass.
+- DONE 4+5 batch (build only, runtime NOT checked; API v7, work RAM spare 3,760 B):
+  - Room lists now also spawn ACTOR_EN_ITEM00 (9 floor rupees in room 0).
+  - oot_core_owns_kokiri_props() (src/oot_core_host.h): while decomp plays Kokiri, C grass
+    (gameplay.c tufts) and C floor rupees stop cutting/collecting; kokiri_sgl.c draws decomp
+    En_Kusa (uncut, object ready) with the grass billboard and decomp En_Item00 with
+    kokiri_drop_draw (params = ITEM00 type) via entry actor_view. Wonder-item drops stay C.
+  - Rupees/hearts: En_Item00 collects by distance (real code) -> Item_Give -> C save.
+  - Seeds/nuts/stick: player proxy handles Actor_OfferGetItemNearby (PlayerProxy_GetItem):
+    APPROXIMATE, given at once (no hold-up, no first-get text).
+  - Entry set_save mirrors C save into gSaveContext each step (health, capacity, rupees,
+    stick/nut/slingshot + ammo; child; no magic/bombs/bow) so the real drop table and
+    Item00 filters see the real state. Floor rupees use temp collectible flags (0x24-0x27):
+    they respawn on scene re-entry, as in OoT (C used to keep them taken in the save).
+  - Missing (logged): Kusa lift/throw with A (Actor_OfferCarry), Item00 collect rise anim,
+    two-quad sword, room 2 (no room streaming).
+- Human check (one pass): Debug, Kokiri, L+R. Cut grass -> grass sprite vanishes, drop
+  visible, walk over -> rupee/heart counted with sound; grass regrows later; floor rupees
+  visible and collectable; seeds only drop with slingshot owned; no double cut sound.
 
 Step 5 tasks, in order:
 1. Room actor lists: importer cuts each Kokiri room's ActorEntryList verbatim out of
