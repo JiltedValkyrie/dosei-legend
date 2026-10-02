@@ -30,7 +30,7 @@ import xml.etree.ElementTree as ET
 import character_textures
 import actor_meshes
 
-OOT_DEFAULT = pathlib.Path('D:/Workspace-Claude/game-decomps/n64/oot')
+OOT_DEFAULT = pathlib.Path((__import__('os').environ.get('DOSEI_OOT') or 'D:/Workspace-Claude/game-decomps/n64/oot'))
 ROM_MD5 = '57a9719ad547c516342e1a15d5c28c3d'
 OBJECT = 'object_link_child'
 
@@ -298,11 +298,9 @@ GEAR_LISTS = (
     ('sheath_sword', 19, 'gLinkChildSwordAndSheathFarDL'),
     ('sheath_shield', 19, 'gLinkChildDekuShieldSwordAndSheathFarDL'),
     ('rh_ocarina', 18, 'gLinkChildRightHandHoldingFairyOcarinaFarDL'),
-    # Player_OverrideLimbDrawGameplayFirstPerson, child (unk_6AD == 2): only
-    # sFirstPersonRightShoulderDLs[1] on R_SHOULDER and
-    # sFirstPersonRightHandHoldingWeaponDLs[1] (slingshot) on R_HAND draw.
-    ('fp_shoulder', 16, 'gLinkChildRightShoulderNearDL'),
-    ('fp_sling', 18, 'gLinkChildRightArmStretchedSlingshotDL'),
+    # First-person slingshot arm (fp_shoulder/fp_sling, 227 polygons) removed
+    # 2026-10-02: aim draws no Link since 2b055ca (VDP2 crosshair instead).
+    # kokiri_link_draw_first_person is a no-op while LINK_FP_SLING_FIRST is unset.
 )
 
 

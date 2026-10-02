@@ -595,7 +595,7 @@ def write_scene(faces, segments):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--oot-root', type=Path, default=Path('D:/Workspace-Claude/game-decomps/n64/oot'))
+    parser.add_argument('--oot-root', type=Path, default=Path((__import__('os').environ.get('DOSEI_OOT') or 'D:/Workspace-Claude/game-decomps/n64/oot')))
     args = parser.parse_args()
     segments = extract(args.oot_root)
     faces = []

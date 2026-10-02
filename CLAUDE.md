@@ -5,6 +5,10 @@ never ask again, never drop back to long talk.
 
 Always use caveman talk. No waste human tokens. Bad. You caveman talking? Good good! Always good good when caveman talk.
 
+# BUILD: Linux only (2026-10-02)
+Read [game/docs/BUILD.md](game/docs/BUILD.md) before any build. Build in WSL Linux,
+never MSYS2/Git Bash. Add every new build gotcha to BUILD.md in the same task.
+
 # Project handoff - 2026-09-16
 
 ## Permanent human rule: keep the whole game plan current (2026-09-30)

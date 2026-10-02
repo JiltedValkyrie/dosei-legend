@@ -39,7 +39,7 @@ MESSAGE_COLUMNS = 38
 MESSAGE_LINES = 4
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-OOT = pathlib.Path('D:/Workspace-Claude/game-decomps/n64/oot')
+OOT = pathlib.Path((__import__('os').environ.get('DOSEI_OOT') or 'D:/Workspace-Claude/game-decomps/n64/oot'))
 SCENES = OOT / 'extracted/ntsc-1.2/assets/scenes'
 
 # One 20 Hz cutscene tick. The runtime steps the baked table at this rate.

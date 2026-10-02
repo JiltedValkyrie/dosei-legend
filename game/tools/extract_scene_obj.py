@@ -126,7 +126,7 @@ NIGHT_SCALE = (0.32, 0.36, 0.55)
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--oot', type=pathlib.Path,
-                        default=pathlib.Path('D:/Workspace-Claude/game-decomps/n64/oot'))
+                        default=pathlib.Path((__import__('os').environ.get('DOSEI_OOT') or 'D:/Workspace-Claude/game-decomps/n64/oot')))
     parser.add_argument('--rom-dir', type=pathlib.Path)
     parser.add_argument('--prefix', default='spot00',
                         help='scene to extract, e.g. spot00 (Hyrule Field)')

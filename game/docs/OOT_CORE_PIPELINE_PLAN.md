@@ -12,6 +12,47 @@ in bulk. Our Saturn renderer/audio stay as backend. 4 MB cart required -> code r
 - Actors draw via N64 Gfx display lists (gSPDisplayList, matrices). Need shim, not VDP1 native.
 - RAM: OoT code ~1 MB + overlays. Fit cart if overlays load per scene like N64.
 
+## Status — Phase 0 (2026-10-02)
+Code in place (host-verified, target compile-verified; runtime numbers pending human run):
+- `tools/oot_core_import.py` mirrors decomp `include/`+`src/` headers and listed sources into
+  `build/oot-core/decomp/` (`.c` -> `.cpp`). Mechanical fixups only, counted in
+  `build/oot-core/import_report.txt`: float literals -> `FXL()`, MtxF/`_words`/CamParamData
+  anonymous aggregates named, MIN/MAX/ABS/CLAMP -> `OOT_SEL`, xstdio long double.
+- `oot-core/include/oot_prelude.h` (force-included): `float`/`double` -> `Fx`, C++ keyword renames
+  (`this` etc.), `OOT_SEL` mixed-type ternary. `oot-core/shim/`: assert.h, math.h.
+- `oot-core/include/fx.h`: **Fx = int64, Q39.24** (not 32-bit Q16.16). Reasons found by probe:
+  decomp builds floats past s16 (`Rand_ZeroOne()*0xFFFF`, distSq ~1e8) -> 32-bit saturates;
+  16 frac bits lose 6% on reciprocals (Math3D_DefPlane normal). Mul fast path 1 dmuls when both
+  fit 32 bits, 2 when one does. All ops constexpr: no `.ctors` (makefile rejects any).
+- Replaced (float bit tricks / libc): `oot-core/src/oot_math.cpp` (sqrtf isqrt64, sinf/cosf Q30
+  poly, floor/round...), `oot_rand.cpp` (qrand same LCG, mantissa -> exact Fx).
+  NOTE: N64 `sintable` samples i*pi/(2*1023); do not interpolate it as /1024.
+- Compiles for SH-2 (sh2eb-elf-g++ 14.3, linked by Jo gcc 9.3), **zero soft-float calls**:
+  z_lib, sys_math, sys_math_atan, sys_math3d, math64, sins/coss, **z_actor, z_collision_check,
+  z_bgcheck, z_en_item00, En_Kusa** (~240 KB text). Also syntax-clean: z_player, z_camera.
+- Host probe `oot-core/tests/run_host_probe.sh`: 458 values (sin/cos/sqrt/atan2/dist/plane/
+  SmoothStep/Approach/StepTo/Rand) Fx vs real float, **0 over tolerance, worst 0.017%**.
+- Target: `./build.sh OOT_CORE=1` builds `OOTCORE.BIN` (10.6 KB after gc-sections), linked at the
+  cached cart alias 0x027F0000 (carve RAM_CART_OOTCORE), loaded + cache-purged at boot, called via
+  its entry table. Debug panel rows 13-14 show ns/call (ma dv ss / ds sn at). Work RAM untouched
+  by decomp code (standard image 6,832 B spare). Default/Clean builds unchanged (flag off).
+  This blob is the Phase 1 pattern: decomp code lives in the cart, not work RAM.
+
+Open / next:
+- Human: run OOT_CORE=1 standard build, read rows 13-14 (gate numbers).
+- Actor/collision/bgcheck objects compile but are not linked yet: need PlayState/Gfx/audio/
+  effect bridges (Phase 1). En_Kusa's real `Item_DropCollectibleRandom` comes with z_en_item00.
+- ROM data holding IEEE floats (CutsceneCameraPoint.viewAngle, some cutscene cmds) must be
+  converted to Fx offline when that data is loaded.
+- Asset headers come from `extracted/ntsc-1.2`; decomp `build/` only has ntsc-1.1 objects.
+- SaturnMath++ (MIT, github robertoduarte/SaturnMathPP, clone ../../SaturnMathPP @8bdc355) is
+  32-bit-only fixed point (16.16/24.8/8.24) -> cannot hold decomp floats; NOT the Fx type.
+  Borrowed: its SH-2 divider register pattern -> `fx_div` hardware path when |quotient| < 2^30
+  in Q24 (else libgcc __divdi3). Target-only; runtime unverified. Not interrupt-safe if an ISR
+  uses the divider. Candidates later: its trig/atan2 LUTs if bench shows sinf/atan slow;
+  Vector/Matrix/Frustum for Saturn-side renderer/draw shim (needs C++23).
+- Perf TODO: code size for work RAM (move oot-core text to cart overlay in Phase 1).
+
 ## Approach (phased, each phase gate)
 ### Phase 0 — spike, prove or kill (do first)
 1. New dir `game/oot-core/` (or `shared/oot-core/`). Build decomp C files as **C++** for SH-2 with

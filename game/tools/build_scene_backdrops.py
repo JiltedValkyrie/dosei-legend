@@ -94,7 +94,7 @@ def main():
     ap.add_argument('--cd', type=pathlib.Path, default=here / 'build/cd')
     ap.add_argument('--out', type=pathlib.Path, default=here / 'build/generated')
     ap.add_argument('--oot', type=pathlib.Path,
-                    default=pathlib.Path('D:/Workspace-Claude/game-decomps/n64/oot'))
+                    default=pathlib.Path((__import__('os').environ.get('DOSEI_OOT') or 'D:/Workspace-Claude/game-decomps/n64/oot')))
     ap.add_argument('--rom-dir', default=None)
     ap.add_argument('--png', action='store_true',
                     help='also write a PNG of each backdrop, to look at')

@@ -22,7 +22,7 @@ SCENE_IDS = {'ydan': 7, 'ydan_boss': 9, 'spot10': 8}
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument('--oot', type=Path, default=Path('D:/Workspace-Claude/game-decomps/n64/oot'))
+    ap.add_argument('--oot', type=Path, default=Path((__import__('os').environ.get('DOSEI_OOT') or 'D:/Workspace-Claude/game-decomps/n64/oot')))
     ap.add_argument('--rom-dir', type=Path)
     ap.add_argument('--out', type=Path, default=ROOT / 'build/progression-rooms')
     ap.add_argument('--scene', choices=tuple(SCENE_IDS), action='append')

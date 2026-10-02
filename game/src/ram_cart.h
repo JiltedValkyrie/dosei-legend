@@ -28,7 +28,16 @@
 /* The top of bank 2 is kept OUT of jo_malloc for fixed runtime pools (actor
 ** pool first). A fixed carve keeps these off the 56 KB work-RAM malloc arena,
 ** which jo_malloc would otherwise fill first. */
+#ifdef DOSEI_OOT_CORE
+/* oot-core blob (OOTCORE.BIN): decomp code linked at a fixed cart address and
+** run from the cart (oot-core/oot-core.ld, makefile OOT_CORE_LOAD_ADDR). It is
+** the last carve, so its address is BANK2 end - RAM_CART_OOTCORE_BYTES. */
+#define RAM_CART_OOTCORE_OFFSET 0x82400u
+#define RAM_CART_OOTCORE_BYTES  0x10000u
+#define RAM_CART_FIXED_BYTES    0x92400u
+#else
 #define RAM_CART_FIXED_BYTES    0x82400u
+#endif
 #define RAM_CART_FIXED_ADDRESS  (RAM_CART_BANK2_ADDRESS + RAM_CART_BANK2_BYTES - RAM_CART_FIXED_BYTES)
 
 /* Fixed carve for the actor pool (actor_sys_bytes() must fit). */
@@ -75,7 +84,8 @@
 ** equipment change (BUG-039). Moved to the tail 2026-10-01: the arm grew the
 ** file to 25,312 B and the old 0x4800 carve at 0xF000 let it overwrite Navi's
 ** glow, the mesh LOD rows and DEKUBABA (Link's ATTR table corrupted).
-** 0xF000-0x13800 is now unused. */
+** 0xF000-0x13800 is now unused.
+** 2026-10-02: first-person arm dropped -> Link 704 polygons (22,528 B). */
 #define RAM_CART_LINKMESH_OFFSET    0x7C000u
 #define RAM_CART_LINKMESH_BYTES     0x6400u
 

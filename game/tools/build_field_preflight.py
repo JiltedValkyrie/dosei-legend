@@ -15,7 +15,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--oot', type=Path, default=Path('D:/Workspace-Claude/game-decomps/n64/oot'))
+    parser.add_argument('--oot', type=Path, default=Path((__import__('os').environ.get('DOSEI_OOT') or 'D:/Workspace-Claude/game-decomps/n64/oot')))
     parser.add_argument('--rom-dir', type=Path)
     parser.add_argument('--source-tessellation', action='store_true')
     parser.add_argument('--base-tile-limit', type=int, choices=(16,32,64))

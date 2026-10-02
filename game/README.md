@@ -5,6 +5,8 @@ Active Jo Engine / SGL project. See the [directory map](../README.md),
 
 ## Build and launch
 
+**Agents/oot-sat: build on Linux. See [docs/BUILD.md](docs/BUILD.md) (commands + gotchas).**
+
 Configure local dependencies with `../launch-game.bat` > **Config > Paths...**.
 See [developer setup](../tools/launcher/SETUP.md) for the SDK, decomp and exact ROM.
 Settings are saved to the repository's ignored `config.ini`. From Windows, use

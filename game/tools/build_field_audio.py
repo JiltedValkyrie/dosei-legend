@@ -56,6 +56,6 @@ def build(oot,out):
 
 if __name__=='__main__':
     ap=argparse.ArgumentParser(description=__doc__)
-    ap.add_argument('--oot',type=Path,default=Path('D:/Workspace-Claude/game-decomps/n64/oot'))
+    ap.add_argument('--oot',type=Path,default=Path((__import__('os').environ.get('DOSEI_OOT') or 'D:/Workspace-Claude/game-decomps/n64/oot')))
     ap.add_argument('--out',type=Path,default=Path(__file__).resolve().parents[1]/'build/generated')
     a=ap.parse_args();build(a.oot,a.out)

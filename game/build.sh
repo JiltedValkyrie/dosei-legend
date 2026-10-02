@@ -7,11 +7,32 @@ set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 config="$here/../tools/launcher/project_config.py"
-python="$("${DOSEI_PYTHON:-python}" "$config" python)"
-python="$(cygpath -u "$python")"
-sdk="$("$python" "$config" jo_engine)"
-compiler="$(cygpath -u "$sdk")/Compiler/WINDOWS"
+# Linux (incl. WSL): host bash/make/python3 and Jo's Compiler/LINUX toolchain.
+# Windows: MSYS2 and Compiler/WINDOWS, as before.
+linux=0
+if [ "$(uname -s)" = Linux ]; then
+    linux=1
+    cygpath() { printf '%s\n' "${@: -1}"; }   # paths are already POSIX
+    python="${DOSEI_PYTHON:-python3}"
+    sdk="$("$python" "$config" jo_engine)"
+    # gcc 9.3 built by tools/toolchain/build-sh-elf-linux.sh matches the
+    # Windows compiler. Jo's own Compiler/LINUX gcc 8.2 overflows work RAM.
+    sh_elf="${SH_ELF_LINUX:-$(cd "$here/../.." && pwd)/sh-elf-9.3-linux}"
+    if [ ! -x "$sh_elf/bin/sh-elf-gcc" ]; then
+        echo "Linux sh-elf gcc 9.3 missing at $sh_elf: run tools/toolchain/build-sh-elf-linux.sh" >&2
+        exit 1
+    fi
+    compiler="$sh_elf"
+    cc_check="$sh_elf/bin/sh-elf-gcc"
+else
+    python="$("${DOSEI_PYTHON:-python}" "$config" python)"
+    python="$(cygpath -u "$python")"
+    sdk="$("$python" "$config" jo_engine)"
+    compiler="$(cygpath -u "$sdk")/Compiler/WINDOWS"
+    cc_check="$compiler/bin/sh-elf-gcc.exe"
+fi
 oot="$("$python" "$config" oot_decomp)"
+export DOSEI_OOT="$oot"
 roms="$("$python" "$config" oot_roms)"
 prepared="$("$python" "$config" --prepare)"
 mapfile -t dependencies <<< "${prepared//$'\r'/}"
@@ -28,7 +49,7 @@ elif [ "${1:-}" = "--clean" ]; then
     mode_args=(CLEAN_TEST=1)
 fi
 
-if [ ! -x "$compiler/bin/sh-elf-gcc.exe" ]; then
+if [ ! -x "$cc_check" ]; then
     echo "Jo Engine SDK not found at $compiler" >&2
     exit 1
 fi
@@ -181,16 +202,36 @@ done
 cd "$here"
 "$python" "$here/tools/check_disc_directory.py"
 "$python" "$here/tools/check_forest_budget.py"
+# oot-core (fork Phase 0): `./build.sh OOT_CORE=1` mirrors the decomp first.
+# Without it, drop a stale OOTCORE.BIN so it never ships on a normal disc.
+oot_core=0
+for arg in "$@"; do
+    [ "$arg" = OOT_CORE=1 ] && oot_core=1
+done
+if [ "$oot_core" = 1 ]; then
+    "$python" "$here/tools/oot_core_import.py" --oot "$oot"
+else
+    rm -f "$here/build/cd/OOTCORE.BIN"
+fi
 # jo_engine_makefile picks its toolchain from $(OS), which does not reach make
 # from every shell that can run this script; it then falls back to the LINUX
 # binaries and dies with "Exec format error". Compiler/WINDOWS is already
 # required above, so name that toolchain outright instead of letting make guess.
+if [ "$linux" = 1 ]; then
+    # CC/CONV override Jo's Compiler/LINUX (gcc 8.2) choice.
+    make "${mode_args[@]}" \
+        "JO_ENGINE_SRC_DIR=${dependencies[0]}/jo_engine" \
+        "COMPILER_DIR=${dependencies[0]}/Compiler" \
+        "CC=$sh_elf/bin/sh-elf-gcc" "CONV=$sh_elf/bin/sh-elf-objcopy" \
+        "PYTHON=$python" "$@"
+else
 "${dependencies[1]}/usr/bin/make.exe" "${mode_args[@]}" \
     "JO_ENGINE_SRC_DIR=${dependencies[0]}/jo_engine" \
     "COMPILER_DIR=${dependencies[0]}/Compiler" \
     "SHELL=${dependencies[1]}/usr/bin/bash.exe" "PYTHON=$python" \
     "CC=$compiler/bin/sh-elf-gcc.exe" "CONV=$compiler/bin/sh-elf-objcopy.exe" \
     "CUE_MAKER=JoEngineCueMaker.exe" "$@"
+fi
 
 # The work area is laid out from the top of work RAM downwards, so .bss must
 # end below its base. Only the map just produced can prove that.

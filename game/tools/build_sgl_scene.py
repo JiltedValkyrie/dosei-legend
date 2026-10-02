@@ -364,7 +364,7 @@ def main():
                          'the texture mapping itself visible in-game')
     ap.add_argument('--texture-path', choices=('legacy', 'patches', 'hybrid'), default='hybrid')
     ap.add_argument('--oot', type=pathlib.Path,
-                    default=pathlib.Path('D:/Workspace-Claude/game-decomps/n64/oot'))
+                    default=pathlib.Path((__import__('os').environ.get('DOSEI_OOT') or 'D:/Workspace-Claude/game-decomps/n64/oot')))
     ap.add_argument('--rom-dir', type=pathlib.Path)
     ap.add_argument('--quad-obj', type=pathlib.Path,
                     help='workshop OBJ topology; retain original N64 textures and collision')

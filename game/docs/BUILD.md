@@ -1,0 +1,140 @@
+# Build guide and gotchas
+
+The authoritative build path is **Linux** (WSL Debian 12 on this machine).
+Do not use MSYS2 or Git Bash for builds.
+
+## Build commands
+
+From Windows (PowerShell):
+
+```powershell
+wsl.exe -e bash -c "cd /mnt/d/Workspace-Claude/saturn-homebrew/oot-sat/game && ./build.sh --clean"
+```
+
+Variants (pass to `build.sh`):
+
+| Args | Output | Use |
+|---|---|---|
+| `--clean` | `build/game-clean.cue/.iso` | normal player build (default choice) |
+| *(none)* | `build/game.cue/.iso` | developer build with debug HUD |
+| `--hires` | `build/game-hires.cue/.iso` | 320x480i, on request only |
+| `OOT_CORE=1` | adds oot-core decomp slice + SH-2 bench (debug rows 13-14) | oot-core work |
+
+Log a long build to a file and check the tail:
+`./build.sh OOT_CORE=1 > build/oot-core/build_log.txt 2>&1; echo EXIT=$?`
+
+## One-time Linux setup
+
+```bash
+sudo apt-get install -y python3-pil genisoimage   # Pillow + mkisofs
+```
+
+- Python: system `python3` (3.11). Override with `DOSEI_PYTHON`.
+- Compiler: **sh-elf gcc 9.3.0 + binutils 2.34**, the same versions and configure as
+  Jo's Windows compiler. Build it once (about 30-60 min, needs internet):
+  `tools/toolchain/build-sh-elf-linux.sh` installs to `../sh-elf-9.3-linux`
+  (override with `SH_ELF_LINUX`). `build.sh` refuses to run without it and passes
+  `CC`/`CONV` to make. Do NOT use Jo's `Compiler/LINUX` gcc 8.2 (gotcha 15). The
+  C++ front end is included, so it also compiles oot-core.
+- Paths come from `config.ini` (else `config.example.ini`). The decomp falls back to
+  `../../game-decomps/n64/oot`. `build.sh` exports it as `DOSEI_OOT` for the tools.
+
+## External inputs not in git
+
+| Input | Location | How to get it |
+|---|---|---|
+| OoT decomp, extracted ntsc-1.2 | `D:/Workspace-Claude/game-decomps/n64/oot` | zeldaret/oot, `make setup VERSION=ntsc-1.2` |
+| Extracted audio | `shared/build/audio-source/` (32 MB) | copied from `dosei-legend/shared/build/audio-source` |
+| Jo Engine SDK | `../joengine` | sibling checkout |
+| sh2eb-elf (Windows only, optional) | `../sh2eb-elf` | only for host-side oot-core checks on Windows |
+
+## Gotchas (each one cost a failed build)
+
+1. **MSYS2 / Git Bash picks the wrong compiler.** From Git Bash, MSYS2 `make`
+   ignored command-line overrides and `OS`, chose `Compiler/LINUX`, and failed
+   with `Exec format error`. Fix: build on Linux. (Windows path still exists in
+   `build.sh` but is not maintained for agents.)
+2. **Hardcoded `D:/...` paths in Python tools.** On Linux `Path('D:/...')` is a
+   relative path and the lookups find nothing (`StopIteration`). Tools now read
+   `os.environ['DOSEI_OOT']` first. New tools: never hardcode a drive path. Take
+   `--oot` or use `DOSEI_OOT`.
+3. **`project_config.py --prepare` needs MSYS2.** It is now skipped when not on
+   Windows (`os.name != 'nt'`).
+4. **`cygpath` does not exist on Linux.** `build.sh` defines a no-op shim when on Linux.
+5. **makefile `SHELL := C:/msys64/...`.** Now conditional: `/bin/bash` on Linux.
+6. **Missing extracted audio** -> `build_cdda.py` `FileNotFoundError ...Soundfont_3.xml`.
+   Copy `shared/build/audio-source/` (see table above).
+7. **Whole-Field polygon check.** `build_hybrid_scene.convert()` failed with
+   `2709 polygons exceed the 2600-polygon table budget`, but the Field streams.
+   `build_field_chunks` passes `streamed=True`, and its own per-position sweep
+   enforces the budget (worst resident 721 polys). Do not remove the sweep check.
+8. **Two toolchains differ.** Linux gcc is 8.2; Windows is 9.3.
+   `__builtin_is_constant_evaluated` is GCC 9+. `fx.h` uses `FX_RUNTIME()` with a
+   `__builtin_constant_p` fallback. Code size can differ, so watch the
+   work-RAM boundary check (`build_sgl_area.py --verify`).
+9. **oot-core objects must not need static constructors.** Jo's startup never runs
+   `.ctors`. The makefile rejects any oot-core object that has one (checked with
+   `readelf -S`; host `objdump` cannot read SH ELF). Keep all `Fx` operators
+   `constexpr`.
+10. **`#include` placement in `main.c`.** `texture_probe.h` sits inside
+    `#ifdef DOSEI_TEXTURE_PROBE`. Do not add unrelated includes after it.
+11. **PowerShell to WSL quoting.** Escape `$` as `\$` inside
+    `wsl.exe -e bash -c "..."`. `$?` printed as `True` when left unescaped.
+12. **Python patching via heredoc mangles backslashes/quotes.** For edits containing
+    `\\`, regex or nested quotes, write the patch script to a file first, or use
+    the Edit tool.
+13. **Text encoding.** Some docs contain non-ASCII text. On Windows Python, read
+    with `encoding='utf-8'` (the cp932 default fails).
+14. **Fixed RAM-cart carves are compile-time checked.** `size of array
+    'link_mesh_fits_carve' is negative` = Link mesh (`LINK_POLYGON_COUNT` x 32 B)
+    outgrew `RAM_CART_LINKMESH_BYTES` in `src/ram_cart.h`. Grow the carve and
+    `RAM_CART_FIXED_BYTES` together (both checked in `ram_cart.c`). Or shrink
+    Link first: 2026-10-02 the unused first-person arm (227 polys) was dropped from
+    `build_link_model.py`, so Link is 704 polys and fits the 0x6400 carve again.
+15. **Linux gcc 8.2 code is bigger -> work-RAM boundary fails.** `--clean` on Linux:
+    `.bss ends at 0x6085914 ... free at least 6420 bytes` (the same tree fit with
+    Windows gcc 9.3). `OOT_CORE=1` adds ~72 KB (sys_math3d alone 44 KB, now
+    unlinked) -> 81 KB over. oot-core code must move to the RAM cart (Phase 1).
+    Fix (human decision 2026-10-02): build gcc 9.3 for Linux (see setup above).
+16. **`ld: cannot find -lc`.** The link needs newlib. The toolchain script builds
+    newlib 3.3.0 (the same version as Jo's Windows toolchain) after gcc. A toolchain
+    built with only gcc and binutils cannot link the game.
+    **newlib options must match Windows** (taken from Jo's `newlib.h` and its
+    archive members): nano formatted IO, `--disable-newlib-io-float`, nano malloc,
+    lite exit, `-Os`. A default newlib adds ~37 KB (work RAM 26.7 KB over). Nano
+    with float IO fails with `undefined reference to _printf_float`. Proof
+    method: relink against Jo's Windows `sh-elf/lib/libc.a` (archives do not
+    depend on the host). The Linux gcc 9.3 object for `kokiri_sgl.c` is
+    byte-identical to the Windows one.
+17. **Use the draw-cap-fixed Kronos, never the stock build.** Stock Kronos 2.7 stops
+    after 2048 VDP1 commands per frame without setting EDSR.CEF, so SGL `slSynch`
+    deadlocks: the game freezes, Kronos shows VDP1 00 FPS with VDP2 still 60, and the
+    watchdog reads `HANG P9 E1`. The nightmare reliably hits it at frame 450. Real
+    hardware has no such cap. `tools/build_kronos_draw_fix.py` builds the patched
+    emulator; the existing one is `dosei-legend/game/build/kronos-draw-fix/kronos.exe`.
+    `config.ini` (local, gitignored) must point `kronos` at it. Without
+    `config.ini`, `config.example.ini` falls back to the stock build. That is how the
+    fork regressed (2026-10-02).
+18. **WSL git cannot read this checkout.** It is a git worktree whose `.git` file
+    holds a Windows path (`D:/.../dosei-legend/.git/worktrees/...`). Run git from
+    Windows. Scripts that need the revision take it from an environment variable,
+    e.g. `OOT_SAT_REV` in `tools/package_playtest.sh`.
+19. **The emulator is human-run only.**
+
+## Playtest package
+
+Build Clean, then run `tools/package_playtest.sh` in WSL with `OOT_SAT_REV` set.
+Output goes to `playtest/` (gitignored). The package holds the disc (cue, iso and CD
+audio tracks), the draw-cap-fixed Kronos with local paths blanked and the 4 MB
+cart preset, and `README.txt` (template: `tools/playtest_readme.txt`). It ships no
+BIOS. Agents build; the human launches
+    Kronos/Saroo.
+
+## oot-core specifics
+
+- `tools/oot_core_import.py` regenerates `build/oot-core/decomp/` (run by `build.sh` when
+  `OOT_CORE=1`). Report: `build/oot-core/import_report.txt`.
+- Host math check (Windows mingw g++): `bash oot-core/tests/run_host_probe.sh`
+  must report `0 over tolerance`.
+- Target soft-float check: no `__addsf3/__mulsf3/__divsf3/__fix*/__float*`
+  symbols in the oot-core objects.

@@ -473,7 +473,8 @@ def bake(oot, rom_dir, head, actor, owl_actor, document, out_path, report_path=N
         folder = pathlib.Path(temp)
         _, positions, faces, tiles = hybrid.convert(
             oot, head, merged, folder, rom_dir=rom_dir, room=room, prefix='spot00',
-            layout=layout, base_tile_limit=32, source_tessellation=True, wall_split_limit=3)
+            layout=layout, base_tile_limit=32, source_tessellation=True, wall_split_limit=3,
+            streamed=True)
         manifest = json.loads((folder / 'texture_manifest.json').read_text())
     records = manifest['faces']
     source_faces = [f for f in hybrid.load_faces(oot, rom_dir, prefix='spot00') if f['room'] == room]

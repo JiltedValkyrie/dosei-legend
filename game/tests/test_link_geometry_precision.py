@@ -329,8 +329,8 @@ int32_t link_points[LINK_SKIN_VERTICES][3];
 
     def test_generator_puts_first_person_groups_last_and_emits_base_count(self):
         tool = (ROOT/'tools/build_link_model.py').read_text()
-        self.assertIn("('fp_shoulder', 16, 'gLinkChildRightShoulderNearDL')", tool)
-        self.assertIn("('fp_sling', 18, 'gLinkChildRightArmStretchedSlingshotDL')", tool)
+        # First-person arm groups removed 2026-10-02 (aim draws no Link).
+        self.assertNotIn("('fp_sling',", tool)
         self.assertIn("'#define LINK_BASE_VERTICES %d'", tool)
         self.assertIn("('aim_ready','gPlayerAnim_link_bow_bow_ready',0,0,1)", tool)
         draw = (ROOT/'src/kokiri_sgl.c').read_text()

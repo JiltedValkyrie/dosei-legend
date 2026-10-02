@@ -45,7 +45,7 @@ def build(oot, rom_dir, out):
 
 if __name__ == '__main__':
     parser=argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--oot',type=Path,default=Path('D:/Workspace-Claude/game-decomps/n64/oot'))
+    parser.add_argument('--oot',type=Path,default=Path((__import__('os').environ.get('DOSEI_OOT') or 'D:/Workspace-Claude/game-decomps/n64/oot')))
     parser.add_argument('--rom-dir',type=Path)
     parser.add_argument('--out',type=Path,default=Path(__file__).resolve().parents[1]/'build/field-preflight/owl')
     args=parser.parse_args()

@@ -39,6 +39,16 @@ static unsigned int to_microseconds(uint32_t ticks)
     return (unsigned int)((ticks * TICKS_PER_US_NUM) / TICKS_PER_US_DEN);
 }
 
+unsigned int    frame_timer_ticks(void)
+{
+    return read_ticks();
+}
+
+unsigned int    frame_timer_ticks_to_us(unsigned int ticks)
+{
+    return to_microseconds(ticks);
+}
+
 void            frame_timer_init(void)
 {
     FRT_TCR = FRT_PRESCALER_128;

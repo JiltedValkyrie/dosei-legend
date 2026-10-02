@@ -665,7 +665,7 @@ def build(oot, source, out):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--oot', type=Path, default=Path('D:/Workspace-Claude/game-decomps/n64/oot'))
+    parser.add_argument('--oot', type=Path, default=Path((__import__('os').environ.get('DOSEI_OOT') or 'D:/Workspace-Claude/game-decomps/n64/oot')))
     parser.add_argument('--source', type=Path, default=ROOT.parent/'shared/build/audio-source/extracted/assets/audio')
     parser.add_argument('--out', type=Path, default=ROOT/'build/generated')
     args = parser.parse_args()

@@ -227,7 +227,7 @@ def main(oot=None):
         (ROOT / 'build/cd/TITLE.RGB').write_bytes(b''.join(struct.pack('>H', rgb555(p)) for p in pixels))
     (ROOT / 'build/cd/START.RGB').write_bytes((baseline / 'assets/static/ui/PRESS_START.RAW').read_bytes())
     if oot is None:
-        oot = Path('D:/Workspace-Claude/game-decomps/n64/oot')
+        oot = Path((__import__('os').environ.get('DOSEI_OOT') or 'D:/Workspace-Claude/game-decomps/n64/oot'))
     candidates = sorted(Path(oot).glob(
         'extracted/*/assets/objects/gameplay_keep/gFairyWingTex.i8.png'))
     if not candidates:

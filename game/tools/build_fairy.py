@@ -213,7 +213,7 @@ def preview(frames, glow, path):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--oot', type=Path, default=Path('D:/Workspace-Claude/game-decomps/n64/oot'))
+    parser.add_argument('--oot', type=Path, default=Path((__import__('os').environ.get('DOSEI_OOT') or 'D:/Workspace-Claude/game-decomps/n64/oot')))
     args = parser.parse_args()
     keep = args.oot / 'extracted/ntsc-1.2/assets/objects/gameplay_keep'
     frames = pose(keep)

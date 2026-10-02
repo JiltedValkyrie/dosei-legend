@@ -153,7 +153,7 @@ def build_one(source, output, name, sequence, stem, preserve_intro=False,pitch_a
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--source', type=Path,
-                        default=Path('D:/Workspace-Claude/game-decomps/n64/oot/extracted/ntsc-1.2/assets/audio'))
+                        default=Path((__import__('os').environ.get('DOSEI_OOT') or 'D:/Workspace-Claude/game-decomps/n64/oot') + '/extracted/ntsc-1.2/assets/audio'))
     parser.add_argument('--output', type=Path,
                         default=ROOT / 'assets/audio/cutscenes')
     args = parser.parse_args()

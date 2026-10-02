@@ -522,7 +522,7 @@ def main():
     ap.add_argument('--out', type=pathlib.Path,
                     default=pathlib.Path(__file__).resolve().parents[1] / 'build/generated')
     ap.add_argument('--oot', type=pathlib.Path,
-                    default=pathlib.Path('D:/Workspace-Claude/game-decomps/n64/oot'))
+                    default=pathlib.Path((__import__('os').environ.get('DOSEI_OOT') or 'D:/Workspace-Claude/game-decomps/n64/oot')))
     ap.add_argument('--cd', type=pathlib.Path,
                     default=pathlib.Path(__file__).resolve().parents[1] / 'build/cd')
     ap.add_argument('--verify', action='store_true',

@@ -37,6 +37,13 @@ typedef char carve_dialogue_before_musictrg[CARVE_END(RAM_CART_DIALOGUE) <= RAM_
 typedef char carve_titlepth_before_dialogue[CARVE_END(RAM_CART_TITLEPTH) <= RAM_CART_DIALOGUE_OFFSET ? 1 : -1];
 typedef char carve_musictrg_before_linkmesh[CARVE_END(RAM_CART_MUSICTRG) <= RAM_CART_LINKMESH_OFFSET ? 1 : -1];
 typedef char carve_linkmesh_inside[CARVE_END(RAM_CART_LINKMESH) <= RAM_CART_FIXED_BYTES ? 1 : -1];
+#ifdef DOSEI_OOT_CORE
+typedef char carve_linkmesh_before_ootcore[CARVE_END(RAM_CART_LINKMESH) <= RAM_CART_OOTCORE_OFFSET ? 1 : -1];
+typedef char carve_ootcore_inside[CARVE_END(RAM_CART_OOTCORE) <= RAM_CART_FIXED_BYTES ? 1 : -1];
+/* The blob is linked at OOT_CORE_LOAD_ADDR (makefile), the cached alias of this
+** carve; the carve's cache-through address must be that plus 0x20000000. */
+typedef char carve_ootcore_at_link_address[RAM_CART_FIXED_ADDRESS + RAM_CART_OOTCORE_OFFSET == (OOT_CORE_LOAD_ADDR | 0x20000000u) ? 1 : -1];
+#endif
 
 /* One-shot guard: jo_add_memory_zone() has no way to retract a zone, so adding
 ** the same bank twice would hand out the same addresses from two free lists. */

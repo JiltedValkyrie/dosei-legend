@@ -1,0 +1,209 @@
+#!/usr/bin/env python3
+"""Mirror zeldaret/oot decomp sources into game/build/oot-core/ for the SH-2 C++ build.
+
+Only MECHANICAL C-vs-C++ fixups are allowed here, never logic edits:
+  * MtxF anonymous-struct fields (.xx etc.) -> .mf[col][row]; GCC forbids
+    members with constructors (Fx) in anonymous aggregates.
+  * xstdio.h `long double` printf slot -> long long (no long double type).
+  * `typedef union X { struct {...}; s32 _words[N]; } X;` -> plain struct
+    (_words is never read by game code; same anonymous-aggregate rule).
+  * CamParamData's anonymous door struct/union get names; the six
+    `paramData.<member>` accesses are rewritten to match.
+  * MIN/MAX/ABS/CLAMP* macro bodies -> OOT_SEL (mixed int/Fx ternary).
+  * Floating literals -> FXL(lit). Otherwise `s16 * 0.5f` is evaluated in
+    hardware float (soft-float on SH-2) because neither operand is Fx.
+Keyword renames and float->Fx live in game/oot-core/include/oot_prelude.h.
+Anything the fixups cannot handle must be listed in the import report, not
+hand-patched in the generated tree.
+"""
+import argparse
+import pathlib
+import re
+import sys
+
+OOT_DEFAULT = pathlib.Path((__import__('os').environ.get('DOSEI_OOT') or 'D:/Workspace-Claude/game-decomps/n64/oot'))
+VERSION = 'ntsc-1.2'
+GAME = pathlib.Path(__file__).resolve().parents[1]
+OUT_DEFAULT = GAME / 'build' / 'oot-core'
+
+# Phase 0 slice. Paths relative to the decomp root.
+SOURCES = [
+    'src/code/z_lib.c',
+    'src/code/sys_math.c',
+    'src/code/sys_math_atan.c',
+    'src/code/sys_math3d.c',
+    'src/libc64/math64.c',
+    'src/libultra/gu/sins.c',
+    'src/libultra/gu/coss.c',
+    'src/code/z_actor.c',
+    'src/code/z_collision_check.c',
+    'src/code/z_en_item00.c',
+    'src/code/z_bgcheck.c',
+    'src/overlays/actors/ovl_En_Kusa/z_en_kusa.c',
+]
+# Whole trees mirrored for headers.
+HEADER_TREES = ['include', 'src']
+
+MTXF_FIELDS = ['xx', 'yx', 'zx', 'wx', 'xy', 'yy', 'zy', 'wy',
+               'xz', 'yz', 'zz', 'wz', 'xw', 'yw', 'zw', 'ww']
+MTXF_INDEX = {name: (i // 4, i % 4) for i, name in enumerate(MTXF_FIELDS)}
+MTXF_ACCESS = re.compile(r'(\.|->)\s*(' + '|'.join(MTXF_FIELDS) + r')\b')
+MTXF_DECL = re.compile(
+    r'typedef union MtxF \{\s*MtxF_t mf;\s*struct \{.*?\};\s*\} MtxF;', re.S)
+
+
+WORDS_UNION = re.compile(
+    r'typedef union (\w+) \{\s*struct \{(.*?)\};\s*s32 _words\[\w+\];\s*\} \1;', re.S)
+CAM_DOOR_DECL = re.compile(
+    r'struct \{\s*(/\* 0x0 \*/ DoorParams doorParams;)\s*(/\* 0xC \*/) union \{(.*?)\};\s*\};', re.S)
+CAM_DOOR_ACCESS = re.compile(r'\bparamData\.(doorParams|uniq0|uniq3|spec9)\b')
+
+
+def fix_anon_aggregates(rel, text, stats):
+    def words(m):
+        stats['anon'] += 1
+        return f'typedef struct {m.group(1)} {{{m.group(2)}}} {m.group(1)};'
+    text = WORDS_UNION.sub(words, text)
+    if rel == 'include/camera.h':
+        text, n = CAM_DOOR_DECL.subn(
+            lambda m: ('struct {\n        ' + m.group(1) + '\n        ' + m.group(2) +
+                       ' union {' + m.group(3) + '} u;\n    } door;'), text)
+        if n != 1:
+            stats['problems'].append(f'{rel}: CamParamData door struct not found')
+        stats['anon'] += n
+
+    def access(m):
+        stats['anon'] += 1
+        member = m.group(1)
+        return 'paramData.door.' + (member if member == 'doorParams' else 'u.' + member)
+    return CAM_DOOR_ACCESS.sub(access, text)
+
+
+FLOAT_LIT = re.compile(
+    r'(?<![\w.])(?:\d+\.\d*|\.\d+|\d+(?=[eE]))(?:[eE][+-]?\d+)?[fFlL]?(?![\w.])')
+SKIP_TOKEN = re.compile(r'"(?:\\.|[^"\\\n])*"|\'(?:\\.|[^\'\\\n])*\'|//[^\n]*|/\*.*?\*/', re.S)
+DIRECTIVE = re.compile(r'^[ \t]*#[ \t]*(include|pragma|line|error|warning)\b[^\n]*$', re.M)
+
+
+def fix_float_literals(text, stats):
+    out = []
+    pos = 0
+    skips = sorted([m.span() for m in SKIP_TOKEN.finditer(text)] +
+                   [m.span() for m in DIRECTIVE.finditer(text)])
+
+    def wrap(chunk):
+        def sub(m):
+            stats['fxl'] += 1
+            return f'FXL({m.group(0)})'
+        return FLOAT_LIT.sub(sub, chunk)
+    for start, end in skips:
+        if start < pos:
+            continue
+        out.append(wrap(text[pos:start]))
+        out.append(text[start:end])
+        pos = end
+    out.append(wrap(text[pos:]))
+    return ''.join(out)
+
+
+MACRO_REWRITES = {
+    'include/z_math.h': [
+        ('#define ABS(x) ((x) >= 0 ? (x) : -(x))', '#define ABS(x) OOT_SEL((x) >= 0, (x), -(x))'),
+        ('#define CLAMP(x, min, max) ((x) < (min) ? (min) : (x) > (max) ? (max) : (x))',
+         '#define CLAMP(x, min, max) OOT_SEL((x) < (min), (min), OOT_SEL((x) > (max), (max), (x)))'),
+        ('#define CLAMP_MAX(x, max) ((x) > (max) ? (max) : (x))', '#define CLAMP_MAX(x, max) OOT_SEL((x) > (max), (max), (x))'),
+        ('#define CLAMP_MIN(x, min) ((x) < (min) ? (min) : (x))', '#define CLAMP_MIN(x, min) OOT_SEL((x) < (min), (min), (x))'),
+    ],
+    'include/ultra64/gbi.h': [
+        ('#define MAX(a, b) ((a) > (b) ? (a) : (b))', '#define MAX(a, b) OOT_SEL((a) > (b), (a), (b))'),
+        ('#define MIN(a, b) ((a) < (b) ? (a) : (b))', '#define MIN(a, b) OOT_SEL((a) < (b), (a), (b))'),
+    ],
+}
+
+
+def fix_macros(rel, text, stats):
+    for old, new in MACRO_REWRITES.get(rel, []):
+        if old not in text:
+            stats['problems'].append(f'{rel}: macro not found: {old}')
+            continue
+        text = text.replace(old, new)
+        stats['macros'] += 1
+    return text
+
+
+def fix_mtxf(text, stats):
+    def sub(m):
+        col, row = MTXF_INDEX[m.group(2)]
+        stats['mtxf'] += 1
+        return f'{m.group(1)}mf[{col}][{row}]'
+    return MTXF_ACCESS.sub(sub, text)
+
+
+def fixup(rel, text, stats):
+    if rel == 'include/ultra64/ultratypes.h':
+        text, n = MTXF_DECL.subn('typedef union MtxF {\n    MtxF_t mf;\n} MtxF;', text)
+        if n != 1:
+            stats['problems'].append(f'{rel}: MtxF declaration not found')
+    if rel == 'include/ultra64/xstdio.h':
+        text, n = re.subn(r'LONG_DOUBLE_TYPE ld;', 'long long ld;', text)
+        if n != 1:
+            stats['problems'].append(f'{rel}: long double slot not found')
+    text = fix_anon_aggregates(rel, text, stats)
+    text = fix_macros(rel, text, stats)
+    text = fix_float_literals(text, stats)
+    return fix_mtxf(text, stats)
+
+
+def write_if_changed(path, text):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if path.exists() and path.read_text(encoding='utf-8', errors='replace') == text:
+        return False
+    path.write_text(text, encoding='utf-8')
+    return True
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument('--oot', type=pathlib.Path, default=OOT_DEFAULT)
+    ap.add_argument('--out', type=pathlib.Path, default=OUT_DEFAULT)
+    args = ap.parse_args()
+
+    stats = {'macros': 0, 'fxl': 0, 'anon': 0, 'mtxf': 0, 'files': 0, 'written': 0, 'problems': []}
+    files = set()
+    for tree in HEADER_TREES:
+        files.update(p for p in (args.oot / tree).rglob('*.h'))
+        files.update(p for p in (args.oot / tree).rglob('*.inc.c'))
+    files.update(args.oot / s for s in SOURCES)
+    asset_root = args.oot / 'extracted' / VERSION
+    for f in sorted(files):
+        rel = f.relative_to(args.oot).as_posix()
+        text = f.read_text(encoding='utf-8', errors='replace')
+        text = fixup(rel, text, stats)
+        dest = args.out / 'decomp' / rel
+        if dest.suffix == '.c' and not rel.endswith('.inc.c'):
+            dest = dest.with_suffix('.cpp')
+        stats['files'] += 1
+        stats['written'] += write_if_changed(dest, text)
+    for s in SOURCES:
+        if not (args.oot / s).exists():
+            stats['problems'].append(f'missing source {s}')
+
+    report = [
+        f'oot-core import ({VERSION})',
+        f'decomp: {args.oot}',
+        f'assets: {asset_root} (included in place, not copied)',
+        f'files: {stats["files"]}, rewritten: {stats["written"]}',
+        f'MtxF field rewrites: {stats["mtxf"]}',
+        f'anonymous aggregate rewrites: {stats["anon"]}',
+        f'float literals wrapped: {stats["fxl"]}',
+        'NOTE: ROM data holding IEEE floats (e.g. CutsceneCameraPoint.viewAngle)'
+        ' must be converted to Fx offline before use.',
+        'sources: ' + ', '.join(SOURCES),
+    ] + [f'PROBLEM: {p}' for p in stats['problems']]
+    write_if_changed(args.out / 'import_report.txt', '\n'.join(report) + '\n')
+    print('\n'.join(report))
+    return 1 if stats['problems'] else 0
+
+
+if __name__ == '__main__':
+    sys.exit(main())

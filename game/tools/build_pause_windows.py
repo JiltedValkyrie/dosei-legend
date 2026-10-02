@@ -242,7 +242,7 @@ def build(oot,cd,out,sdk=ROOT.parent.parent/'joengine'):
 
 if __name__=='__main__':
     p=argparse.ArgumentParser(description=__doc__)
-    p.add_argument('--oot',type=Path,default=Path('D:/Workspace-Claude/game-decomps/n64/oot'))
+    p.add_argument('--oot',type=Path,default=Path((__import__('os').environ.get('DOSEI_OOT') or 'D:/Workspace-Claude/game-decomps/n64/oot')))
     p.add_argument('--cd',type=Path,default=ROOT/'build/cd')
     p.add_argument('--out',type=Path,default=ROOT/'build/generated')
     p.add_argument('--sdk',type=Path,default=ROOT.parent.parent/'joengine')

@@ -20,7 +20,7 @@ from vdp1_budget import (Budget, tile_bytes, MAX_POLYGONS, MAX_VERTICES,
                          RUNTIME_SPRITE_BYTES, FOREST_VRAM_MARGIN,
                          FOREST_ACTOR_BYTES, ACTOR_SCENES)
 
-OOT_DEFAULT = pathlib.Path('D:/Workspace-Claude/game-decomps/n64/oot')
+OOT_DEFAULT = pathlib.Path((__import__('os').environ.get('DOSEI_OOT') or 'D:/Workspace-Claude/game-decomps/n64/oot'))
 
 
 def load_faces(oot, rom_dir=None, prefix='spot04'):
@@ -197,7 +197,10 @@ def render_tile(group, width, height, shared=False):
 
 def convert(oot, head, actor, out_dir, patches_only=False, rom_dir=None,
             quad_obj=None, source_path=None, room=None, prefix='spot04', layout=None, base_tile_limit=None, source_tessellation=False,
-            wall_split_limit=None):
+            wall_split_limit=None, streamed=False):
+    """streamed=True: the caller (build_field_chunks.sweep) streams pieces and
+    checks the table/vertex/VRAM budget per Link position, so the whole-scene
+    union is allowed to exceed what one frame can hold."""
     source_faces = load_faces(oot, rom_dir, prefix=prefix)
     from layout_variants import build_document
     document = build_document() if layout is None else layout
@@ -449,7 +452,7 @@ def convert(oot, head, actor, out_dir, patches_only=False, rom_dir=None,
     if prefix in ACTOR_SCENES:
         budget.reserve_forest_actors()
     print(budget.report(), flush=True)
-    if budget.failures():
+    if budget.failures() and not streamed:
         raise ValueError('; '.join(budget.failures()))
     # Export connected render components/bounds for later hut/tree visibility.
     # This metadata never removes or partitions the resident collision mesh.

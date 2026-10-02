@@ -73,6 +73,11 @@ unsigned int    frame_timer_other(void);
 ** "COPR changed", and no CPU-versus-fill verdict is drawn from it.
 */
 void            frame_timer_sample_vdp1(void);
+
+/* Raw extended tick count and conversion, for one-off benchmarks (oot-core
+** Phase 0). Same wrap rule: reads must be under 293 ms apart. */
+unsigned int    frame_timer_ticks(void);
+unsigned int    frame_timer_ticks_to_us(unsigned int ticks);
 unsigned int    frame_timer_copr_changed(void);
 
 #endif

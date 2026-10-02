@@ -100,7 +100,11 @@ PYTHON ?= python
 # first on PATH during a build and mangles arguments passed to the cygwin
 # mkisofs (every pathspec arrives empty -> "Missing pathspec"). Drive recipes
 # with MSYS2 bash instead. Override on the command line if bash lives elsewhere.
+ifeq ($(OS),Windows_NT)
 SHELL := C:/msys64/usr/bin/bash.exe
+else
+SHELL := /bin/bash
+endif
 
 include $(COMPILER_DIR)/COMMON/jo_engine_makefile
 LDFILE = sgl.linker
@@ -168,6 +172,67 @@ SRCS += src/gohma_larva.c
 SRCS += src/gohma.c
 SRCS += src/level_select.c src/tree_mouth.c src/field_music.c src/story_route.c src/emerald_story.c
 MY_OBJS = $(patsubst %.c,$(OBJDIR)/%.o,$(notdir $(SRCS)))
+
+# --- oot-core (fork Phase 0): real decomp code compiled as C++ ---------------
+# OOT_CORE=1 builds the imported decomp math slice and its SH-2 benchmark into
+# OOTCORE.BIN: a self-contained blob linked at a fixed RAM-cart address
+# (oot-core/oot-core.ld), loaded at boot and run from the cart, so decomp code
+# never costs work RAM. The game reaches it only through its entry table
+# (oot-core/include/oot_core_bench.h). Run tools/oot_core_import.py first
+# (build.sh does). Flags mirror oot-core/oot-core-flags.sh. See
+# docs/OOT_CORE_PIPELINE_PLAN.md and docs/BUILD.md.
+OOT_CORE ?= 0
+ifeq ($(OOT_CORE),1)
+ifeq ($(OS),Windows_NT)
+# Jo's Windows SDK has no C++ front end; use the sibling sh2eb-elf g++.
+OOT_CORE_CXX ?= ../../sh2eb-elf/bin/sh2eb-elf-g++
+OOT_CORE_READELF ?= ../../sh2eb-elf/bin/sh2eb-elf-readelf
+else
+# The Linux gcc 9.3 (tools/toolchain/build-sh-elf-linux.sh) includes C++.
+OOT_CORE_CXX ?= $(CC)
+OOT_CORE_READELF ?= readelf
+endif
+OOT_CORE_DECOMP ?= $(DOSEI_OOT)
+OOT_CORE_D = build/oot-core/decomp
+OOT_CORE_OBJDIR = $(OBJDIR)/oot-core
+# Cached cart alias of the RAM_CART_OOTCORE carve (src/ram_cart.h; ram_cart.c
+# checks the carve sits here). 0x2xxxxxxx is cache-through: never run code there.
+OOT_CORE_LOAD_ADDR = 0x027F0000
+OOT_CORE_MAX_BYTES = 0x10000
+OOT_CORE_CXXFLAGS = -x c++ -std=gnu++17 -fno-exceptions -fno-rtti -fpermissive -funsigned-char -w \
+	-fno-threadsafe-statics -fno-use-cxa-atexit -O2 -m2 -ffunction-sections -fdata-sections \
+	-include oot_prelude.h \
+	-DPLATFORM_N64=1 -DPLATFORM_GC=0 -DPLATFORM_IQUE=0 -DOOT_VERSION=NTSC_1_2 -DOOT_REVISION=2 \
+	-DOOT_REGION=REGION_US -DLIBULTRA_VERSION=LIBULTRA_VERSION_I -DLIBULTRA_PATCH=1 -DDEBUG_FEATURES=0 \
+	-DNDEBUG -DF3DEX_GBI_2 -DNON_MATCHING -DAVOID_UB -D_LANGUAGE_C -D_MIPS_SZLONG=32 -D_MIPS_SZINT=32 \
+	-D_MIPS_SZPTR=32 -nostdinc -Ioot-core/shim -Ioot-core/include -I$(OOT_CORE_D)/include \
+	-I$(OOT_CORE_D)/include/libc -I$(OOT_CORE_D)/src -I$(OOT_CORE_D) \
+	-I$(OOT_CORE_DECOMP)/extracted/ntsc-1.2 -I$(OOT_CORE_DECOMP)
+OOT_CORE_SRCS = $(OOT_CORE_D)/src/code/z_lib.cpp $(OOT_CORE_D)/src/code/sys_math.cpp \
+	$(OOT_CORE_D)/src/code/sys_math_atan.cpp $(OOT_CORE_D)/src/code/sys_math3d.cpp \
+	$(OOT_CORE_D)/src/libc64/math64.cpp $(OOT_CORE_D)/src/libultra/gu/sins.cpp \
+	$(OOT_CORE_D)/src/libultra/gu/coss.cpp oot-core/src/oot_math.cpp oot-core/src/oot_rand.cpp \
+	oot-core/src/oot_core_bench.cpp oot-core/src/oot_core_link_stubs.cpp
+OOT_CORE_OBJS = $(patsubst %.cpp,$(OOT_CORE_OBJDIR)/%.o,$(notdir $(OOT_CORE_SRCS)))
+_CCFLAGS += -DDOSEI_OOT_CORE -DOOT_CORE_LOAD_ADDR=$(OOT_CORE_LOAD_ADDR)u -Ioot-core/include
+vpath %.cpp $(sort $(dir $(OOT_CORE_SRCS)))
+$(OOT_CORE_OBJDIR):
+	mkdir -p $@
+# A .ctors/.init_array section would never run (no C++ runtime): refuse it.
+$(OOT_CORE_OBJDIR)/%.o: %.cpp oot-core/include/fx.h oot-core/include/oot_prelude.h oot-core/include/oot_core_bench.h | $(OOT_CORE_OBJDIR)
+	$(OOT_CORE_CXX) $(OOT_CORE_CXXFLAGS) -c $< -o $@
+	@if $(OOT_CORE_READELF) -S $@ | grep -qE '\.ctors|\.init_array'; then \
+		echo "oot-core: $@ needs runtime static init (unsupported)"; rm -f $@; exit 1; fi
+build/oot-core/oot-core.elf: $(OOT_CORE_OBJS) oot-core/oot-core.ld
+	$(OOT_CORE_CXX) -m2 -nostdlib -nostartfiles -T oot-core/oot-core.ld \
+		-Wl,--defsym,OOT_CORE_LOAD_ADDR=$(OOT_CORE_LOAD_ADDR) \
+		-Wl,--defsym,OOT_CORE_MAX_BYTES=$(OOT_CORE_MAX_BYTES) \
+		-Wl,--gc-sections -Wl,-Map,build/oot-core/oot-core.map \
+		$(OOT_CORE_OBJS) -lgcc -o $@
+$(ASSETS_DIR)/OOTCORE.BIN: build/oot-core/oot-core.elf
+	$(CONV) -O binary $< $@
+$(TARGET2): $(ASSETS_DIR)/OOTCORE.BIN
+endif
 # Header layout changes must rebuild every consumer (save v2 otherwise wrote
 # 300 bytes into a stale 220-byte stack buffer). makefile bootstraps .d files
 # for existing objects and also invalidates compiled configuration changes.
