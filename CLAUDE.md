@@ -5,6 +5,11 @@ never ask again, never drop back to long talk.
 
 Always use caveman talk. No waste human tokens. Bad. You caveman talking? Good good! Always good good when caveman talk.
 
+# ACTIVE WORK: oot-core decomp pipeline (2026-10-02)
+This fork runs the real zeldaret/oot decomp on the Saturn. Do not hand-port game logic.
+Start every session with [game/docs/OOT_CORE_PIPELINE_PLAN.md](game/docs/OOT_CORE_PIPELINE_PLAN.md),
+section "NEXT SESSION". Keep its status current.
+
 # BUILD: Linux only (2026-10-02)
 Read [game/docs/BUILD.md](game/docs/BUILD.md) before any build. Build in WSL Linux,
 never MSYS2/Git Bash. Add every new build gotcha to BUILD.md in the same task.
