@@ -102,6 +102,13 @@ class DisplayLists:
 
     def read(self, address, size):
         segment, offset = address >> 24, address & 0xFFFFFF
+        if segment not in self.segments and 0x06 <= segment <= 0x0D:
+            # Scene_DrawConfig* (z_scene_table.c) binds 08-0D (06 = object) at draw time to
+            # animated textures or display lists. APPROXIMATE fallback for a
+            # scene with no explicit binding: a display list there ends at
+            # once (G_ENDDL) and a texture reads as black.
+            self.segments[segment] = b'\xDF' + bytes(0x1FFFF)
+            self.fallback_segments = getattr(self, 'fallback_segments', set()) | {segment}
         assert segment in self.segments, f'Unknown segment {segment:02x}'
         data = self.segments[segment]
         assert offset + size <= len(data), (hex(address), size, len(data))
@@ -170,6 +177,11 @@ class DisplayLists:
 
     def matrix(self, word, address):
         # Static rooms have none. Other importers must interpret, never ignore.
+        if getattr(self, 'generic_scene', False):
+            # All-scenes import: APPROXIMATE, room geometry keeps the room's
+            # identity matrix (moving/billboard parts drawn at rest).
+            self.ignored_matrices = getattr(self, 'ignored_matrices', 0) + 1
+            return
         raise ValueError(f'Matrix-aware importer required: {word:08x} {address:08x}')
 
     def triangle(self, word, transparent):

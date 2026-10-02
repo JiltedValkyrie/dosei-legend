@@ -10,7 +10,7 @@ import asset_names
 from build_sgl_scene import floor_uses_far_sort
 
 
-def transitions(oot, rom_dir=None, prefix='spot04', room_count=None):
+def transitions(oot, rom_dir=None, prefix='spot04', room_count=None, strict=True):
     """En_Holl tunnels and supported source-gated Door_Shutter transitions.
 
     Distinct from the scene-to-scene doors in build_scene_table.py: these swap
@@ -33,6 +33,11 @@ def transitions(oot, rom_dir=None, prefix='spot04', room_count=None):
                 if actor == 46 and ((params >> 6) & 15) in (0, 1, 2, 7):
                     kind = 8 + ((params >> 6) & 15)
                 elif actor != 35 or kind not in (0, 2, 4, 6):
+                    if not strict:
+                        # All-scenes import: En_Door etc. not wired; the
+                        # room is reachable from the level select only.
+                        print('transition skipped: %s actor %d params %04X' % (prefix, actor, params))
+                        continue
                     raise ValueError('Unsupported authored room transition: %s actor %d params %04X' %
                                      (prefix, actor, params))
                 result.append(dict(front=front,back=back,x=x,y=y,z=z,yaw=yaw,kind=kind,flag=params&63))
@@ -161,11 +166,23 @@ def emit_rooms(args, head, actor, normal):
             # display-list geometry to convert, so it gets no VDP1 bank. Its
             # backdrop is staged by build_scene_backdrops.py instead.
             continue
-        scene_portals = transitions(args.oot, args.rom_dir, prefix=prefix, room_count=entry['rooms'])
+        scene_portals = transitions(args.oot, args.rom_dir, prefix=prefix, room_count=entry['rooms'],
+                                    strict=not entry.get('generic'))
         for portal in scene_portals:
             portals.append(dict(portal, scene=scene_id))
         for room_id in range(entry['rooms']):
             room = '%s_room_%d' % (prefix, room_id)
+            if entry.get('generic'):
+                # All-scenes registration: bank baked by build_all_scenes.py.
+                from build_scene_table import ALL_SCENES_DIR, _room_header
+                baked = ALL_SCENES_DIR / room
+                (out / asset_names.room_asset(scene_id, room_id, 'MSH')).write_bytes(
+                    (baked / 'room.msh').read_bytes())
+                (out / asset_names.room_asset(scene_id, room_id, 'TEX')).write_bytes(
+                    (baked / 'room.tex').read_bytes())
+                summaries.append(dict(scene=scene_id, prefix=prefix, id=room_id,
+                                      budget=[], workshop=None, **_room_header(baked / 'room.msh')))
+                continue
             folder = out / ('s%dr%d' % (scene_id, room_id))
             from room_imports import selected, convert as convert_import
             override = selected(prefix, room_id)

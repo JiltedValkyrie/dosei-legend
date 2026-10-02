@@ -51,7 +51,7 @@ def rgb555(rgb):
     return 0x8000 | (b >> 3) << 10 | (g >> 3) << 5 | (r >> 3)
 
 
-def room_backdrop(room):
+def room_backdrop(room, multi_first=False):
     """The JFIF image and its declared size from a ROOM_SHAPE_TYPE_IMAGE room.
 
     Header walk: room command 0x0A points at a RoomShapeImageSingle --
@@ -68,6 +68,15 @@ def room_backdrop(room):
         kind, amount = room[shape], room[shape + 1]
         if kind != 1:
             raise ValueError('room shape %d is not ROOM_SHAPE_TYPE_IMAGE' % kind)
+        if amount == 2 and multi_first:
+            # RoomShapeImageMulti: numBackgrounds @8, backgrounds* @0xC;
+            # RoomShapeImageMultiBgEntry (0x1C): bgCamIndex @2, source @4,
+            # width/height @0x10. APPROXIMATE: first entry only; the real
+            # room picks the entry whose bgCamIndex is the active bg camera.
+            entries = int.from_bytes(room[shape + 12:shape + 16], 'big') & 0xFFFFFF
+            start = int.from_bytes(room[entries + 4:entries + 8], 'big') & 0xFFFFFF
+            width, height = struct.unpack_from('>2H', room, entries + 0x10)
+            return room[start:], width, height
         if amount != 1:
             raise ValueError('multi-background rooms are not handled yet '
                              '(amountType %d)' % amount)
@@ -128,7 +137,17 @@ def main():
                                   expect=entry['rooms'] + 1)
         for room_id in range(entry['rooms']):
             room = segments['%s_room_%d' % (entry['prefix'], room_id)]
-            data, width, height = room_backdrop(room)
+            try:
+                data, width, height = room_backdrop(room, multi_first=bool(entry.get("generic")))
+            except ValueError as error:
+                if not entry.get('generic'):
+                    raise
+                print('backdrop: %s room %d not staged: %s' % (entry['prefix'], room_id, error))
+                continue
+            if (width, height) != (WIDTH, HEIGHT) and entry.get('generic'):
+                print('backdrop: %s room %d is %dx%d, not staged (runtime stages %dx%d)'
+                      % (entry['prefix'], room_id, width, height, WIDTH, HEIGHT))
+                continue
             if (width, height) != (WIDTH, HEIGHT):
                 raise ValueError('%s room %d backdrop is %dx%d; the runtime '
                                  'stages %dx%d' % (entry['prefix'], room_id,

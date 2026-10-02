@@ -147,6 +147,15 @@ sudo apt-get install -y python3-pil genisoimage   # Pillow + mkisofs
     `#include "spot04_scene.h"` to the asset-root path; new scenes get the same rewrite.
 29. **PlayState is 78 KB with Fx** (floats doubled). It lives in low work RAM
     (`RAM_LOW_OOTPLAY`), never in the blob .bss or the 256 KB blob carve.
+30. **All-scenes registration needs `tools/build_all_scenes.py` run first (about 1-2 h).**
+    It bakes every decomp scene's rooms into `build/all-scenes/` (ignored). Then
+    `build_scene_table.py` registers each scene that fits the runtime caps
+    (`RUNTIME_CAPS`), caching the verdicts in `build/all-scenes/registered.json`
+    (delete it to recheck). Without the bake only the 11 slice scenes exist. Run from
+    `game/tools` with `DOSEI_OOT` set and `--rom-dir <oot>/baseroms/ntsc-1.2`.
+31. **Scene ids >= 36 use `Z<two base-36 digits>` file names** (`asset_scene_name`,
+    tools/asset_names.py `scene_stem`). Spawns and doors are in `SCENETAB.BIN`, not
+    work RAM: 75 scenes put 10 KB of tables over the static RAM limit.
 
 ## Playtest package
 

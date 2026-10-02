@@ -1351,7 +1351,7 @@ static void __attribute__((optimize("Os"))) file_select_screen(void)
     if(level_select.visible) {
         for(row=0;row<FS_ROWS;++row)jo_printf(0,FS_ROW+row,"                                      ");
         jo_printf(8,FS_ROW,"LEVEL SELECT");
-        jo_printf(4,FS_ROW+2,"AREA: %-24s",save_scene_name(scene_entries[level_select.scene].save_scene));
+        jo_printf(4,FS_ROW+2,"AREA: %-24s",scene_names[level_select.scene]);
         jo_printf(4,FS_ROW+4,"ROOM: %u / %u",level_select.room,scene_entries[level_select.scene].rooms-1);
         jo_printf(4,FS_ROW+6,"UP/DOWN: AREA  LEFT/RIGHT: ROOM");
         jo_printf(4,FS_ROW+8,"A: ENTER  B: TITLE");
@@ -1514,6 +1514,11 @@ void __attribute__((optimize("Os"))) jo_main(void)
 
     /* Dialogue line text: disc file into a fixed cart carve (BUG-033). */
     if (!dialogue_text_load()) {
+        return;
+    }
+    /* Scene spawns and doors (all scenes) from disc into the jo heap. */
+    if (!scene_table_load()) {
+        jo_core_error("SCENETAB.BIN failed to load");
         return;
     }
 

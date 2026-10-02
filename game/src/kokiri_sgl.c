@@ -652,14 +652,13 @@ bool __attribute__((optimize("Os"))) kokiri_scene_load_backdrop(unsigned int sce
     /* An interior reuses the Field's tile pools: stop streaming into them. */
     field_stream_free();
     relocate_resident(GAME_TEXTURE_BASE);
-    char        name[] = "S0R0.RGB";
+    char        name[12];
     jo_file     file;
     jo_img      strip;
     int         row;
     bool        ok = true;
 
-    if (scene >= ASSET_ID_LIMIT || room >= ASSET_ID_LIMIT || !kokiri_bank_allocate()) return false;
-    name[1] = asset_name_digit(scene); name[3] = asset_name_digit(room);
+    if (!asset_scene_name(name, scene, (int)room, "RGB") || !kokiri_bank_allocate()) return false;
     asset_loading(name);
     asset_loading(name);
     if (!jo_fs_open(&file, name)) return false;
@@ -1083,15 +1082,14 @@ static bool __attribute__((optimize("Os"))) room_load_bank(unsigned int scene, u
         if (!kokiri_bank_allocate()) return false;
         return field_stream_load(scene, room);
     }
-    char mesh_name[] = "S0R0.MSH", pixel_name[] = "S0R0.TEX";
+    char mesh_name[12], pixel_name[12];
     jo_file file;
     bool ok;
-    if (scene >= ASSET_ID_LIMIT || room >= ASSET_ID_LIMIT || !kokiri_bank_allocate()) return false;
+    if (!asset_scene_name(mesh_name, scene, (int)room, "MSH") ||
+        !asset_scene_name(pixel_name, scene, (int)room, "TEX") || !kokiri_bank_allocate()) return false;
     const unsigned char *cached = scene == 2 && room < 10 ? opening_cache[room].mesh : 0;
     bool from_cache = cached != 0;
     if (from_cache && opening_cache[room].mesh_bytes < (int)sizeof(header)) return false;
-    mesh_name[1] = pixel_name[1] = asset_name_digit(scene);
-    mesh_name[3] = pixel_name[3] = asset_name_digit(room);
     if (!from_cache) {
         asset_loading(mesh_name);
         if (!jo_fs_open(&file, mesh_name)) return false;

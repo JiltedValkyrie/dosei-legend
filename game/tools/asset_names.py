@@ -12,9 +12,18 @@ def digit(value):
     return '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ'[value]
 
 
+def scene_stem(scene):
+    """S<s> below 36, else Z<s1><s0> (src/asset_names.h asset_scene_name)."""
+    if scene < LIMIT:
+        return 'S' + digit(scene)
+    if scene >= LIMIT * LIMIT:
+        raise ValueError('scene id %r outside 0..%d' % (scene, LIMIT * LIMIT - 1))
+    return 'Z' + digit(scene // LIMIT) + digit(scene % LIMIT)
+
+
 def room_asset(scene, room, ext):
-    return 'S%sR%s.%s' % (digit(scene), digit(room), ext)
+    return '%sR%s.%s' % (scene_stem(scene), digit(room), ext)
 
 
 def scene_asset(scene, ext):
-    return 'S%s.%s' % (digit(scene), ext)
+    return '%s.%s' % (scene_stem(scene), ext)

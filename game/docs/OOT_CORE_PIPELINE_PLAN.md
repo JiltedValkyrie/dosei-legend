@@ -110,6 +110,21 @@ Open / next:
   Grow it (src/ram_cart.h OOTCORE + FIXED bytes, makefile LOAD_ADDR/MAX_BYTES together; ram_cart.c
   checks the address) as actors are added. Each 64 KB taken shrinks bank-2 jo_malloc space.
 
+## ALL SCENES (2026-10-02, human request "create every map and room, add to level select")
+Build only, runtime NOT checked. Level select (title secret menu) now cycles 75 scenes
+(11 slice + 64 generic, ids 11..74, names from SceneId). Pipeline: tools/build_all_scenes.py
+(generic mode: segments 06-0D fallback = black texture/empty DL, room G_MTX ignored, G_BRANCH_Z
+walked: all APPROXIMATE) -> build_scene_table.py _extra_scenes (caps filter) -> build_room_scene
+copies banks. Generic scenes: save id SAVE_SCENE_COUNT+n (no persistent flags), doors between
+registered scenes resolve from ROM exits, En_Door/other room transitions skipped (rooms only via
+level select), image rooms use the shop RGB backdrop path (multi-bg: first picture only),
+no actors, Kokiri music/sfx defaults. Not registered (26): see build/all-scenes/registered.json:
+collision over 2321 tris (Forest/Fire/Spirit Temple, Ice Cavern, Ganon's Tower/Castle, GTG,
+Ganon's Castle, hakasitarelay), small cap overflows (pixels/tiles/verts: Dodongo, Jabu, Water,
+Shadow rooms, Barinade, Zora's/Lake/Gerudo/Desert/Lon Lon/Death Mountain/Kakariko field?,
+etc.), moribossroom/hiral_demo converter errors. Next: raise caps (RAM cost) to admit the
+near-misses; multi-bg camera selection; per-scene music; En_Door room switches.
+
 ## NEXT SESSION: Phase 1 step 5 (first live decomp actor)
 Rule: game logic comes from decomp source via `tools/oot_core_import.py`. Do not rewrite a
 system by hand that the decomp already has. Our C code stays only as the Saturn backend

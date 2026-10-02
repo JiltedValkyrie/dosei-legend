@@ -90,7 +90,8 @@ bool scene_flow_pivot(void)
 bool scene_flow_toggle_view(void)
 {
     bool pivot = scene_flow_pivot(), ok;
-    if (!scene_flow_is_interior() || current_scene == SCENE_KOKIRI_SHOP)
+    if (!scene_flow_is_interior() || current_scene == SCENE_KOKIRI_SHOP ||
+        current_scene >= SCENE_GENERIC_FIRST) /* no panorama baked */
         return false;
     if (!vdp1_wait_for_draw_end()) return false;
     ok = pivot ? kokiri_scene_load_backdrop(current_scene, 0) :
@@ -140,14 +141,13 @@ const scene_spawn_t *scene_flow_spawn(unsigned int scene, unsigned int spawn)
 /* Read one scene's collision file into the shared buffer. */
 static bool     collision_load(unsigned int scene)
 {
-    char        name[] = "S0.COL";
+    char        name[12];
     void       *data;
     int         length = 0;
     uint32_t    need;
 
-    if (scene >= ASSET_ID_LIMIT)
+    if (!asset_scene_name(name, scene, -1, "COL"))
         return (false);
-    name[1] = asset_name_digit(scene);
     data = jo_fs_read_file(name, &length);
     if (!data || length <= 0) {
         if (data) jo_free(data);
@@ -205,8 +205,11 @@ bool            scene_flow_load(unsigned int scene, unsigned int spawn)
         return (false);
     if (entry->image) {
         /* A prerendered interior: one backdrop on VDP2, no geometry at all. */
-        if (!(scene == SCENE_KOKIRI_SHOP ? kokiri_scene_load_backdrop(scene, 0) :
-              kokiri_scene_load_bank(4, scene)))
+        /* The shop and every all-scenes interior show their own backdrop;
+        ** the five Kokiri houses start on their bank-4 panorama. */
+        unsigned int room = scene_flow_spawn(scene, spawn)->room;
+        if (!(scene == SCENE_KOKIRI_SHOP || scene >= SCENE_GENERIC_FIRST ?
+              kokiri_scene_load_backdrop(scene, room) : kokiri_scene_load_bank(4, scene)))
             return (false);
     } else {
         if (!kokiri_scene_load_bank(scene, scene_flow_spawn(scene, spawn)->room))
