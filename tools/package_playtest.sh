@@ -41,7 +41,8 @@ if grep -qiE 'jilte|Workspace-Claude' "$stage/kronos/kronos.ini"; then
 fi
 
 cp "$root/tools/playtest_readme.txt" "$stage/README.txt"
-sed -i "s|@BUILD@|$stamp|" "$stage/README.txt"
+cp "$root/tools/playtest_play.bat" "$stage/Play.bat"
+sed -i -e "s|@BUILD@|$stamp|" -e 's/$//' "$stage/README.txt"  # CRLF for Notepad
 
 (cd "$out" && rm -f "$name.zip" && zip -qr "$name.zip" "$name")
 rm -rf "$stage"

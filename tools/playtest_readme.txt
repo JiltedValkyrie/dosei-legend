@@ -4,21 +4,46 @@ OoT Saturn (oot-sat) - private dev playtest build @BUILD@
 This is a private test build for a few invited testers. Please don't share it.
 
 WHAT YOU NEED
-- A Sega Saturn BIOS file (not included). In Kronos: Settings > General > BIOS.
-- The 4 MB RAM expansion cartridge. The included Kronos is already set to it
-  (Cartridge type: 32 Mbit DRAM). The game will not start without it.
+- A Sega Saturn BIOS file (not included).
+- Windows, to use the bundled Kronos emulator. On real hardware, see below.
 
-HOW TO PLAY (WINDOWS)
-1. Run kronos\kronos.exe.
-   Use THIS Kronos. The stock Kronos 2.7 freezes in the opening nightmare
-   cutscene: it stops drawing after 2048 VDP1 commands. This copy has that
-   limit removed (kronos\vdp1-draw-cap-fix.c is the patched source file).
-2. Set your BIOS file once (Settings > General).
-3. File > Open ISO/CUE and pick game\game-clean.cue.
-   Keep all files in game\ together: the .cue points at the TRACKxx.BIN
-   audio tracks next to it.
+QUICK START (WINDOWS)
+1. Unzip everything. Keep the folder layout as it is.
+2. Copy your Saturn BIOS into this folder (next to Play.bat) and name it bios.bin.
+3. Double-click Play.bat. Kronos starts and boots the game.
+   Without bios.bin, set the BIOS once inside Kronos (Settings > General > BIOS),
+   close Kronos, then run Play.bat again.
+
+WHY YOU MUST USE THE BUNDLED KRONOS AND ITS INI
+- The fix that raises the drawing cap is built into kronos\kronos.exe itself.
+  Stock Kronos 2.7 stops after 2048 VDP1 drawing commands per frame and never
+  reports the frame as done, so the game freezes. You will reliably hit this in
+  the opening nightmare cutscene, right after Ganon appears. This kronos.exe has
+  the limit removed; kronos\vdp1-draw-cap-fix.c is the patched source file.
+  An INI file cannot fix this. Only the patched exe can.
+- kronos\kronos.ini holds the settings the game needs: Cartridge type
+  "32 Mbit DRAM" (the 4 MB RAM expansion cart). The game will not start
+  without it. The settings are shown in Kronos as:
+      Settings > Cartridge > Type: 32 Mbit DRAM
+- On Windows, Kronos only reads kronos.ini when it sits in the same folder as
+  kronos.exe. Otherwise it uses your user profile's settings, which won't have
+  the cart set. So:
+    * Always run kronos.exe from the kronos folder (Play.bat does this).
+    * Don't move kronos.exe away from kronos.ini.
+    * If you change settings inside Kronos, they are saved back to that same
+      kronos.ini.
+
+MANUAL LAUNCH (instead of Play.bat)
+  Run kronos\kronos.exe, then File > Open ISO/CUE and pick game\game-clean.cue.
+  From a command prompt:
+      cd kronos
+      kronos.exe -b "C:\path\to\bios.bin" -i "..\game\game-clean.cue" -a
+  Keep all files in game\ together: the .cue points at the TRACKxx.BIN audio
+  tracks next to it.
 
 REAL HARDWARE (SAROO etc.)
+- Real Saturn hardware has no 2048-command drawing cap, so the freeze above
+  does not happen there.
 - Put the whole game folder on the device and pick game-clean.cue.
 - You need 4 MB of cart RAM.
 
