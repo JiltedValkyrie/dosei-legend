@@ -155,7 +155,9 @@ sudo apt-get install -y python3-pil genisoimage   # Pillow + mkisofs
     `game/tools` with `DOSEI_OOT` set and `--rom-dir <oot>/baseroms/ntsc-1.2`.
 31. **Scene ids >= 36 use `Z<two base-36 digits>` file names** (`asset_scene_name`,
     tools/asset_names.py `scene_stem`). Spawns and doors are in `SCENETAB.BIN`, not
-    work RAM: 75 scenes put 10 KB of tables over the static RAM limit.
+    work RAM: 75 scenes put 10 KB of tables over the static RAM limit. build.sh copies
+    `Z*R*.MSH/.TEX` banks too; a new name pattern must be added to that copy loop
+    (missed once: `Z20R3.MSH: File not found`).
 
 ## Playtest package
 
