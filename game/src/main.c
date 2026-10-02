@@ -164,8 +164,10 @@ static bool oot_core_load(void)
     if (!jo_fs_read_file_ptr("OOTCORE.BIN", carve, &length)) return false;
     /* Code runs from the cached alias: drop any stale cache lines first. */
     slCashPurge();
-    return entry->magic == OOT_CORE_MAGIC && entry->version == OOT_CORE_VERSION &&
-           (unsigned int)entry->end <= OOT_CORE_LOAD_ADDR + RAM_CART_OOTCORE_BYTES;
+    if (entry->magic != OOT_CORE_MAGIC || entry->version != OOT_CORE_VERSION ||
+        (unsigned int)entry->end > OOT_CORE_LOAD_ADDR + RAM_CART_OOTCORE_BYTES) return false;
+    entry->init();
+    return true;
 }
 #endif
 

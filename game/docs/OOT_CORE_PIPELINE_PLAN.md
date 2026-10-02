@@ -23,7 +23,8 @@ Code in place (host-verified, target compile-verified; runtime numbers pending h
 - `oot-core/include/fx.h`: **Fx = int64, Q39.24** (not 32-bit Q16.16). Reasons found by probe:
   decomp builds floats past s16 (`Rand_ZeroOne()*0xFFFF`, distSq ~1e8) -> 32-bit saturates;
   16 frac bits lose 6% on reciprocals (Math3D_DefPlane normal). Mul fast path 1 dmuls when both
-  fit 32 bits, 2 when one does. All ops constexpr: no `.ctors` (makefile rejects any).
+  fit 32 bits, 2 when one does. All ops constexpr. (Phase 1: GCC 9 still emits ctors for some
+  file-scope tables, so the blob runs its own ctor table from `OotCoreEntry.init`.)
 - Replaced (float bit tricks / libc): `oot-core/src/oot_math.cpp` (sqrtf isqrt64, sinf/cosf Q30
   poly, floor/round...), `oot_rand.cpp` (qrand same LCG, mantissa -> exact Fx).
   NOTE: N64 `sintable` samples i*pi/(2*1023); do not interpolate it as /1024.
@@ -32,16 +33,41 @@ Code in place (host-verified, target compile-verified; runtime numbers pending h
   z_bgcheck, z_en_item00, En_Kusa** (~240 KB text). Also syntax-clean: z_player, z_camera.
 - Host probe `oot-core/tests/run_host_probe.sh`: 458 values (sin/cos/sqrt/atan2/dist/plane/
   SmoothStep/Approach/StepTo/Rand) Fx vs real float, **0 over tolerance, worst 0.017%**.
-- Target: `./build.sh OOT_CORE=1` builds `OOTCORE.BIN` (10.6 KB after gc-sections), linked at the
-  cached cart alias 0x027F0000 (carve RAM_CART_OOTCORE), loaded + cache-purged at boot, called via
+- Target: `./build.sh OOT_CORE=1` builds `OOTCORE.BIN` (Phase 0: 10.6 KB), linked at the
+  cached cart alias (now 0x027C0000, carve RAM_CART_OOTCORE), loaded + cache-purged at boot, called via
   its entry table. Debug panel rows 13-14 show ns/call (ma dv ss / ds sn at). Work RAM untouched
   by decomp code (standard image 6,832 B spare). Default/Clean builds unchanged (flag off).
   This blob is the Phase 1 pattern: decomp code lives in the cart, not work RAM.
 
+## Status — Phase 1 (2026-10-02): steps 2-3 linked, not run
+- Carve 256 KB at 0x027C0000 (`RAM_CART_OOTCORE_BYTES` 0x40000, `RAM_CART_FIXED_BYTES` 0xC2400,
+  makefile `OOT_CORE_LOAD_ADDR`/`OOT_CORE_MAX_BYTES`). Blob compiled **-Os**: 203 KB in carve
+  (OOTCORE.BIN 170 KB; -O2 was 425 KB). 0 soft-float symbols. Standard image 6,832 B spare.
+- Decomp file list lives ONLY in `tools/oot_core_import.py` SOURCES; importer writes
+  `build/oot-core/sources.mk`, makefile includes it. Linked now: z_actor, z_collision_check,
+  z_bgcheck, z_en_item00, En_Kusa + batch 1/2 leaf systems: sys_matrix, z_skin_matrix,
+  TwoHeadArena, z_lights, z_eff_ss_dead, z_bg_collect, z_bg_item, z_inventory, z_rcp,
+  lookathil, mtxutil, z_effect, z_effect_soft_sprite(+old_init), z_eff_blure/spark/shield_particle,
+  z_malloc, __osMalloc_n64.
+- `oot_core_roots.cpp`: pointer table that keeps Actor_InitContext/UpdateAll/DrawAll/Spawn,
+  BgCheck_Allocate, CollisionCheck_AT/OC, En_Kusa/En_Item00 profiles alive under gc. Step 4
+  replaces it with the real API.
+- Bridges (`oot-core/src/`): `bridge_tables.cpp` actor + effect-ss overlay tables built from
+  the decomp table headers, all entries internal, **weak profiles** (import a file = registered;
+  not imported = NULL profile, spawn must check). `bridge_play.cpp` REAL/HOST/STUB tagged:
+  Play_GetCamera/ActiveCamId real; Item_Give, Health_ChangeBy, sfx -> `OotCoreHost`
+  (`oot-core/include/oot_core_host.h`, global `gOotCoreHost`, not wired yet); Object_* = always
+  loaded; Overlay_Load/Fault/os*/Player_* (InCsMode, ExplosiveHeld, ReleaseLockOn)/Magic_Reset/
+  GetItem_Draw/Camera_RequestMode stubs. `bridge_assets.cpp`: 41 one-word placeholder asset
+  symbols (gameplay_keep DLs/textures, object_kusa DLs) = draw-shim keys. `bridge_libc.cpp`.
+- gSaveContext and gSegments are defined in bridge_play (zeroed). C side must fill what
+  actors read (e.g. save inventory) before step 5.
+- **Step 4/5 hazard:** Actor_UpdateAll and most actors read GET_PLAYER(play). Our Link is C,
+  so step 4 needs a proxy Player actor in the PLAYER category, synced from C Link each frame.
+
 Open / next:
 - Human: run OOT_CORE=1 Debug build, read rows 13-14 (gate numbers). See NEXT SESSION below.
-- Actor/collision/bgcheck objects compile but are not linked yet: need PlayState/Gfx/audio/
-  effect bridges (Phase 1). En_Kusa's real `Item_DropCollectibleRandom` comes with z_en_item00.
+  Blob is -Os now: numbers from this build supersede any earlier -O2 reading.
 - ROM data holding IEEE floats (CutsceneCameraPoint.viewAngle, some cutscene cmds) must be
   converted to Fx offline when that data is loaded.
 - Asset headers come from `extracted/ntsc-1.2`; decomp `build/` only has ntsc-1.1 objects.
@@ -51,9 +77,9 @@ Open / next:
   in Q24 (else libgcc __divdi3). Target-only; runtime unverified. Not interrupt-safe if an ISR
   uses the divider. Candidates later: its trig/atan2 LUTs if bench shows sinf/atan slow;
   Vector/Matrix/Frustum for Saturn-side renderer/draw shim (needs C++23).
-- Work RAM: solved by the OOTCORE.BIN cart blob (carve 64 KB at 0x027F0000). Grow the
-  carve (src/ram_cart.h RAM_CART_OOTCORE_BYTES + makefile OOT_CORE_MAX_BYTES) as Phase 1 adds code;
-  z_actor+collision+bgcheck+item00 is ~160 KB text, so expect ~256 KB+ soon.
+- Work RAM: solved by the OOTCORE.BIN cart blob (carve 256 KB at 0x027C0000, 203 KB used).
+  Grow it (src/ram_cart.h OOTCORE + FIXED bytes, makefile LOAD_ADDR/MAX_BYTES together; ram_cart.c
+  checks the address) as actors are added. Each 64 KB taken shrinks bank-2 jo_malloc space.
 
 ## NEXT SESSION: Phase 1 start (do in this order; stop hand-porting)
 Rule: game logic comes from decomp source via `tools/oot_core_import.py`. Do not rewrite a
@@ -63,10 +89,11 @@ system by hand that the decomp already has. Our C code stays only as the Saturn 
 1. Gate numbers: the human runs the Debug build (`./build.sh OOT_CORE=1`, game/build/game.cue) and
    reads rows 13-14. A large ns/call (e.g. dv or at) gets fixed before bulk import: SaturnMath++
    LUT/DIVU.
-2. Grow the cart carve to 256 KB+. Add z_actor, z_collision_check, z_bgcheck, z_en_item00,
+2. DONE 2026-10-02 (see Phase 1 status). Grow the cart carve to 256 KB+. Add z_actor, z_collision_check, z_bgcheck, z_en_item00,
    En_Kusa to OOT_CORE_SRCS. The link fails on undefined symbols: that list IS the Phase 1 backend
    work list. `--gc-sections` keeps only what's reached.
-3. Write `oot-core/src/bridge_*.cpp` for each undefined group. Keep them thin:
+3. FIRST PASS DONE 2026-10-02 (links, 0 undefined; stubs listed in status). Next: wire
+   `OotCoreHost` from C, then replace stubs as files get imported. Write `oot-core/src/bridge_*.cpp` for each undefined group. Keep them thin:
    - PlayState/ActorContext/ObjectContext: one global PlayState owned by oot-core; Object_* =
      "always loaded" for imported objects.
    - Gfx_*, gSPDisplayList, OPEN/CLOSE_DISPS: record DL segment address + current MtxF -> a draw
@@ -75,7 +102,7 @@ system by hand that the decomp already has. Our C code stays only as the Saturn 
    - EffectSs*_Spawn: stub (count calls) first, then port the effects that are needed.
    - BgCheck: decide between z_bgcheck over our converted collision (preferred; needs the
      CollisionHeader in decomp format from the ROM) and a bridge to kokiri_collision.
-4. Entry table grows (oot_core_bench.h -> oot_core_api.h): init(play), update(), draw(list),
+4. NEXT. Entry table grows (v2 already has `init` = ctor runner; add the proxy Player) (oot_core_bench.h -> oot_core_api.h): init(play), update(), draw(list),
    spawn(actorId, params, pos). The C main loop calls them for scenes flagged "decomp actors".
 5. First live actor: En_Kusa in Kokiri Forest with its real drop table via z_en_item00. Replace
    world_props grass for that scene only. Human verifies in Kronos.

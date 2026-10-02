@@ -26,12 +26,16 @@ typedef void (*OotCoreBenchFn)(OotCoreBench* out, unsigned int (*ticks)(void),
  * self-contained: the game reaches it only through these pointers.
  */
 #define OOT_CORE_MAGIC 0x4F4F5443u /* 'OOTC' */
-#define OOT_CORE_VERSION 1u
+#define OOT_CORE_VERSION 2u
 typedef struct OotCoreEntry {
     unsigned int magic;
     unsigned int version;
     const void* end; /* first address past .bss: must fit the cart carve */
     OotCoreBenchFn bench;
+    /* Call once after load, before anything else: runs the blob's own static
+     * initializers. GCC 9 emits a ctor for a file-scope table whose Fx divide
+     * it cannot fold (e.g. z_actor sAttentionRanges). Jo never runs .ctors. */
+    void (*init)(void);
 } OotCoreEntry;
 
 #endif

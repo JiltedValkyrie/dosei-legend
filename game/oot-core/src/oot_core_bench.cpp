@@ -80,8 +80,16 @@ static void oot_core_bench_run(OotCoreBench* out, unsigned int (*ticks)(void),
     out->ns[OOT_BENCH_ATAN2] = ticks_to_us(ticks() - t0);
 }
 
-/* Linker-script symbol: first address past the blob's .bss. */
+/* Linker-script symbols: first address past the blob's .bss; ctor table. */
 extern "C" char oot_core_end[];
+typedef void (*OotCoreCtor)(void);
+extern "C" OotCoreCtor oot_core_ctors_start[], oot_core_ctors_end[];
+
+static void oot_core_init(void) {
+    for (OotCoreCtor* c = oot_core_ctors_start; c != oot_core_ctors_end; ++c) {
+        (*c)();
+    }
+}
 
 /* First bytes of OOTCORE.BIN (oot-core.ld KEEPs .oot_entry at the load address). */
 extern "C" const OotCoreEntry oot_core_entry __attribute__((section(".oot_entry"), used)) = {
@@ -89,4 +97,5 @@ extern "C" const OotCoreEntry oot_core_entry __attribute__((section(".oot_entry"
     OOT_CORE_VERSION,
     oot_core_end,
     oot_core_bench_run,
+    oot_core_init,
 };

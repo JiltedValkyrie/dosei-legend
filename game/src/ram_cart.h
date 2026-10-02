@@ -33,8 +33,8 @@
 ** run from the cart (oot-core/oot-core.ld, makefile OOT_CORE_LOAD_ADDR). It is
 ** the last carve, so its address is BANK2 end - RAM_CART_OOTCORE_BYTES. */
 #define RAM_CART_OOTCORE_OFFSET 0x82400u
-#define RAM_CART_OOTCORE_BYTES  0x10000u
-#define RAM_CART_FIXED_BYTES    0x92400u
+#define RAM_CART_OOTCORE_BYTES  0x40000u
+#define RAM_CART_FIXED_BYTES    0xC2400u
 #else
 #define RAM_CART_FIXED_BYTES    0x82400u
 #endif

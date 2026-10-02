@@ -72,10 +72,9 @@ sudo apt-get install -y python3-pil genisoimage   # Pillow + mkisofs
    `__builtin_is_constant_evaluated` is GCC 9+. `fx.h` uses `FX_RUNTIME()` with a
    `__builtin_constant_p` fallback. Code size can differ, so watch the
    work-RAM boundary check (`build_sgl_area.py --verify`).
-9. **oot-core objects must not need static constructors.** Jo's startup never runs
-   `.ctors`. The makefile rejects any oot-core object that has one (checked with
-   `readelf -S`; host `objdump` cannot read SH ELF). Keep all `Fx` operators
-   `constexpr`.
+9. **Jo's startup never runs `.ctors`.** Superseded 2026-10-02 (gotcha 20): the
+   oot-core blob runs its own ctor table via `OotCoreEntry.init`, so the makefile no
+   longer rejects ctors. Still keep all `Fx` operators `constexpr` (fewer ctors).
 10. **`#include` placement in `main.c`.** `texture_probe.h` sits inside
     `#ifdef DOSEI_TEXTURE_PROBE`. Do not add unrelated includes after it.
 11. **PowerShell to WSL quoting.** Escape `$` as `\$` inside
@@ -120,6 +119,22 @@ sudo apt-get install -y python3-pil genisoimage   # Pillow + mkisofs
     Windows. Scripts that need the revision take it from an environment variable,
     e.g. `OOT_SAT_REV` in `tools/package_playtest.sh`.
 19. **The emulator is human-run only.**
+20. **GCC 9 static ctor for Fx tables.** A non-constexpr file-scope table whose initializer
+    divides Fx (z_actor `sAttentionRanges`) is not constant-folded: `__builtin_is_constant_evaluated`
+    is false there, the DIVU path is volatile, so GCC emits `_GLOBAL__sub_I_*`. The same
+    expression in a `constexpr` variable folds. Fix: the blob keeps `.init_array`/`.ctors`
+    (oot-core.ld) and `OotCoreEntry.init` runs them; main.c calls it right after load. Find the
+    culprit with `sh-elf-g++ ... -S -o - | grep -A400 _GLOBAL__sub_I`.
+21. **oot-core link passes with 0 undefined = nothing linked.** `--gc-sections` drops all decomp
+    code no entry reaches. `oot-core/src/oot_core_roots.cpp` keeps the systems alive.
+22. **oot-core -O2 is 2x the size of -Os** (Fx int64 ops inline): 425 KB vs 203 KB. Blob uses -Os.
+23. **Git Bash `sed`/heredoc `\n` in replacement writes a literal `\n`** into the makefile (broke
+    OOT_CORE_SRCS). Use the Edit tool or a Python script file for multi-line makefile edits.
+24. **Decomp `libc/string.h` declares memcpy with C++ linkage**, but GCC emits calls to the C
+    symbol for struct copies. `bridge_libc.cpp` includes no decomp headers and defines the C ones.
+25. **Add decomp files in `tools/oot_core_import.py` SOURCES only.** It writes
+    `build/oot-core/sources.mk`; the makefile includes it. Object names use the basename, so two
+    sources with the same file name would collide.
 
 ## Playtest package
 
