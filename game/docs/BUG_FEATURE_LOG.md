@@ -59,6 +59,24 @@ Gohma/Tree-mouth focus unverified; 16 reported full-suite failures have no valid
 baseline comparison yet (message table, npc models, level_select, vdp1 budget,
 kokiri_sgl extraction harnesses). Do not call these pre-existing or unrelated.
 
+## BUG-074: Link mesh overran its cart carve; Link draws broken (2026-10-01)
+
+P0, Claude, FIXED in tree. Human screenshot (19:38 Clean): only Link's
+legs/skirt drawn, "can't see Link". Cause: cd5de84 added first-person arm
+groups (fp_shoulder/fp_sling) to Link's model: 564 -> 791 polygons,
+LINKMESH.BIN 25,312 B, but `RAM_CART_LINKMESH` was 0x4800 at 0xF000.
+`jo_fs_read_file_ptr` has no size limit: the file overran NAVIGLOW, MESH_LOD
+and DEKUBABA; their later loads overwrote Link's ATTR table from polygon ~217
+onward. Fix: carve moved to the tail (0x7C000, 0x6400), `RAM_CART_FIXED_BYTES`
+0x7C000 -> 0x82400 (bank-2 jo_malloc pool about 25 KB smaller; old
+0xF000-0x13800 unused), layout guards updated, compile-time size guard and
+runtime file-size check (jo_core_error) before the read. Clean image rebuilt
+(build.bat -Variant clean OK). Kronos check pending (human): full Link + gear,
+Navi glow, Deku Baba, Field LOD switching. Optional: drop the unused fp_* groups
+from build_link_model.py to shrink Link back to 564 polygons. Low camera / floor
+wedges in that screenshot not traced separately; reopen if they remain after this fix.
+test_pause_renderer setUpClass compile fails with or without this change.
+
 ## BUG-071: Clean build fails Field table budget at HEAD (2026-10-01)
 
 P0 build blocker, unowned, found by Claude during Field LOD work. `build.bat

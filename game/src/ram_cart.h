@@ -28,7 +28,7 @@
 /* The top of bank 2 is kept OUT of jo_malloc for fixed runtime pools (actor
 ** pool first). A fixed carve keeps these off the 56 KB work-RAM malloc arena,
 ** which jo_malloc would otherwise fill first. */
-#define RAM_CART_FIXED_BYTES    0x7C000u
+#define RAM_CART_FIXED_BYTES    0x82400u
 #define RAM_CART_FIXED_ADDRESS  (RAM_CART_BANK2_ADDRESS + RAM_CART_BANK2_BYTES - RAM_CART_FIXED_BYTES)
 
 /* Fixed carve for the actor pool (actor_sys_bytes() must fit). */
@@ -71,9 +71,13 @@
 #define RAM_CART_FAIRY_BYTES        0x1000u
 
 /* Fixed carve for LINKMESH.BIN (link_scene.h): Link's POLYGON + ATTR
-** tables, 564 x 32 B, read only on equipment change (BUG-039). */
-#define RAM_CART_LINKMESH_OFFSET    0xF000u
-#define RAM_CART_LINKMESH_BYTES     0x4800u
+** tables, 791 x 32 B (body + gear + first-person arm), read only on
+** equipment change (BUG-039). Moved to the tail 2026-10-01: the arm grew the
+** file to 25,312 B and the old 0x4800 carve at 0xF000 let it overwrite Navi's
+** glow, the mesh LOD rows and DEKUBABA (Link's ATTR table corrupted).
+** 0xF000-0x13800 is now unused. */
+#define RAM_CART_LINKMESH_OFFSET    0x7C000u
+#define RAM_CART_LINKMESH_BYTES     0x6400u
 
 /* Fixed carve for Navi's glow pixels: 3 colours x 3 breath steps x 512 B
 ** (FAIRY*.RGB). One VRAM slot is refilled from here (kokiri_sgl.c): room

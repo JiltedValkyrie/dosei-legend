@@ -842,6 +842,19 @@ bool __attribute__((optimize("Os"))) kokiri_scene_load(void)
         unsigned char *mesh = (unsigned char *)ram_cart_fixed(RAM_CART_LINKMESH_OFFSET,
                                                               RAM_CART_LINKMESH_BYTES);
         int length = 0;
+        typedef char link_mesh_fits_carve[LINK_MESH_BYTES <= RAM_CART_LINKMESH_BYTES ? 1 : -1];
+        jo_file probe;
+        /* jo_fs_read_file_ptr writes the whole file: refuse a disc file that
+        ** would overrun the carve (it once clobbered Navi glow/LOD/DEKUBABA). */
+        if (jo_fs_open(&probe, LINK_MESH_FILE)) {
+            int size = probe.size;
+            jo_fs_close(&probe);
+            if (size > (int)RAM_CART_LINKMESH_BYTES) {
+                jo_core_error("%s is %d B, cart carve %d B", LINK_MESH_FILE,
+                              size, (int)RAM_CART_LINKMESH_BYTES);
+                return (false);
+            }
+        }
         if (!mesh || !jo_fs_read_file_ptr(LINK_MESH_FILE, mesh, &length) ||
             length != (int)LINK_MESH_BYTES)
             return (false);
