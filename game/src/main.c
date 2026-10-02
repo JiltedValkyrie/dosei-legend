@@ -166,7 +166,6 @@ static bool oot_core_load(void)
     slCashPurge();
     if (entry->magic != OOT_CORE_MAGIC || entry->version != OOT_CORE_VERSION ||
         (unsigned int)entry->end > OOT_CORE_LOAD_ADDR + RAM_CART_OOTCORE_BYTES) return false;
-    entry->init();
     return true;
 }
 #endif
@@ -1498,10 +1497,18 @@ void __attribute__((optimize("Os"))) jo_main(void)
         return;
     }
 #ifdef DOSEI_OOT_CORE
+    /* Boot progress: a hang here leaves the last marker on screen. */
+    jo_printf(0, 20, "oc 1 load ");
     oot_core_loaded = oot_core_load();
+    /* Diagnostic order: bench (no ctor data) before init, to tell a cart-exec
+    ** failure from a ctor failure. */
+    jo_printf(0, 20, "oc 2 bench %d ", (int)oot_core_loaded);
     if (oot_core_loaded)
         ((const OotCoreEntry *)OOT_CORE_LOAD_ADDR)->bench(&oot_core_bench, frame_timer_ticks,
                                                           frame_timer_ticks_to_us);
+    jo_printf(0, 20, "oc 3 init         ");
+    if (oot_core_loaded) ((const OotCoreEntry *)OOT_CORE_LOAD_ADDR)->init();
+    jo_printf(0, 20, "oc 4 done        ");
 #endif
 
     /* Actor pool lives in the cart's fixed carve, never in work RAM. */

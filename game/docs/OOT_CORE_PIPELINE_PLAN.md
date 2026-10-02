@@ -65,6 +65,11 @@ Code in place (host-verified, target compile-verified; runtime numbers pending h
 - **Step 4/5 hazard:** Actor_UpdateAll and most actors read GET_PLAYER(play). Our Link is C,
   so step 4 needs a proxy Player actor in the PLAYER category, synced from C Link each frame.
 
+**Gate numbers (human, Kronos kronos-fix, Debug, -Os, blob in cart) 2026-10-02:** ns/call
+ma 8582, dv 20901, ss 15864, ds 59799, sn 49818, at 28630. ~240 cycles for one Fx mul-add:
+far too slow for bulk actors. Unknown split: cart (A-bus) code fetch / Kronos timing vs Fx
+cost. Next: rerun the same bench from work RAM (low WRAM) to separate them before step 4.
+
 Open / next:
 - Human: run OOT_CORE=1 Debug build, read rows 13-14 (gate numbers). See NEXT SESSION below.
   Blob is -Os now: numbers from this build supersede any earlier -O2 reading.

@@ -135,6 +135,12 @@ sudo apt-get install -y python3-pil genisoimage   # Pillow + mkisofs
 25. **Add decomp files in `tools/oot_core_import.py` SOURCES only.** It writes
     `build/oot-core/sources.mk`; the makefile includes it. Object names use the basename, so two
     sources with the same file name would collide.
+26. **Kronos cannot run code above 0x020FFFFF in the cart area.** Its SH-2 fetch table maps
+    only 0x020xxxxx to CS0; the oot-core blob at 0x027C0000 fetched 0xFFFF and hung after the
+    SEGA logo (boot marker `oc 2 bench 1`, 2026-10-02). Real hardware has no limit.
+    `tools/build_kronos_draw_fix.py` now also patches `sh2int.c` (0x020-0x027 -> CS0 cache).
+    Built to `build/kronos-fix/` on top of the old draw-fix `libkronos.a` (`--archive`), DLLs,
+    `platforms/` and `kronos.ini` copied from it; `config.ini` points there.
 
 ## Playtest package
 
