@@ -47,7 +47,11 @@ void            kokiri_link_draw_first_person(int x, int y, int z, int yaw, int 
  * are rejected. OoT's gameplay view near plane is 10 (z_view.c); level 5 gives
  * 240 >> 5 = 7 (play) and 290 >> 5 = 9 (first person, where the child's
  * slingshot arm lies inside the old level-3 cut of 36). */
-#define KOKIRI_ZDSP_LEVEL 5
+/* Level 3 everywhere (240 >> 3 = 30). Level 5 let ground corners a few
+ * units from the eye project past VDP1's coordinate range and wrap into
+ * screen-wide wedges (BUG_FEATURE_LOG, tools/field_walk_probe.py). The
+ * first-person arm that wanted it was removed (human, 2026-10-01). */
+#define KOKIRI_ZDSP_LEVEL 3
 /* Screen-space HUD sprite depth just past the live near rejection, so every
  * visible world polygon sorts behind it. `above` orders HUD layers (1 front). */
 int             kokiri_hud_depth(int above);

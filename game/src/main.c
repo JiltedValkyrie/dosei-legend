@@ -72,6 +72,7 @@
 ** downward: the fixed view must be (x-CAM_X, CAM_Y-y, z-CAM_Z).
 */
 #define SCREEN_DISTANCE     (240)
+static bool aim_dot_shown;  /* VDP2 slingshot crosshair on screen */
 static bool         scene_ready;
 static bool         music_ready;
 static bool         debug_visible;
@@ -385,23 +386,8 @@ static void         viewer_draw(void)
             frame_timer_end(FRAME_PHASE_LINK);
         }
     } else if (demo_link_active && !demo_title_is_visible() && demo_slingshot_aiming()) {
-#ifdef LINK_CLIP_AIM_READY
-        /* Subj3 slingshot aim: only the first-person arm, pinned to the
-         * camera focus (eye + 5 along the view, player_camera_first_person).
-         * func_80834D2C holds bow_bow_ready's last frame on the upper body. */
-        int32_t sy, cy, sp, cp;
-        kokiri_camera_sincos(demo_yaw, &sy, &cy);
-        kokiri_camera_sincos((uint16_t)demo_pitch, &sp, &cp);
-        frame_timer_begin(FRAME_PHASE_LINK);
-        link_anim_first_person(true);
-        link_anim_pose(LINK_CLIP_AIM_READY, LINK_FRAMES_AIM_READY - 1, 0);
-        kokiri_link_draw_first_person(
-            demo_camera.x + (int)(((int64_t)sy * cp * 5) >> 32),
-            demo_camera.y + (int)(sp * 5 / 65536),
-            demo_camera.z + (int)(((int64_t)cy * cp * 5) >> 32),
-            demo_yaw, (int)demo_pitch);
-        frame_timer_end(FRAME_PHASE_LINK);
-#endif
+        /* Slingshot aim draws no Link: the first-person arm never showed and
+         * was removed (human, 2026-10-01). A VDP2 crosshair marks the aim. */
     } else if (demo_link_active && !demo_title_is_visible() && !demo_first_person() &&
                !demo_shop_browsing()) {
         frame_timer_begin(FRAME_PHASE_LINK);
@@ -508,9 +494,16 @@ static void         viewer_draw(void)
         if (!gameplay_blocks_world() && !gameplay.dead) {
             int32_t x,y; bool locked; unsigned kind;
             if (demo_slingshot_aiming()) {
-                kokiri_lock_reticle_draw(160,120,KOKIRI_RETICLE_AIM);
+                /* VDP2 text-layer crosshair: cell (20,15) covers pixels
+                 * 160-167 x 120-127, glyph centre ~3 px off screen centre. */
+                jo_printf(20, 15, "+");
+                aim_dot_shown = true;
             } else if (demo_target_marker(&x,&y,&locked,&kind))
                 kokiri_lock_reticle_draw(x,y,kind);
+        }
+        if (aim_dot_shown && !demo_slingshot_aiming()) {
+            jo_printf(20, 15, " ");
+            aim_dot_shown = false;
         }
         kokiri_rupee_hud_draw();
         minimap_draw(demo_link.x, demo_link.z, demo_link_yaw);

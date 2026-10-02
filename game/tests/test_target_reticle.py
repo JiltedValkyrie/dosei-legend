@@ -28,7 +28,8 @@ class TargetReticleTests(unittest.TestCase):
     def test_target_ui_uses_reticle_not_dialogue_glyphs(self):
         main = (ROOT / 'src/main.c').read_text(encoding='utf-8')
         block = main[main.index('if (demo_slingshot_aiming())'):main.index('kokiri_rupee_hud_draw()', main.index('if (demo_slingshot_aiming())'))]
-        self.assertIn('kokiri_lock_reticle_draw(160,120,KOKIRI_RETICLE_AIM)', block)
+        # Slingshot aim: VDP2 text crosshair at screen centre (human 2026-10-01).
+        self.assertIn('jo_printf(20, 15, "+")', block)
         self.assertIn('kokiri_lock_reticle_draw(x,y,kind)', block)
         self.assertNotIn('kokiri_message_mark_draw', block)
 
@@ -40,7 +41,7 @@ class TargetReticleTests(unittest.TestCase):
         header = (ROOT / 'src/kokiri_sgl.h').read_text(encoding='utf-8')
         main = (ROOT / 'src/main.c').read_text(encoding='utf-8')
         level = int(header.split('#define KOKIRI_ZDSP_LEVEL')[1].split()[0])
-        self.assertEqual(level, 5)                       # OoT zNear 10: 240>>5=7, 290>>5=9
+        self.assertEqual(level, 3)                       # 240>>3=30: no wedge wrap
         self.assertIn('slZdspLevel(KOKIRI_ZDSP_LEVEL);', main)
         body = source[source.index('int                 kokiri_hud_depth'):]
         body = body[:body.index('}') + 1]
