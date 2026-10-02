@@ -21,7 +21,23 @@ The currently running game/disc does not change until rebuilt.
 
 Only the chosen room's visual geometry changes. Collision, doors, actors,
 spawns and other rooms stay as before. Moving a wall or floor does not move
-its collision. This does not install Link or other actor meshes.
+its collision. Characters use the panel below, not Publish mesh.
+
+## Character mesh (Link, Zelda, Impa, Ganon)
+
+1. Pick the character in the Character mesh panel, click Export character OBJ.
+   Default file: game/assets/dynamic/<actor>/LOD0/<actor>.obj, plus .mtl,
+   PNGs and <actor>.actor.json. Named, no random folders.
+2. Edit in Blender (Forward -Z, Up Y, scale 1): decimate, move, delete.
+   Keep material names (m000.body.L07 = group + limb); keep sidecar beside OBJ.
+   Do not delete a whole equipment group (sword, shield, sheath, first-person).
+3. Use character OBJ: the real builder checks it, then copies it to
+   game/assets/dynamic/<actor>/mesh/ and sets mesh_override in source.json.
+   Rebuild Clean. Restore original drops the override.
+
+Each corner takes limb and shading from the nearest original vertex of its
+group, so animation follows the edit. Unedited export round-trips byte-exact.
+Existing LINKMESH/VRAM guards still fail an over-budget mesh.
 
 ## Asset browser
 

@@ -12,6 +12,7 @@ from tkinter import filedialog, messagebox, ttk
 from mesh_assets import PROJECT, WORKSPACE, catalog, export_obj, import_obj
 import asset_catalog
 from game_install import GAME_TARGETS, install_mesh
+import actor_meshes  # game/tools, on sys.path via game_install
 
 
 class Workshop:
@@ -91,6 +92,21 @@ class Workshop:
             button = ttk.Button(buttons, text=label, command=action)
             button.pack(side='left', padx=(0, 8))
             self.controls.append(button)
+        characters = ttk.LabelFrame(outer, text='Character mesh (skinned; animation follows edits)', padding=8)
+        characters.pack(fill='x', pady=(0, 10))
+        self.actor = tk.StringVar(value=actor_meshes.ACTORS[0])
+        ttk.Combobox(characters, textvariable=self.actor, values=list(actor_meshes.ACTORS),
+                     state='readonly', width=10).pack(side='left', padx=(0, 8))
+        self.actor.trace_add('write', lambda *_: self.actor_state())
+        for label, action in [('Export character OBJ...', self.export_actor),
+                              ('Use character OBJ...', self.install_actor),
+                              ('Restore original', self.restore_actor)]:
+            button = ttk.Button(characters, text=label, command=action)
+            button.pack(side='left', padx=(0, 8))
+            self.controls.append(button)
+        self.actor_info = tk.StringVar()
+        ttk.Label(characters, textvariable=self.actor_info).pack(side='left', padx=8)
+        self.actor_state()
         self.status = tk.StringVar(value='Ready. Use matching Blender axes on import and export: Forward -Z, Up Y, scale 1.')
         ttk.Label(outer, textvariable=self.status, wraplength=860).pack(anchor='w')
         menu = tk.Menu(root)
@@ -178,6 +194,7 @@ class Workshop:
             self.target_picker.configure(state='readonly')
             self.status.set(('Saved: ' if success else 'Failed: ') + str(result))
             self.refresh()
+            self.actor_state()
             if success:
                 summary = ''
                 if isinstance(result, dict):
@@ -235,6 +252,37 @@ class Workshop:
                        if choice is not None else 'Rebuild Clean to play.')
             return dict(message=f'Installed {target}:\n{folder}\n\n{next_step} Collision stays unchanged.')
         self.task(work, 'Checking geometry and memory budget, then installing ' + target + '...')
+
+    def actor_state(self):
+        mesh = actor_meshes.override(self.actor.get())
+        self.actor_info.set('Using edited: ' + str(mesh.relative_to(PROJECT)) if mesh else 'Using original ROM mesh')
+
+    def export_actor(self):
+        actor = self.actor.get()
+        default = actor_meshes.default_export(actor)
+        default.parent.mkdir(parents=True, exist_ok=True)
+        path = filedialog.asksaveasfilename(parent=self.root, title='Export ' + actor + ' character OBJ',
+            initialdir=str(default.parent), initialfile=default.name, defaultextension='.obj',
+            filetypes=[('Wavefront OBJ', '*.obj')])
+        if not any(default.parent.iterdir()): default.parent.rmdir()   # cancelled or saved elsewhere
+        if path:
+            self.task(lambda: dict(message=f'Exported {actor}:\n{actor_meshes.export_actor(actor, path)}\n\n'
+                'Keep MTL, PNGs and .actor.json beside it. Keep material names; '
+                'decimate/edit freely, then Use character OBJ.'), 'Exporting ' + actor + ' from ROM...')
+
+    def install_actor(self):
+        actor = self.actor.get()
+        path = filedialog.askopenfilename(parent=self.root, title='Use edited OBJ for ' + actor,
+            initialdir=str(actor_meshes.default_export(actor).parent), filetypes=[('Wavefront OBJ', '*.obj')])
+        if path:
+            self.task(lambda: dict(message=f'{actor}: {actor_meshes.install(actor, path)}\n\nRebuild Clean to play.'),
+                      'Checking ' + actor + ' OBJ with the real builder...')
+
+    def restore_actor(self):
+        actor = self.actor.get()
+        done = actor_meshes.restore(actor)
+        self.actor_state()
+        self.status.set(f'{actor}: original ROM mesh restored. Rebuild Clean.' if done else f'{actor}: already original.')
 
     def help(self):
         window = tk.Toplevel(self.root)

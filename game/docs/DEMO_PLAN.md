@@ -127,6 +127,13 @@ Link, 2,471 verts, 409 KB; not the selected layout in this image. Kronos
 pending (human): cell-edge pops/hitch, far LOD2 look, fog at 9,000, owl
 intro/leave, interiors and exits, Continue in Field.
 Not done: Map Workshop chunk overlay/budget heatmap (optional, P3).
+Character mesh exchange (Claude, 2026-10-01): Mesh Workshop exports Link /
+Zelda / Impa / Ganon as named OBJ (assets/dynamic/<actor>/LOD0/), imports edited
+(decimated) OBJ with nearest-vertex limb ownership via recipe mesh_override
+(game/tools/actor_meshes.py, both model builders). Unedited round trip
+byte-identical for all four; synthetic 1/3-decimated Link builds. Host tests
+only; no override installed, no Clean image rebuilt; Kronos check of an edited
+character pending (human).
 
 The integrated route is implemented, host-tested and target-built in the usual
 Clean image: Gohma death/optional heart/blue warp -> all nine Tree aftermath

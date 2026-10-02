@@ -28,6 +28,7 @@ import struct
 import sys
 import xml.etree.ElementTree as ET
 import character_textures
+import actor_meshes
 
 OOT_DEFAULT = pathlib.Path('D:/Workspace-Claude/game-decomps/n64/oot')
 ROM_MD5 = '57a9719ad547c516342e1a15d5c28c3d'
@@ -292,6 +293,11 @@ GEAR_LISTS = (
     ('right_empty', 18, 'gLinkChildRightHandClosedFarDL'),
     ('right_shield', 18, 'gLinkChildRightFistAndDekuShieldFarDL'),
     ('sheath', 19, 'gLinkChildSheathFarDL'),
+    # Cutscene gear (Player_SetModels, sheathed): sword in sheath, shield on
+    # back with sword, and PLAYER_MODELTYPE_RH_OCARINA for the Fairy Ocarina.
+    ('sheath_sword', 19, 'gLinkChildSwordAndSheathFarDL'),
+    ('sheath_shield', 19, 'gLinkChildDekuShieldSwordAndSheathFarDL'),
+    ('rh_ocarina', 18, 'gLinkChildRightHandHoldingFairyOcarinaFarDL'),
     # Player_OverrideLimbDrawGameplayFirstPerson, child (unk_6AD == 2): only
     # sFirstPersonRightShoulderDLs[1] on R_SHOULDER and
     # sFirstPersonRightHandHoldingWeaponDLs[1] (slingshot) on R_HAND draw.
@@ -334,7 +340,7 @@ def emit_equipment(out, faces):
                   '#define LINK_%s_COUNT %d' % (group.upper(), len(ids))]
     counts = {g: sum(f['group'] == g for f in faces) for g in groups}
     maximum = counts['body'] + max(counts['left_empty'], counts['left_sword']) + \
-        max(counts['right_empty'], counts['right_shield']) + counts['sheath']
+        max(counts['right_empty'], counts['right_shield'], counts['rh_ocarina']) +         max(counts['sheath'], counts['sheath_sword'], counts['sheath_shield'])
     tunic=[i for i,f in enumerate(faces) if tuple(f.get('prim',(0,0,0))[:3])==(80,188,8)]
     if not tunic:raise ValueError('Link source tunic material missing')
     mask=bytearray((len(faces)+7)//8)
@@ -993,6 +999,10 @@ def main():
     ap.add_argument('--flat', action='store_true',
                     help='collapse every face except the eyes and mouth to a '
                          'single colour, freeing VDP1 VRAM for the scene')
+    ap.add_argument('--export-obj', type=pathlib.Path,
+                    help='write the unedited mesh as a named character OBJ')
+    ap.add_argument('--mesh-obj', type=str,
+                    help='edited character OBJ (default: recipe mesh_override)')
     args = ap.parse_args()
 
     data = read_object(args.oot, OBJECT, args.rom_dir)
@@ -1010,6 +1020,8 @@ def main():
                                  HEAD_LIMB, FACE_SEGMENTS)
     flattened = flatten_faces(faces) if args.flat else 0
     tinted = apply_primitive_colour(faces)
+    faces = actor_meshes.exchange('link', faces, {i: (m, o) for i, m, o, _ in placed},
+                                  args.export_obj, args.mesh_obj)
     faces = scale_faces(faces, args.scale)
     if not args.animate:
         faces = drop_degenerate(faces)
