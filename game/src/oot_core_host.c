@@ -58,8 +58,15 @@ static int host_health_change(short amount)
     return save_state.health != 0;
 }
 
+static void host_rupees_change(short amount)
+{
+    int r = (int)save_state.rupees + amount;
+    save_state.rupees = (uint16_t)(r < 0 ? 0 : r > 99 ? 99 : r); /* child wallet */
+    gameplay.rupees = (uint8_t)save_state.rupees;
+}
+
 static const OotCoreHost host = { host_sfx, host_give_item, host_health_change,
-                                  frame_timer_ticks, frame_timer_ticks_to_us };
+                                  frame_timer_ticks, frame_timer_ticks_to_us, host_rupees_change };
 
 static OotCoreBench bench;
 /* Last decomp update (Actor_UpdateAll etc.), microseconds. */
@@ -211,6 +218,41 @@ static OotCoreMeshKey core_mesh_key[CORE_MESHES_MAX];
 static unsigned char core_mesh_ready[CORE_MESHES_MAX];
 static unsigned int core_mesh_count;
 
+/* Generic skinned NPC models (N<obj><n>.BIN + .SKN). */
+#define CORE_SKINS_MAX 8
+static actor_mesh_t *core_skin[CORE_SKINS_MAX];
+static unsigned char *core_skin_table[CORE_SKINS_MAX];
+static unsigned short core_skin_key[CORE_SKINS_MAX];
+static unsigned char core_skin_ready[CORE_SKINS_MAX];
+static unsigned int core_skin_count;
+
+static void load_skins(void)
+{
+    static const char hex[] = "0123456789ABCDEF";
+    const unsigned short *keys;
+    int n = ENTRY->skin_list(&keys), i;
+    for (i = 0; i < (int)core_skin_count; ++i) {
+        actor_mesh_free(core_skin[i]); core_skin[i] = 0;
+        if (core_skin_table[i]) { jo_free(core_skin_table[i]); core_skin_table[i] = 0; }
+    }
+    core_skin_count = 0;
+    for (i = 0; i < n && core_skin_count < CORE_SKINS_MAX; ++i) {
+        char file[] = "N0000.BIN";
+        int length = 0;
+        file[1] = hex[(keys[i] >> 12) & 15]; file[2] = hex[(keys[i] >> 8) & 15];
+        file[3] = hex[(keys[i] >> 4) & 15]; file[4] = hex[keys[i] & 15];
+        if (GFS_NameToId((Sint8 *)file) < 0) continue;
+        core_skin[core_skin_count] = actor_mesh_load_static(file);
+        if (!core_skin[core_skin_count]) continue;
+        file[6] = 'S'; file[7] = 'K'; file[8] = 'N';
+        core_skin_table[core_skin_count] = GFS_NameToId((Sint8 *)file) >= 0 ?
+            (unsigned char *)jo_fs_read_file(file, &length) : 0;
+        core_skin_key[core_skin_count] = keys[i];
+        core_skin_ready[core_skin_count] = 0;
+        core_skin_count++;
+    }
+}
+
 static void load_meshes(void)
 {
     static const char hex[] = "0123456789ABCDEF";
@@ -236,6 +278,7 @@ static void load_meshes(void)
         core_mesh_ready[core_mesh_count] = 0;
         core_mesh_count++;
     }
+    load_skins();
     npc_draw_reupload();
 }
 
@@ -246,11 +289,31 @@ void oot_core_meshes_upload(void)
     unsigned int i;
     for (i = 0; i < core_mesh_count; ++i)
         core_mesh_ready[i] = playing && actor_mesh_upload(core_mesh[i]);
+    for (i = 0; i < core_skin_count; ++i)
+        core_skin_ready[i] = playing && actor_mesh_upload(core_skin[i]);
+}
+
+/* Generic skinned NPCs: the decomp's limb matrices on the prebuilt model. */
+static void skins_draw(void)
+{
+    const OotCoreNpcView *v;
+    int n = oot_core_npcs(&v), k;
+    unsigned int m;
+    for (k = 0; k < n; ++k) {
+        if (!v[k].skin) continue;
+        for (m = 0; m < core_skin_count; ++m)
+            if (core_skin_ready[m] && core_skin_key[m] == v[k].skin) {
+                actor_mesh_draw_skinned(core_skin[m], core_skin_table[m],
+                                        (const int32_t *)v[k].mats, v[k].mat_count);
+                break;
+            }
+    }
 }
 
 /* From world_props_draw: one prebuilt mesh per decomp draw item. */
 void oot_core_meshes_draw(void)
 {
+    skins_draw();
     const OotCoreDrawItem *items;
     int n = playing ? ENTRY->draw_items(&items) : 0, i;
     unsigned int m;

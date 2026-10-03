@@ -28,7 +28,12 @@ typedef decltype(0.0f) fx_hwfloat;
 typedef decltype(0.0) fx_hwdouble;
 typedef long long fx_raw;
 
-#define FX_FRAC 24
+/* 16 (2026-10-03, was 24): every normal game value (positions up to
+ * +/-32767, speeds, scales) then fits 32 bits and multiplies with one
+ * dmuls.l. At 24 any value over 128 took the 4-multiply slow path. */
+#ifndef FX_FRAC
+#define FX_FRAC 16
+#endif
 #define FX_ONE ((fx_raw)1 << FX_FRAC)
 /* -Os outlined every Fx op (bench 2026-10-02: ~250 cycles per mul-add, all
  * in calls to fx_mul/__ashldi3/__ashiftrt). Hot ops are forced inline. */
@@ -44,10 +49,15 @@ static constexpr FX_INL fx_raw fx_shl_frac(fx_raw r) {
                    (unsigned long)r << FX_FRAC);
 }
 static constexpr FX_INL fx_raw fx_sar_frac(fx_raw r) {
-    /* hi >> 24 as shlr16/shlr8/exts.b: SH-2 has no shad, and GCC calls
-     * __ashiftrt_r4_24 for a signed 24-bit shift. Exact for FX_FRAC 24. */
+    /* hi >> FRAC without __ashiftrt calls: SH-2 has no shad. For 16 the
+     * signed shift is shlr16 + exts.w, for 24 shlr16/shlr8 + exts.b. */
+#if FX_FRAC == 16
+    return fx_join((long)(short)((unsigned long)(r >> 32) >> 16),
+                   ((unsigned long)(r >> 32) << 16) | ((unsigned long)r >> 16));
+#else
     return fx_join((long)(signed char)((unsigned long)(r >> 32) >> FX_FRAC),
                    ((unsigned long)(r >> 32) << (32 - FX_FRAC)) | ((unsigned long)r >> FX_FRAC));
+#endif
 }
 
 template <class T> struct fx_is_int { static constexpr bool value = false; };

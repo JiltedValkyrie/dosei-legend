@@ -19,6 +19,8 @@ typedef struct OotCoreHost {
     /* Free-running timer and its conversion to microseconds (profiling). */
     unsigned int (*ticks)(void);
     unsigned int (*ticks_to_us)(unsigned int ticks);
+    /* z_parameter Rupees_ChangeBy: add (or spend, negative) rupees. */
+    void (*rupees_change)(short amount);
 } OotCoreHost;
 
 #endif

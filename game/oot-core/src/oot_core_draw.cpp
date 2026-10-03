@@ -59,8 +59,22 @@ static const s16 sSkinIds[] = { ACTOR_EN_KO, ACTOR_EN_MD };
 typedef struct SkinCapture {
     Actor* actor;
     s32 count;
+    u16 model; /* generic skin model, 0 = Kokiri npc_draw model */
     s32 mats[SKIN_LIMBS_MAX][12];
 } SkinCapture;
+
+/* Generic NPC skins (build_core_skins.py): limb DL placeholder -> model, slot. */
+typedef struct SkinRow {
+    u16 object, index, model, slot;
+} SkinRow;
+static const SkinRow sSkinRows[] = {
+#include "../../build/oot-core/generic_skins.h"
+};
+static const s16 sGenericNpcDrawIds[] = {
+#include "../../build/oot-core/generic_npc_ids.h"
+};
+#define GENERIC_NPC_RANGE 900.0f
+#define GENERIC_NPC_NEAREST 6
 static SkinCapture sSkins[SKIN_ACTORS_MAX];
 static s32 sSkinCount;
 
@@ -82,7 +96,9 @@ static s32 Draw_IsGeneric(s16 id) {
 #define WALK_MTX_DEPTH 12
 #define WALK_DL_DEPTH 10
 
+typedef struct SkinCapture* SkinCaptureP;
 typedef struct Walker {
+    struct SkinCapture* cap; /* non-NULL: record limb matrices instead of items */
     uintptr_t segments[16];
     uintptr_t skinBase; /* first gSPSegment(0x0D) = flex matrix array */
     MtxF stack[WALK_MTX_DEPTH];
@@ -142,6 +158,34 @@ static void Draw_Emit(Walker* w, uintptr_t p) {
 
     if (!Draw_Key(p, &kind, &object, &index)) {
         return; /* not a placeholder (e.g. gEmptyDL): nothing to draw */
+    }
+    if (w->cap != NULL) {
+        u32 r;
+
+        if (kind != OOT_CORE_DRAW_OBJECT) {
+            return;
+        }
+        for (r = 0; r < ARRAY_COUNT(sSkinRows); r++) {
+            const SkinRow* row = &sSkinRows[r];
+
+            if (row->object == object && row->index == index && row->slot < SKIN_LIMBS_MAX &&
+                (w->cap->model == 0 || w->cap->model == row->model)) {
+                s32 rr, cc;
+
+                w->cap->model = row->model;
+                for (rr = 0; rr < 3; rr++) {
+                    for (cc = 0; cc < 3; cc++) {
+                        w->cap->mats[row->slot][rr * 3 + cc] = (s32)(m->mf[cc][rr] * 65536.0f);
+                    }
+                    w->cap->mats[row->slot][9 + rr] = (s32)(m->mf[3][rr] * 65536.0f);
+                }
+                if (row->slot + 1 > w->cap->count) {
+                    w->cap->count = row->slot + 1;
+                }
+                return;
+            }
+        }
+        return;
     }
     if (sItemCount >= OOT_CORE_DRAW_ITEMS_MAX) {
         sDropped++;
@@ -326,17 +370,72 @@ static void Skin_Store(const Mtx* mtx, s32* out) {
     }
 }
 
-const int* OotCore_SkinMats(Actor* actor, unsigned char* count) {
+const int* OotCore_SkinMats(Actor* actor, unsigned char* count, unsigned short* model) {
     s32 i;
 
     for (i = 0; i < sSkinCount; i++) {
         if (sSkins[i].actor == actor) {
             *count = (unsigned char)sSkins[i].count;
+            *model = sSkins[i].model;
             return &sSkins[i].mats[0][0];
         }
     }
     *count = 0;
+    *model = 0;
     return NULL;
+}
+
+static s32 Draw_IsGenericNpc(s16 id) {
+    u32 i;
+
+    for (i = 1; i < ARRAY_COUNT(sGenericNpcDrawIds); i++) {
+        if (sGenericNpcDrawIds[i] == id) {
+            return true;
+        }
+    }
+    return false;
+}
+
+/* True if fewer than GENERIC_NPC_NEAREST generic NPCs are closer. */
+static s32 GenericNpc_IsNearest(PlayState* play, Actor* actor) {
+    Actor* other;
+    s32 cat, closer = 0;
+
+    for (cat = 0; cat < ACTORCAT_MAX; cat++) {
+        for (other = play->actorCtx.actorLists[cat].head; other != NULL; other = other->next) {
+            if (other != actor && other->update != NULL && Draw_IsGenericNpc(other->id) &&
+                other->xzDistToPlayer < actor->xzDistToPlayer) {
+                closer++;
+            }
+        }
+    }
+    return closer < GENERIC_NPC_NEAREST;
+}
+
+int OotCore_SkinList(const unsigned short** out) {
+    static u16 sList[16];
+    PlayState* play = gOotCorePlay;
+    u32 r;
+    s32 j, n = 0;
+
+    *out = sList;
+    if (play == NULL) {
+        return 0;
+    }
+    for (r = 0; r < ARRAY_COUNT(sSkinRows) && n < 16; r++) {
+        s32 loaded = false, dup = false;
+
+        for (j = 1; j < play->objectCtx.numEntries; j++) {
+            loaded |= ABS(play->objectCtx.slots[j].id) == sSkinRows[r].object;
+        }
+        for (j = 0; j < n; j++) {
+            dup |= sList[j] == sSkinRows[r].model;
+        }
+        if (loaded && !dup && sSkinRows[r].object != 0xFFFF) {
+            sList[n++] = sSkinRows[r].model;
+        }
+    }
+    return n;
 }
 
 /* Actor_DrawAll's actor loop for the generic-draw actors only (culling flag
@@ -349,6 +448,7 @@ s32 OotCore_DrawActors(PlayState* play) {
     sItemCount = 0;
     sDropped = 0;
     sSkinCount = 0;
+    w.cap = NULL;
     for (i = 0; i < ACTORCAT_MAX; i++) {
         Actor* actor;
 
@@ -359,6 +459,41 @@ s32 OotCore_DrawActors(PlayState* play) {
 
             if (actor->init != NULL || actor->draw == NULL || actor->update == NULL ||
                 !(actor->flags & (ACTOR_FLAG_DRAW_CULLING_DISABLED | ACTOR_FLAG_INSIDE_CULLING_VOLUME))) {
+                continue;
+            }
+            if (Draw_IsGenericNpc(actor->id)) {
+                SkinCapture* cap;
+
+                if (actor->xzDistToPlayer > GENERIC_NPC_RANGE || sSkinCount >= SKIN_ACTORS_MAX ||
+                    !GenericNpc_IsNearest(play, actor) ||
+                    (u8*)gfx->polyOpa.d - (u8*)gfx->polyOpa.p < 0x1800 ||
+                    (u8*)gfx->polyXlu.d - (u8*)gfx->polyXlu.p < 0x800) {
+                    continue;
+                }
+                opa0 = gfx->polyOpa.p;
+                xlu0 = gfx->polyXlu.p;
+                Actor_Draw(play, actor);
+                actor->isDrawn = true;
+                cap = &sSkins[sSkinCount];
+                cap->actor = actor;
+                cap->count = 0;
+                cap->model = 0;
+                w.cap = cap;
+                for (s = 0; s < 16; s++) {
+                    w.segments[s] = gSegments[s];
+                }
+                w.segments[6] = (uintptr_t)play->objectCtx.slots[actor->objectSlot].segment;
+                w.skinBase = 0;
+                SkinMatrix_SetTranslate(&w.stack[0], 0.0f, 0.0f, 0.0f);
+                w.depth = 0;
+                w.actorId = actor->id;
+                w.xlu = 0;
+                Walk_Range(&w, opa0, gfx->polyOpa.p);
+                Walk_Range(&w, xlu0, gfx->polyXlu.p);
+                w.cap = NULL;
+                if (cap->count > 0) {
+                    sSkinCount++;
+                }
                 continue;
             }
             if (Draw_IsSkinned(actor->id)) {

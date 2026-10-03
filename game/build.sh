@@ -227,6 +227,8 @@ if [ "$oot_core" = 1 ]; then
     "$python" "$here/tools/oot_core_import.py" --oot "$oot"
     # Phase 2 draw shim meshes (K/Q*.MSH) + build/oot-core/generic_meshes.h.
     "$python" "$here/tools/build_core_meshes.py" --oot "$oot" --rom-dir "$roms"
+    # Generic skinned NPC models (N*.BIN/.SKN) + build/oot-core/generic_skins.h.
+    "$python" "$here/tools/build_core_skins.py" --oot "$oot" --rom-dir "$roms"
 else
     rm -f "$here/build/cd/OOTCORE.BIN"
 fi

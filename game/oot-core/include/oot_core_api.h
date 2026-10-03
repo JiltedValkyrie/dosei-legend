@@ -17,7 +17,7 @@
 #include "oot_core_host.h"
 
 #define OOT_CORE_MAGIC 0x4F4F5443u /* 'OOTC' */
-#define OOT_CORE_VERSION 14u
+#define OOT_CORE_VERSION 15u
 
 /* PlayState (~78 KB with Fx) + TwoHeadArena + ZeldaArena come from one block
  * the host allocates, so they never take the blob's fixed cart carve. */
@@ -50,6 +50,9 @@ typedef struct OotCoreNpcView {
      * 3x3 rotation*scale rows then translation, Q16. NULL if not drawn. */
     const int* mats;
     unsigned char mat_count;
+    /* Generic skinned model (N<object><n>.BIN/.SKN, build_core_skins.py):
+     * object << 4 | n, 0 = none (Kokiri NPCs use npc_draw's models). */
+    unsigned short skin;
 } OotCoreNpcView;
 
 /* z_message state for the VDP2 text box (route step 4). The blob lays the
@@ -167,6 +170,8 @@ typedef struct OotCoreEntry {
     void (*set_camera)(short yaw);
     /* Second debug line: phase times (0.1 ms) and nearest NPC talk data. */
     const char* (*debug_text2)(void);
+    /* Skinned models the current scene can draw (object << 4 | n); count. */
+    int (*skin_list)(const unsigned short** out);
     /* C Link -> player proxy (Q0 world units). Call before update. */
     void (*set_player)(int x, int y, int z, short yaw);
     /* Player entered another room: z_room room change (kills the old

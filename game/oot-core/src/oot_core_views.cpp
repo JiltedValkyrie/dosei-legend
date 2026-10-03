@@ -172,7 +172,7 @@ const OotCoreMessageView* OotCore_MessageView(void) {
 
 #define NPC_VIEW_MAX 16
 static OotCoreNpcView sNpcView[NPC_VIEW_MAX];
-const int* OotCore_SkinMats(Actor* actor, unsigned char* count); /* oot_core_draw.cpp */
+const int* OotCore_SkinMats(Actor* actor, unsigned char* count, unsigned short* model); /* oot_core_draw.cpp */
 
 SkelAnime* OotCore_ActorSkel(Actor* actor) {
     switch (actor->id) {
@@ -195,7 +195,9 @@ int OotCore_NpcView(const OotCoreNpcView** out) {
     if (play == NULL) {
         return 0;
     }
-    for (actor = play->actorCtx.actorLists[ACTORCAT_NPC].head; actor != NULL && n < NPC_VIEW_MAX;
+    s32 cat;
+    for (cat = 0; cat < ACTORCAT_MAX; cat++)
+    for (actor = play->actorCtx.actorLists[cat].head; actor != NULL && n < NPC_VIEW_MAX;
          actor = actor->next) {
         OotCoreNpcView* v = &sNpcView[n];
 
@@ -217,6 +219,26 @@ int OotCore_NpcView(const OotCoreNpcView** out) {
             skel = &md->skelAnime;
             alpha = md->alpha;
         } else {
+            /* Generic skinned NPC: drawn only from captured matrices. */
+            unsigned short model;
+            const int* mats = OotCore_SkinMats(actor, &v->mat_count, &model);
+
+            if (mats == NULL || model == 0) {
+                continue;
+            }
+            v->mats = mats;
+            v->skin = model;
+            v->id = actor->id;
+            v->params = actor->params;
+            v->x = (s32)actor->world.pos.x;
+            v->y = (s32)actor->world.pos.y;
+            v->z = (s32)actor->world.pos.z;
+            v->yaw = (u16)actor->shape.rot.y;
+            v->head_x = v->head_y = v->torso_x = v->torso_y = 0;
+            v->frame = 0;
+            v->alpha = 255;
+            v->flags = OOT_CORE_VIEW_DRAWN;
+            n++;
             continue;
         }
         v->head_x = info->headRot.x;
@@ -232,7 +254,8 @@ int OotCore_NpcView(const OotCoreNpcView** out) {
         v->z = (s32)actor->world.pos.z;
         v->yaw = (u16)actor->shape.rot.y;
         v->flags = (actor->draw != NULL) ? OOT_CORE_VIEW_DRAWN : 0;
-        v->mats = OotCore_SkinMats(actor, &v->mat_count);
+        v->mats = OotCore_SkinMats(actor, &v->mat_count, &v->skin);
+        v->skin = 0;
         n++;
     }
     return n;
@@ -271,12 +294,52 @@ int OotCore_PropQuery(short actor_id, int x, int z) {
 }
 
 extern u32 gOotCorePhaseUs[4];
+u32 gOotCoreTalkCalls, gOotCoreTalkWhy; /* Actor_OfferTalkExchange (importer hook) */
+extern const OotCoreHost* gOotCoreHost;
+
+/* Per actor id update time this step (profiling: debug row 17 shows the
+ * three most expensive ids). Reset by OotCore_ProfileReset each step. */
+#define PROF_IDS 24
+static s16 sProfId[PROF_IDS];
+static u32 sProfUs[PROF_IDS];
+static u8 sProfCount[PROF_IDS];
+static s32 sProfN;
+
+void OotCore_ProfileReset(void) {
+    sProfN = 0;
+}
+
+void OotCore_ProfiledUpdate(Actor* actor, PlayState* play) {
+    u32 t0, us;
+    s32 i;
+
+    if (gOotCoreHost == NULL || gOotCoreHost->ticks == NULL) {
+        actor->update(actor, play);
+        return;
+    }
+    t0 = gOotCoreHost->ticks();
+    actor->update(actor, play);
+    us = gOotCoreHost->ticks_to_us(gOotCoreHost->ticks() - t0);
+    for (i = 0; i < sProfN && sProfId[i] != actor->id; i++) {
+    }
+    if (i == sProfN) {
+        if (sProfN == PROF_IDS) {
+            return;
+        }
+        sProfId[i] = actor->id;
+        sProfUs[i] = 0;
+        sProfCount[i] = 0;
+        sProfN++;
+    }
+    sProfUs[i] += us;
+    sProfCount[i]++;
+}
 
 /* "oc t<talk> m<msgMode> x<textId> n<npcs> c<AT>/<AC>/<OC>" for the debug panel,
  * then (second line) phase times in 0.1 ms: collision, actors, message, draw,
  * and the nearest NPC: distance, talk distance, actor flags low byte. */
 const char* OotCore_DebugText2(void) {
-    static char sText[40];
+    static char sText[64];
     static const char hex[] = "0123456789ABCDEF";
     PlayState* play = gOotCorePlay;
     Player* player;
@@ -312,7 +375,39 @@ const char* OotCore_DebugText2(void) {
         PUT_DEC(gOotCorePhaseUs[i] / 100);
         *p++ = i < 3 ? '/' : ' ';
     }
-    if (near != NULL) {
+    /* Top 3 actor ids by update time: id(hex) x count = 0.1 ms. */
+    {
+        s32 used[3] = { -1, -1, -1 }, r, best;
+        for (r = 0; r < 3; r++) {
+            best = -1;
+            for (i = 0; i < sProfN; i++) {
+                if (i != used[0] && i != used[1] && (best < 0 || sProfUs[i] > sProfUs[best])) {
+                    best = i;
+                }
+            }
+            if (best < 0) {
+                break;
+            }
+            used[r] = best;
+            v = (u32)sProfId[best];
+            for (k = 2; k >= 0; k--) {
+                *p++ = hex[(v >> (k * 4)) & 0xF];
+            }
+            *p++ = 'x';
+            PUT_DEC(sProfCount[best]);
+            *p++ = '=';
+            PUT_DEC(sProfUs[best] / 100);
+            *p++ = ' ';
+        }
+    }
+    /* o<offer calls this step>w<last fail reason> */
+    *p++ = 'o';
+    PUT_DEC(gOotCoreTalkCalls);
+    *p++ = 'w';
+    PUT_DEC(gOotCoreTalkWhy);
+    *p++ = ' ';
+    gOotCoreTalkCalls = 0;
+    if (near != NULL && p < sText + 40) {
         *p++ = 'd';
         PUT_DEC((s32)near->xzDistToPlayer);
         *p++ = ' ';

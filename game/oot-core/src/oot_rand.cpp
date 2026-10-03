@@ -28,7 +28,11 @@ static f32 Rand_MantissaToUnit(u32 bits) {
 #if OOT_CORE_HWFLOAT
     return (f32)(bits & 0x007FFFFF) / 8388608.0f;
 #else
+#if FX_FRAC >= 23
     return Fx::raw((fx_raw)(bits & 0x007FFFFF) << (FX_FRAC - 23));
+#else
+    return Fx::raw((fx_raw)(bits & 0x007FFFFF) >> (23 - FX_FRAC)); /* low mantissa bits dropped */
+#endif
 #endif
 }
 

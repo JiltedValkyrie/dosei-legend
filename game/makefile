@@ -200,11 +200,11 @@ OOT_CORE_D = build/oot-core/decomp
 OOT_CORE_OBJDIR = $(OBJDIR)/oot-core
 # Cached cart alias of the RAM_CART_OOTCORE carve (src/ram_cart.h; ram_cart.c
 # checks the carve sits here). 0x2xxxxxxx is cache-through: never run code there.
-OOT_CORE_LOAD_ADDR = 0x02790000
-OOT_CORE_MAX_BYTES = 0x70000
+OOT_CORE_LOAD_ADDR = 0x02770000
+OOT_CORE_MAX_BYTES = 0x90000
 # Scene collision blobs (RAM_CART_SCENECOL carve, cached alias). One per scene in
 # tools/oot_core_import.py SCENE_COLLISION; data only, nothing executes there.
-OOT_SCENECOL_ADDR = 0x02750000
+OOT_SCENECOL_ADDR = 0x02730000
 OOT_SCENECOL_MAX_BYTES = 0x40000
 OOT_CORE_CXXFLAGS = -x c++ -std=gnu++17 -fno-exceptions -fno-rtti -fpermissive -funsigned-char -w \
 	-fno-threadsafe-statics -fno-use-cxa-atexit -Os -m2 -ffunction-sections -fdata-sections \
@@ -223,7 +223,7 @@ OOT_CORE_SRCS = $(OOT_CORE_DECOMP_SRCS) \
 	oot-core/src/oot_core_api.cpp oot-core/src/bridge_tables.cpp oot-core/src/bridge_libc.cpp \
 	oot-core/src/bridge_play.cpp oot-core/src/bridge_assets.cpp oot-core/src/bridge_player.cpp \
 	oot-core/src/bridge_message.cpp oot-core/src/oot_core_views.cpp \
-	oot-core/src/oot_core_draw.cpp build/oot-core/keep_ph.cpp
+	oot-core/src/oot_core_draw.cpp build/oot-core/keep_ph.cpp oot-core/src/bridge_npc.cpp
 OOT_CORE_OBJS = $(patsubst %.cpp,$(OOT_CORE_OBJDIR)/%.o,$(notdir $(OOT_CORE_SRCS)))
 _CCFLAGS += -DDOSEI_OOT_CORE -DOOT_CORE_LOAD_ADDR=$(OOT_CORE_LOAD_ADDR)u \
 	-DOOT_SCENECOL_ADDR=$(OOT_SCENECOL_ADDR)u -Ioot-core/include

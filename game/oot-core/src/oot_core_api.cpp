@@ -52,6 +52,8 @@ const char* OotCore_DebugText(void);
 s32 OotCore_DrawActors(PlayState* play);
 int OotCore_DrawItems(const OotCoreDrawItem** out);
 const char* OotCore_DebugText2(void);
+int OotCore_SkinList(const unsigned short** out);
+void OotCore_ProfileReset(void);
 int OotCore_MeshList(const OotCoreMeshKey** out);
 s32 OotCore_IsGenericDraw(s16 id);
 static u8 sGenericScene;
@@ -128,6 +130,19 @@ s32 OotCore_SceneHasActor(s16 id) {
     return false;
 }
 
+static const s16 sGenericNpcIds[] = {
+#include "../../build/oot-core/generic_npc_ids.h"
+};
+static s32 IsGenericNpc(s16 id) {
+    u32 i;
+    for (i = 1; i < ARRAY_COUNT(sGenericNpcIds); i++) {
+        if (sGenericNpcIds[i] == id) {
+            return true;
+        }
+    }
+    return false;
+}
+
 static void load_room_actors(PlayState* play, int room) {
     const ActorEntry* list;
     const OotSceneLayer* layer;
@@ -148,7 +163,7 @@ static void load_room_actors(PlayState* play, int room) {
         }
         /* Generic-draw actors: only where no C copy exists. */
         if (k == ARRAY_COUNT(sRoomActorIds) && sGenericScene && n < ROOM_ENTRIES_MAX &&
-            OotCore_IsGenericDraw(list[i].id & 0x1FFF)) {
+            (OotCore_IsGenericDraw(list[i].id & 0x1FFF) || IsGenericNpc(list[i].id & 0x1FFF))) {
             sRoomEntries[n++] = list[i];
         }
     }
@@ -492,6 +507,7 @@ static void oot_core_update(void) {
     CollisionCheck_ClearContext(play, &play->colChkCtx);
     gOotCorePhaseUs[0] = Phase_Us(t0);
     t0 = Phase_Now();
+    OotCore_ProfileReset();
     OotCore_CullActors(play);
     Actor_UpdateAll(play, &play->actorCtx);
     Effect_UpdateAll(play);
@@ -577,6 +593,7 @@ extern "C" const OotCoreEntry oot_core_entry __attribute__((section(".oot_entry"
     OotCore_MeshList,
     oot_core_set_camera,
     OotCore_DebugText2,
+    OotCore_SkinList,
     oot_core_set_player,
     oot_core_set_room,
     oot_core_set_sword,
