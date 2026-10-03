@@ -30,6 +30,25 @@ typedef long long fx_raw;
 
 #define FX_FRAC 24
 #define FX_ONE ((fx_raw)1 << FX_FRAC)
+/* -Os outlined every Fx op (bench 2026-10-02: ~250 cycles per mul-add, all
+ * in calls to fx_mul/__ashldi3/__ashiftrt). Hot ops are forced inline. */
+#define FX_INL __attribute__((always_inline))
+
+/* 64-bit shifts by the fraction width built from 32-bit halves: GCC emits
+ * libgcc calls for 64-bit shifts on SH-2. Constant-evaluable. */
+static constexpr FX_INL fx_raw fx_join(long hi, unsigned long lo) {
+    return (fx_raw)(((unsigned long long)(unsigned long)hi << 32) | lo);
+}
+static constexpr FX_INL fx_raw fx_shl_frac(fx_raw r) {
+    return fx_join((long)(((unsigned long)(r >> 32) << FX_FRAC) | ((unsigned long)r >> (32 - FX_FRAC))),
+                   (unsigned long)r << FX_FRAC);
+}
+static constexpr FX_INL fx_raw fx_sar_frac(fx_raw r) {
+    /* hi >> 24 as shlr16/shlr8/exts.b: SH-2 has no shad, and GCC calls
+     * __ashiftrt_r4_24 for a signed 24-bit shift. Exact for FX_FRAC 24. */
+    return fx_join((long)(signed char)((unsigned long)(r >> 32) >> FX_FRAC),
+                   ((unsigned long)(r >> 32) << (32 - FX_FRAC)) | ((unsigned long)r >> FX_FRAC));
+}
 
 template <class T> struct fx_is_int { static constexpr bool value = false; };
 #define FX_INT_TYPE(t) template <> struct fx_is_int<t> { static constexpr bool value = true; };
@@ -48,16 +67,20 @@ struct Fx {
     constexpr Fx(fx_hwfloat f) : v((fx_raw)((fx_hwdouble)f * (fx_hwdouble)FX_ONE)) {}
     constexpr Fx(fx_hwdouble d) : v((fx_raw)(d * (fx_hwdouble)FX_ONE)) {}
     template <class T, class = FX_IF_INT(T, void)>
-    constexpr Fx(T i) : v((fx_raw)i * FX_ONE) {}
+    constexpr FX_INL Fx(T i)
+        : v(sizeof(T) > 4 ? (fx_raw)i * FX_ONE
+            : (sizeof(T) == 4 && (T)-1 > (T)0)
+                ? fx_join((long)((unsigned long)i >> (32 - FX_FRAC)), (unsigned long)i << FX_FRAC)
+                : fx_join((long)i >> (32 - FX_FRAC), (unsigned long)(long)i << FX_FRAC)) {}
 
-    static constexpr Fx raw(fx_raw r) {
+    static constexpr FX_INL Fx raw(fx_raw r) {
         Fx x{};
         x.v = r;
         return x;
     }
 
     /* Float->int truncates toward zero, like C/MIPS trunc.w.s. */
-    constexpr fx_raw trunc() const { return v >= 0 ? (v >> FX_FRAC) : -((-v) >> FX_FRAC); }
+    constexpr FX_INL fx_raw trunc() const { return v >= 0 ? fx_sar_frac(v) : -fx_sar_frac(-v); }
     template <class T, class = FX_IF_INT(T, void)>
     constexpr operator T() const { return (T)trunc(); }
     /* Host reference/debug only: never call on target hot paths. */
@@ -68,7 +91,20 @@ struct Fx {
     constexpr bool operator!() const { return v == 0; }
 };
 
-static constexpr bool fx_fits32(fx_raw r) { return (fx_raw)(long)r == r; }
+static constexpr FX_INL bool fx_fits32(fx_raw r) { return (long)(r >> 32) == ((long)r >> 31); }
+
+#if defined(__sh__)
+/* SH-2 dmuls.l: signed 32x32 -> 64 in MACH:MACL, no libgcc call. */
+static inline FX_INL fx_raw fx_dmuls(long a, long b) {
+    long hi, lo;
+    __asm__("dmuls.l %2,%3\n\tsts mach,%0\n\tsts macl,%1" : "=r"(hi), "=r"(lo) : "r"(a), "r"(b) : "mach", "macl");
+    return fx_join(hi, (unsigned long)lo);
+}
+#define FX_RT_ONLY() (!__builtin_is_constant_evaluated())
+#else
+static inline fx_raw fx_dmuls(long a, long b) { return (fx_raw)a * b; }
+#define FX_RT_ONLY() false
+#endif
 
 /* |a| * b where b fits 32 bits: two 32x32->64 multiplies. */
 static constexpr fx_raw fx_mul_wide32(fx_raw a, long b) {
@@ -80,11 +116,21 @@ static constexpr fx_raw fx_mul_wide32(fx_raw a, long b) {
     return a < 0 ? -r : r;
 }
 
-static constexpr Fx fx_mul(Fx a, Fx b) {
+/* Rare wide cases stay out of line (code size); the 32x32 path is inline. */
+static constexpr Fx fx_mul_slow(Fx a, Fx b, bool sa, bool sb);
+
+static constexpr FX_INL Fx fx_mul(Fx a, Fx b) {
     bool sa = fx_fits32(a.v), sb = fx_fits32(b.v);
     if (__builtin_expect(sa && sb, 1)) {
+        if (FX_RT_ONLY()) {
+            return Fx::raw(fx_sar_frac(fx_dmuls((long)a.v, (long)b.v)));
+        }
         return Fx::raw(((fx_raw)(long)a.v * (long)b.v) >> FX_FRAC);
     }
+    return fx_mul_slow(a, b, sa, sb);
+}
+
+static constexpr Fx fx_mul_slow(Fx a, Fx b, bool sa, bool sb) {
     if (sb) {
         return Fx::raw(fx_mul_wide32(a.v, (long)b.v));
     }
@@ -141,12 +187,12 @@ static constexpr Fx fx_div(Fx a, Fx b) {
          * |a / b| < 2^(31 - FX_FRAC)  <=>  |a.v| < |b.v| << 7 (with margin). */
         fx_raw ub = b.v < 0 ? -b.v : b.v;
         if (ua < (ub << (31 - FX_FRAC - 1))) {
-            return Fx::raw(fx_divu64_32(a.v * FX_ONE, (long)b.v));
+            return Fx::raw(fx_divu64_32(fx_shl_frac(a.v), (long)b.v));
         }
     }
 #endif
     if (ua < ((fx_raw)1 << (62 - FX_FRAC))) {
-        return Fx::raw((a.v * FX_ONE) / b.v);
+        return Fx::raw(fx_shl_frac(a.v) / b.v);
     }
     /* Huge numerator: pre-shift as far as it fits, finish after dividing. */
     int s = 0;
@@ -157,55 +203,63 @@ static constexpr Fx fx_div(Fx a, Fx b) {
     return Fx::raw(((a.v * ((fx_raw)1 << s)) / b.v) * ((fx_raw)1 << (FX_FRAC - s)));
 }
 
-static constexpr Fx operator+(Fx a, Fx b) { return Fx::raw(a.v + b.v); }
-static constexpr Fx operator-(Fx a, Fx b) { return Fx::raw(a.v - b.v); }
-static constexpr Fx operator*(Fx a, Fx b) { return fx_mul(a, b); }
-static constexpr Fx operator/(Fx a, Fx b) { return fx_div(a, b); }
-constexpr bool operator<(Fx a, Fx b) { return a.v < b.v; }
-constexpr bool operator>(Fx a, Fx b) { return a.v > b.v; }
-constexpr bool operator<=(Fx a, Fx b) { return a.v <= b.v; }
-constexpr bool operator>=(Fx a, Fx b) { return a.v >= b.v; }
-constexpr bool operator==(Fx a, Fx b) { return a.v == b.v; }
-constexpr bool operator!=(Fx a, Fx b) { return a.v != b.v; }
+static constexpr FX_INL Fx operator+(Fx a, Fx b) { return Fx::raw(a.v + b.v); }
+static constexpr FX_INL Fx operator-(Fx a, Fx b) { return Fx::raw(a.v - b.v); }
+static constexpr FX_INL Fx operator*(Fx a, Fx b) { return fx_mul(a, b); }
+static constexpr FX_INL Fx operator/(Fx a, Fx b) { return fx_div(a, b); }
+constexpr FX_INL bool operator<(Fx a, Fx b) { return a.v < b.v; }
+constexpr FX_INL bool operator>(Fx a, Fx b) { return a.v > b.v; }
+constexpr FX_INL bool operator<=(Fx a, Fx b) { return a.v <= b.v; }
+constexpr FX_INL bool operator>=(Fx a, Fx b) { return a.v >= b.v; }
+constexpr FX_INL bool operator==(Fx a, Fx b) { return a.v == b.v; }
+constexpr FX_INL bool operator!=(Fx a, Fx b) { return a.v != b.v; }
+
+/* Fx raw * integer (no rescale): dmuls.l when both fit 32 bits. */
+template <class T> static constexpr FX_INL fx_raw fx_mul_int(fx_raw a, T b) {
+    if (FX_RT_ONLY() && sizeof(T) <= 4 && !(sizeof(T) == 4 && (T)-1 > (T)0) && fx_fits32(a)) {
+        return fx_dmuls((long)a, (long)b);
+    }
+    return a * (fx_raw)b;
+}
 
 /* Mixed Fx/integer: exact-match templates beat the builtin int operators that
  * the implicit integer conversion would otherwise make ambiguous. Integer
  * multiply/divide skip the fixed-point rescale. */
 #define FX_MIXED(op, expr_fi, expr_if)                                                    \
-    template <class T> static constexpr FX_IF_INT(T, Fx) operator op(Fx a, T b) { return expr_fi; } \
-    template <class T> static constexpr FX_IF_INT(T, Fx) operator op(T a, Fx b) { return expr_if; }
+    template <class T> static constexpr FX_INL FX_IF_INT(T, Fx) operator op(Fx a, T b) { return expr_fi; } \
+    template <class T> static constexpr FX_INL FX_IF_INT(T, Fx) operator op(T a, Fx b) { return expr_if; }
 FX_MIXED(+, a + Fx(b), Fx(a) + b)
 FX_MIXED(-, a - Fx(b), Fx(a) - b)
-FX_MIXED(*, Fx::raw(a.v * (fx_raw)b), Fx::raw((fx_raw)a * b.v))
+FX_MIXED(*, Fx::raw(fx_mul_int(a.v, b)), Fx::raw(fx_mul_int(b.v, a)))
 FX_MIXED(/, a / Fx(b), Fx(a) / b)
 #undef FX_MIXED
 #define FX_MIXED_CMP(op)                                                                       \
-    template <class T> static constexpr FX_IF_INT(T, bool) operator op(Fx a, T b) { return a op Fx(b); } \
-    template <class T> static constexpr FX_IF_INT(T, bool) operator op(T a, Fx b) { return Fx(a) op b; }
+    template <class T> static constexpr FX_INL FX_IF_INT(T, bool) operator op(Fx a, T b) { return a op Fx(b); } \
+    template <class T> static constexpr FX_INL FX_IF_INT(T, bool) operator op(T a, Fx b) { return Fx(a) op b; }
 FX_MIXED_CMP(<) FX_MIXED_CMP(>) FX_MIXED_CMP(<=) FX_MIXED_CMP(>=) FX_MIXED_CMP(==) FX_MIXED_CMP(!=)
 #undef FX_MIXED_CMP
 /* Fx with hardware-float literal operands (e.g. x * 0.5f) folds the literal. */
 #define FX_HW(op, R)                                                                   \
-    static constexpr R operator op(Fx a, fx_hwfloat b) { return a op Fx(b); }             \
-    static constexpr R operator op(fx_hwfloat a, Fx b) { return Fx(a) op b; }             \
-    static constexpr R operator op(Fx a, fx_hwdouble b) { return a op Fx(b); }            \
-    static constexpr R operator op(fx_hwdouble a, Fx b) { return Fx(a) op b; }
+    static constexpr FX_INL R operator op(Fx a, fx_hwfloat b) { return a op Fx(b); }             \
+    static constexpr FX_INL R operator op(fx_hwfloat a, Fx b) { return Fx(a) op b; }             \
+    static constexpr FX_INL R operator op(Fx a, fx_hwdouble b) { return a op Fx(b); }            \
+    static constexpr FX_INL R operator op(fx_hwdouble a, Fx b) { return Fx(a) op b; }
 FX_HW(+, Fx) FX_HW(-, Fx) FX_HW(*, Fx) FX_HW(/, Fx)
 FX_HW(<, bool) FX_HW(>, bool) FX_HW(<=, bool) FX_HW(>=, bool) FX_HW(==, bool) FX_HW(!=, bool)
 #undef FX_HW
 
-static constexpr Fx& operator+=(Fx& a, Fx b) { return a = a + b; }
-static constexpr Fx& operator-=(Fx& a, Fx b) { return a = a - b; }
-static constexpr Fx& operator*=(Fx& a, Fx b) { return a = a * b; }
-static constexpr Fx& operator/=(Fx& a, Fx b) { return a = a / b; }
+static constexpr FX_INL Fx& operator+=(Fx& a, Fx b) { return a = a + b; }
+static constexpr FX_INL Fx& operator-=(Fx& a, Fx b) { return a = a - b; }
+static constexpr FX_INL Fx& operator*=(Fx& a, Fx b) { return a = a * b; }
+static constexpr FX_INL Fx& operator/=(Fx& a, Fx b) { return a = a / b; }
 /* int op= Fx: C computes in float then truncates back. */
-template <class T> static constexpr FX_IF_INT(T, T&) operator+=(T& a, Fx b) { return a = (T)(Fx(a) + b); }
-template <class T> static constexpr FX_IF_INT(T, T&) operator-=(T& a, Fx b) { return a = (T)(Fx(a) - b); }
-template <class T> static constexpr FX_IF_INT(T, T&) operator*=(T& a, Fx b) { return a = (T)(Fx(a) * b); }
-template <class T> static constexpr FX_IF_INT(T, T&) operator/=(T& a, Fx b) { return a = (T)(Fx(a) / b); }
-static constexpr Fx& operator++(Fx& a) { return a.v += FX_ONE, a; }
-static constexpr Fx& operator--(Fx& a) { return a.v -= FX_ONE, a; }
-static constexpr Fx operator++(Fx& a, int) { Fx o = a; a.v += FX_ONE; return o; }
-static constexpr Fx operator--(Fx& a, int) { Fx o = a; a.v -= FX_ONE; return o; }
+template <class T> static constexpr FX_INL FX_IF_INT(T, T&) operator+=(T& a, Fx b) { return a = (T)(Fx(a) + b); }
+template <class T> static constexpr FX_INL FX_IF_INT(T, T&) operator-=(T& a, Fx b) { return a = (T)(Fx(a) - b); }
+template <class T> static constexpr FX_INL FX_IF_INT(T, T&) operator*=(T& a, Fx b) { return a = (T)(Fx(a) * b); }
+template <class T> static constexpr FX_INL FX_IF_INT(T, T&) operator/=(T& a, Fx b) { return a = (T)(Fx(a) / b); }
+static constexpr FX_INL Fx& operator++(Fx& a) { return a.v += FX_ONE, a; }
+static constexpr FX_INL Fx& operator--(Fx& a) { return a.v -= FX_ONE, a; }
+static constexpr FX_INL Fx operator++(Fx& a, int) { Fx o = a; a.v += FX_ONE; return o; }
+static constexpr FX_INL Fx operator--(Fx& a, int) { Fx o = a; a.v -= FX_ONE; return o; }
 
 #endif

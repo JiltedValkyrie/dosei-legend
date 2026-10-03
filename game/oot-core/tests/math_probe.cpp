@@ -12,6 +12,11 @@
 #include "libc64/qrand.h"
 #include "rand.h"
 #include "array_count.h"
+#include "oot_core_host.h"
+
+/* oot_core_link_stubs.cpp routes sfx to the host table (bridge_play.cpp on
+ * target); the probe has no host. */
+const OotCoreHost* gOotCoreHost;
 
 extern "C" int printf(const char*, ...);
 extern "C" int sprintf(char*, const char*, ...);
