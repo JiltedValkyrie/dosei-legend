@@ -95,12 +95,20 @@ bool oot_core_boot(void)
     loaded = load_carve("OOTCORE.BIN", RAM_CART_OOTCORE_OFFSET, RAM_CART_OOTCORE_BYTES);
     /* Code and data are used through the cached aliases: drop stale lines. */
     slCashPurge();
-    loaded = loaded && ENTRY->magic == OOT_CORE_MAGIC && ENTRY->version == OOT_CORE_VERSION &&
-             (unsigned int)ENTRY->end <= OOT_CORE_LOAD_ADDR + RAM_CART_OOTCORE_BYTES &&
-             ENTRY->play_bytes() <= RAM_LOW_OOTPLAY_BYTES;
-    if (!loaded) {
-        jo_printf(0, 20, "oc load failed     ");
-        return false;
+    {
+        /* Which check failed, for the boot line: f file, m magic, v version,
+         * e blob end past the carve, p play block too big. */
+        char why = !loaded ? 'f' : ENTRY->magic != OOT_CORE_MAGIC ? 'm' :
+                   ENTRY->version != OOT_CORE_VERSION ? 'v' :
+                   (unsigned int)ENTRY->end > OOT_CORE_LOAD_ADDR + RAM_CART_OOTCORE_BYTES ? 'e' :
+                   ENTRY->play_bytes() > RAM_LOW_OOTPLAY_BYTES ? 'p' : 0;
+        if (why) {
+            jo_printf(0, 20, "oc load failed %c %x", why,
+                      why == 'v' ? ENTRY->version : why == 'p' ? ENTRY->play_bytes() :
+                      why == 'e' ? (unsigned int)ENTRY->end : 0u);
+            loaded = false;
+            return false;
+        }
     }
     jo_printf(0, 20, "oc 2 init  ");
     ENTRY->init(&host);
