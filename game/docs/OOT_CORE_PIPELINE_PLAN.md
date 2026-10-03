@@ -208,7 +208,10 @@ Steps (in order):
     - C (oot_core_host.c): loads the scene's meshes after set_objects, uploads them last
       in npc_draw upload_visible (a full bank skips them, never errors), draws items in
       world_props_draw via actor_mesh_draw_euler (Y flip negates pitch/roll).
-    - Generic-draw actors (importer GENERIC_DRAW_SOURCES): Obj_Tsubo, En_Gs, Obj_Hana.
+    - Generic-draw actors (importer GENERIC_DRAW_SOURCES): Obj_Tsubo, En_Gs, Obj_Hana,
+      En_Wood02 (trees/bushes), Obj_Syokudai (torches), Obj_Kibako (crates). Meshes load
+      only for generic actors the scene's room lists contain (mesh_list, C cap 40).
+      set_camera passes the C camera yaw (Camera_GetCamDirYaw for torch flames). API v12.
       They spawn ONLY in generic scenes (save scene >= SAVE_SCENE_COUNT); slice scenes keep
       the C copies, so Kokiri is unchanged by this step. En_Ishi left out (38 KB, needs
       carry). Gossip stone material/squished DLs fail the converter (only base DL drawn).

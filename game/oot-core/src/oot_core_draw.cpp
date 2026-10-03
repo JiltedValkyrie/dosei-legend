@@ -322,9 +322,14 @@ s32 OotCore_DrawActors(PlayState* play) {
     return sItemCount;
 }
 
-static const OotCoreMeshKey sMeshes[] = {
+typedef struct MeshUse {
+    u16 kind, object, index;
+    s16 actor;
+} MeshUse;
+static const MeshUse sMeshes[] = {
 #include "../../build/oot-core/generic_meshes.h"
 };
+extern s32 OotCore_SceneHasActor(s16 id); /* oot_core_api.cpp */
 static OotCoreMeshKey sSceneMeshes[ARRAY_COUNT(sMeshes)];
 
 s32 OotCore_IsGenericDraw(s16 id) {
@@ -341,15 +346,24 @@ int OotCore_MeshList(const OotCoreMeshKey** out) {
         return 0;
     }
     for (i = 0; i < ARRAY_COUNT(sMeshes); i++) {
-        if (sMeshes[i].kind == OOT_CORE_DRAW_KEEP) {
-            sSceneMeshes[n++] = sMeshes[i];
+        const MeshUse* m = &sMeshes[i];
+        s32 loaded = (m->kind == OOT_CORE_DRAW_KEEP);
+
+        if (m->kind > OOT_CORE_DRAW_OBJECT || !OotCore_SceneHasActor(m->actor)) {
             continue;
         }
-        for (j = 1; j < play->objectCtx.numEntries; j++) {
-            if (sMeshes[i].kind == OOT_CORE_DRAW_OBJECT && ABS(play->objectCtx.slots[j].id) == sMeshes[i].object) {
-                sSceneMeshes[n++] = sMeshes[i];
-                break;
-            }
+        for (j = 1; !loaded && j < play->objectCtx.numEntries; j++) {
+            loaded = ABS(play->objectCtx.slots[j].id) == m->object;
+        }
+        for (j = 0; loaded && j < n; j++) {
+            loaded = !(sSceneMeshes[j].kind == m->kind && sSceneMeshes[j].object == m->object &&
+                       sSceneMeshes[j].index == m->index);
+        }
+        if (loaded) {
+            sSceneMeshes[n].kind = m->kind;
+            sSceneMeshes[n].object = m->object;
+            sSceneMeshes[n].index = m->index;
+            n++;
         }
     }
     return n;

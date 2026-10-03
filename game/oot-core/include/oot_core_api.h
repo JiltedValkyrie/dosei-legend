@@ -17,7 +17,7 @@
 #include "oot_core_host.h"
 
 #define OOT_CORE_MAGIC 0x4F4F5443u /* 'OOTC' */
-#define OOT_CORE_VERSION 11u
+#define OOT_CORE_VERSION 12u
 
 /* PlayState (~78 KB with Fx) + TwoHeadArena + ZeldaArena come from one block
  * the host allocates, so they never take the blob's fixed cart carve. */
@@ -158,6 +158,8 @@ typedef struct OotCoreEntry {
     int (*draw_items)(const OotCoreDrawItem** out);
     /* Meshes the current scene can draw (keep + loaded objects); count. */
     int (*mesh_list)(const OotCoreMeshKey** out);
+    /* C camera facing (binary angle, OoT convention). Before update. */
+    void (*set_camera)(short yaw);
     /* C Link -> player proxy (Q0 world units). Call before update. */
     void (*set_player)(int x, int y, int z, short yaw);
     /* Player entered another room: z_room room change (kills the old

@@ -193,3 +193,14 @@ u32 Quake_SetDuration(s16 index, s16 duration) { /* STUB */
 }
 void Rumble_Request(f32 distSq, u8 sourceStrength, u8 duration, u8 decreaseRate) { /* STUB */
 }
+
+/* ---- z_camera.c / z_onepointdemo.c: the C camera owns the view ---- */
+#include "one_point_cutscene.h"
+s16 gOotCoreCamYaw; /* set_camera: C camera facing, binary angle */
+
+s16 Camera_GetCamDirYaw(Camera* camera) { /* HOST: C camera direction */
+    return gOotCoreCamYaw;
+}
+s32 OnePointCutscene_Attention(PlayState* play, Actor* actor) { /* STUB: no attention shots */
+    return CAM_ID_NONE;
+}

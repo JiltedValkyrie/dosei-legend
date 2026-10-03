@@ -196,7 +196,7 @@ static bool load_scene_blob(unsigned int scene)
 }
 
 /* ---- Phase 2 draw shim: prebuilt meshes for the decomp's draw items ---- */
-#define CORE_MESHES_MAX 24
+#define CORE_MESHES_MAX 40
 static actor_mesh_t *core_mesh[CORE_MESHES_MAX];
 static OotCoreMeshKey core_mesh_key[CORE_MESHES_MAX];
 static unsigned char core_mesh_ready[CORE_MESHES_MAX];
@@ -290,6 +290,7 @@ void oot_core_frame(const gameplay_input_t *in)
     }
     if (!playing) return;
     sync_player();
+    ENTRY->set_camera((short)demo_yaw);
     send_input(in);
     mirror_save();
     ENTRY->set_room((int)kokiri_bank_room());

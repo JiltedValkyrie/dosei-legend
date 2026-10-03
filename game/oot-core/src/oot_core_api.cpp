@@ -52,6 +52,10 @@ int OotCore_DrawItems(const OotCoreDrawItem** out);
 int OotCore_MeshList(const OotCoreMeshKey** out);
 s32 OotCore_IsGenericDraw(s16 id);
 static u8 sGenericScene;
+extern s16 gOotCoreCamYaw;
+static void oot_core_set_camera(short yaw) {
+    gOotCoreCamYaw = yaw;
+}
 
 /* Linker-script symbols: first address past the blob's .bss; ctor table. */
 extern "C" char oot_core_end[];
@@ -99,6 +103,27 @@ static const OotSceneLayer* room_layer(int room) {
         return &row[SCENE_LAYER_ADULT_DAY];
     }
     return &row[0];
+}
+
+/* A generic-draw actor id listed in any room of the current scene layer
+ * (mesh_list: load only the meshes the scene can use). */
+s32 OotCore_SceneHasActor(s16 id) {
+    u32 r, i;
+
+    if (sScene == NULL || !sGenericScene) {
+        return false;
+    }
+    for (r = 0; r < sScene->num_rooms; r++) {
+        const OotSceneLayer* layer = room_layer(r);
+        const ActorEntry* list = (const ActorEntry*)layer->actors;
+
+        for (i = 0; list != NULL && i < layer->num_actors; i++) {
+            if ((list[i].id & 0x1FFF) == id) {
+                return true;
+            }
+        }
+    }
+    return false;
 }
 
 static void load_room_actors(PlayState* play, int room) {
@@ -524,6 +549,7 @@ extern "C" const OotCoreEntry oot_core_entry __attribute__((section(".oot_entry"
     OotCore_DebugText,
     OotCore_DrawItems,
     OotCore_MeshList,
+    oot_core_set_camera,
     oot_core_set_player,
     oot_core_set_room,
     oot_core_set_sword,
