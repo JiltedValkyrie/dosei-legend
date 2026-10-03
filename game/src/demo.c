@@ -808,9 +808,12 @@ static void __attribute__((optimize("Os"))) scene_music(void)
     if (scene_flow_scene() >= SCENE_GENERIC_FIRST && !story_owl_talking()) {
         unsigned int seq = scene_flow_entry()->seq;
         if (seq == 0x7F || seq == 0x01) { music_silence(DEMO_MUSIC_FADE_FRAMES); return; }
-        if (music_play_fade((oot_song_t)seq, DEMO_MUSIC_FADE_FRAMES) ||
-            music_area_play(seq, DEMO_MUSIC_FADE_FRAMES)) return;
-        music_silence(DEMO_MUSIC_FADE_FRAMES); /* sequence not baked */
+        if (music_song_routed((oot_song_t)seq)) {
+            music_play_fade((oot_song_t)seq, DEMO_MUSIC_FADE_FRAMES);
+            return;
+        }
+        if (!music_area_play(seq, DEMO_MUSIC_FADE_FRAMES))
+            music_silence(DEMO_MUSIC_FADE_FRAMES); /* sequence not baked */
         return;
     }
     music_play_fade(song, DEMO_MUSIC_FADE_FRAMES);

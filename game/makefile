@@ -203,6 +203,10 @@ OOT_CORE_MAX_BYTES = 0x40000
 # Scene collision blobs (RAM_CART_SCENECOL carve, cached alias). One per scene in
 # tools/oot_core_import.py SCENE_COLLISION; data only, nothing executes there.
 OOT_SCENECOL_ADDR = 0x02780000
+# Speed check (plan Phase 1 step 6a): the same blob linked into low work RAM at
+# RAM_LOW_OOTPLAY (src/ram_low.h, cached alias). Free at boot, before play_init.
+OOT_BENCH_LOAD_ADDR = 0x00271500
+OOT_BENCH_MAX_BYTES = 0x64000
 OOT_SCENECOL_MAX_BYTES = 0x40000
 OOT_CORE_CXXFLAGS = -x c++ -std=gnu++17 -fno-exceptions -fno-rtti -fpermissive -funsigned-char -w \
 	-fno-threadsafe-statics -fno-use-cxa-atexit -Os -m2 -ffunction-sections -fdata-sections \
@@ -222,6 +226,7 @@ OOT_CORE_SRCS = $(OOT_CORE_DECOMP_SRCS) \
 	oot-core/src/bridge_play.cpp oot-core/src/bridge_assets.cpp oot-core/src/bridge_player.cpp
 OOT_CORE_OBJS = $(patsubst %.cpp,$(OOT_CORE_OBJDIR)/%.o,$(notdir $(OOT_CORE_SRCS)))
 _CCFLAGS += -DDOSEI_OOT_CORE -DOOT_CORE_LOAD_ADDR=$(OOT_CORE_LOAD_ADDR)u \
+	-DOOT_BENCH_LOAD_ADDR=$(OOT_BENCH_LOAD_ADDR)u \
 	-DOOT_SCENECOL_ADDR=$(OOT_SCENECOL_ADDR)u -Ioot-core/include
 vpath %.cpp $(sort $(dir $(OOT_CORE_SRCS)))
 $(OOT_CORE_OBJDIR):
@@ -237,6 +242,13 @@ build/oot-core/oot-core.elf: $(OOT_CORE_OBJS) oot-core/oot-core.ld
 		$(OOT_CORE_OBJS) -lgcc -o $@
 $(ASSETS_DIR)/OOTCORE.BIN: build/oot-core/oot-core.elf
 	$(CONV) -O binary $< $@
+build/oot-core/oot-bench.elf: $(OOT_CORE_OBJS) oot-core/oot-core.ld
+	$(OOT_CORE_CXX) -m2 -nostdlib -nostartfiles -T oot-core/oot-core.ld \
+		-Wl,--defsym,OOT_CORE_LOAD_ADDR=$(OOT_BENCH_LOAD_ADDR) \
+		-Wl,--defsym,OOT_CORE_MAX_BYTES=$(OOT_BENCH_MAX_BYTES) \
+		-Wl,--gc-sections $(OOT_CORE_OBJS) -lgcc -o $@
+$(ASSETS_DIR)/OOTBENCH.BIN: build/oot-core/oot-bench.elf
+	$(CONV) -O binary $< $@
 build/oot-core/scenecol/%COL.elf: build/oot-core/scenecol/%COL.cpp oot-core/scenecol.ld
 	$(OOT_CORE_CXX) $(OOT_CORE_CXXFLAGS) -c $< -o build/oot-core/scenecol/$*COL.o
 	$(OOT_CORE_CXX) -m2 -nostdlib -nostartfiles -T oot-core/scenecol.ld \
@@ -245,7 +257,7 @@ build/oot-core/scenecol/%COL.elf: build/oot-core/scenecol/%COL.cpp oot-core/scen
 		build/oot-core/scenecol/$*COL.o -o $@
 $(ASSETS_DIR)/%COL.BIN: build/oot-core/scenecol/%COL.elf
 	$(CONV) -O binary $< $@
-$(TARGET2): $(ASSETS_DIR)/OOTCORE.BIN $(patsubst %,$(ASSETS_DIR)/%COL.BIN,$(OOT_SCENECOL_NAMES))
+$(TARGET2): $(ASSETS_DIR)/OOTCORE.BIN $(ASSETS_DIR)/OOTBENCH.BIN $(patsubst %,$(ASSETS_DIR)/%COL.BIN,$(OOT_SCENECOL_NAMES))
 endif
 # Header layout changes must rebuild every consumer (save v2 otherwise wrote
 # 300 bytes into a stale 220-byte stack buffer). makefile bootstraps .d files

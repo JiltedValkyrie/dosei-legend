@@ -1,6 +1,7 @@
 #include <jo/jo.h>
 #include "music.h"
 #include "music_area.h"
+#include "area_music_list.h"
 
 #define AREA_HEADER_BYTES 36u
 
@@ -31,6 +32,9 @@ bool music_area_play(unsigned int seq, unsigned int fade_frames)
     int length = 0;
     unsigned char *blob;
 
+    /* jo_fs_read_file reports a missing file as a fatal error: only open
+    ** banks build_area_music.py actually baked. */
+    if (seq >= 128u || !(area_music_baked[seq >> 3] & (1u << (seq & 7)))) return false;
     if (area_seq[area_slot] == seq && music_current() == &area_bank[area_slot]) return true;
     if (music_current() == bank || music_busy()) return false; /* slot still audible */
     area_name(hdr, seq, "HDR");

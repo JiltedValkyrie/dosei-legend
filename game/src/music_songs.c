@@ -43,6 +43,11 @@ bool music_play(oot_song_t song)
     return music_play_fade(song, 0);
 }
 
+bool music_song_routed(oot_song_t song)
+{
+    return route_for(song) != 0;
+}
+
 const music_bank_t *music_song_bank(oot_song_t song)
 {
     const song_route_t *route = route_for(song);

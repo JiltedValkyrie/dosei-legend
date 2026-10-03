@@ -2212,11 +2212,11 @@ static void rupee_world(int x, int y, int z, unsigned int room,
 ** C pickup billboards until the Phase 2 draw shim. ITEM00 type = params. */
 #define OOT_ACTOR_EN_ITEM00 0x0015
 #define OOT_ACTOR_EN_KUSA   0x0125
-static OotCoreActorView core_view[32];
+static OotCoreActorView core_view[24];
 
 static void core_drops_draw(unsigned int tick)
 {
-    int i, n = oot_core_view(8 /* ACTORCAT_MISC */, core_view, 32);
+    int i, n = oot_core_view(8 /* ACTORCAT_MISC */, core_view, 24);
     for (i = 0; i < n; ++i) {
         const OotCoreActorView *a = &core_view[i];
         int dx = a->x - demo_camera.x, dz = a->z - demo_camera.z;
@@ -2228,7 +2228,7 @@ static void core_drops_draw(unsigned int tick)
 
 static void core_grass_draw(void)
 {
-    int i, n = oot_core_view(6 /* ACTORCAT_PROP */, core_view, 32);
+    int i, n = oot_core_view(6 /* ACTORCAT_PROP */, core_view, 24);
     for (i = 0; i < n; ++i) {
         const OotCoreActorView *a = &core_view[i];
         int32_t dx = a->x - demo_camera.x, dz = a->z - demo_camera.z;
