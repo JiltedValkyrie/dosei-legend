@@ -162,12 +162,42 @@ Current runtime facts (human Kronos, Debug, 2026-10-03):
 - Static RAM spare: Debug 640 B, Clean 4672 B. FREE RAM FIRST before any C addition
   (candidates: move C tables to cart; archive C systems the decomp replaced).
 
+FRAME-SKIP RULE (human 2026-10-03, applies to EVERY C<->decomp hand-off, all steps):
+Below 30 fps the C game runs up to 4 catch-up steps per drawn frame, but poses Link (and
+other skinned C models) ONCE per drawn frame; the decomp runs 2 of every 3 C steps (20 Hz).
+So C data handed to the decomp can repeat across steps, and a decomp step can be skipped.
+- Hit volumes (AT/AC/OC) built from C poses stay live on steps where the source did not
+  move; never drop them because "nothing changed" (real OoT does, at fixed 20 Hz).
+- Sweeps go from the last pose the decomp SAW to now, same action only; never from an
+  idle/sheath pose. First step of an action hits with the volume itself (with thickness).
+- One-shot C events (presses, swing start, damage, item use) latch until a decomp step
+  consumes them (input already does this). Decomp -> C results (damage to Link, knockback,
+  player_push) apply once, on the C step after the decomp step, never twice.
+- Check every new bridge at 15 fps AND 30 fps (human: inside 29 fps vs outdoors 15 fps).
+Applies to step I (decomp enemies hurting C Link), G (talk), H (doors), all proxies.
+First case: sword vs grass, bridge_player.cpp PlayerProxy_UpdateWeaponInfo.
+
 Roadmap (each step = one batch, build both images, one human test; gate before next):
 
 PHASE 1: make the decomp path cheap (nothing new until these pass)
- A. Grass back: host bgcheck probe (z_bgcheck + scene blob on host, raycast down at every
-    Kokiri En_Kusa spawn, Fx vs float); fix the Fx/bgcheck issue in the library.
-    Gate: row 15 pr24 in Kokiri.
+ A. Grass back. DONE 2026-10-03: human Kronos PASS (grass back, cuts right at 15+30 fps).
+    Cause was NOT Fx math: tests/run_bgcheck_probe.sh (real z_bgcheck + S1 blob, Fx16 vs
+    float, 64-bit and MinGW 32-bit long) finds the floor at all 37 Kokiri En_Kusa spawns.
+    Real cause: carve move left S1.OOC linked at old 0x0275xxxx; pointers garbage, floor
+    snap failed, Actor_Kill. Fix: makefile addr.stamp relinks blobs; host rejects a blob
+    outside the carve (BUILD.md gotcha 41). Logged, not blocking: Fx16 subdivLengthInv
+    (1/524 -> 0.06% low) inserts 4962 vs 5052 poly nodes; slope floor error up to ~3 units
+    on the grid (325/4997 over 0.1%). Fix later in C (32-bit Fx) if floors miss at edges.
+    Human 2026-10-03: grass back and cuttable, but only point-blank. Cause guess: proxy
+    sword's first live step only primed (real Player_UpdateWeaponInfo), with decomp on
+    2 of 3 C steps and short C swing most of slash lost. Fix built: host sends blade points
+    always, proxy swept from last idle pose -> WRONG: idle pose = sheath on back, cut grass
+    behind Link (human). Now: first live step hits with the blade line itself, 8 units tall
+    (like C capsule radius 4), then normal sweeps between decomp steps. Never sweep from idle.
+    Human: still bad at 15 fps, fine at 29 fps. Real cause: Link posed once per drawn
+    frame, catch-up steps see the same blade, real Player_UpdateWeaponInfo drops AT when
+    the blade did not move. Fix built: keep last swept quad live (FRAME-SKIP RULE above).
+    Gate: grass cuts at normal sword reach at 15 fps and 30 fps, never behind Link. Static RAM spare Debug 608 B, Clean 4640 B.
  B. Cheap NPC skeletons: no Actor_Draw/Gfx walker for NPCs. Limb matrices straight from
     SkelAnime.jointTable in 32-bit ints, no callbacks, every other step, nearest N only;
     far NPCs frozen pose or hidden. Gate: Ingo draw < 1 ms (row 17).

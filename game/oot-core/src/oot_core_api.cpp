@@ -323,8 +323,10 @@ static void oot_core_set_player(int x, int y, int z, short yaw) {
 }
 
 static void oot_core_set_sword(int active, const int* base, const int* tip) {
+    /* Points arrive whenever the C blade exists (also between swings): the
+     * proxy sweeps from the last idle pose, so the first live step hits. */
     gOotCoreSwordActive = active && base != NULL && tip != NULL;
-    if (gOotCoreSwordActive) {
+    if (base != NULL && tip != NULL) {
         gOotCoreSwordBase.x = base[0];
         gOotCoreSwordBase.y = base[1];
         gOotCoreSwordBase.z = base[2];

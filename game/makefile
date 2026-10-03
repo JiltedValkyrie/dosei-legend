@@ -244,7 +244,14 @@ $(ASSETS_DIR)/OOTCORE.BIN: build/oot-core/oot-core.elf
 # One blob per registered scene (oot_core_import.py registered_scenes), named
 # by scene index like the room banks (S1, Z20). A scene whose blob does not fit
 # the carve is left out (recipe removes the target); the runtime skips it.
-build/oot-core/scenecol/%.elf: build/oot-core/scenecol/%.cpp oot-core/scenecol.ld oot-core/include/oot_scene_blob.h
+# Link addresses live only in this makefile: a carve move must relink every blob
+# (2026-10-03: stale S1.OOC kept the old 0x0275xxxx pointers, Kokiri collision
+# read garbage, every En_Kusa failed its floor snap). Stamp rewritten on change.
+OOT_CORE_ADDR_STAMP = build/oot-core/addr.stamp
+OOT_CORE_ADDR_KEY = $(OOT_CORE_LOAD_ADDR) $(OOT_CORE_MAX_BYTES) $(OOT_SCENECOL_ADDR) $(OOT_SCENECOL_MAX_BYTES)
+$(shell mkdir -p build/oot-core; [ "$$(cat $(OOT_CORE_ADDR_STAMP) 2>/dev/null)" = "$(OOT_CORE_ADDR_KEY)" ] || echo "$(OOT_CORE_ADDR_KEY)" > $(OOT_CORE_ADDR_STAMP))
+build/oot-core/oot-core.elf: $(OOT_CORE_ADDR_STAMP)
+build/oot-core/scenecol/%.elf: build/oot-core/scenecol/%.cpp oot-core/scenecol.ld oot-core/include/oot_scene_blob.h $(OOT_CORE_ADDR_STAMP)
 	$(OOT_CORE_CXX) $(OOT_CORE_CXXFLAGS) -c $< -o build/oot-core/scenecol/$*.o || \
 		{ rm -f build/oot-core/scenecol/$*.o; echo "scene blob $* compile failed"; }
 	$(OOT_CORE_CXX) -m2 -nostdlib -nostartfiles -T oot-core/scenecol.ld \

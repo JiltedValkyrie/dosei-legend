@@ -193,6 +193,11 @@ sudo apt-get install -y python3-pil genisoimage   # Pillow + mkisofs
     count toward the disc directory.
 40. **Blob size watch:** a single actor can cost 30-40 KB (Fx int64 code at -Os, e.g.
     En_Ishi). Check the per-object sizes in oot-core.map before importing in bulk.
+41. **Carve move left stale scene blobs** (2026-10-03): moving OOT_SCENECOL_ADDR did not
+    relink unchanged `S*.OOC`; Kokiri kept 0x0275xxxx pointers, collision read garbage and
+    all decomp grass died in its floor snap. `build/oot-core/addr.stamp` now relinks every
+    blob when an address changes; the host rejects a blob whose col_header is outside the
+    carve. Check: `xxd -l 4 build/cd/S1.OOC` starts with the OOT_SCENECOL_ADDR top half.
 
 ## Playtest package
 
@@ -209,5 +214,9 @@ BIOS. Agents build; the human launches
   `OOT_CORE=1`). Report: `build/oot-core/import_report.txt`.
 - Host math check (Windows mingw g++): `bash oot-core/tests/run_host_probe.sh`
   must report `0 over tolerance`.
+- Host bgcheck check: `oot-core/tests/run_bgcheck_probe.sh` runs the real z_bgcheck on a
+  scene blob (default S1 Kokiri), raycasts every En_Kusa spawn + a grid, Fx vs float.
+  WSL g++ works (64-bit long); MinGW (`HOST_CXX=/c/msys64/mingw64/bin/g++ PY=python
+  OOT=D:/...`) matches SH-2 32-bit long. Grid has small slope errors (<4 units), see plan.
 - Target soft-float check: no `__addsf3/__mulsf3/__divsf3/__fix*/__float*`
   symbols in the oot-core objects.

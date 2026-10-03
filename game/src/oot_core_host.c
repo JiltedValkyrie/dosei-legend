@@ -191,6 +191,8 @@ static bool load_scene_blob(unsigned int scene)
     length = load_carve(name, RAM_CART_SCENECOL_OFFSET, RAM_CART_SCENECOL_BYTES);
     if (!length) return false;
     slCashPurge();
+    /* Blob linked for another carve address: its pointers are garbage. */
+    if (blob->col_header && (unsigned int)blob->col_header - OOT_SCENECOL_ADDR >= RAM_CART_SCENECOL_BYTES) return false;
     used = ((unsigned int)length + 15u) & ~15u;
     for (i = 0; i < blob->num_objects && i < SCENE_OBJECTS_MAX; ++i) {
         unsigned int id = blob->objects[i];
@@ -368,8 +370,9 @@ void oot_core_frame(const gameplay_input_t *in)
     ENTRY->set_room((int)kokiri_bank_room());
     {
         int32_t base[3], tip[3];
-        int live = gameplay_sword_active() && gameplay_blade_points(base, tip);
-        ENTRY->set_sword(live, (const int *)base, (const int *)tip);
+        bool have = gameplay_blade_points(base, tip);
+        ENTRY->set_sword(have && gameplay_sword_active(), have ? (const int *)base : 0,
+                         have ? (const int *)tip : 0);
     }
     /* Decomp actors are written for 20 Hz; gameplay steps run at 30 Hz. */
     step_phase += 2;

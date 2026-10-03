@@ -93,8 +93,11 @@ static s32 PlayerProxy_UpdateWeaponInfo(PlayState* play, ColliderQuad* collider,
     } else if ((weaponInfo->posA.x == newPosA->x) && (weaponInfo->posA.y == newPosA->y) &&
                (weaponInfo->posA.z == newPosA->z) && (weaponInfo->posB.x == newPosB->x) &&
                (weaponInfo->posB.y == newPosB->y) && (weaponInfo->posB.z == newPosB->z)) {
+        /* Saturn: C poses Link once per drawn frame, so catch-up steps see
+         * the same blade. The real code drops AT here; that lost every
+         * other hit below 30 fps. Keep the last swept quad live instead. */
         if (collider != NULL) {
-            Collider_ResetQuadAT(play, &collider->base);
+            CollisionCheck_SetAT(play, &play->colChkCtx, &collider->base);
         }
         return false;
     } else {
@@ -114,14 +117,34 @@ static s32 PlayerProxy_UpdateWeaponInfo(PlayState* play, ColliderQuad* collider,
  * lines from the left hand). dmgFlags as func_80837948 for a Kokiri Sword
  * slash (func_80837918); jump/spin flags not passed yet. */
 static void PlayerProxy_UpdateSword(Player* this, PlayState* play) {
+    WeaponInfo* w = &this->meleeWeaponInfo[1];
     if (!gOotCoreSwordActive) {
-        this->meleeWeaponInfo[1].active = false; /* func_80832318 */
+        w->active = false; /* func_80832318 */
         return;
     }
     this->meleeWeaponQuads[0].elem.atDmgInfo.dmgFlags = DMG_SLASH_KOKIRI;
     this->meleeWeaponQuads[0].elem.atElemFlags = ATELEM_ON | ATELEM_NEAREST;
-    PlayerProxy_UpdateWeaponInfo(play, &this->meleeWeaponQuads[0], &this->meleeWeaponInfo[1], &gOotCoreSwordTip,
-                                 &gOotCoreSwordBase);
+    if (!w->active) {
+        /* Saturn: the real first frame only primes (no AT). The decomp runs
+         * 2 of 3 C steps in a short C swing, so that lost the slash start.
+         * Like the C blade capsule (radius GP_BLADE_RADIUS 4), hit with the
+         * blade itself, 8 units tall. Never sweep from the idle pose: that
+         * is the sheath on Link's back (cut grass behind, 2026-10-03). */
+        ColliderQuad* q = &this->meleeWeaponQuads[0];
+        Vec3f a = gOotCoreSwordTip, b = gOotCoreSwordBase, c = gOotCoreSwordTip, d = gOotCoreSwordBase;
+        a.y += 4;
+        b.y += 4;
+        c.y -= 4;
+        d.y -= 4;
+        Collider_ResetQuadAT(play, &q->base); /* new swing: clear hit list */
+        Collider_SetQuadVertices(q, &b, &a, &d, &c);
+        CollisionCheck_SetAT(play, &play->colChkCtx, &q->base);
+        Math_Vec3f_Copy(&w->posA, &gOotCoreSwordTip);
+        Math_Vec3f_Copy(&w->posB, &gOotCoreSwordBase);
+        w->active = true;
+        return;
+    }
+    PlayerProxy_UpdateWeaponInfo(play, &this->meleeWeaponQuads[0], w, &gOotCoreSwordTip, &gOotCoreSwordBase);
 }
 
 /* Child Link eye height used for focus (attention arrows, actor look-at).
