@@ -9,7 +9,7 @@
 
 #define M_PI FXL(3.14159265358979323846f)
 #define M_SQRT2 FXL(1.41421356237309504880f)
-#define MAXFLOAT FXL(3.0e14) /* near the Fx (Q47.16) ceiling */
+#define MAXFLOAT FXL(1.0e11) /* under the Fx Q39.24 ceiling (~5.5e11); 3e14 overflowed */
 #define SHT_MAX FXL(32767.0f)
 #define SHT_MINV FXL(1.0f / 32767.0f)
 

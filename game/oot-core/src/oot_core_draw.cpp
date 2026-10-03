@@ -294,7 +294,9 @@ static s32 Draw_IsSkinned(s16 id) {
 extern SkelAnime* OotCore_ActorSkel(Actor* actor); /* oot_core_views.cpp */
 
 #define SKIN_RANGE 350.0f
-#define SKIN_NEAREST 3
+/* 0 = off (2026-10-03: frame rate). Real flex draws cost too much for now;
+ * the baked clips are used. Raise once the draw path is profiled. */
+#define SKIN_NEAREST 0
 
 /* True if fewer than SKIN_NEAREST skinned actors are closer to the player. */
 static s32 Skin_IsNearest(PlayState* play, Actor* actor) {

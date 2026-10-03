@@ -473,6 +473,11 @@ MACRO_REWRITES = {
         ('#define OS_K0_TO_PHYSICAL(x)    (u32)(((char*)(x)-0x80000000))', '#define OS_K0_TO_PHYSICAL(x)    (u32)(uintptr_t)(x)'),
         ('#define OS_PHYSICAL_TO_K0(x)    (void*)(((u32)(x)+0x80000000))', '#define OS_PHYSICAL_TO_K0(x)    (void*)(uintptr_t)(x)'),
     ],
+    # 3.4e38 overflows Fx (Q39.24, ~5.5e11): Player talkActorDistance =
+    # MAXFLOAT made every talk offer fail its distance test.
+    'include/libc/math.h': [
+        ('#define MAXFLOAT 3.40282347e+38f', '#define MAXFLOAT 1.0e11f'),
+    ],
     # Weak profiles (bridge_tables.cpp): an actor or effect that is not
     # imported has a NULL profile. Spawning it must fail like an overlay
     # that cannot load, never call through NULL.

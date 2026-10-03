@@ -22,6 +22,7 @@
 #include "libu64/pad.h"
 #include "object.h"
 #include "z_lib.h"
+#include "z_math.h"
 #include "sys_matrix.h"
 #include "player.h"
 #include "oot_core_api.h"
@@ -445,9 +446,12 @@ static void OotCore_CullActors(PlayState* play) {
         Actor* actor;
 
         for (actor = play->actorCtx.actorLists[i].head; actor != NULL; actor = actor->next) {
-            f32 dist = Math_Vec3f_DistXYZ(&actor->world.pos, &player->actor.world.pos);
+            f32 dx = actor->world.pos.x - player->actor.world.pos.x;
+            f32 dy = actor->world.pos.y - player->actor.world.pos.y;
+            f32 dz = actor->world.pos.z - player->actor.world.pos.z;
+            f32 range = actor->cullingVolumeDistance + actor->cullingVolumeScale;
 
-            if (dist < actor->cullingVolumeDistance + actor->cullingVolumeScale) {
+            if (SQ(dx) + SQ(dy) + SQ(dz) < SQ(range)) { /* no sqrt per actor per step */
                 actor->flags |= ACTOR_FLAG_INSIDE_CULLING_VOLUME;
             } else {
                 actor->flags &= ~ACTOR_FLAG_INSIDE_CULLING_VOLUME;
