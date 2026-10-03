@@ -17,7 +17,10 @@
 #include "oot_core_host.h"
 
 #define OOT_CORE_MAGIC 0x4F4F5443u /* 'OOTC' */
-#define OOT_CORE_VERSION 15u
+#define OOT_CORE_VERSION 16u
+/* set_flags bits. NPC_SPRITES: generic NPCs are host sprites (NPC views carry
+ * object/anim/frame; their Actor_Draw is skipped, no limb matrices). */
+#define OOT_CORE_FLAG_NPC_SPRITES 1u
 
 /* PlayState (~78 KB with Fx) + TwoHeadArena + ZeldaArena come from one block
  * the host allocates, so they never take the blob's fixed cart carve. */
@@ -53,6 +56,12 @@ typedef struct OotCoreNpcView {
     /* Generic skinned model (N<object><n>.BIN/.SKN, build_core_skins.py):
      * object << 4 | n, 0 = none (Kokiri NPCs use npc_draw's models). */
     unsigned short skin;
+    /* Sprite path (OOT_CORE_FLAG_NPC_SPRITES): the actor's object id, its
+     * SkelAnime limb count and animation (segment address), frame above. */
+    unsigned short object;
+    unsigned char limbs;
+    unsigned char pad;
+    unsigned int anim;
 } OotCoreNpcView;
 
 /* z_message state for the VDP2 text box (route step 4). The blob lays the
@@ -192,6 +201,8 @@ typedef struct OotCoreEntry {
     int (*actor_count)(int category);
     /* Copy up to max actors of a category into out; returns the count. */
     int (*actor_view)(int category, OotCoreActorView* out, int max);
+    /* OOT_CORE_FLAG_* (v16). Call after load; default 0. */
+    void (*set_flags)(unsigned int flags);
 } OotCoreEntry;
 
 #endif

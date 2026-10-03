@@ -30,6 +30,8 @@
 #include "array_count.h"
 #include "z_math.h"
 
+extern u32 gOotCoreFlags; /* oot_core_api.cpp, OOT_CORE_FLAG_* */
+
 extern PlayState* gOotCorePlay;
 void Actor_Draw(PlayState* play, Actor* actor); /* z_actor.c */
 GraphicsContext* OotCore_GfxCtx(void);
@@ -50,6 +52,7 @@ typedef struct OotObjectHead {
  * C renderer (npc_draw, kokiri_sgl, world_props) or not at all. */
 static const s16 sGenericDrawIds[] = {
 #include "../../build/oot-core/generic_draw_ids.h"
+
 };
 
 /* Skinned NPCs (npc_draw draws them from these matrices). */
@@ -463,6 +466,10 @@ s32 OotCore_DrawActors(PlayState* play) {
             }
             if (Draw_IsGenericNpc(actor->id)) {
                 SkinCapture* cap;
+
+                if (gOotCoreFlags & OOT_CORE_FLAG_NPC_SPRITES) {
+                    continue; /* host draws a baked sprite from the NPC view */
+                }
 
                 if (actor->xzDistToPlayer > GENERIC_NPC_RANGE || sSkinCount >= SKIN_ACTORS_MAX ||
                     !GenericNpc_IsNearest(play, actor) ||

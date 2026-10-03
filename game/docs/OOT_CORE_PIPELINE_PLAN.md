@@ -129,6 +129,24 @@ src/music_area.c, tables in jo heap). All 17 baked (converter now: channel io po
 hand music. Work RAM spare (Debug) 304 B. Next: raise caps (RAM cost) to admit the
 near-misses; multi-bg camera selection; per-scene music; En_Door room switches.
 
+## HANDOFF TO ASTRA (Claude, 2026-10-03, branch oot-core)
+Committed+pushed 507dbc3: step A (grass back; cause = stale S1.OOC after carve move, makefile
+addr.stamp + host blob guard), sword proxy fixes, FRAME-SKIP RULE, tests/run_bgcheck_probe.sh.
+UNCOMMITTED (sprite NPCs, human loves them, Kronos PASS Kokiri; Lon Lon OOM fix built, untested):
+- tools/build_npc_sprites.py (new): bakes NPC00-15.SPR (C NPCs) and --generic-only G*.SPR +
+  build/oot-core/generic_sprites.h (decomp NPCs). tools/build_npc_models.py build(full=True).
+- src/npc_sprite.c/.h (new, Clean only via makefile CLEAN_TEST): shared sprite draw.
+- src/npc_draw.c: all C NPCs as sprites (Clean), draw range 1500, Saria 3D in greeting.
+- src/oot_core_host.c: decomp NPC sprites (Clean): sheets for spawned NPC objects only,
+  85% heap guard, 8 slots; set_flags(OOT_CORE_FLAG_NPC_SPRITES).
+- Blob API v16 (oot_core_api.h/.cpp, oot_core_views.cpp, oot_core_draw.cpp): set_flags,
+  NPC view object/limbs/anim; generic NPC Actor_Draw skipped when the flag is on.
+- build.sh: sprite bake steps (C NPCs after build_npc_models; generic after build_core_skins).
+- BUILD.md gotchas 42 (CRLF from Windows python into build.sh) and 43 (SGL sprHflip typo).
+Debug image keeps 3D NPCs (576 B static RAM; sprite code needs ~1 KB). Open: horses (import
+En_Horse_Link_Child/En_Horse_Normal + Skin-limb baker), pitch row for above/below views,
+Debug RAM (step E), roadmap step B now mostly replaced by sprites. Details: NPC SPRITES below.
+
 ## NEXT CHAT START HERE (written 2026-10-03, state = commit 736982c + docs)
 Human goal: ALL NPCs in EVERY zone, ALL dialogue, spawn/talk/events checked against
 save flags and triggers exactly like OoT. Must work in BULK for all actors (importer
@@ -176,6 +194,60 @@ So C data handed to the decomp can repeat across steps, and a decomp step can be
 - Check every new bridge at 15 fps AND 30 fps (human: inside 29 fps vs outdoors 15 fps).
 Applies to step I (decomp enemies hurting C Link), G (talk), H (doors), all proxies.
 First case: sword vs grass, bridge_player.cpp PlayerProxy_UpdateWeaponInfo.
+
+NPC SPRITES (human 2026-10-03: "all NPC except Hero, incl. Lon Lon, horses as sprites").
+Mido test PASSED. Rollout PASSED in Kronos ("better than 3D by far"); above/below view
+looks a little odd (option: bake a 2nd pitch row). Sprite draw range 1500 (was 180-400
+3D fade), built, waiting test. Rollout details (CLEAN IMAGE ONLY: Debug has
+576 B static RAM; Debug keeps 3D NPCs and the old decomp skin path).
+- tools/build_npc_sprites.py: C NPCs NPC00-15.SPR (Mido, Saria idle, 13 Kokiri types,
+  shopkeeper), <=8 poses/clip, cels <=64 px tall, full textures, 5 dirs + runtime mirror.
+  --generic(-only): decomp NPC objects (GENERIC_NPC_SOURCES) -> G<oid3><nn>.SPR, one sheet
+  per (skeleton, animation the actor source names), <=6 poses, <=56 px, one cel size per
+  skeleton; build/oot-core/generic_sprites.h {object, limbs, anim offset, nn}. 34 sheets,
+  1.57 MB total; host loads only the current scene's objects into the cart heap.
+- src/npc_sprite.c: shared draw. One VDP1 slot per drawn instance; rewritten only on
+  pose/direction change; a slot rebinds size+CLUT when its sheet changes.
+- npc_draw.c: every placement + shopkeeper as sprite; Saria back to 3D while a greeting
+  clip plays (clips not baked). Focus = fixed height. No head/torso turns (cut).
+- Blob API v16: OOT_CORE_FLAG_NPC_SPRITES (set_flags): generic NPC Actor_Draw skipped
+  (the 12.8 ms Lon Lon draw), NPC view carries object/limbs/anim/frame. Host: 8 slots
+  sized for the scene's biggest cel, nearest-first view order, 2000-unit box.
+- Lon Lon fix (human: out of memory G0C006.SPR): host loaded every object of every layer
+  (1.5 MB). Now loads sheets only for objects of spawned generic NPCs, jo_malloc + 85% heap
+  guard (skip, never error). Gap: NPC spawned later in another room with a new object has
+  no sheet until the next scene load. Limit is cart sheet memory, not sprite count (VDP1
+  draws hundreds: Dragon Force); slots (8) can grow.
+- Horses NOT done: En_Horse_Link_Child (child Epona) and En_Horse_Normal not imported,
+  and they use the Skin system (not SkelAnime): needs import + a Skin-limb baker. Next batch.
+- Undo: revert npc_draw.c, oot_core_host.c, npc_sprite.*, blob views/draw/api v16,
+  build.sh lines, build_npc_models.py full=, delete tools/build_npc_sprites.py.
+
+FRAME-SKIP RULE (human 2026-10-03, applies to EVERY C<->decomp hand-off, all steps):
+Below 30 fps the C game runs up to 4 catch-up steps per drawn frame, but poses Link (and
+other skinned C models) ONCE per drawn frame; the decomp runs 2 of every 3 C steps (20 Hz).
+So C data handed to the decomp can repeat across steps, and a decomp step can be skipped.
+- Hit volumes (AT/AC/OC) built from C poses stay live on steps where the source did not
+  move; never drop them because "nothing changed" (real OoT does, at fixed 20 Hz).
+- Sweeps go from the last pose the decomp SAW to now, same action only; never from an
+  idle/sheath pose. First step of an action hits with the volume itself (with thickness).
+- One-shot C events (presses, swing start, damage, item use) latch until a decomp step
+  consumes them (input already does this). Decomp -> C results (damage to Link, knockback,
+  player_push) apply once, on the C step after the decomp step, never twice.
+- Check every new bridge at 15 fps AND 30 fps (human: inside 29 fps vs outdoors 15 fps).
+Applies to step I (decomp enemies hurting C Link), G (talk), H (doors), all proxies.
+First case: sword vs grass, bridge_player.cpp PlayerProxy_UpdateWeaponInfo.
+
+SPRITE IMPOSTOR TEST (human 2026-10-03, Mido only): PASS in Kronos ("perfect"), direction
+sign fixed (phi = yaw - facing). Next: decide rollout (all NPC types; Debug needs RAM first).
+tools/build_npc_sprites.py bakes NPC00.SPR from the real skeleton/anim with FULL textures
+(build_npc_models build(full=True) -> SPR00.BIN/ANM, pure-python z-buffer raster, VDP1 A,B,C,C
+tile mapping): 48x66 4bpp, 15 poses x 5 dirs (3 mirrored at runtime), 116 KB in cart heap.
+src/npc_draw.c spr_draw: 1 VDP1 cel slot, rewritten only on pose/direction change, drawn
+with slPutSprite (world pos, SGL scale/sort). CLEAN IMAGE ONLY (Debug has 608 B static RAM;
+sprite code +864 B). No head turn, focus fixed at 85% height. If liked: bake all NPC types,
+streaming cels as the NPC draw path (replaces most of step B). Undo: revert npc_draw.c,
+build.sh, build_npc_models.py, delete tools/build_npc_sprites.py.
 
 Roadmap (each step = one batch, build both images, one human test; gate before next):
 

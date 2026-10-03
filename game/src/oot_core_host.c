@@ -17,6 +17,21 @@
 #include "actor_mesh.h"
 #include "npc_draw.h"
 #include <string.h>
+#ifdef DOSEI_CLEAN_TEST
+/* Generic decomp NPCs as baked sprites (tools/build_npc_sprites.py --generic,
+** blob OOT_CORE_FLAG_NPC_SPRITES): no Actor_Draw, no limb matrices. */
+#define CORE_SPRITES 1
+#include "npc_sprite.h"
+static const struct { unsigned short object; unsigned char limbs; unsigned int anim; unsigned char file; }
+core_sprite_rows[] = {
+#include "../build/oot-core/generic_sprites.h"
+};
+#define CORE_SPRITE_ROWS (sizeof core_sprite_rows / sizeof core_sprite_rows[0])
+#define CORE_SPRITE_SLOTS 8
+#define CORE_SPRITE_HEAP_PERCENT 85   /* leave heap for the rest of the scene */
+static unsigned char *core_sprite[CORE_SPRITE_ROWS];   /* G<oid><nn>.SPR, cart heap */
+static npc_sprite_inst_t core_sprite_inst[CORE_SPRITE_SLOTS];
+#endif
 
 
 #define ENTRY ((const OotCoreEntry *)OOT_CORE_LOAD_ADDR)
@@ -280,7 +295,41 @@ static void load_meshes(void)
         core_mesh_ready[core_mesh_count] = 0;
         core_mesh_count++;
     }
+#ifdef CORE_SPRITES
+    {   /* Sheets of the objects the spawned generic NPCs use (the scene's
+        ** object list names every layer: child + adult Lon Lon overflowed
+        ** the cart heap). Scene change = CD time. A sheet that does not fit
+        ** under the heap guard is skipped: that NPC is not drawn. */
+        static const char hex[] = "0123456789ABCDEF";
+        const OotCoreNpcView *v;
+        int n = ENTRY->npc_view(&v), k;
+        unsigned int r;
+        for (r = 0; r < CORE_SPRITE_ROWS; ++r) {
+            char file[] = "G00000.SPR";
+            int length = 0;
+            jo_file probe;
+            if (core_sprite[r]) { jo_free(core_sprite[r]); core_sprite[r] = 0; }
+            for (k = 0; k < n && v[k].object != core_sprite_rows[r].object; ++k) {}
+            if (k == n) continue;
+            file[1] = hex[(core_sprite_rows[r].object >> 8) & 15];
+            file[2] = hex[(core_sprite_rows[r].object >> 4) & 15];
+            file[3] = hex[core_sprite_rows[r].object & 15];
+            file[4] = hex[core_sprite_rows[r].file >> 4]; file[5] = hex[core_sprite_rows[r].file & 15];
+            if (GFS_NameToId((Sint8 *)file) < 0 || !jo_fs_open(&probe, file)) continue;
+            length = probe.size;
+            jo_fs_close(&probe);
+            core_sprite[r] = (unsigned char *)jo_malloc((unsigned int)length);
+            if (core_sprite[r] && jo_memory_usage_percent() > CORE_SPRITE_HEAP_PERCENT) {
+                jo_free(core_sprite[r]); core_sprite[r] = 0;
+            }
+            if (core_sprite[r] && !jo_fs_read_file_ptr(file, core_sprite[r], &length)) {
+                jo_free(core_sprite[r]); core_sprite[r] = 0;
+            }
+        }
+    }   /* no skinned models: the sprites replace them */
+#else
     load_skins();
+#endif
     npc_draw_reupload();
 }
 
@@ -293,7 +342,43 @@ void oot_core_meshes_upload(void)
         core_mesh_ready[i] = playing && actor_mesh_upload(core_mesh[i]);
     for (i = 0; i < core_skin_count; ++i)
         core_skin_ready[i] = playing && actor_mesh_upload(core_skin[i]);
+#ifdef CORE_SPRITES
+    {   /* slots sized for the scene's biggest cel; draw rebinds per sheet */
+        const unsigned char *big = 0;
+        unsigned int r, best = 0;
+        for (r = 0; r < CORE_SPRITE_ROWS; ++r) {
+            const unsigned char *s = core_sprite[r];
+            unsigned int bytes = s ? (unsigned int)(s[4] << 8 | s[5]) * (unsigned int)(s[6] << 8 | s[7]) : 0;
+            if (bytes > best) { best = bytes; big = s; }
+        }
+        for (i = 0; i < CORE_SPRITE_SLOTS; ++i)
+            if (!playing || !big || !npc_sprite_upload(big, &core_sprite_inst[i]))
+                core_sprite_inst[i].slot = KOKIRI_TILE_NONE;   /* bank full: not drawn */
+    }
+#endif
 }
+
+#ifdef CORE_SPRITES
+static void sprites_draw(void)
+{
+    const OotCoreNpcView *v;
+    int n = oot_core_npcs(&v), k;
+    unsigned int r, used = 0;
+    for (k = 0; k < n && used < CORE_SPRITE_SLOTS; ++k) {
+        int dx = v[k].x - demo_camera.x, dz = v[k].z - demo_camera.z;
+        if (!v[k].anim || !(v[k].flags & OOT_CORE_VIEW_DRAWN) ||
+            dx < -2000 || dx > 2000 || dz < -2000 || dz > 2000) continue;
+        for (r = 0; r < CORE_SPRITE_ROWS; ++r)
+            if (core_sprite[r] && core_sprite_rows[r].object == v[k].object &&
+                core_sprite_rows[r].limbs == v[k].limbs &&
+                core_sprite_rows[r].anim == (v[k].anim & 0xFFFFFFu)) {
+                npc_sprite_draw(core_sprite[r], &core_sprite_inst[used++], v[k].frame,
+                                v[k].x, v[k].y, v[k].z, v[k].yaw);
+                break;
+            }
+    }
+}
+#endif
 
 /* Generic skinned NPCs: the decomp's limb matrices on the prebuilt model. */
 static void skins_draw(void)
@@ -315,7 +400,11 @@ static void skins_draw(void)
 /* From world_props_draw: one prebuilt mesh per decomp draw item. */
 void oot_core_meshes_draw(void)
 {
+#ifdef CORE_SPRITES
+    sprites_draw();
+#else
     skins_draw();
+#endif
     const OotCoreDrawItem *items;
     int n = playing ? ENTRY->draw_items(&items) : 0, i;
     unsigned int m;
@@ -358,6 +447,9 @@ void oot_core_frame(const gameplay_input_t *in)
                                    (short)demo_link.z, (short)demo_link_yaw) != 0;
         if (playing) {
             ENTRY->set_objects(scene_objects, scene_object_count);
+#ifdef CORE_SPRITES
+            ENTRY->set_flags(OOT_CORE_FLAG_NPC_SPRITES);
+#endif
             load_meshes();
         }
         step_phase = 0;

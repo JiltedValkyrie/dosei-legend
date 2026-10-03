@@ -69,7 +69,9 @@ SARIA_CS_CLIPS.update({19:'gSariaWaitOnBridgeAnim',20:'gSariaHoldOcarinaAnim',
 MODEL_COUNT = 23
 
 
-def build(oot, rom_dir, out, model):
+def build(oot, rom_dir, out, model, full=False):
+    """full: sprite-bake source (tools/build_npc_sprites.py): every face keeps
+    its texture, written as SPR<nn>.BIN/.ANM only (no SKN/TRK)."""
     saria_cs = SARIA_CS_CLIPS.get(model)
     slot = model           # the NPC<nn> the file is written as
     if saria_cs:
@@ -173,8 +175,11 @@ def build(oot, rom_dir, out, model):
         raise ValueError(f'{obj}: unresolved texture/display segments {lists.external_lists}')
     link.apply_primitive_colour(faces)
     faces = link.scale_faces(faces, 0.01)
-    dest = out / ('NPC%02d.BIN' % slot)
-    positions, tiles, owners, locals_ = link.write_model(faces, dest, skinned=True)
+    dest = out / (('SPR%02d.BIN' if full else 'NPC%02d.BIN') % slot)
+    if full:
+        for face in faces:
+            face['full_texture'] = True
+    positions, tiles, owners, locals_ = link.write_model(faces, dest, skinned=True, character=not full)
     source_frames = [static] if static is not None else range(2, 15) if ko == 3 else range(frames)
 
     def track():
@@ -185,6 +190,8 @@ def build(oot, rom_dir, out, model):
                    for owner, local in zip(owners, locals_)]
 
     write_track(dest.with_suffix('.ANM'), track())
+    if full:
+        return dict(model=slot, ticks=len(source_frames))
     # Runtime skinning (oot-core): per vertex, the slot of its limb in the
     # flex skeleton's matrix array (SkelAnime_DrawFlex writes one Mtx per limb
     # with a display list, depth first: lists.matrix_limbs order) and its

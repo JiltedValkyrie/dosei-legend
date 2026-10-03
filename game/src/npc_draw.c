@@ -26,6 +26,8 @@
  * shop at its actor-list spot, facing the counter (rot.y 0). Not a
  * kokiri_npcs entry: the counter talk in gameplay.c already owns her. */
 #define NPC_SHOPKEEPER  15
+#define SPR_SARIA_3D    (1u << 31)   /* visible-mask key: Saria clip plays in 3D */
+#define NPC_SPRITE_RANGE 1500       /* sprite NPC draw range, world units */
 /*
 ** Saria's greeting poses.
 **
@@ -41,6 +43,18 @@
 static const char *const saria_cue_clip[3] = { "NPC16", "NPC17", "NPC18" };
 static unsigned char saria_clip_loaded;     /* cue id currently swapped in */
 static actor_mesh_t *models[NPC_MODEL_COUNT];
+/* Sprite impostors (tools/build_npc_sprites.py, src/npc_sprite.c): every
+** NPC except Link. NPCnn.SPR sheets live in the cart heap; each placement
+** (kokiri_npcs index, then the shopkeeper) owns one cel slot. Saria keeps her
+** 3D mesh while a greeting clip plays (clips are not baked). */
+#ifdef DOSEI_CLEAN_TEST
+#include "npc_sprite.h"
+static unsigned char *spr[NPC_MODEL_COUNT];
+static npc_sprite_inst_t spr_inst[KOKIRI_NPC_COUNT + 1];
+#define SPR(m) (spr[m])
+#else
+#define SPR(m) ((unsigned char *)0)         /* Debug: no static RAM left */
+#endif
 #ifdef DOSEI_OOT_CORE
 /* NPCnn.SKN runtime skin tables (decomp NPCs drawn with the real animation). */
 static unsigned char *skins[NPC_MODEL_COUNT];
@@ -211,6 +225,10 @@ void npc_draw_free(void)
         if (skins[i]) { jo_free(skins[i]); skins[i] = 0; }
 #endif
     }
+#ifdef DOSEI_CLEAN_TEST
+    for (i = 0; i < NPC_MODEL_COUNT; ++i)
+        if (spr[i]) { jo_free(spr[i]); spr[i] = 0; }
+#endif
     interior_mask_free();
     world_props_draw_free();
     actor_mesh_free(shelves); shelves = 0;
@@ -275,6 +293,15 @@ bool __attribute__((optimize("Os"))) npc_draw_load(unsigned int scene)
 
         }
     }
+#ifdef DOSEI_CLEAN_TEST
+    for (i = 0; i < NPC_MODEL_COUNT; ++i) {
+        char file[] = "NPC00.SPR";
+        int length = 0;
+        if (!models[i]) continue;
+        file[3] = '0' + i / 10; file[4] = '0' + i % 10;
+        if (GFS_NameToId((Sint8 *)file) >= 0) spr[i] = (unsigned char *)jo_fs_read_file(file, &length);
+    }
+#endif
     if (!world_props_draw_load(scene)) { npc_draw_free(); return false; }
     asset_loading_done();
     uploaded = 0xFFFFFFFFu; /* force first actor/prop texture upload */
@@ -323,11 +350,24 @@ static bool upload_visible(unsigned int visible, unsigned int generation)
         bank_generation = generation;
         for (i = 0; i < NPC_MODEL_COUNT; ++i) {
             if (!(visible & (1u << i))) continue;
+            if (SPR(i) && !(i == 1 && (visible & SPR_SARIA_3D))) continue;
             if (!actor_mesh_upload(models[i])) {
                 jo_core_error("NPC texture bank full: %u", i);
                 return false;
             }
         }
+#ifdef DOSEI_CLEAN_TEST
+        for (i = 0; i <= KOKIRI_NPC_COUNT; ++i) {
+            unsigned int m = i < KOKIRI_NPC_COUNT ? model_for(i) : NPC_SHOPKEEPER;
+            spr_inst[i].slot = KOKIRI_TILE_NONE;     /* not uploaded = not drawn */
+            if (i < KOKIRI_NPC_COUNT && kokiri_npcs[i].scene != save_state.scene_id) continue;
+            if (m < NPC_MODEL_COUNT && spr[m] && (visible & (1u << m)) &&
+                !npc_sprite_upload(spr[m], &spr_inst[i])) {
+                jo_core_error("NPC texture bank full: sprite %u", i);
+                return false;
+            }
+        }
+#endif
         if (counter && !actor_mesh_upload(counter)) return false;
         if (shelves && !actor_mesh_upload(shelves)) {
             jo_core_error("NPC texture bank full: shelves");
@@ -497,6 +537,9 @@ void npc_draw(unsigned int tick)
          * separate from this visibility bound. */
         distance = kokiri_npcs[i].kind == KOKIRI_NPC_CHILD ?
                    ((kokiri_npcs[i].param & 255) == 5 ? 240 : 180) : 400;
+        /* Saturn: a sprite costs one cel, so it shows far past the 3D fade
+         * range (human 2026-10-03). Logic/talk ranges are unchanged. */
+        if (SPR(model_for(i))) distance = NPC_SPRITE_RANGE;
         /* EnSa_Update pins alpha to 255 while EnSa_HandleCutscene runs, so the
          * distance fade does not apply: her first cue stands her 900 units out
          * and she has to be on screen from the first frame of the shot. */
@@ -509,6 +552,7 @@ void npc_draw(unsigned int tick)
     }
     if (models[NPC_SHOPKEEPER] && save_state.scene_id == SAVE_SCENE_KOKIRI_SHOP)
         visible |= 1u << NPC_SHOPKEEPER;
+    if (gameplay_saria_cutscene()) visible |= SPR_SARIA_3D;   /* re-upload her mesh */
     if (!upload_visible(visible, generation)) return;
     interior_mask_draw();
     if (demo_shop_browsing()) actor_mesh_draw_static(counter, 0, 0, 0, 0);
@@ -520,6 +564,12 @@ void npc_draw(unsigned int tick)
     if (visible & (1u << NPC_SHOPKEEPER)) {
         static const npc_track_t still = {{0, 0}, {0, 0}};
         int32_t focus[3];
+#ifdef DOSEI_CLEAN_TEST
+        if (spr[NPC_SHOPKEEPER])
+            npc_sprite_draw(spr[NPC_SHOPKEEPER], &spr_inst[KOKIRI_NPC_COUNT], tick / 3,
+                            KOKIRI_SHOPKEEPER_X, KOKIRI_SHOPKEEPER_Y, KOKIRI_SHOPKEEPER_Z, 0);
+        else
+#endif
         draw_pose(NPC_SHOPKEEPER, tick, KOKIRI_SHOPKEEPER_X, KOKIRI_SHOPKEEPER_Y,
                   KOKIRI_SHOPKEEPER_Z, 0, &still, focus);
     }
@@ -532,6 +582,16 @@ void npc_draw(unsigned int tick)
             unsigned int model = model_for(i);
             uint16_t yaw = gameplay_npc_yaw(i);
             int32_t focus[3], rotated[3];
+#ifdef DOSEI_CLEAN_TEST
+            if (spr[model] && !(model == 1 && (visible & SPR_SARIA_3D))) {
+                npc_sprite_draw(spr[model], &spr_inst[i], tick / 3, gameplay_npc_x(i),
+                                gameplay_npc_y(i), gameplay_npc_z(i), yaw);
+                rotated[0] = rotated[2] = 0;
+                rotated[1] = npc_sprite_focus_y(spr[model]);
+                gameplay_npc_focus(i, rotated);
+                continue;
+            }
+#endif
             draw_pose(model, tick, gameplay_npc_x(i), gameplay_npc_y(i),
                       gameplay_npc_z(i), yaw, t, focus);
             {

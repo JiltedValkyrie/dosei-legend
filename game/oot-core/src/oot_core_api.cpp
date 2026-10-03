@@ -322,6 +322,11 @@ static void oot_core_set_player(int x, int y, int z, short yaw) {
     gOotCorePlayerYaw = yaw;
 }
 
+u32 gOotCoreFlags;
+static void oot_core_set_flags(unsigned int flags) {
+    gOotCoreFlags = flags;
+}
+
 static void oot_core_set_sword(int active, const int* base, const int* tip) {
     /* Points arrive whenever the C blade exists (also between swings): the
      * proxy sweeps from the last idle pose, so the first live step hits. */
@@ -605,4 +610,5 @@ extern "C" const OotCoreEntry oot_core_entry __attribute__((section(".oot_entry"
     oot_core_spawn,
     oot_core_actor_count,
     oot_core_actor_view,
+    oot_core_set_flags,
 };

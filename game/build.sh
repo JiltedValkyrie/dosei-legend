@@ -129,7 +129,8 @@ fi
 "$python" "$here/tools/build_area_music.py" --oot "$oot"
 cp "$here"/build/generated/owl/OWL*.BIN "$here"/build/generated/owl/OWL*.ANM "$here/build/cd/"
 "$python" "$here/tools/build_npc_models.py" --oot "$oot" --rom-dir "$roms"
-cp "$here"/build/generated/npcs/NPC*.BIN "$here"/build/generated/npcs/NPC*.ANM "$here"/build/generated/npcs/NPC*.TRK "$here"/build/generated/npcs/NPC*.SKN "$here/build/cd/"
+"$python" "$here/tools/build_npc_sprites.py" --oot "$oot" --rom-dir "$roms"   # NPC sprite sheets (Clean)
+cp "$here"/build/generated/npcs/NPC*.BIN "$here"/build/generated/npcs/NPC*.ANM "$here"/build/generated/npcs/NPC*.TRK "$here"/build/generated/npcs/NPC*.SKN "$here"/build/generated/npcs/NPC*.SPR "$here/build/cd/"
 # Surface bits now live inside S<n>.COL (KBG2); drop the retired .SUR files.
 rm -f "$here"/build/cd/S*.SUR
 "$python" "$here/tools/build_scene_backdrops.py" --oot "$oot" --rom-dir "$roms"
@@ -229,6 +230,9 @@ if [ "$oot_core" = 1 ]; then
     "$python" "$here/tools/build_core_meshes.py" --oot "$oot" --rom-dir "$roms"
     # Generic skinned NPC models (N*.BIN/.SKN) + build/oot-core/generic_skins.h.
     "$python" "$here/tools/build_core_skins.py" --oot "$oot" --rom-dir "$roms"
+    # Decomp NPC sprite sheets (G*.SPR) + build/oot-core/generic_sprites.h.
+    rm -f "$here"/build/cd/G?????.SPR
+    "$python" "$here/tools/build_npc_sprites.py" --oot "$oot" --rom-dir "$roms" --generic-only --out "$here/build/cd"
 else
     rm -f "$here/build/cd/OOTCORE.BIN"
 fi

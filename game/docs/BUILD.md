@@ -198,6 +198,10 @@ sudo apt-get install -y python3-pil genisoimage   # Pillow + mkisofs
     all decomp grass died in its floor snap. `build/oot-core/addr.stamp` now relinks every
     blob when an address changes; the host rejects a blob whose col_header is outside the
     carve. Check: `xxd -l 4 build/cd/S1.OOC` starts with the OOT_SCENECOL_ADDR top half.
+42. **Windows python wrote CRLF into build.sh** (`set: pipefail: invalid option name`).
+    Edit .sh files with sed/Edit, or python `open(p, 'w', newline='')`; fix: `sed -i 's/$//'`.
+43. **SGL `sprHflip` is broken** (SL_DEF.H: `UseTexture << PDATA16`, undeclared). Use
+    `(1 << 4) | sprNoflip` for a horizontally flipped sprite.
 
 ## Playtest package
 

@@ -20,6 +20,28 @@
 #include "overlays/actors/ovl_En_Md/z_en_md.h"
 #include "overlays/actors/ovl_En_Kanban/z_en_kanban.h"
 #include "oot_core_api.h"
+#include "overlays/actors/ovl_En_In/z_en_in.h"
+#include "overlays/actors/ovl_En_Ma1/z_en_ma1.h"
+#include "overlays/actors/ovl_En_Ma2/z_en_ma2.h"
+#include "overlays/actors/ovl_En_Ta/z_en_ta.h"
+#include "overlays/actors/ovl_En_Niw/z_en_niw.h"
+#include "overlays/actors/ovl_En_Cow/z_en_cow.h"
+
+extern u32 gOotCoreFlags; /* oot_core_api.cpp, OOT_CORE_FLAG_* */
+
+/* SkelAnime of a generic NPC (oot_core_import GENERIC_NPC_SOURCES) for the
+ * sprite path. New generic NPC actor: add its struct here. */
+static const SkelAnime* GenericNpc_Skel(Actor* a) {
+    switch (a->id) {
+        case ACTOR_EN_IN: return &((EnIn*)a)->skelAnime;
+        case ACTOR_EN_MA1: return &((EnMa1*)a)->skelAnime;
+        case ACTOR_EN_MA2: return &((EnMa2*)a)->skelAnime;
+        case ACTOR_EN_TA: return &((EnTa*)a)->skelAnime;
+        case ACTOR_EN_NIW: return &((EnNiw*)a)->skelAnime;
+        case ACTOR_EN_COW: return &((EnCow*)a)->skelAnime;
+        default: return NULL;
+    }
+}
 
 extern PlayState* gOotCorePlay; /* oot_core_api.cpp */
 unsigned int OotCore_TalkState(void);
@@ -218,6 +240,26 @@ int OotCore_NpcView(const OotCoreNpcView** out) {
             info = &md->interactInfo;
             skel = &md->skelAnime;
             alpha = md->alpha;
+        } else if ((gOotCoreFlags & OOT_CORE_FLAG_NPC_SPRITES) && (skel = GenericNpc_Skel(actor)) != NULL) {
+            /* Generic NPC as a host sprite: object + animation + frame. */
+            v->mats = NULL;
+            v->mat_count = 0;
+            v->skin = 0;
+            v->id = actor->id;
+            v->params = actor->params;
+            v->x = (s32)actor->world.pos.x;
+            v->y = (s32)actor->world.pos.y;
+            v->z = (s32)actor->world.pos.z;
+            v->yaw = (u16)actor->shape.rot.y;
+            v->head_x = v->head_y = v->torso_x = v->torso_y = 0;
+            v->frame = (u16)(s32)skel->curFrame;
+            v->alpha = 255;
+            v->flags = (actor->draw != NULL) ? OOT_CORE_VIEW_DRAWN : 0;
+            v->object = (u16)play->objectCtx.slots[actor->objectSlot].id;
+            v->limbs = skel->limbCount;
+            v->anim = (u32)(uintptr_t)skel->animation;
+            n++;
+            continue;
         } else {
             /* Generic skinned NPC: drawn only from captured matrices. */
             unsigned short model;
