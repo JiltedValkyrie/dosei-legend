@@ -559,6 +559,30 @@ void actor_mesh_draw_euler(actor_mesh_t *mesh, int32_t x, int32_t y, int32_t z,
     jo_3d_pop_matrix();
 }
 
+bool actor_mesh_draw_skinned(actor_mesh_t *mesh, const unsigned char *skin,
+                             const int32_t *mats, unsigned int count)
+{
+    unsigned int i, n;
+    const unsigned char *slot, *local;
+    if (!mesh || !mesh->loaded || !skin || !mats || read_be32(skin) != 0x534B4E31u) return false;
+    n = read_be32(skin + 4);
+    if (n != (unsigned int)mesh->pdata.nbPoint || read_be32(skin + 8) > count) return false;
+    slot = skin + 12;
+    local = slot + ((n + 1) & ~1u);
+    for (i = 0; i < n; ++i, local += 6) {
+        const int32_t *m = mats + slot[i] * 12;
+        int32_t lx = (int16_t)read_be16(local), ly = (int16_t)read_be16(local + 2),
+                lz = (int16_t)read_be16(local + 4);
+        mesh->points[i][X] = m[0] * lx + m[1] * ly + m[2] * lz + m[9];
+        mesh->points[i][Y] = -(m[3] * lx + m[4] * ly + m[5] * lz + m[10]);
+        mesh->points[i][Z] = m[6] * lx + m[7] * ly + m[8] * lz + m[11];
+    }
+    jo_3d_push_matrix();
+    kokiri_submit_pdata(&mesh->pdata);
+    jo_3d_pop_matrix();
+    return true;
+}
+
 void actor_mesh_free(actor_mesh_t *mesh)
 {
     if (mesh) { free_actor(mesh); jo_free(mesh); }

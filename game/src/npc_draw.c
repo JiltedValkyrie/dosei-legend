@@ -41,6 +41,10 @@
 static const char *const saria_cue_clip[3] = { "NPC16", "NPC17", "NPC18" };
 static unsigned char saria_clip_loaded;     /* cue id currently swapped in */
 static actor_mesh_t *models[NPC_MODEL_COUNT];
+#ifdef DOSEI_OOT_CORE
+/* NPCnn.SKN runtime skin tables (decomp NPCs drawn with the real animation). */
+static unsigned char *skins[NPC_MODEL_COUNT];
+#endif
 /* En_Tana params 0 at its shop actor-list spot (0,0,-20), rot 0. */
 static actor_mesh_t *shelves, *counter;
 #define SHOP_SHELVES_X 0
@@ -203,6 +207,9 @@ void npc_draw_free(void)
     unsigned int i;
     for (i = 0; i < NPC_MODEL_COUNT; ++i) {
         actor_mesh_free(models[i]); models[i] = 0;
+#ifdef DOSEI_OOT_CORE
+        if (skins[i]) { jo_free(skins[i]); skins[i] = 0; }
+#endif
     }
     interior_mask_free();
     world_props_draw_free();
@@ -233,6 +240,14 @@ bool __attribute__((optimize("Os"))) npc_draw_load(unsigned int scene)
         asset_loading(file);
         models[model] = actor_mesh_load(file);
         if (!models[model]) { npc_draw_free(); return false; }
+#ifdef DOSEI_OOT_CORE
+        {
+            char skn[] = "NPC00.SKN";
+            int length = 0;
+            skn[3] = file[3]; skn[4] = file[4];
+            if (GFS_NameToId((Sint8 *)skn) >= 0) skins[model] = (unsigned char *)jo_fs_read_file(skn, &length);
+        }
+#endif
     }
     if (scene == SAVE_SCENE_KOKIRI_SHOP) {
         asset_loading("NPC15.BIN");
@@ -534,7 +549,9 @@ void npc_draw(unsigned int tick)
         unsigned int model = core_npc_model(v);
         npc_track_t t = {{v->head_x, v->head_y}, {v->torso_x, v->torso_y}};
         int32_t focus[3];
-        if (model) draw_pose(model - 1, v->frame * 3u, v->x, v->y, v->z, v->yaw, &t, focus);
+        if (model && !(v->mat_count && actor_mesh_draw_skinned(models[model - 1], skins[model - 1],
+                                                               (const int32_t *)v->mats, v->mat_count)))
+            draw_pose(model - 1, v->frame * 3u, v->x, v->y, v->z, v->yaw, &t, focus);
     }
 #endif
 }

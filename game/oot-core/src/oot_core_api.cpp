@@ -22,6 +22,7 @@
 #include "libu64/pad.h"
 #include "object.h"
 #include "z_lib.h"
+#include "sys_matrix.h"
 #include "player.h"
 #include "oot_core_api.h"
 #include "oot_scene_blob.h"
@@ -207,6 +208,7 @@ static int oot_core_play_init(void* block, unsigned int bytes, int scene_id, con
     EffectSs_InitInfo(play, 0x55);
     Regs_InitData(play);
     Message_Init(play);
+    Matrix_Init(&play->state); /* Play_Init: sys_matrix stack (draws, some updates) */
     CollisionCheck_InitContext(play, &play->colChkCtx);
     AnimTaskQueue_Reset(&play->animTaskQueue);
     sScene = (const OotSceneBlob*)scene;

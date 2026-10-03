@@ -219,8 +219,22 @@ Steps (in order):
     Kakariko, Death Mountain trail, a dungeon room with pots): props appear at the right
     place/size/orientation; sword breaks a pot (drop appears). If props are mirrored or
     tipped: report it (pitch/roll sign in actor_mesh_draw_euler is the first suspect).
- 5. Next: more generic actors (crates, trees, torches), En_Sa (needs z_demo cues),
-    skeleton (flex) meshes per limb, then other areas.
+ 5c. Real NPC animation by runtime skinning, BUILT, runtime NOT checked (API v13):
+    - Matrix_Init now runs in play_init (was missing: any Matrix_* call wrote through
+      NULL; affected En_Kanban updates and every draw).
+    - En_Ko/En_Md are drawn for real each step (Actor_Draw -> SkelAnime_DrawFlex); the
+      blob copies the flex matrix array (gSPSegment 0x0D, dListCount entries) per actor
+      and exposes it in OotCoreNpcView.mats.
+    - build_npc_models.py writes NPCnn.SKN (per vertex: matrix slot = depth-first index
+      of limbs with a DL, limb-local position). C actor_mesh_draw_skinned transforms the
+      baked model's vertices with the live matrices: every animation, blink-free pose and
+      head/torso turn comes from the decomp. Falls back to the baked idle clip when the
+      table or matrices are missing.
+    - Scratch opaque display list 64 KB (RAM_LOW_OOTPLAY 0x78000).
+    Human check: kids/Mido animate like OoT (sitting, standing, digging...), turn heads,
+    no exploded limbs. Exploded or inside-out limbs = slot order mismatch (report which
+    kid type).
+ 5. Next: more generic actors, En_Sa (needs z_demo cues), other areas.
     Archive the C Kokiri child/Mido/sign code to legacy/ once confirmed.
  6. Later: z_demo cutscenes, z_player, z_camera. Then archive C counterparts.
 

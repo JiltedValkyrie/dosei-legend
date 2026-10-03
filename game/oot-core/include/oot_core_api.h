@@ -17,7 +17,7 @@
 #include "oot_core_host.h"
 
 #define OOT_CORE_MAGIC 0x4F4F5443u /* 'OOTC' */
-#define OOT_CORE_VERSION 12u
+#define OOT_CORE_VERSION 13u
 
 /* PlayState (~78 KB with Fx) + TwoHeadArena + ZeldaArena come from one block
  * the host allocates, so they never take the blob's fixed cart carve. */
@@ -45,6 +45,11 @@ typedef struct OotCoreNpcView {
     unsigned short frame;        /* skelAnime.curFrame, whole frames */
     unsigned char alpha;         /* model alpha (fade), 0 = hidden */
     unsigned char flags;         /* OOT_CORE_VIEW_DRAWN */
+    /* The real flex draw's limb matrices (SkelAnime_DrawFlex, one per limb
+     * with a display list, depth first), OoT world space, 12 ints each:
+     * 3x3 rotation*scale rows then translation, Q16. NULL if not drawn. */
+    const int* mats;
+    unsigned char mat_count;
 } OotCoreNpcView;
 
 /* z_message state for the VDP2 text box (route step 4). The blob lays the

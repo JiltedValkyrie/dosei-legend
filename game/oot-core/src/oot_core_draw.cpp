@@ -52,6 +52,18 @@ static const s16 sGenericDrawIds[] = {
 #include "../../build/oot-core/generic_draw_ids.h"
 };
 
+/* Skinned NPCs (npc_draw draws them from these matrices). */
+static const s16 sSkinIds[] = { ACTOR_EN_KO, ACTOR_EN_MD };
+#define SKIN_ACTORS_MAX 16
+#define SKIN_LIMBS_MAX 24
+typedef struct SkinCapture {
+    Actor* actor;
+    s32 count;
+    s32 mats[SKIN_LIMBS_MAX][12];
+} SkinCapture;
+static SkinCapture sSkins[SKIN_ACTORS_MAX];
+static s32 sSkinCount;
+
 static OotCoreDrawItem sItems[OOT_CORE_DRAW_ITEMS_MAX];
 static s32 sItemCount;
 static u32 sDropped; /* items over the buffer this frame */
@@ -72,6 +84,7 @@ static s32 Draw_IsGeneric(s16 id) {
 
 typedef struct Walker {
     uintptr_t segments[16];
+    uintptr_t skinBase; /* first gSPSegment(0x0D) = flex matrix array */
     MtxF stack[WALK_MTX_DEPTH];
     s32 depth; /* stack[depth] = current modelview */
     s16 actorId;
@@ -231,6 +244,9 @@ static void Walk_List(Walker* w, const Gfx* g, s32 dlDepth) {
             case G_MOVEWORD:
                 if (((w0 >> 16) & 0xFF) == G_MW_SEGMENT) {
                     w->segments[((w0 & 0xFFFF) / 4) & 0xF] = w1;
+                    if (((w0 & 0xFFFF) / 4) == 0xD && w->skinBase == 0) {
+                        w->skinBase = w1;
+                    }
                 }
                 break;
             case G_TEXRECT:
@@ -264,6 +280,46 @@ static void Walk_Range(Walker* w, const Gfx* from, const Gfx* to) {
     }
 }
 
+static s32 Draw_IsSkinned(s16 id) {
+    u32 i;
+
+    for (i = 0; i < ARRAY_COUNT(sSkinIds); i++) {
+        if (sSkinIds[i] == id) {
+            return true;
+        }
+    }
+    return false;
+}
+
+extern SkelAnime* OotCore_ActorSkel(Actor* actor); /* oot_core_views.cpp */
+
+/* Mtx -> 12 Q16 ints: rows of the column-vector rotation*scale, then t. */
+static void Skin_Store(const Mtx* mtx, s32* out) {
+    MtxF mf;
+    s32 r, c;
+
+    Matrix_MtxToMtxF((Mtx*)mtx, &mf);
+    for (r = 0; r < 3; r++) {
+        for (c = 0; c < 3; c++) {
+            out[r * 3 + c] = (s32)(mf.mf[c][r] * 65536.0f);
+        }
+        out[9 + r] = (s32)(mf.mf[3][r] * 65536.0f);
+    }
+}
+
+const int* OotCore_SkinMats(Actor* actor, unsigned char* count) {
+    s32 i;
+
+    for (i = 0; i < sSkinCount; i++) {
+        if (sSkins[i].actor == actor) {
+            *count = (unsigned char)sSkins[i].count;
+            return &sSkins[i].mats[0][0];
+        }
+    }
+    *count = 0;
+    return NULL;
+}
+
 /* Actor_DrawAll's actor loop for the generic-draw actors only (culling flag
  * from OotCore_CullActors). Returns the item count. */
 s32 OotCore_DrawActors(PlayState* play) {
@@ -273,9 +329,7 @@ s32 OotCore_DrawActors(PlayState* play) {
 
     sItemCount = 0;
     sDropped = 0;
-    if (ARRAY_COUNT(sGenericDrawIds) <= 1) { /* only the -1 sentinel */
-        return 0;
-    }
+    sSkinCount = 0;
     for (i = 0; i < ACTORCAT_MAX; i++) {
         Actor* actor;
 
@@ -285,8 +339,67 @@ s32 OotCore_DrawActors(PlayState* play) {
             u32 s;
 
             if (actor->init != NULL || actor->draw == NULL || actor->update == NULL ||
-                !(actor->flags & (ACTOR_FLAG_DRAW_CULLING_DISABLED | ACTOR_FLAG_INSIDE_CULLING_VOLUME)) ||
-                !Draw_IsGeneric(actor->id)) {
+                !(actor->flags & (ACTOR_FLAG_DRAW_CULLING_DISABLED | ACTOR_FLAG_INSIDE_CULLING_VOLUME))) {
+                continue;
+            }
+            if (Draw_IsSkinned(actor->id)) {
+                SkelAnime* skel = OotCore_ActorSkel(actor);
+                SkinCapture* cap;
+                s32 n;
+
+                if (skel == NULL || sSkinCount >= SKIN_ACTORS_MAX ||
+                    (u8*)gfx->polyOpa.d - (u8*)gfx->polyOpa.p < 0x1800 ||
+                    (u8*)gfx->polyXlu.d - (u8*)gfx->polyXlu.p < 0x800) {
+                    continue;
+                }
+                opa0 = gfx->polyOpa.p;
+                xlu0 = gfx->polyXlu.p;
+                Actor_Draw(play, actor);
+                actor->isDrawn = true;
+                for (s = 0; s < 16; s++) {
+                    w.segments[s] = gSegments[s];
+                }
+                w.skinBase = 0;
+                SkinMatrix_SetTranslate(&w.stack[0], 0.0f, 0.0f, 0.0f);
+                w.depth = 0;
+                w.actorId = actor->id;
+                w.xlu = 0;
+                /* Walk only to find the matrix array; emits nothing (the
+                 * limb DLs are not generic placeholders the C side knows). */
+                {
+                    const Gfx* g;
+                    /* Opaque, or translucent while fading (alpha < 255). */
+                    for (g = opa0; g < gfx->polyOpa.p && w.skinBase == 0; g++) {
+                        u32 w0 = g->words.w0;
+                        if ((u8)(w0 >> 24) == G_MOVEWORD && ((w0 >> 16) & 0xFF) == G_MW_SEGMENT &&
+                            ((w0 & 0xFFFF) / 4) == 0xD) {
+                            w.skinBase = g->words.w1;
+                        }
+                    }
+                    for (g = xlu0; g < gfx->polyXlu.p && w.skinBase == 0; g++) {
+                        u32 w0 = g->words.w0;
+                        if ((u8)(w0 >> 24) == G_MOVEWORD && ((w0 >> 16) & 0xFF) == G_MW_SEGMENT &&
+                            ((w0 & 0xFFFF) / 4) == 0xD) {
+                            w.skinBase = g->words.w1;
+                        }
+                    }
+                }
+                if (w.skinBase == 0) {
+                    continue;
+                }
+                cap = &sSkins[sSkinCount++];
+                cap->actor = actor;
+                n = skel->dListCount;
+                if (n > SKIN_LIMBS_MAX) {
+                    n = SKIN_LIMBS_MAX;
+                }
+                for (s = 0; s < (u32)n; s++) {
+                    Skin_Store((const Mtx*)Walk_Resolve(&w, w.skinBase) + s, cap->mats[s]);
+                }
+                cap->count = n;
+                continue;
+            }
+            if (!Draw_IsGeneric(actor->id)) {
                 continue;
             }
             /* Leave room: one actor's lists plus its GRAPH_ALLOC matrices. */
@@ -304,6 +417,7 @@ s32 OotCore_DrawActors(PlayState* play) {
                 w.segments[s] = gSegments[s];
             }
             w.segments[6] = (uintptr_t)play->objectCtx.slots[actor->objectSlot].segment;
+            w.skinBase = 0;
             SkinMatrix_SetTranslate(&w.stack[0], 0.0f, 0.0f, 0.0f);
             w.depth = 0;
             w.actorId = actor->id;

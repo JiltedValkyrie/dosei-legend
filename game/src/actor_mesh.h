@@ -17,6 +17,12 @@ bool actor_mesh_upload(actor_mesh_t *mesh);
 ** scale Q16 (oot-core draw items). */
 void actor_mesh_draw_euler(actor_mesh_t *mesh, int32_t x, int32_t y, int32_t z,
     int16_t yaw, int16_t pitch, int16_t roll, int32_t sx, int32_t sy, int32_t sz);
+/* Runtime skinning (oot-core NPCs): each vertex = mats[slot] * local, from
+** an NPCnn.SKN table (build_npc_models.py) and the decomp flex draw's limb
+** matrices (12 Q16 ints each, OoT world space). False = not drawn (table
+** does not match the mesh or too few matrices): use the baked clip. */
+bool actor_mesh_draw_skinned(actor_mesh_t *mesh, const unsigned char *skin,
+                             const int32_t *mats, unsigned int count);
 bool actor_mesh_load_scroll(actor_mesh_t *mesh, const char *file);
 /* Replace only the clip on a loaded mesh: same geometry, same uploaded
 ** tiles, different .ANM/.TRK. `stem` is the file name without extension. */

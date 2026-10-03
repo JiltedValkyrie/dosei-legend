@@ -185,6 +185,16 @@ def build(oot, rom_dir, out, model):
                    for owner, local in zip(owners, locals_)]
 
     write_track(dest.with_suffix('.ANM'), track())
+    # Runtime skinning (oot-core): per vertex, the slot of its limb in the
+    # flex skeleton's matrix array (SkelAnime_DrawFlex writes one Mtx per limb
+    # with a display list, depth first: lists.matrix_limbs order) and its
+    # limb-local position in object units. The decomp draw supplies the
+    # matrices, so every animation and head/torso turn is the real one.
+    slots = [lists.matrix_limbs.index(owner) for owner in owners]
+    skin = struct.pack('>4sII', b'SKN1', len(owners), len(lists.matrix_limbs))
+    skin += bytes(slots) + bytes((-len(slots)) % 2)
+    skin += b''.join(struct.pack('>3h', *(round(c) for c in local)) for local in locals_)
+    dest.with_suffix('.SKN').write_bytes(skin)
     # The source head override rotates in the head parent's frame BEFORE
     # applying the head joint translation/rotation. Retain that frame, not
     # a guessed world-up pivot, for integer runtime tracking.

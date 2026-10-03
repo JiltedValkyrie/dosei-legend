@@ -422,6 +422,10 @@ void action_audio_decomp_sfx(unsigned int sfx_id)
     case 0x4803: rupee_start(); break;                 /* NA_SE_SY_GET_RUPY */
     case 0x4824: play(ACTION_GET_ITEM, 27); break;     /* NA_SE_SY_GET_ITEM */
     case 0x480B: play(ACTION_HP_RECOVER, 27); break;   /* NA_SE_SY_HP_RECOVER */
+    case 0x4818:                                       /* NA_SE_SY_MESSAGE_PASS */
+    case 0x482E:                                       /* NA_SE_SY_MESSAGE_END */
+    case 0x4808:                                       /* NA_SE_SY_DECIDE */
+    case 0x4809: play(ACTION_MESSAGE, 27); break;      /* NA_SE_SY_CURSOR */
     default: break;
     }
 }

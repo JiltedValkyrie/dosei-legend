@@ -23,6 +23,8 @@
 
 extern PlayState* gOotCorePlay; /* oot_core_api.cpp */
 unsigned int OotCore_TalkState(void);
+int OotCore_DrawItems(const OotCoreDrawItem** out);
+static const OotCoreDrawItem* sItemsView;
 
 static OotCoreMessageView sMsgView;
 static u32 sMsgHash;
@@ -170,6 +172,18 @@ const OotCoreMessageView* OotCore_MessageView(void) {
 
 #define NPC_VIEW_MAX 16
 static OotCoreNpcView sNpcView[NPC_VIEW_MAX];
+const int* OotCore_SkinMats(Actor* actor, unsigned char* count); /* oot_core_draw.cpp */
+
+SkelAnime* OotCore_ActorSkel(Actor* actor) {
+    switch (actor->id) {
+        case ACTOR_EN_KO:
+            return &((EnKo*)actor)->skelAnime;
+        case ACTOR_EN_MD:
+            return &((EnMd*)actor)->skelAnime;
+        default:
+            return NULL;
+    }
+}
 
 /* NPCs whose actor struct the view knows. Others are left to the C game. */
 int OotCore_NpcView(const OotCoreNpcView** out) {
@@ -218,6 +232,7 @@ int OotCore_NpcView(const OotCoreNpcView** out) {
         v->z = (s32)actor->world.pos.z;
         v->yaw = (u16)actor->shape.rot.y;
         v->flags = (actor->draw != NULL) ? OOT_CORE_VIEW_DRAWN : 0;
+        v->mats = OotCore_SkinMats(actor, &v->mat_count);
         n++;
     }
     return n;
@@ -292,6 +307,9 @@ const char* OotCore_DebugText(void) {
     PUT_HEX(play->colChkCtx.colACCount, 2);
     *p++ = '/';
     PUT_HEX(play->colChkCtx.colOCCount, 2);
+    *p++ = ' ';
+    *p++ = 'd';
+    PUT_HEX(OotCore_DrawItems(&sItemsView), 2);
 #undef PUT_HEX
     *p = '\0';
     return sText;

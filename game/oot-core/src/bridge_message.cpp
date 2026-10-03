@@ -133,7 +133,7 @@ s32 AudioOcarina_MemoryGameNextNote(void) {
 
 /* ---- graph.c: scratch display lists for Message_Draw (never executed) ---- */
 #define OVERLAY_GFX 256
-#define POLY_OPA_GFX 4096
+#define POLY_OPA_GFX 8192
 #define POLY_XLU_GFX 1024
 /* In the host's play block (low work RAM), not the blob's cart carve. */
 static Gfx* sOverlayGfx;
