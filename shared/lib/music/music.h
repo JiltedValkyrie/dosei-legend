@@ -42,6 +42,9 @@ typedef struct {
 
 /** @brief Load @p bank and start playing it. Installs the vblank driver. */
 bool music_init(const music_bank_t *bank);
+/* Optional caller-owned temporary buffer: loads boot PCM in one CD request.
+ * Capacity includes jo_fs_read_file_ptr's trailing byte; not retained. */
+bool music_init_with_scratch(const music_bank_t *bank, void *scratch, unsigned int capacity);
 /* Resident musical phrases. Selector runs at the phrase boundary in VBlank;
  * it must use integer state only, with no allocation or file I/O. */
 void music_set_sections(const music_bank_t *bank,const unsigned short (*ranges)[2],
@@ -82,6 +85,9 @@ const music_bank_t *music_current(void);
 
 /** @brief True while a switch is fading or streaming. */
 bool music_busy(void);
+/* Main thread only: relinquish CD read-ahead before another file access.
+ * Resumed by music_service; false means the CD could not be released. */
+bool music_yield_cd(void);
 
 /** @brief True if a switch failed; the player is left silent and idle. */
 bool music_failed(void);

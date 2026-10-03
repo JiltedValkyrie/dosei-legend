@@ -11,6 +11,7 @@ this counts everything that competes:
   * the 32-byte CLUT every tile carries, whether or not it is unique
   * 8-byte alignment, because SGL addresses sprite character data in 8-byte
     units and a tile that is not aligned wastes the remainder
+  * 32-byte alignment for CLUT addresses (CMDCOLR low two bits must be zero)
   * a reservation for the VDP1 command table below our texture base
   * Link's resident tiles, which are loaded alongside the scene
 
@@ -89,8 +90,12 @@ ACTOR_SCENES = ('spot04', 'ydan', 'ydan_boss', 'spot10', 'spot05')
 def tile_bytes(width, height):
     """Bytes one 4bpp tile costs, CLUT and alignment included."""
     pixels = width * height // 2
-    total = pixels + CLUT_BYTES
-    return (total + ALIGN - 1) // ALIGN * ALIGN
+    return bank_bytes(pixels, 1)
+
+
+def bank_bytes(pixels, tiles):
+    """One aligned bank: packed pixels, padding, then contiguous CLUTs."""
+    return (pixels + CLUT_BYTES - 1) // CLUT_BYTES * CLUT_BYTES + tiles * CLUT_BYTES
 
 
 class Budget(object):

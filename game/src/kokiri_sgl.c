@@ -281,15 +281,19 @@ static bool __attribute__((optimize("Os"))) mesh_load(const char *file, unsigned
     unsigned char   *base = (unsigned char *)JO_VDP1_VRAM
                             + texture_base;
     unsigned int     clut_bytes = tile_count * 32;
+    /* CMDCOLR is in eight-byte units, but its low two bits must be zero:
+     * the LUT itself needs a 32-byte boundary (VDP1 manual 6.4). */
+    unsigned int     clut_offset = ((texture_base + vram_used + pixel_bytes + 31u)
+                                    & ~31u) - texture_base - vram_used;
     unsigned char   *pixel_vram, *clut_vram;
     char            *loaded;
     int              length = 0;
     unsigned int     i, sprite_base = sprite_next;
 
-    if (vram_used + pixel_bytes + clut_bytes > TEXTURE_CAPACITY)
+    if (vram_used + clut_offset + clut_bytes > TEXTURE_CAPACITY)
     {
         jo_core_error("%s needs %d more VDP1 bytes, %d used of %d", file,
-                      (int)(pixel_bytes + clut_bytes), (int)vram_used,
+                      (int)(clut_offset + clut_bytes), (int)vram_used,
                       (int)GAME_TEXTURE_BYTES);
         return (false);
     }
@@ -337,14 +341,23 @@ static bool __attribute__((optimize("Os"))) mesh_load(const char *file, unsigned
         return (false);
     }
 
-    /* CLUTs sit directly behind the pixels. jo_fs_read_file_ptr() also writes a
-    ** NUL at stream[fsize], i.e. the first CLUT byte; this upload overwrites it,
-    ** and the budget checked above already counts both. */
-    clut_vram = pixel_vram + pixel_bytes;
+    /* The file reader's trailing NUL lands in padding or the first CLUT byte;
+     * the palette upload replaces it. Count padding in the allocation too. */
+    clut_vram = pixel_vram + clut_offset;
     if (pdata == &kokiri_pdata) forest_palette = clut_vram;
     jo_dma_copy((void *)cluts, clut_vram, clut_bytes);
     slDMAWait();
-    vram_used += pixel_bytes + clut_bytes;
+    /* Read the actual VRAM, not just the disc palette. This separates
+     * transfer corruption from VDP1/VDP2 interpretation on accurate targets. */
+    for (i = 0; i < clut_bytes / 2; ++i) {
+        unsigned short got = ((volatile unsigned short *)clut_vram)[i];
+        unsigned short want = ((const unsigned short *)cluts)[i];
+        if (got != want) {
+            jo_core_error("%s CLUT %u: %04x expected %04x", file, i, got, want);
+            return false;
+        }
+    }
+    vram_used += clut_offset + clut_bytes;
 
     /* Publish one SGL TEXTURE entry per tile. __jo_sprite_def is the table
     ** handed to slInitSystem() in jo_core_init_vdp(), so an ATTR texno is just
@@ -549,7 +562,7 @@ static bool __attribute__((optimize("Os"))) fairy_load(void)
 }
 
 #ifdef KOKIRI_STREAM_ROOMS
-typedef struct { void *mesh, *pixels; int mesh_bytes, pixel_bytes; } opening_cache_t;
+typedef struct { void *pixels; int pixel_bytes; } opening_cache_t;
 static opening_cache_t opening_cache[10];
 
 void kokiri_opening_cache_free(void)
@@ -559,9 +572,8 @@ void kokiri_opening_cache_free(void)
     opening_pixel_pool = 0;
     opening_pixel_pool_bytes = 0;
     for (i = 0; i < 10; ++i) {
-        if (opening_cache[i].mesh) jo_free(opening_cache[i].mesh);
         if (opening_cache[i].pixels) jo_free(opening_cache[i].pixels);
-        opening_cache[i].mesh = opening_cache[i].pixels = 0;
+        opening_cache[i].pixels = 0;
     }
 }
 
@@ -573,13 +585,14 @@ bool __attribute__((optimize("Os"))) kokiri_opening_cache_load(void)
     opening_pixel_pool = jo_fs_read_file_ptr("NAVIPOOL.TEX", 0, &opening_pixel_pool_bytes);
     if (!opening_pixel_pool) return false;
     for (i = 0; i < 10; ++i) {
-        char mesh[] = "S2R0.MSH", pixels[] = "S2R0.MAP";
-        mesh[3] = pixels[3] = asset_name_digit(i);
-        asset_loading(mesh);
-        opening_cache[i].mesh = jo_fs_read_file_ptr(mesh, 0, &opening_cache[i].mesh_bytes);
+        char pixels[] = "S2R0.MAP";
+        pixels[3] = asset_name_digit(i);
+        /* Keep the shared pixel pool and tiny maps resident. Ten meshes cost
+         * 737 KB alongside oot-core; each room's mesh can instead use the
+         * existing whole-file scratch read at its shot boundary. */
         asset_loading(pixels);
         opening_cache[i].pixels = jo_fs_read_file_ptr(pixels, 0, &opening_cache[i].pixel_bytes);
-        if (!opening_cache[i].mesh || !opening_cache[i].pixels) {
+        if (!opening_cache[i].pixels) {
             kokiri_opening_cache_free();
             jo_core_error("Opening cache does not fit RAM cart");
             return false;
@@ -718,7 +731,9 @@ static void relocate_resident(unsigned int next_base)
             __jo_sprite_pic[i].data = (unsigned char *)__jo_sprite_pic[i].data + delta;
     }
     for (i = 0; i < (unsigned int)link_pdata.nbPolygon; ++i)
-        link_pdata.attbl[i].colno += delta / 8;
+        if ((link_pdata.attbl[i].dir & 7) < 4 &&
+            (link_pdata.attbl[i].atrb & 0x38) == CL16Look)
+            link_pdata.attbl[i].colno += delta / 8;
     texture_base = next_base;
     invalidate_equipped();
 }
@@ -985,7 +1000,7 @@ static bool __attribute__((optimize("Os"))) field_stream_load(unsigned int scene
         pools += field_buckets[i].size * field_buckets[i].slots;
     relocate_resident(GAME_TEXTURE_BASE);
     capacity = 0x7fef8u - GAME_TEXTURE_BASE;
-    required = resident_bytes + pools + field_head->slots * 32;
+    required = ((resident_bytes + pools + 31u) & ~31u) + field_head->slots * 32;
     if (required > capacity || resident_sprites + field_head->slots > JO_MAX_SPRITE) {
         field_stream_free();
         jo_core_error("%s: VRAM %d/%d, sprites %d/%d", name, (int)required, (int)capacity,
@@ -1014,9 +1029,10 @@ static bool __attribute__((optimize("Os"))) field_stream_load(unsigned int scene
         field_bucket_vram[i] = at;
         at += field_buckets[i].size * field_buckets[i].slots;
     }
+    at = (at + 31u) & ~31u;
     field_clut_vram = (unsigned char *)JO_VDP1_VRAM + at;
     forest_palette = field_clut_vram;
-    vram_used += pools + field_head->slots * 32;
+    vram_used = required;
     sprite_next += field_head->slots;
     if (sprite_next > kokiri_sprite_peak) kokiri_sprite_peak = sprite_next;
     forest_tile_count = field_head->slots;
@@ -1080,16 +1096,13 @@ static bool __attribute__((optimize("Os"))) room_load_bank(unsigned int scene, u
     bool ok;
     if (!asset_scene_name(mesh_name, scene, (int)room, "MSH") ||
         !asset_scene_name(pixel_name, scene, (int)room, "TEX") || !kokiri_bank_allocate()) return false;
-    const unsigned char *cached = scene == 2 && room < 10 ? opening_cache[room].mesh : 0;
-    bool from_cache = cached != 0;
-    int mesh_bytes = from_cache ? opening_cache[room].mesh_bytes : 0;
-    if (!from_cache) {
-        /* Whole .MSH in one CD read; then parse it like the opening cache. */
-        asset_loading(mesh_name);
-        cached = (const unsigned char *)ram_cart_load_scratch(mesh_name, &mesh_bytes);
-        asset_loading_done();
-        if (!cached) return false;
-    }
+    const unsigned char *cached;
+    int mesh_bytes = 0;
+    /* Whole .MSH in one CD read; no permanent copy in the heap. */
+    asset_loading(mesh_name);
+    cached = (const unsigned char *)ram_cart_load_scratch(mesh_name, &mesh_bytes);
+    asset_loading_done();
+    if (!cached) return false;
     if (mesh_bytes < (int)sizeof(header) || !room_read(&file, header, sizeof(header), &cached))
         return false;
     expected = 32 + header[1]*12 + header[2]*32 + header[3]*44 +
@@ -1104,7 +1117,8 @@ static bool __attribute__((optimize("Os"))) room_load_bank(unsigned int scene, u
         header[5] > KOKIRI_OBJECT_COUNT || header[6] > MESH_LOD_MAX ||
         (header[6] && !ram_cart_fixed(RAM_CART_MESH_LOD_OFFSET, RAM_CART_MESH_LOD_BYTES)) ||
         (unsigned int)mesh_bytes != expected ||
-        (from_cache && (unsigned int)opening_cache[room].pixel_bytes != header[3]*4)) {
+        (scene == 2 && room < 10 && opening_cache[room].pixels &&
+         (unsigned int)opening_cache[room].pixel_bytes != header[3]*4)) {
         return false;
     }
     /* Check the destination layout, before relocating or overwriting a bank.
@@ -1147,7 +1161,7 @@ static bool __attribute__((optimize("Os"))) room_load_bank(unsigned int scene, u
     if (header[3] &&
         !mesh_load(pixel_name,header[4],kokiri_tiles,header[3],
                    (const unsigned short (*)[16])kokiri_cluts,&kokiri_pdata,header[2],
-                   from_cache ? opening_cache[room].pixels : 0))
+                   scene == 2 && room < 10 ? opening_cache[room].pixels : 0))
         return false;
     forest_vertex_count = kokiri_pdata.nbPoint = header[1];
     forest_polygon_count = kokiri_pdata.nbPolygon = header[2];
@@ -1356,6 +1370,12 @@ static void         submit(PDATA *pdata, unsigned int bit)
     ** frame's polygon or vertex budget is exhausted. Ignoring it is how a
     ** partially drawn scene could look complete, so every refusal is recorded. */
     unsigned i;
+    /* CMDPMOD colour mode describes texture fetches. Sega requires mode 0
+     * for polygons/lines, even when CMDCOLR holds RGB555. Old backend assets
+     * incorrectly used texture mode 5 for their untextured RGB faces. */
+    for (i=0;i<(unsigned)pdata->nbPolygon;++i)
+        if ((pdata->attbl[i].dir & 7) >= 4)
+            pdata->attbl[i].atrb = (pdata->attbl[i].atrb & ~0x38u) | ECdis | SPdis;
     if(hit_filter)for(i=0;i<(unsigned)pdata->nbPolygon;++i){
         pdata->attbl[i].atrb|=CL_Gouraud;
         pdata->attbl[i].gstb=(texture_base+hit_table_offset)/8+hit_filter-1;
@@ -2542,7 +2562,7 @@ void kokiri_actor_tiles_reset(void)
 #endif
 }
 
-unsigned int        kokiri_bank_tile_upload(const void *pixels,
+unsigned int __attribute__((optimize("Os"))) kokiri_bank_tile_upload(const void *pixels,
                                             const void *clut,
                                             unsigned int width,
                                             unsigned int height,
@@ -2550,14 +2570,16 @@ unsigned int        kokiri_bank_tile_upload(const void *pixels,
 {
 #ifdef KOKIRI_STREAM_ROOMS
     unsigned int   bytes = width * height / 2;   /* 4bpp */
+    unsigned int   padded = ((texture_base + vram_used + bytes + 31u) & ~31u)
+                            - texture_base - vram_used;
     unsigned int   clut_bytes = 32;              /* 16 entries of 15-bit RGB */
     unsigned char *vram = (unsigned char *)JO_VDP1_VRAM + texture_base
                           + vram_used;
     jo_texture_definition *texture;
     unsigned int   slot, i;
 
-    if (!width || !height ||
-        vram_used + bytes + clut_bytes > TEXTURE_CAPACITY ||
+    if (!width || width > 504 || (width & 7) || !height || height > 255 ||
+        vram_used + padded + clut_bytes > TEXTURE_CAPACITY ||
         sprite_next >= JO_MAX_SPRITE)
         return (KOKIRI_TILE_NONE);
     {
@@ -2565,16 +2587,15 @@ unsigned int        kokiri_bank_tile_upload(const void *pixels,
 
         for (i = 0; i < bytes; ++i)
             vram[i] = source[i];
+        for (; i < padded; ++i) vram[i] = 0;
     }
-    /* The CLUT goes directly behind its tile, as mesh_load() places a bank's.
-    ** A 4bpp tile is meaningless without it: uploading pixels alone leaves the
-    ** hardware reading whatever palette happened to be at colno, which is what
-    ** made the riders come out in the wrong colours entirely. */
+    /* As in mesh_load(), align the CLUT's absolute VRAM address to 32 bytes.
+     * Eight-byte texture alignment alone corrupts palette fetches on hardware. */
     {
         const unsigned char *source = (const unsigned char *)clut;
 
         for (i = 0; i < clut_bytes; ++i)
-            vram[bytes + i] = source[i];
+            vram[padded + i] = source[i];
     }
     slot = sprite_next++;
     if (sprite_next > kokiri_sprite_peak) kokiri_sprite_peak = sprite_next;
@@ -2587,8 +2608,8 @@ unsigned int        kokiri_bank_tile_upload(const void *pixels,
     __jo_sprite_pic[slot].color_mode = COL_16;
     __jo_sprite_pic[slot].data = vram;
     if (colno)
-        *colno = VRAM_UNITS((unsigned int)(vram + bytes) - JO_VDP1_VRAM);
-    vram_used += bytes + clut_bytes;
+        *colno = VRAM_UNITS((unsigned int)(vram + padded) - JO_VDP1_VRAM);
+    vram_used += padded + clut_bytes;
     return (slot);
 #else
     (void)pixels; (void)clut; (void)width; (void)height; (void)colno;

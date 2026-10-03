@@ -253,8 +253,21 @@ bool __attribute__((optimize("Os"))) npc_draw_load(unsigned int scene)
         char file[] = "NPC00.BIN";
         if (kokiri_npcs[i].scene != scene) continue;
         if (model >= NPC_MODEL_COUNT) { npc_draw_free(); return false; }
-        if (models[model]) continue;
+        if (models[model] || SPR(model)) continue;
         file[3] = '0' + model / 10; file[4] = '0' + model % 10;
+#ifdef DOSEI_CLEAN_TEST
+        {
+            char sprite[] = "NPC00.SPR";
+            int length = 0;
+            sprite[3] = file[3]; sprite[4] = file[4];
+            asset_loading(sprite);
+            if (GFS_NameToId((Sint8 *)sprite) >= 0)
+                spr[model] = (unsigned char *)jo_fs_read_file(sprite, &length);
+            /* Saria still needs her mesh for the greeting clips. Other
+             * sprite NPCs must not also retain BIN/ANM/TRK/SKN copies. */
+            if (spr[model] && model != 1) continue;
+        }
+#endif
         asset_loading(file);
         models[model] = actor_mesh_load(file);
         if (!models[model]) { npc_draw_free(); return false; }
@@ -297,7 +310,7 @@ bool __attribute__((optimize("Os"))) npc_draw_load(unsigned int scene)
     for (i = 0; i < NPC_MODEL_COUNT; ++i) {
         char file[] = "NPC00.SPR";
         int length = 0;
-        if (!models[i]) continue;
+        if (!models[i] || spr[i]) continue;
         file[3] = '0' + i / 10; file[4] = '0' + i % 10;
         if (GFS_NameToId((Sint8 *)file) >= 0) spr[i] = (unsigned char *)jo_fs_read_file(file, &length);
     }

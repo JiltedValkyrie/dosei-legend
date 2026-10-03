@@ -47,6 +47,7 @@
 #include "ram_cart.h"
 #include "ram_low.h"
 #include "heap_profile.h"
+#include "sgl_registers.h"
 #include "actor_sys.h"
 #include "npc_draw.h"
 #include "save_device.h"
@@ -477,6 +478,7 @@ static void         viewer_draw(void)
         } else if (debug_visible) {
             jo_printf(0, 0, "                                        ");
             jo_printf(0, 1, "                                        ");
+            jo_printf(0, 2, "                                        ");
             debug_visible = false;
         }
     }
@@ -523,6 +525,32 @@ static void         viewer_draw(void)
         jo_printf(1, JO_TV_HEIGHT / 8 - 1, "VRAM %3u%%   CPU~ %3u%%   ",
                   kokiri_scene_vram_percent(), cpu);
     }
+    /* Last text writer: available on Clean, title, menus and cutscenes too.
+     * demo_clock is normalized to 60 Hz, independent of rendering rate/PAL.
+     * Require release after firing so a long hold cannot toggle repeatedly. */
+    {
+        static unsigned int hold_start;
+        static bool holding, latched, visible;
+        unsigned int now = demo_clock();
+        bool chord = jo_is_pad1_available() &&
+            jo_is_pad1_key_pressed(JO_KEY_L) && jo_is_pad1_key_pressed(JO_KEY_R);
+        if (!chord) holding = latched = false;
+        else if (!holding) { holding = true; hold_start = now; }
+        else if (!latched && now - hold_start >= 60u) {
+            latched = true;
+            visible = !visible;
+            if (!visible) jo_printf(0, 2, "                                        ");
+        }
+        if (visible) {
+            /* SPCTL/PRISA are write-only. Read this SDK's SGL shadow instead:
+             * slInitScroll copies its register table to GBR+192;
+             * slSpriteColMode accesses SPCTL at GBR+416. These are intended
+             * settings, not proof of the hardware's latched register state. */
+            jo_printf(0, 2, "SGL SP %04X PR %04X END %X ",
+                      *sgl_vdp2_shadow(0xe0),
+                      *sgl_vdp2_shadow(0xf0), JO_VDP1_EDSR);
+        }
+    }
     frame_timer_frame_end();
     frame_timer_begin(FRAME_PHASE_SYNC);
 }
@@ -532,8 +560,9 @@ static void         viewer_draw(void)
 **
 ** OoT fills the screen with a coloured quad and ramps its alpha
 ** (z_demo.c:1550-1574). VDP2 offers the same effect far more cheaply: a
-** negative colour offset darkens every layer it is applied to, so a black fill
-** is a ramp from 0 to -255 and needs no polygon at all.
+** black line-colour screen supplies the second colour for VDP2 alpha blending.
+** Subtracting alpha as a colour offset clips dark pixels to black instead of
+** fading them (60% of the house panorama was clipped at alpha 100).
 **
 ** Applied to the scene layers and the sprites, never to NBG0: the text layer
 ** has to stay legible over a darkened scene, and the narration is drawn while
@@ -542,22 +571,34 @@ static void         viewer_draw(void)
 ** A fully opaque fill is handled earlier by skipping the scene entirely, so
 ** this only has to cover the partial values.
 */
-static void         cutscene_fade(void)
+static void __attribute__((optimize("Os"))) cutscene_fade(void)
 {
-    static int last_level = -999;
-    static bool last_hidden;
+    static int last_key = -1;
     bool hidden = cutscene_hides_scene();
     unsigned int alpha = cutscene_fade_alpha();
     int flash = cutscene_lightning();
     if (!cutscene_is_playing() && player_items_flash()) flash = (int)player_items_flash() * 255 / 6;
-    Sint16 level = (Sint16)(flash - (int)alpha);
-
-    if (alpha && cutscene_fade_colour() != CUTSCENE_FADE_BLACK)
-        level = (Sint16)(flash + (int)alpha);
+    bool black = cutscene_fade_colour() == CUTSCENE_FADE_BLACK;
+    int key = (int)alpha | (flash << 8) | (black << 16) | (hidden << 17);
+    Sint16 level = (Sint16)(flash + (black ? 0 : (int)alpha));
     if (level > 255) level = 255;
-    if (level == last_level && hidden == last_hidden) return;
-    last_level = level;
-    last_hidden = hidden;
+    if (key == last_key) return;
+    last_key = key;
+    if (black && alpha && !hidden) {
+        unsigned rate = alpha >> 3; /* VDP2's 32-step second-image weight. */
+        /* Reserved word beyond the 512-entry back-colour table; CRAM 2047
+         * is outside the font/HUD/marker palettes. slLine1ColSet takes a
+         * VRAM-relative byte offset, unlike slLineColTable. */
+        ((volatile unsigned short *)JO_VDP2_CRAM)[2047] = 0;
+        slLine1ColSet((void *)0x7f400u, 2047);
+        slLineColDisp(NBG1ON | RBG0ON | SPRON);
+        slColRateNbg1(rate); slColRateRbg0(rate); slColRateSpr0(rate);
+        slSpriteCCalcCond(CC_pr_CN); slSpriteCCalcNum(7);
+        slColorCalc(CC_RATE | CC_TOP | NBG1ON | RBG0ON | SPRON);
+    } else {
+        slLineColDisp(0);
+        slColorCalc(0);
+    }
     if (!level) {
         slColOffsetOff(NBG1ON | RBG0ON | SPRON | BACKON);
         return;
@@ -1544,7 +1585,9 @@ void __attribute__((optimize("Os"))) jo_main(void)
     scene_ready = kokiri_scene_load();
     scene_ready = scene_ready && demo_init();
     field_music_init();
-    music_ready = scene_ready && music_init(music_song_bank(NA_BGM_TITLE));
+    music_ready = scene_ready && music_init_with_scratch(music_song_bank(NA_BGM_TITLE),
+        ram_cart_fixed(RAM_CART_LOAD_SCRATCH_OFFSET, RAM_CART_LOAD_SCRATCH_BYTES),
+        RAM_CART_LOAD_SCRATCH_BYTES);
     if (scene_ready && !music_ready)
         jo_printf(2, 3, "music load FAILED");
     if (music_ready && !action_audio_init()) {

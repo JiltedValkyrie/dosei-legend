@@ -15,6 +15,7 @@
 typedef char heap_zone_count_matches[
     HEAP_PROFILE_ZONES == JO_MALLOC_MAX_MEMORY_ZONE ? 1 : -1];
 heap_profile_t dosei_heap_profile;
+void jo_reduce_memory_fragmentation(void);
 
 static void profile_extent(unsigned int zone)
 {
@@ -70,10 +71,28 @@ static void *allocate_same_size(unsigned int n)
 
 void *jo_malloc_with_behaviour(unsigned int n, const jo_malloc_behaviour behaviour)
 {
+    unsigned int needed;
+    if (!n || n > ~0u - sizeof(jo_memory_block) - 3u) return JO_NULL;
+    needed = (n + sizeof(jo_memory_block) + 3u) & ~3u;
     void *result = behaviour == JO_MALLOC_TRY_REUSE_SAME_BLOCK_SIZE
         ? allocate_same_size(n) : dosei_allocator_malloc(n, behaviour);
+    if (!result) {
+        /* Scene/clip teardown leaves adjacent holes. Merge before declaring
+         * OOM, without moving live allocations or changing their pointers. */
+        jo_reduce_memory_fragmentation();
+        result = behaviour == JO_MALLOC_TRY_REUSE_SAME_BLOCK_SIZE
+            ? allocate_same_size(n) : dosei_allocator_malloc(n, behaviour);
+    }
     if (result) {
         jo_memory_block *block = ((jo_memory_block *)result) - 1;
+        /* SDK reuse consumes the ENTIRE free block. A tiny file probe could
+         * otherwise pin a freed 224 KB animation until the next scene. */
+        if (block->size - needed >= sizeof(*block) + 4u) {
+            jo_memory_block *tail = (jo_memory_block *)((unsigned char *)block + needed);
+            tail->size = block->size - needed;
+            tail->zone = JO_BLOCK_FREE;
+            block->size = needed;
+        }
         heap_zone_profile_t *p = &dosei_heap_profile.zone[block->zone];
         p->live += block->size;
         if (p->live > p->peak_live) p->peak_live = p->live;
@@ -107,6 +126,21 @@ void jo_free(const void * const ptr)
 void jo_reduce_memory_fragmentation(void)
 {
     unsigned int zone;
+    /* The SDK only retracts the free tail; it never combines interior holes. */
+    for (zone = 0; zone < (unsigned int)__jo_memory_zone_index; ++zone) {
+        unsigned char *ptr = memory_zones[zone].begin;
+        jo_memory_block *previous = JO_NULL;
+        while (ptr < memory_zones[zone].high) {
+            jo_memory_block *block = (jo_memory_block *)ptr;
+            unsigned int remaining = memory_zones[zone].high - ptr;
+            if (remaining < sizeof(*block) || block->size < sizeof(*block) ||
+                (block->size & 3u) || block->size > remaining) return;
+            ptr += block->size;
+            if (block->zone != JO_BLOCK_FREE) previous = JO_NULL;
+            else if (previous) previous->size += block->size;
+            else previous = block;
+        }
+    }
     dosei_allocator_reduce();
     for (zone = 0; zone < dosei_heap_profile.zones; ++zone)
         profile_extent(zone);

@@ -23,6 +23,7 @@ through the path that already exists.
 """
 
 import argparse
+from vdp1_budget import bank_bytes
 import io
 import pathlib
 import struct
@@ -125,7 +126,7 @@ def main():
         vertices, faces, tiles = house_panorama(args.oot, *spec)
         records = [dict(object=0, indices=list(f['idx'])) for f in faces]
         mesh, pixels, _ = pack_room(vertices, faces, tiles, records, normal)
-        if len(pixels) + len(tiles) * 32 > 140000:
+        if bank_bytes(len(pixels), len(tiles)) > 140000:
             raise ValueError('Interior panorama exceeds reserved texture budget')
         for ext, blob in [('MSH', mesh), ('TEX', pixels)]:
             (args.cd / asset_names.room_asset(4, index, ext)).write_bytes(blob)

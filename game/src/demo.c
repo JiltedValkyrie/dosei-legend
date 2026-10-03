@@ -1,5 +1,6 @@
 #include <jo/jo.h>
 #include "ram_cart.h"
+#include "sgl_registers.h"
 #include "demo.h"
 #include "oot_core_host.h"
 #include "pause_windows.h"
@@ -312,7 +313,7 @@ static jo_color sky_color(unsigned int row)
  * skybox is imported, use that horizon colour rather than Kokiri daylight. */
 static void cutscene_sky_update(void)
 {
-    static int last_nightmare = -1;
+    static int last_key = -1;
     int nightmare = cutscene_is_playing() && cutscene_id() == CUTSCENE_NIGHTMARE;
     if(cutscene_is_playing() && (cutscene_id()==CUTSCENE_EMERALD2 ||
        cutscene_id()==CUTSCENE_EMERALD3 || cutscene_id()==CUTSCENE_EMERALD8))nightmare=2;
@@ -321,10 +322,17 @@ static void cutscene_sky_update(void)
 #ifdef DOSEI_HIRES
     lines = 480;
 #endif
-    if (last_nightmare == nightmare) return;
-    last_nightmare = nightmare;
-    for (row = 0; row < lines - 1; ++row)
-        sky[row] = nightmare==2 ? JO_COLOR_RGB(0,0,0) : nightmare ? JO_COLOR_RGB(0, 20, 35) : sky_color(row * 240 / lines);
+    unsigned alpha = cutscene_fade_colour() == CUTSCENE_FADE_BLACK ? cutscene_fade_alpha() : 0;
+    int key = nightmare | (alpha << 2);
+    if (last_key == key) return;
+    last_key = key;
+    for (row = 0; row < lines - 1; ++row) {
+        unsigned c = nightmare==2 ? JO_COLOR_RGB(0,0,0) : nightmare ? JO_COLOR_RGB(0, 20, 35) : sky_color(row * 240 / lines);
+        unsigned scale = 255 - alpha;
+        sky[row] = 0x8000u | (((c & 31u) * scale / 255u)) |
+            ((((c >> 5) & 31u) * scale / 255u) << 5) |
+            ((((c >> 10) & 31u) * scale / 255u) << 10);
+    }
 }
 
 /* TITLEPTH.BIN (tools/build_cart_tables.py), bound into the cart carve at
@@ -1087,7 +1095,8 @@ static void demo_vblank(void)
         connected ? jo_get_input_axis(0, JoAxis3) : 0,
         connected ? jo_get_input_axis(0, JoAxis4) : 0);
     /* BDCLMD=0 keeps the border outside the active picture black. */
-    JO_VDP2_TVMD &= (unsigned short)~0x0100;
+    *sgl_vdp2_shadow(0) &= (unsigned short)~0x0100;
+    JO_VDP2_TVMD = *sgl_vdp2_shadow(0);
     phase += 60;
     while (phase >= refresh) { phase -= refresh; ++ticks; }
 }

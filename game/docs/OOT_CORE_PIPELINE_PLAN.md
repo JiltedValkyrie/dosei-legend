@@ -1,5 +1,112 @@
 # Plan: bulk decomp pipeline ("oot-core" on Saturn)
 
+## Current Mednafen repair handoff (Astra, 2026-10-03)
+
+Latest human: palette repair checks out in Mednafen; graphics accepted. Next work
+is missing Lon Lon Ranch NPC sprites and high CPU/slow gameplay versus Kronos.
+Human requests commit and push of this repair checkpoint before sprite/CPU changes.
+Keep batched work and no intermediate human-test asks. Decomp retains the Saturn backend.
+
+Latest palette repair built in usual game-clean.cue/.iso; log
+`build/mednafen-clut-build.log`, 96 bytes high-WRAM margin. Graphics human-accepted.
+Confirmed backend defect: CLUT addresses require **32-byte boundaries**, not
+eight-byte boundaries despite CMDCOLR's address/8 encoding. Sega VDP1 manual 6.4:
+https://www.infochunk.com/saturn/segahtml_en/hard/vdp1/hon/p06_40.htm
+Link's current pixel blob is 8912 bytes (16 modulo 32). The old loader placed
+all Link CLUTs halfway across a hardware boundary; that offset propagated into
+room banks. Simulating the hardware boundary against the actual S4R0 data
+reproduces the screenshot's noisy curtains/walls/floor. Correct source and
+converted textures are clean. Offline comparison artifacts (ignored build dir):
+`house-texture-comparison.png` and `house-clut-address.png` (correct, OR hypothesis,
+hardware-boundary hypothesis from left to right; right matches reported defect).
+This explains why validating bytes at the requested CPU pointer did not catch it.
+
+`kokiri_sgl.c` now pads every CLUT allocation to an absolute 32-byte boundary:
+mesh_load, actor/NPC tile upload and streamed Field palettes. All capacity checks
+count padding; offline tile/bank/Field/panorama budgets follow the same rule.
+Four graphics backend tests, six VRAM budget tests and eight Field streaming
+tests pass. Actual upload functions tested at all eight-byte starting alignments,
+all 16 palette colours via hardware address decoding, disk/cache and failure paths.
+Negative control: both palette upload tests reject the old eight-byte alignment.
+No asset replacement or decomp logic rewrite. Human confirms this repair checks out.
+
+Earlier graphics batch (mednafen-graphics-build.log, then 160 bytes margin):
+- Black fade previously subtracted alpha from RGB. Actual house bank at FADE 100:
+  59.91% pixels clipped black. VDP2 alpha blend against black line-colour screen
+  preserves dark detail (under 2% black even quantized back to 5 bits). Sky table
+  scales proportionally. Gray/white flashes retain prior additive path.
+  Reserves VDP2 word 0x7f400 (after 512 back-colour entries), CRAM entry 2047.
+  Line-colour insertion: https://www.infochunk.com/saturn/segahtml_en/hard/intr/hon/p03_40.htm
+- Initial 4bpp actor/NPC upload padded pixels to 8 bytes. This was insufficient;
+  superseded by the 32-byte fix above (also covers odd-height SPR textures).
+- Untextured faces normalize CMDPMOD colour mode to 0 with ECD/SPD set. Resident
+  texture moves adjust only textured CL16Look colours, not flat RGB values.
+  Command rules: https://www.infochunk.com/saturn/segahtml_en/hard/vdp1/hon/p09_10.htm
+- Host regressions exercise actual upload/fade functions and baked house pixels.
+  A host harness name clash caused test.exe's Windows assertion popup; fixed the
+  harness, tests now fail via normal exit status without interactive CRT abort.
+- Ruled out a tempting sprite-command lead: sprNoflip|FUNC_Sprite looks like
+  reserved command 3, but SGL _sbMakeSprite masks/replaces the low nibble with 1.
+  Do not change sprite direction flags based on that source expression alone.
+
+Full decomp remains the goal. Current priority overrides historical next-session
+queues below: VDP1 corruption, startup load delay, missing nightmare actors,
+Navi OOM/skipped shots and house-exit crash. Latest human test confirms all opening
+shots complete; graphics still corrupt before the palette repair, Navi room loads
+pause, music starts late. SGL SP 0723 / PR 0604, END 1 (house) / 3 (nightmare/forest)
+are plausible; they did not diagnose this palette-address bug. Fade now brighter.
+Human explicitly confirms menu before music no longer crashes (earlier PAUSEFNT.BIN).
+Earlier house exit reported CS4.BIN then S1.OOC CD failures; no explicit acceptance
+for that path yet. Implemented CD ownership fix:
+fs_low.c wraps Jo GFS open/load/read with music_yield_cd; cancel read-ahead using
+NwStop, resume on next service with seek to consumed offset. Close cancels too.
+Host mock-server regression passes interrupted load/resume and failure paths.
+Sega manual: https://www.infochunk.com/saturn/segahtml_en/prgg/prg1/file/hon/p08_14.htm
+NwCdRead remains active until consumption or NwStop; another request cannot
+assume the drive is idle simply because music_service returned.
+Baseline advanced externally to 8874db2 during investigation; its sprite work
+is preserved. This checkpoint contains Astra's Mednafen repair batch; Ranch/CPU
+investigation has started read-only, with no subsequent implementation yet.
+
+- `heap_profile.c`: reproduced wasted free-block capacity; SDK reuse kept a whole
+  large hole for a tiny allocation. Split unused tails, merge adjacent free holes
+  before retrying a failed allocation. SDK reduction alone only retracts tails.
+  Seven host allocator tests pass, including the two new pressure cases.
+- `npc_draw.c`: Clean loads sprite first and skips BIN/ANM/TRK/SKN for those NPCs;
+  Saria still retains her greeting mesh, missing sprites retain the 3D fallback.
+- `kokiri_sgl.c`: Navi pool/maps stay resident, but ten room meshes no longer do
+  (737,384 bytes saved in current assets). Bulk scratch load at shot boundary.
+  This trades bounded room-change CD reads for lower peak heap use.
+- `music.c/.h`, `main.c`: title PCM uses existing idle cart scratch for a whole
+  file read. Generic boot fallback reads multi-sector chunks. Scratch is never
+  retained or freed by music. Background swaps now yield read-ahead to Jo loads.
+- Graphics correction: `cutscene_start` explicitly loads bank 4 for moving
+  Link-house cameras; `kokiri_scene_draw` renders this as VDP1 panorama geometry.
+  Earlier NBG1 diagnosis did not apply to the reported opening shot.
+  Mesh upload now verifies CLUT words in actual VRAM;
+  SPCTL/PRISA/EDSR readout now draws last on all screens, Clean included:
+  hold L+R one second to toggle; release before toggling again; starts hidden.
+  Human confirms toggle visible. Correction: SPCTL/PRISA hardware reads are invalid
+  (write-only); their constant zeros did not diagnose corruption. New SGL SP/PR
+  reads SDK shadow at GBR+416/+432; END reads EDSR. Intended settings only, not
+  proof of hardware state. Verified offsets in LIBSGL slInitScroll/slSpriteColMode.
+  Sega register rule: https://www.infochunk.com/saturn/segahtml_en/hard/vdp2/hon/p15_20.htm
+  Register audit found two real write-only-read bugs: demo_vblank's TVMD &= mask
+  discarded display/mode bits, and pause saved invalid cycle-register reads.
+  New sgl_registers.h reads this SDK's shadow. TVMD preserves shadow bits;
+  pause uses slScrCycleSet for both shadow/hardware and restores saved cycles.
+  Visual impact still needs Mednafen testing; do not call corruption fixed yet.
+  Previous cutscene-only readout was not visible in human's Clean test. Palette files
+  being correct offline did not establish that runtime VRAM or commands were.
+- Historical WSL Clean target build passed with CD ownership and register fixes;
+  high-WRAM margin 576 bytes. Log: build/mednafen-cd-build.log;
+  superseded by latest build at top. Menu-before-music is now human-accepted;
+  other remaining symptoms stay open. No intermediate human-test requests.
+  Missing riders and house-exit crash are not independently root-caused yet.
+
+`DEMO_PLAN.md` was absent on this branch; restored as a concise current full-game
+status document under the required historical filename, not a new demo scope.
+
 ## Context
 Hand-port 1 system at time -> guess behavior, bugs pile up (BUG log long). zeldaret/oot at
 D:\Workspace-Claude\game-decomps\n64\oot already extracted (ntsc-1.2) + built. 456 actor .c.
@@ -344,12 +451,13 @@ Now stages in cart scratch, validates, frees old, mallocs, copies. If malloc sti
 the mesh is marked unloaded (no motion) instead of a fatal error.
 
 **4. Speckle "garbage" picture: NOT fixed.** Seen in opening (Link's house, Navi lines).
-- Link's house = prerendered NBG1 RGB bitmap (VDP2), not VDP1.
+- Correction from source audit: the opening house uses bank-4 VDP1 panorama.
+  The NBG1 RGB bitmap is the fixed-camera view, not this moving-camera shot.
 - Ruled out: CLUT MSB (all set), backdrop pixel MSB (all set), CL32KRGB rewrite at
   kokiri_sgl.c fog code (also switches to untextured polygon).
 - Added harmless `slDMAWait` between per-tile `jo_dma_copy` (mesh_load, field_upload).
   Did not fix it.
-- Lead: VDP2 VRAM cycle patterns. Jo/SGL `slScrAutoDisp` picks them; Kronos ignores
+- Historical lead (not established for this VDP1 shot): VDP2 VRAM cycle patterns. Jo/SGL `slScrAutoDisp` picks them; Kronos ignores
   them, Mednafen/hardware obey. NBG1 bitmap sits in A0/A1 (needs 2 slots per bank);
   NBG0 text in B1, NBG2 minimap in B0. Pause path already sets them explicitly
   (demo.c slScrCycleSet). Waiting on human: Mednafen Ctrl+1..7 layer toggles to name

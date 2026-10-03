@@ -24,7 +24,7 @@ import struct
 import build_hybrid_scene as hybrid
 import build_quads as quads
 from build_sgl_scene import face_normal, floor_uses_far_sort
-from vdp1_budget import (tile_bytes, MAX_TABLE_POLYGONS, MAX_VERTICES,
+from vdp1_budget import (tile_bytes, bank_bytes, MAX_TABLE_POLYGONS, MAX_VERTICES,
                          MAX_SPRITE_SLOTS, RUNTIME_SPRITE_BYTES,
                          RUNTIME_SPRITE_SLOTS, VDP1_USER_AREA)
 
@@ -341,7 +341,7 @@ def sweep(pieces, pool, actor, owl_actor=None):
     buckets = sorted(bucket_worst.items())
     slots = sum(n for _, n in buckets)
     pool_bytes = sum(size * n for size, n in buckets)
-    vram = pool_bytes + slots * 32
+    vram = bank_bytes(pool_bytes, slots)
     actor_bytes = sum(tile_bytes(w, h) for w, h in actor['tiles'] + owl_actor['tiles'])
     plan = dict(worst=worst, worst_at=worst_at, buckets=buckets, slots=slots,
                 pool_bytes=pool_bytes, vram=vram, actor_bytes=actor_bytes,

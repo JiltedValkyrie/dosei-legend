@@ -6,6 +6,7 @@
 #include "save_state.h"
 #include "ram_cart.h"
 #include "demo.h"
+#include "sgl_registers.h"
 #include "pause_cursor_data.h"
 #include "dungeon_map_data.h"
 
@@ -16,7 +17,7 @@
 static int loaded = -1, drawn = -1, direction;
 static unsigned phase, started;
 static bool failed, active;
-static unsigned short cycles[6];
+static unsigned int cycles[4];
 
 static unsigned short *cache(void) { return ram_cart_fixed(RAM_CART_PAUSE_OFFSET, RAM_CART_PAUSE_BYTES); }
 static volatile unsigned short *cell(unsigned tile)
@@ -48,15 +49,12 @@ static bool begin(void)
     copy_words(backup,CELLS0,0x10000);
     copy_words(backup+0x10000,CELLS1,0x2C40);
     copy_words(backup+0x12C40,PAGE_MAP,0x2000);
-    cycles[0]=JO_VDP2_CYCB0L; cycles[1]=JO_VDP2_CYCB0U;
-    cycles[2]=JO_VDP2_CYCB1L; cycles[3]=JO_VDP2_CYCB1U;
-    cycles[4]=JO_VDP2_CYCA1L; cycles[5]=JO_VDP2_CYCA1U;
+    for (i=0;i<4;++i)
+        cycles[i]=*(volatile unsigned int *)sgl_vdp2_shadow(0x10+i*4);
     /* RGB NBG0 uses ZOOM_1 (enlargement only), four character fetches.
      * Names live in unused bottom rows of the NBG1 bitmap. A1 retains
      * four NBG1 bitmap fetches and three CPU slots alongside one name. */
-    JO_VDP2_CYCB0L=JO_VDP2_CYCB1L=0x4444;
-    JO_VDP2_CYCB0U=JO_VDP2_CYCB1U=0xEEEE;
-    JO_VDP2_CYCA1L=0x0555; JO_VDP2_CYCA1U=0x5EEE;
+    slScrCycleSet(cycles[0],0x05555EEE,0x4444EEEE,0x4444EEEE);
     for (i=0;i<64;++i) cell(1200)[i]=0;
     for (i=0;i<4096;++i) {
         unsigned x=i%64,y=i/64;
@@ -80,9 +78,7 @@ void pause_windows_reset(void)
         copy_words(CELLS0,backup,0x10000);
         copy_words(CELLS1,backup+0x10000,0x2C40);
         copy_words(PAGE_MAP,backup+0x12C40,0x2000);
-        JO_VDP2_CYCB0L=cycles[0]; JO_VDP2_CYCB0U=cycles[1];
-        JO_VDP2_CYCB1L=cycles[2]; JO_VDP2_CYCB1U=cycles[3];
-        JO_VDP2_CYCA1L=cycles[4]; JO_VDP2_CYCA1U=cycles[5];
+        slScrCycleSet(cycles[0],cycles[1],cycles[2],cycles[3]);
         slCharNbg0(COL_TYPE_256,CHAR_SIZE_1x1);
         slPageNbg0((void *)VDP2_VRAM_B1,(void *)JO_VDP2_CRAM,PNB_1WORD | CN_10BIT);
         slPlaneNbg0(PL_SIZE_1x1);

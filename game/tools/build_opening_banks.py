@@ -148,7 +148,7 @@ def emit_flight_cache(out):
 def emit_opening_banks(oot, out, rooms, normal):
     from build_room_scene import pack_room
     import build_cutscenes as cutscenes
-    from vdp1_budget import VDP1_USER_AREA, RUNTIME_SPRITE_BYTES
+    from vdp1_budget import VDP1_USER_AREA, RUNTIME_SPRITE_BYTES, bank_bytes
     summaries = []
 
     def emit(scene, room, content):
@@ -156,7 +156,7 @@ def emit_opening_banks(oot, out, rooms, normal):
         records = [dict(object=0, indices=list(f['idx'])) for f in faces]
         mesh, pixels, bounds = pack_room(vertices, faces, tiles, records, normal)
         # Reserve resident Link and all overlays, including the message panel.
-        used = len(pixels) + len(tiles) * 32
+        used = bank_bytes(len(pixels), len(tiles))
         if used + RUNTIME_SPRITE_BYTES + 20000 + 2048 > VDP1_USER_AREA:
             raise ValueError('Opening S%dR%d exceeds texture budget: %d' %
                              (scene, room, used))

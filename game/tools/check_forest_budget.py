@@ -63,10 +63,10 @@ def check(root=ROOT):
     header = (root / 'build/generated/link_scene.h').read_text()
     value = lambda name: int(re.search(r'#\s*define\s+' + name + r'\s+(\d+)', header)[1])
     link_slots = value('LINK_TILE_COUNT')
-    resident = value('LINK_PIXEL_BYTES') + link_slots * 32 + budget.RUNTIME_SPRITE_BYTES
+    resident = budget.bank_bytes(value('LINK_PIXEL_BYTES'), link_slots) + budget.RUNTIME_SPRITE_BYTES
     for path in sorted(cd.glob('S1R*.MSH')):
         _, _, _, tiles, pixels, _, _, _ = struct.unpack_from('>8I', path.read_bytes())
-        used = resident + pixels + tiles * 32 + budget.FOREST_ACTOR_BYTES
+        used = resident + budget.bank_bytes(pixels, tiles) + budget.FOREST_ACTOR_BYTES
         slots = 1 + link_slots + budget.RUNTIME_SPRITE_SLOTS + tiles + budget.FOREST_ACTOR_SLOTS
         if used + budget.FOREST_VRAM_MARGIN > budget.VDP1_USER_AREA or slots > budget.MAX_SPRITE_SLOTS:
             raise ValueError('%s: actors included, VRAM %d + %d margin / %d; slots %d / %d' %
@@ -114,7 +114,7 @@ def check(root=ROOT):
         types={int(row.split(',')[-1])>>12 for row in re.findall(r'\{([^{}]+)\}',torches) if int(row.split(',')[0])==room}
         puzzle_cost += [mesh_cost(cd/('DTTORCH%d.BIN'%i)) for i in types]
         _,_,_,tiles,pixels,_,_,_=struct.unpack_from('>8I',path.read_bytes())
-        used=resident+pixels+tiles*32+actor_bytes+sum(c[0] for c in puzzle_cost)
+        used=resident+budget.bank_bytes(pixels,tiles)+actor_bytes+sum(c[0] for c in puzzle_cost)
         slots=1+link_slots+budget.RUNTIME_SPRITE_SLOTS+tiles+actor_slots+sum(c[1] for c in puzzle_cost)
         if used>budget.VDP1_USER_AREA or slots>budget.MAX_SPRITE_SLOTS:
             raise ValueError('%s: dungeon props overflow VRAM %d/%d, slots %d/%d'%
@@ -127,7 +127,7 @@ def check(root=ROOT):
         names=['DTDOOR'] + (['GOHMA','GOMALAR','GOMAEGG','BOSSHRT','BLUEWARP'] if room==1 else [])
         costs=[mesh_cost(cd/(name+'.BIN')) for name in names]
         _,vertices,polygons,tiles,pixels,_,_,_=struct.unpack_from('>8I',path.read_bytes())
-        used=resident+pixels+tiles*32+sum(c[0] for c in costs)
+        used=resident+budget.bank_bytes(pixels,tiles)+sum(c[0] for c in costs)
         slots=1+link_slots+budget.RUNTIME_SPRITE_SLOTS+tiles+sum(c[1] for c in costs)
         if used>budget.VDP1_USER_AREA or slots>budget.MAX_SPRITE_SLOTS:
             raise ValueError('%s: boss actors overflow VRAM %d/%d, slots %d/%d'%
@@ -166,7 +166,7 @@ def check(root=ROOT):
         else:
             _,vertices,polygons,tiles,pixels,_,_,_=struct.unpack_from('>8I',path.read_bytes())
         costs=[mesh_cost(cd/(n+'.BIN')) for n in loaded]
-        used=resident+pixels+tiles*32+sum(c[0] for c in costs)
+        used=resident+budget.bank_bytes(pixels,tiles)+sum(c[0] for c in costs)
         slots=1+link_slots+budget.RUNTIME_SPRITE_SLOTS+tiles+sum(c[1] for c in costs)
         geometry=[struct.unpack_from('>8I',(cd/(n+'.BIN')).read_bytes())[2:4] for n in drawn]
         vertices+=value('LINK_VERTEX_COUNT')+sum(g[0] for g in geometry)
