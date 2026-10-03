@@ -129,6 +129,17 @@ src/music_area.c, tables in jo heap). All 17 baked (converter now: channel io po
 hand music. Work RAM spare (Debug) 304 B. Next: raise caps (RAM cost) to admit the
 near-misses; multi-bg camera selection; per-scene music; En_Door room switches.
 
+## SPEED (2026-10-02, human Kronos kronos-fix, Debug, ns per call, cart)
+Low-WRAM copy (OOTBENCH.BIN, rows 16-17) is NOT faster than cart: cost is the math, not the bus.
+Fixes: fx.h dmuls.l inline 32x32 path + 32-bit shift helpers + always_inline (61769fc);
+oot_math sqrtf = divider Newton, sinf/cosf = Q30 table + interpolation, after SaturnMath++
+(bec381b, e810ba3). Host probe 0 over tolerance each time.
+  ma 9015 -> 7549, dv 20901 -> 19922, ss 15864 -> 14362, ds 59799 -> 39371, sn 49818 -> 10553,
+  at 28630 -> 26350 (decomp code, unchanged). Kronos SH-2 timing is approximate: a ~60-instruction
+  loop shows ~200 cycles. Next: real per-frame cost row (Actor_UpdateAll time), real hardware
+  run if possible. 32-bit Fx would halve again but needs an overflow audit (not started).
+  dv still slow: check fx_div hardware path is taken (FX_RUNTIME / range test) before more work.
+
 ## NEXT SESSION: Phase 1 step 5 (first live decomp actor)
 Rule: game logic comes from decomp source via `tools/oot_core_import.py`. Do not rewrite a
 system by hand that the decomp already has. Our C code stays only as the Saturn backend
