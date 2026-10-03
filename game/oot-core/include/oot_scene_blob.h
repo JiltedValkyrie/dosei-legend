@@ -23,6 +23,14 @@ typedef struct OotSceneBlob {
     unsigned int num_rooms;
     unsigned int num_layers;
     const OotSceneLayer* layers; /* [room * num_layers + layer] */
+    /* Data objects (O<id>.OOB, oot_core_import.py OBJECTS) that any room or
+     * layer of the scene lists: the host loads them after this blob. */
+    const unsigned short* objects;
+    unsigned int num_objects;
+    /* Scene_CommandPathList per scene layer (actors = decomp Path[] or
+     * NULL; present 0 = no header for that layer). */
+    const OotSceneLayer* paths;
+    unsigned int num_path_layers;
 } OotSceneBlob;
 
 #endif

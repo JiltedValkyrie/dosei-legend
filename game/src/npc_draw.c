@@ -19,6 +19,7 @@
 #include "navi_npcs.h"
 #include "kokiri_camera.h"
 #include "cutscene.h"
+#include "oot_core_host.h"
 
 #define NPC_MODEL_COUNT 16
 /* EnOssan OSSAN_TYPE_KOKIRI (build_npc_models SHOPKEEPER): drawn in the
@@ -439,9 +440,27 @@ static void shop_items_draw(unsigned int steps)
     }
 }
 
+#ifdef DOSEI_OOT_CORE
+/* Route step 3 shim: decomp En_Ko (the real actor: placement, flags, path,
+** tracking, fade) drawn with the baked model of its ENKO_TYPE. The clip is
+** the type's own idle; APPROXIMATE while the decomp plays another animation
+** (the frame still comes from its SkelAnime). */
+static unsigned int core_npc_model(const OotCoreNpcView *v)
+{
+    unsigned int model = 2u + (unsigned int)(v->params & 0xFF);
+    return (v->flags & OOT_CORE_VIEW_DRAWN) && v->alpha && model < NPC_SHOPKEEPER && models[model] ? model : 0;
+}
+#endif
+
 void npc_draw(unsigned int tick)
 {
     unsigned int i, n, visible = 0, people = 0;
+#ifdef DOSEI_OOT_CORE
+    const OotCoreNpcView *core;
+    int core_n = oot_core_npcs(&core), k;
+    for (k = 0; k < core_n; ++k)
+        if (core_npc_model(&core[k])) visible |= 1u << core_npc_model(&core[k]);
+#endif
     unsigned int steps = tick / 3 - previous_step;
     unsigned int generation = kokiri_actor_bank_generation();
     previous_step = tick / 3;
@@ -503,6 +522,15 @@ void npc_draw(unsigned int tick)
             }
             gameplay_npc_focus(i, rotated);
         }
+#ifdef DOSEI_OOT_CORE
+    for (k = 0; k < core_n; ++k) {
+        const OotCoreNpcView *v = &core[k];
+        unsigned int model = core_npc_model(v);
+        npc_track_t t = {{v->head_x, v->head_y}, {v->torso_x, v->torso_y}};
+        int32_t focus[3];
+        if (model) draw_pose(model, v->frame * 3u, v->x, v->y, v->z, v->yaw, &t, focus);
+    }
+#endif
 }
 
 /* Flythrough uses its authored layer, independent of save scene and Link's

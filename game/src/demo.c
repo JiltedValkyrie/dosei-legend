@@ -1912,8 +1912,17 @@ void demo_update(void)
                 gohma_notice(demo_camera.x,demo_camera.y,demo_camera.z,demo_yaw,demo_pitch);
                 field_music_motion(action.moving);
                 if(story_owl_talking()) action.cancel=false;
-                gameplay_step(&action);
-                oot_core_frame();
+                {
+                    /* A decomp talk offer or conversation owns A/B: the C
+                     * game must not open its own prompt with the same press. */
+                    bool a = action.interact, b = action.cancel;
+                    unsigned int talk = oot_core_talk();
+                    if (talk) action.interact = false;
+                    if (talk & 1u) action.cancel = false;
+                    gameplay_step(&action);
+                    action.interact = a; action.cancel = b;
+                }
+                oot_core_frame(&action);
                 story_route_step();
                 tree_mouth_step();
                 if (finish_boss_warp()) { walk=0; jump_pending=false; break; }
@@ -2022,7 +2031,7 @@ void demo_update(void)
                 if (world_props_carrying() && !link_lift.phase)
                     player_lift_begin(&link_lift,false,0,false);
                 roll_pending = interact_pending && !blocked_before &&
-                    !gameplay_blocks_world() &&
+                    !gameplay_blocks_world() && !oot_core_talk() &&
                     !(gameplay.events & (GP_EVENT_TALK_OPEN | GP_EVENT_TALK_PAGE |
                                          GP_EVENT_TALK_CLOSE | GP_EVENT_PICKUP |
                                          GP_EVENT_MENU_OPEN | GP_EVENT_MENU_CLOSE |

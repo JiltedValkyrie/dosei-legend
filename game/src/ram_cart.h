@@ -34,11 +34,16 @@
 ** the last carve, so its address is BANK2 end - RAM_CART_OOTCORE_BYTES. */
 /* Scene collision blob (<scene>COL.BIN): decomp CollisionHeader + arrays,
 ** linked at the cached alias OOT_SCENECOL_ADDR (makefile). One scene at a time. */
-#define RAM_CART_SCENECOL_OFFSET 0x82400u
+/* ROM nes_message_data_static (NESMSG.BIN, 229,600 bytes): z_message text,
+** resident because a CD read during play would stop CD-DA music. */
+#define RAM_CART_MSGDATA_OFFSET  0x82400u
+#define RAM_CART_MSGDATA_BYTES   0x38400u
+/* Scene blob (<scene>.OOC) followed by the scene's object data blobs (.OOB). */
+#define RAM_CART_SCENECOL_OFFSET 0xBA800u
 #define RAM_CART_SCENECOL_BYTES  0x40000u
-#define RAM_CART_OOTCORE_OFFSET 0xC2400u
-#define RAM_CART_OOTCORE_BYTES  0x40000u
-#define RAM_CART_FIXED_BYTES    0x102400u
+#define RAM_CART_OOTCORE_OFFSET 0xFA800u
+#define RAM_CART_OOTCORE_BYTES  0x70000u
+#define RAM_CART_FIXED_BYTES    0x16A800u
 #else
 #define RAM_CART_FIXED_BYTES    0x82400u
 #endif

@@ -6,6 +6,21 @@
  */
 OUTPUT_ARCH(sh)
 ENTRY(_oot_core_entry)
+/* Fake VROM bases for ROM segments z_message/z_kanfont DMA from
+ * (bridge_message.cpp DmaMgr_RequestSync maps them; text comes from the
+ * host carve, the rest reads nothing). One 16 MB span each. */
+__nes_message_data_staticSegmentRomStart = 0x10000000;
+__jpn_message_data_staticSegmentRomStart = 0x11000000;
+__staff_message_data_staticSegmentRomStart = 0x12000000;
+__message_staticSegmentRomStart = 0x13000000;
+__message_texture_staticSegmentRomStart = 0x14000000;
+__nes_font_staticSegmentRomStart = 0x15000000;
+__kanjiSegmentRomStart = 0x16000000;
+__icon_item_staticSegmentRomStart = 0x17000000;
+__icon_item_24_staticSegmentRomStart = 0x18000000;
+/* Segment (VRAM) starts: message table entries are segment addresses. */
+__nes_message_data_staticSegmentStart = 0x07000000;
+__jpn_message_data_staticSegmentStart = 0x08000000;
 SECTIONS
 {
     . = OOT_CORE_LOAD_ADDR;

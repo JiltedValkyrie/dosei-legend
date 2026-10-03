@@ -19,6 +19,9 @@
 #include "item.h"
 #include "sfx.h"
 #include "interface.h"
+#include "message.h"
+#include "libu64/pad.h"
+#include "controller.h"
 
 /* Set by oot_core_set_player (oot_core_api.cpp), read in update. */
 Vec3f gOotCorePlayerPos;
@@ -27,6 +30,32 @@ s16 gOotCorePlayerYaw;
 s32 gOotCoreSwordActive;
 Vec3f gOotCoreSwordBase;
 Vec3f gOotCoreSwordTip;
+
+/* OC push the decomp actors gave the player this update (world units,
+ * Q0): the C side moves C Link by it (oot_core_api.cpp player_push). */
+s32 gOotCorePlayerPushX;
+s32 gOotCorePlayerPushZ;
+
+/* z_player.c D_80854624: the player's body cylinder (OC pushes, AC). */
+static ColliderCylinderInit sBodyCylinderInit = {
+    {
+        COL_MATERIAL_HIT5,
+        AT_NONE,
+        AC_ON | AC_TYPE_ENEMY,
+        OC1_ON | OC1_TYPE_ALL,
+        OC2_TYPE_PLAYER,
+        COLSHAPE_CYLINDER,
+    },
+    {
+        ELEM_MATERIAL_UNK1,
+        { 0x00000000, HIT_SPECIAL_EFFECT_NONE, 0x00 },
+        { 0xFFCFFFFF, HIT_BACKLASH_NONE, 0x00 },
+        ATELEM_NONE,
+        ACELEM_ON,
+        OCELEM_ON,
+    },
+    { 12, 60, 0, { 0, 0, 0 } },
+};
 
 /* z_player.c D_80854650: the sword quads' collider. */
 static ColliderQuadInit sMeleeWeaponQuadInit = {
@@ -111,6 +140,9 @@ static void PlayerProxy_Sync(Actor* thisx) {
 static void PlayerProxy_Init(Actor* thisx, PlayState* play) {
     Player* this = (Player*)thisx;
 
+    Collider_InitCylinder(play, &this->cylinder);
+    Collider_SetCylinder(play, &this->cylinder, thisx, &sBodyCylinderInit);
+    thisx->colChkInfo.mass = 50;
     Collider_InitQuad(play, &this->meleeWeaponQuads[0]);
     Collider_SetQuad(play, &this->meleeWeaponQuads[0], thisx, &sMeleeWeaponQuadInit);
     gOotCorePlayerPos = thisx->world.pos;
@@ -119,6 +151,7 @@ static void PlayerProxy_Init(Actor* thisx, PlayState* play) {
 }
 
 static void PlayerProxy_Destroy(Actor* thisx, PlayState* play) {
+    Collider_DestroyCylinder(play, &((Player*)thisx)->cylinder);
     Collider_DestroyQuad(play, &((Player*)thisx)->meleeWeaponQuads[0]);
 }
 
@@ -155,10 +188,63 @@ static void PlayerProxy_GetItem(Player* this, PlayState* play) {
     this->getItemDirection = 0x8000;
 }
 
+/* Talking, from z_player.c: Player_ActionHandler_Talk (offer accepted with
+ * A), Player_StartTalking + Player_SetupTalk (Message_StartTextbox with the
+ * actor's textId), Player_Action_Talk (ends on TEXT_STATE_CLOSING) and the
+ * end-of-update offer reset in Player_UpdateCommon. APPROXIMATE: no C-Up /
+ * Navi talk, no lock-on or carrying checks, Link is assumed on the ground,
+ * no talk animations (the C player owns Link's pose). */
+static void PlayerProxy_UpdateTalk(Player* this, PlayState* play) {
+    Input* input = &play->state.input[0];
+
+    if (this->stateFlags1 & PLAYER_STATE1_TALKING) {
+        if (Message_GetState(&play->msgCtx) == TEXT_STATE_CLOSING) {
+            this->actor.flags &= ~ACTOR_FLAG_TALK;
+            this->stateFlags1 &= ~(PLAYER_STATE1_TALKING | PLAYER_STATE1_29);
+            this->focusActor = NULL;
+        }
+    } else if (this->talkActor != NULL && CHECK_BTN_ALL(input->press.button, BTN_A)) {
+        Actor* actor = this->talkActor;
+
+        actor->flags |= ACTOR_FLAG_TALK;
+        this->exchangeItemId = EXCH_ITEM_NONE;
+        if (actor->textId != 0xFFFF) {
+            this->actor.flags |= ACTOR_FLAG_TALK;
+            this->actor.textId = actor->textId;
+            this->stateFlags1 |= PLAYER_STATE1_TALKING | PLAYER_STATE1_29;
+            if (this->actor.textId != 0) {
+                Message_StartTextbox(play, this->actor.textId, actor);
+                this->focusActor = actor;
+            }
+        }
+    }
+    if (ACTOR_FLAGS_CHECK_ALL(&this->actor, ACTOR_FLAG_TALK)) {
+        this->talkActorDistance = 0.0f;
+    } else {
+        this->talkActor = NULL;
+        this->talkActorDistance = MAXFLOAT;
+        this->exchangeItemId = EXCH_ITEM_NONE;
+    }
+}
+
+/* Player_UpdateCommon's OC part: last frame's cylinder was checked at the
+ * start of this update (CollisionCheck_OC), so the displacement in
+ * colChkInfo is the push from immovable/heavier actors (an En_Ko blocking a
+ * path). The real player applies it in Actor_UpdatePos; the C player does. */
+static void PlayerProxy_UpdateBody(Player* this, PlayState* play) {
+    gOotCorePlayerPushX += (s32)this->actor.colChkInfo.displacement.x;
+    gOotCorePlayerPushZ += (s32)this->actor.colChkInfo.displacement.z;
+    this->actor.colChkInfo.mass = (this->stateFlags1 & PLAYER_STATE1_29) ? MASS_IMMOVABLE : 50;
+    Collider_UpdateCylinder(&this->actor, &this->cylinder);
+    CollisionCheck_SetOC(play, &play->colChkCtx, &this->cylinder.base);
+}
+
 static void PlayerProxy_Update(Actor* thisx, PlayState* play) {
     PlayerProxy_Sync(thisx);
+    PlayerProxy_UpdateBody((Player*)thisx, play);
     PlayerProxy_GetItem((Player*)thisx, play);
     PlayerProxy_UpdateSword((Player*)thisx, play);
+    PlayerProxy_UpdateTalk((Player*)thisx, play);
 }
 
 #define FLAGS                                                                                 \

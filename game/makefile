@@ -198,11 +198,11 @@ OOT_CORE_D = build/oot-core/decomp
 OOT_CORE_OBJDIR = $(OBJDIR)/oot-core
 # Cached cart alias of the RAM_CART_OOTCORE carve (src/ram_cart.h; ram_cart.c
 # checks the carve sits here). 0x2xxxxxxx is cache-through: never run code there.
-OOT_CORE_LOAD_ADDR = 0x027C0000
-OOT_CORE_MAX_BYTES = 0x40000
+OOT_CORE_LOAD_ADDR = 0x02790000
+OOT_CORE_MAX_BYTES = 0x70000
 # Scene collision blobs (RAM_CART_SCENECOL carve, cached alias). One per scene in
 # tools/oot_core_import.py SCENE_COLLISION; data only, nothing executes there.
-OOT_SCENECOL_ADDR = 0x02780000
+OOT_SCENECOL_ADDR = 0x02750000
 OOT_SCENECOL_MAX_BYTES = 0x40000
 OOT_CORE_CXXFLAGS = -x c++ -std=gnu++17 -fno-exceptions -fno-rtti -fpermissive -funsigned-char -w \
 	-fno-threadsafe-statics -fno-use-cxa-atexit -Os -m2 -ffunction-sections -fdata-sections \
@@ -219,7 +219,8 @@ OOT_CORE_SRCS = $(OOT_CORE_DECOMP_SRCS) \
 	oot-core/src/oot_math.cpp oot-core/src/oot_rand.cpp \
 	oot-core/src/oot_core_bench.cpp oot-core/src/oot_core_link_stubs.cpp \
 	oot-core/src/oot_core_api.cpp oot-core/src/bridge_tables.cpp oot-core/src/bridge_libc.cpp \
-	oot-core/src/bridge_play.cpp oot-core/src/bridge_assets.cpp oot-core/src/bridge_player.cpp
+	oot-core/src/bridge_play.cpp oot-core/src/bridge_assets.cpp oot-core/src/bridge_player.cpp \
+	oot-core/src/bridge_message.cpp oot-core/src/oot_core_views.cpp
 OOT_CORE_OBJS = $(patsubst %.cpp,$(OOT_CORE_OBJDIR)/%.o,$(notdir $(OOT_CORE_SRCS)))
 _CCFLAGS += -DDOSEI_OOT_CORE -DOOT_CORE_LOAD_ADDR=$(OOT_CORE_LOAD_ADDR)u \
 	-DOOT_SCENECOL_ADDR=$(OOT_SCENECOL_ADDR)u -Ioot-core/include
@@ -229,12 +230,12 @@ $(OOT_CORE_OBJDIR):
 # Static ctors are fine: OotCoreEntry.init runs the blob's ctor table.
 $(OOT_CORE_OBJDIR)/%.o: %.cpp oot-core/include/fx.h oot-core/include/oot_prelude.h oot-core/include/oot_core_bench.h oot-core/include/oot_core_api.h oot-core/include/oot_core_host.h | $(OOT_CORE_OBJDIR)
 	$(OOT_CORE_CXX) $(OOT_CORE_CXXFLAGS) -c $< -o $@
-build/oot-core/oot-core.elf: $(OOT_CORE_OBJS) oot-core/oot-core.ld
+build/oot-core/oot-core.elf: $(OOT_CORE_OBJS) oot-core/oot-core.ld build/oot-core/obj_syms.ld build/oot-core/msg_syms.ld
 	$(OOT_CORE_CXX) -m2 -nostdlib -nostartfiles -T oot-core/oot-core.ld \
 		-Wl,--defsym,OOT_CORE_LOAD_ADDR=$(OOT_CORE_LOAD_ADDR) \
 		-Wl,--defsym,OOT_CORE_MAX_BYTES=$(OOT_CORE_MAX_BYTES) \
 		-Wl,--gc-sections -Wl,-Map,build/oot-core/oot-core.map \
-		$(OOT_CORE_OBJS) -lgcc -o $@
+		$(OOT_CORE_OBJS) build/oot-core/msg_syms.ld build/oot-core/obj_syms.ld -lgcc -o $@
 $(ASSETS_DIR)/OOTCORE.BIN: build/oot-core/oot-core.elf
 	$(CONV) -O binary $< $@
 # One blob per registered scene (oot_core_import.py registered_scenes), named
@@ -249,7 +250,23 @@ build/oot-core/scenecol/%.elf: build/oot-core/scenecol/%.cpp oot-core/scenecol.l
 		build/oot-core/scenecol/$*.o -o $@ || { rm -f $@; echo "scene blob $* left out"; }
 $(ASSETS_DIR)/%.OOC: build/oot-core/scenecol/%.elf
 	[ ! -f $< ] || $(CONV) -O binary $< $@
-$(TARGET2): $(ASSETS_DIR)/OOTCORE.BIN $(patsubst %,$(ASSETS_DIR)/%.OOC,$(OOT_SCENECOL_NAMES))
+# Decomp object data blobs (oot_core_import.py OBJECTS), linked at segment 6.
+# Their symbols reach the oot-core link as absolute 0x06xxxxxx addresses.
+OOT_OBJECT_MAX_BYTES = 0x30000
+OOT_CORE_NM ?= $(patsubst %gcc,%nm,$(patsubst %g++,%nm,$(OOT_CORE_CXX)))
+OOT_OBJECT_ELFS = $(patsubst %,build/oot-core/objects/%.elf,$(OOT_OBJECT_NAMES))
+build/oot-core/objects/%.elf: build/oot-core/objects/%.cpp build/oot-core/objects/%_ph.cpp oot-core/object.ld
+	$(OOT_CORE_CXX) $(OOT_CORE_CXXFLAGS) -c build/oot-core/objects/$*.cpp -o build/oot-core/objects/$*.o
+	$(OOT_CORE_CXX) $(OOT_CORE_CXXFLAGS) -c build/oot-core/objects/$*_ph.cpp -o build/oot-core/objects/$*_ph.o
+	$(OOT_CORE_CXX) -m2 -nostdlib -nostartfiles -T oot-core/object.ld 		-Wl,--defsym,OOT_OBJECT_MAX_BYTES=$(OOT_OBJECT_MAX_BYTES) 		build/oot-core/objects/$*.o build/oot-core/objects/$*_ph.o -o $@
+build/oot-core/obj_syms.ld: $(OOT_OBJECT_ELFS)
+	for f in $^; do $(OOT_CORE_NM) $$f | awk '$$2 ~ /^[DdBbRrGgSs]$$/ && $$3 !~ /^_oot_/ {print $$3 " = 0x" $$1 ";"}'; done > $@
+# ROM message text for z_message (oot-core/src/bridge_message.cpp).
+$(ASSETS_DIR)/NESMSG.BIN: $(OOT_CORE_DECOMP)/extracted/ntsc-1.2/baserom/nes_message_data_static
+	cp $< $@
+$(ASSETS_DIR)/%.OOB: build/oot-core/objects/%.elf
+	$(CONV) -O binary $< $@
+$(TARGET2): $(ASSETS_DIR)/OOTCORE.BIN $(ASSETS_DIR)/NESMSG.BIN $(patsubst %,$(ASSETS_DIR)/%.OOC,$(OOT_SCENECOL_NAMES)) 	$(patsubst %,$(ASSETS_DIR)/%.OOB,$(OOT_OBJECT_NAMES))
 endif
 # Header layout changes must rebuild every consumer (save v2 otherwise wrote
 # 300 bytes into a stale 220-byte stack buffer). makefile bootstraps .d files

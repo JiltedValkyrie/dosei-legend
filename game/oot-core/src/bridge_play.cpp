@@ -11,6 +11,8 @@
  */
 #include "oot_prelude.h"
 #include "ultra64.h"
+#include "array_count.h"
+#include "z_math.h"
 #include "fault.h"
 #include "libu64/debug.h"
 #include "libu64/overlay.h"
@@ -51,13 +53,35 @@ s32 Camera_RequestMode(Camera* camera, s16 mode) { /* STUB: C camera owns modes 
     return 0;
 }
 
-/* ---- z_scene.c: every imported object is resident (prebuilt Saturn meshes) ---- */
-s32 Object_GetSlot(ObjectContext* objectCtx, s16 objectId) { /* HOST-side model: always slot 0 */
+/* ---- z_scene.c ---- */
+#include "../../build/oot-core/objects/oot_objects_built.h"
+
+/* REAL search over the loaded slots (set_objects). An object not built as
+ * a data blob (gameplay_keep, field keep, object_kusa ...) has only
+ * placeholder symbols in the blob, so it is always "resident" in slot 0.
+ * A data object the scene did not load returns -1, as on N64. */
+s32 Object_GetSlot(ObjectContext* objectCtx, s16 objectId) {
+    s32 i;
+
+    for (i = 0; i < objectCtx->numEntries; i++) {
+        if (ABS(objectCtx->slots[i].id) == objectId) {
+            return i;
+        }
+    }
+    for (i = 0; i < (s32)ARRAY_COUNT(sBuiltObjects); i++) {
+        if (sBuiltObjects[i] == objectId) {
+            return -1;
+        }
+    }
     return 0;
 }
 
-s32 Object_IsLoaded(ObjectContext* objectCtx, s32 slot) {
-    return true;
+s32 Object_IsLoaded(ObjectContext* objectCtx, s32 slot) { /* REAL */
+    if (objectCtx->slots[slot].id > 0) {
+        return true;
+    } else {
+        return false;
+    }
 }
 
 /* ---- libu64 overlay: bridge_tables.cpp makes every overlay internal ---- */
@@ -140,4 +164,10 @@ void Magic_Reset(PlayState* play) { /* STUB: no magic meter yet */
 
 /* ---- z_draw.c ---- */
 void GetItem_Draw(PlayState* play, s16 giDrawId) { /* STUB: Phase 2 draw shim */
+}
+
+u8 Player_GetMask(PlayState* play) { /* REAL (z_player_lib.c) */
+    Player* this = GET_PLAYER(play);
+
+    return this->currentMask;
 }

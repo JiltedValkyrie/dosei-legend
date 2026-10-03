@@ -41,3 +41,10 @@ u64 gUnknownCircle6Tex[1];
 u64 gUnknownEffBlureTex[1];
 u64 object_kusa_DL_000140[1];
 u64 object_kusa_DL_0002E0[1];
+/* z_message ocarina staff icons (message_static / ocarina textures). */
+u64 gOcarinaBtnIconATex[1];
+u64 gOcarinaBtnIconCDownTex[1];
+u64 gOcarinaBtnIconCLeftTex[1];
+u64 gOcarinaBtnIconCRightTex[1];
+u64 gOcarinaBtnIconCUpTex[1];
+u64 gOcarinaTrebleClefTex[1];

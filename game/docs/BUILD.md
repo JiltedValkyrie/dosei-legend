@@ -166,6 +166,24 @@ sudo apt-get install -y python3-pil genisoimage   # Pillow + mkisofs
     (so the full build must have run first). A blob over its 256 KB carve or failing to
     compile is left out with a "scene blob ... left out" line; the runtime skips it.
     The runtime checks GFS_NameToId before opening: jo_fs treats a missing file as fatal.
+34. **Blob-only rebuild:** `./build.sh --quick OOT_CORE=1 -k build/oot-core/oot-core.elf`
+    (make target after the args) runs the importer and links only OOTCORE. Add
+    `OOT_CORE_MAX_BYTES=0x100000` to see the real size when it outgrows the carve.
+    From PowerShell, `\$?` in `wsl.exe -e bash -c "..."` still expands to True: run a
+    script file with `wsl.exe -e bash /mnt/...sh` instead.
+35. **Cart carves moved 2026-10-02 (route steps 3-4):** RAM_CART_MSGDATA (ROM text,
+    0x38400) + SCENECOL 0x40000 + OOTCORE 0x70000; blob now at 0x02790000, scene blob at
+    0x02750000 (makefile OOT_CORE_LOAD_ADDR / OOT_SCENECOL_ADDR, ram_cart.h, checked in
+    ram_cart.c). Change all three together. Bank-2 jo heap shrank to 598 KB.
+36. **Decomp objects are data blobs `O<id hex>.OOB`** (importer OBJECTS) linked at
+    0x06000000 (oot-core/object.ld). Their symbols reach OOTCORE through
+    build/oot-core/obj_syms.ld (nm of each object elf); messages through msg_syms.ld.
+    Both files are link inputs: a stale one gives wrong addresses, not link errors.
+    Object .cpp keep the object header; placeholders (DLs, textures) live in a second
+    unit without it, or `u64 x[1]` clashes with the header's array size.
+37. **Python heredocs from Git Bash** break on `'` inside the script and turn `\\` +
+    newline into a joined line (makefile recipes still work, but read badly). Write patch
+    scripts with the Write tool into the scratchpad and run them (gotcha 12 again).
 
 ## Playtest package
 

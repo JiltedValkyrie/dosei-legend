@@ -140,14 +140,46 @@ Steps (in order):
  0. DONE (build only): `./build.sh --quick ...` skips asset steps (C/C++/oot-core changes).
  1. DONE (build only): gSaveContext mirror both ways each step: eventChkInf/itemGetInf/
     infTable/scene flags (copy back after update), age (child), night (0), dayTime (noon).
- 2. DONE (build only): every registered scene gets a blob (<scene>.OOC, all room layers:
+ 2. DONE: every registered scene gets a blob (<scene>.OOC, all room layers:
     main + AltHeaders); play_init in any scene, layer = Play_Init rule, per-room fallback =
-    Scene_CommandAlternateHeaderList. Still only En_Kusa/En_Item00 spawn (sRoomActorIds).
-    Decomp grass/drops now drawn in any scene. Scene-level alt headers (spawns, transition
-    actors) not yet.
- 3. Phase 2 draw shim for NPCs: decomp SkelAnime/limb state -> existing npc_draw renderer.
- 4. z_message logic -> VDP2 text box; text from ROM.
- 5. NPC/event actors in bulk, area by area (Kokiri first), each with drops + flag checks.
+    Scene_CommandAlternateHeaderList. Decomp grass/drops drawn in any scene. Scene-level alt
+    headers (spawns, transition actors) not yet. Steps 0-2 runtime: human 2026-10-02, Kokiri
+    grass test "no issue" (e57ec80). Second grass scene not reported separately.
+ 3+4+5a. BUILT, runtime NOT checked (API v9, Debug static RAM spare 432 B, Clean 4352 B,
+    blob 392 KB of 448 KB carve). First decomp NPC = En_Ko (all Kokiri children):
+    - Imported: z_skelanime, z_message, z_kanfont, z_construct (real Message_Init +
+      Regs_InitData), z_face_reaction, z_path, gfxalloc, z_memory_utils, En_Ko.
+    - Objects like N64: importer OBJECTS (os_anime, km1, kw1, fa) -> O<id hex>.OOB data
+      blobs linked at segment 6 (oot-core/object.ld): skeletons/limbs/anims verbatim,
+      DLs/textures one-word placeholders. obj_syms.ld gives OOTCORE their 0x06 addresses.
+      Each OOC lists the built objects its room ObjectLists name; host loads them after the
+      OOC in the scene carve; set_objects fills objectCtx slots. Object_GetSlot real search;
+      unbuilt object ids = resident slot 0 (gameplay_keep etc.), built-but-unloaded = -1.
+      SEGMENTED_TO_VIRTUAL/OS_K0_TO_PHYSICAL without K0BASE, gSegments[2]=0x02000000.
+    - Scene paths: OOC carries Path lists per scene layer (Scene_CommandPathList).
+    - Text from ROM: NESMSG.BIN = baserom nes_message_data_static in cart carve
+      RAM_CART_MSGDATA; entry table offsets from the ROM's own table in `code`
+      (importer msg_syms.ld). Japanese table emptied (English only, language set ENG).
+    - z_message runs for real: Message_Update + Message_Draw each decomp step, Gfx to a
+      scratch buffer (bridge_message.cpp). oot_core_views.cpp lays the decoded page into
+      38x4 cells + colours; C oot_core_message_box() prints it on the VDP2 rows 20-25 with
+      the VDP1 panel and prompt mark (decomp box replaces the C box while up).
+    - Player proxy talk: copy of Player_ActionHandler_Talk / StartTalking / SetupTalk /
+      Action_Talk close; real player body cylinder (OC) -> push sent to C Link.
+    - C: Kokiri children absent from C logic while decomp plays (gameplay_npc_present);
+      npc_draw draws each En_Ko with its type's baked model at decomp curFrame + decomp
+      head/torso turn. A goes to the decomp while it offers talk or talks, B while it talks; Link frozen
+      (gameplay_blocks_world) while the decomp text box is up.
+    - APPROXIMATE / missing (log, not blockers): one baked clip per type (decomp anim
+      changes not shown), glyph widths = 1 cell, item icons not drawn, no Z-target/C-Up
+      talk to decomp NPCs, no talk anims for Link, Navi hints about children may still be
+      C, no ocarina in messages, player name fixed "Link". Mido/Saria stay C (next batch).
+    Human check (Debug, one pass): Kokiri Forest - kids visible where OoT has them, look at
+    Link; walk up, A opens real ROM text, A pages/closes, choices (if any) by D-pad; kid
+    blocking the exit pushes Link; row 15 `oc p1 ...` no freeze; one Kokiri house; heap row
+    no failed allocations (bank-2 heap is now 598 KB, was ~1 MB).
+ 5. Next: En_Md (Mido), En_Sa (Saria), Kokiri signs/props, then other areas, each with
+    drops + flag checks. Then archive the C Kokiri child code to legacy/ once 3+4 confirmed.
  6. Later: z_demo cutscenes, z_player, z_camera. Then archive C counterparts.
 
 ## SPEED (2026-10-02, human Kronos kronos-fix, Debug, ns per call, cart)

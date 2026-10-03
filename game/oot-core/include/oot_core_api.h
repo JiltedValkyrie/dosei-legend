@@ -17,7 +17,7 @@
 #include "oot_core_host.h"
 
 #define OOT_CORE_MAGIC 0x4F4F5443u /* 'OOTC' */
-#define OOT_CORE_VERSION 8u
+#define OOT_CORE_VERSION 9u
 
 /* PlayState (~78 KB with Fx) + TwoHeadArena + ZeldaArena come from one block
  * the host allocates, so they never take the blob's fixed cart carve. */
@@ -32,6 +32,40 @@ typedef struct OotCoreActorView {
     int x, y, z;          /* world.pos, Q0 */
     unsigned int flags;   /* OOT_CORE_VIEW_* */
 } OotCoreActorView;
+
+/* One decomp NPC (ACTORCAT_NPC) for the C npc_draw renderer: the baked
+ * Saturn clip of the actor's model is drawn at the decomp skeleton's frame,
+ * with the decomp head/torso turn (NpcInteractInfo). Route step 3 shim. */
+typedef struct OotCoreNpcView {
+    short id, params;
+    int x, y, z;                 /* world.pos, Q0 */
+    unsigned short yaw;          /* shape.rot.y */
+    short head_x, head_y;        /* interactInfo.headRot x (pitch), y (yaw) */
+    short torso_x, torso_y;      /* interactInfo.torsoRot */
+    unsigned short frame;        /* skelAnime.curFrame, whole frames */
+    unsigned char alpha;         /* model alpha (fade), 0 = hidden */
+    unsigned char flags;         /* OOT_CORE_VIEW_DRAWN */
+} OotCoreNpcView;
+
+/* z_message state for the VDP2 text box (route step 4). The blob lays the
+ * decoded page out in character cells; the C side only prints rows. */
+#define OOT_CORE_MSG_ROWS 4
+#define OOT_CORE_MSG_COLS 38
+#define OOT_CORE_MSG_PROMPT_NONE 0
+#define OOT_CORE_MSG_PROMPT_NEXT 1   /* triangle: more pages */
+#define OOT_CORE_MSG_PROMPT_END  2   /* square: last page */
+typedef struct OotCoreMessageView {
+    unsigned char active;        /* a text box is on screen */
+    unsigned char box_pos;       /* TEXTBOX_POS_* (0 variable, 1 top, 2 middle, 3 bottom) */
+    unsigned char rows;          /* rows in use */
+    unsigned char prompt;        /* OOT_CORE_MSG_PROMPT_* */
+    unsigned char choices;       /* 0, 2 or 3: last rows are the choices */
+    unsigned char choice;        /* selected choice */
+    unsigned short serial;       /* changes whenever the cells change */
+    char text[OOT_CORE_MSG_ROWS][OOT_CORE_MSG_COLS + 1];
+    /* Per cell z_message colour index (Message_SetTextColor, 0 = default). */
+    unsigned char colour[OOT_CORE_MSG_ROWS][OOT_CORE_MSG_COLS];
+} OotCoreMessageView;
 
 /* C save <-> gSaveContext. Values are copied in before each update; the
  * flag words and scene flags behind the pointers are copied back after it,
@@ -53,6 +87,8 @@ typedef struct OotCoreSave {
     /* Current scene's persistent flags: chest, swch, clear, collect (the
      * C save_scene_flags_t order), or NULL when the scene keeps none. */
     unsigned long* scene_flags;
+    /* File name, ASCII, space padded (z_message MESSAGE_NAME). */
+    char player_name[8];
 } OotCoreSave;
 
 typedef struct OotCoreEntry {
@@ -70,6 +106,24 @@ typedef struct OotCoreEntry {
      * Player proxy spawns at (x, y, z) facing yaw. Returns 0 on failure. */
     int (*play_init)(void* block, unsigned int bytes, int scene_id, const void* scene, int room,
                      short x, short y, short z, short yaw);
+    /* After play_init: loaded object blobs, objects[i] for scene->objects[i]
+     * (NULL = not loaded). Fills the objectCtx slots (Object_GetSlot). */
+    void (*set_objects)(const void* const* objects, unsigned int count);
+    /* Once after init: ROM nes_message_data_static, resident in the cart. */
+    void (*set_text)(const void* data, unsigned int bytes);
+    /* N64 controller state for play->state.input[0] (BTN_* bits, held and
+     * newly pressed; stick -128..127). Before update. */
+    void (*set_input)(unsigned short held, unsigned short press, signed char stick_x, signed char stick_y);
+    /* Current text box, laid out (never NULL; active 0 when closed). */
+    const OotCoreMessageView* (*message_view)(void);
+    /* Live decomp NPCs (ACTORCAT_NPC) into a blob buffer; returns the count. */
+    int (*npc_view)(const OotCoreNpcView** out);
+    /* Player proxy is talking or a decomp NPC offers talk this frame: the C
+     * game must not use A for its own actions (bit 0 talking, bit 1 offer). */
+    unsigned int (*talk_state)(void);
+    /* OC push the decomp gave the player proxy since the last call (world
+     * units, x and z): the C game moves C Link by it. Clears it. */
+    void (*player_push)(int* x, int* z);
     /* C Link -> player proxy (Q0 world units). Call before update. */
     void (*set_player)(int x, int y, int z, short yaw);
     /* Player entered another room: z_room room change (kills the old

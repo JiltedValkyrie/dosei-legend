@@ -1,0 +1,221 @@
+/*
+ * Read-only views of decomp state for the C renderer (route steps 3-4).
+ * Nothing here changes game state: the real z_message / actor code owns it.
+ *
+ * Message: the page z_message has decoded (msgBufDecoded up to textDrawPos,
+ * advanced by the real Message_DrawText each frame) is laid out in VDP2
+ * character cells with the same control-code walk as Message_DrawText.
+ * APPROXIMATE: proportional widths (sFontWidths) become one cell per
+ * character, SHIFT is pixels / 8 cells, item icons and the background
+ * texture are not drawn.
+ */
+#include "oot_prelude.h"
+#include "ultra64.h"
+#include "actor.h"
+#include "message.h"
+#include "message_data_fmt.h"
+#include "play_state.h"
+#include "player.h"
+#include "overlays/actors/ovl_En_Ko/z_en_ko.h"
+#include "oot_core_api.h"
+
+extern PlayState* gOotCorePlay; /* oot_core_api.cpp */
+
+static OotCoreMessageView sMsgView;
+static u32 sMsgHash;
+
+/* NES extended glyphs (charmap.nes.txt) to ASCII for the VDP2 font. Button
+ * icons keep their letter; the Saturn layout keeps A/B for A/B. */
+static char MsgView_Glyph(u8 c) {
+    if (c >= 0x20 && c < 0x7F) {
+        return (char)c;
+    }
+    switch (c) {
+        case 0x9F: return 'A';
+        case 0xA0: return 'B';
+        case 0xA1: return 'C';
+        case 0xA2: return 'L';
+        case 0xA3: return 'R';
+        case 0xA4: return 'Z';
+        case 0xA5: return '^'; /* C-Up */
+        case 0xA6: return 'v'; /* C-Down */
+        case 0xA7: return '<'; /* C-Left */
+        case 0xA8: return '>'; /* C-Right */
+        case 0xA9: return '*'; /* triangle */
+        case 0xAA: return '+'; /* control stick */
+        case 0xAB: return '+'; /* D-pad */
+        default:
+            /* 0x80..0x9E: accented Latin; show the base letter's slot as '?' */
+            return '?';
+    }
+}
+
+static void MsgView_Layout(PlayState* play) {
+    MessageContext* msgCtx = &play->msgCtx;
+    OotCoreMessageView* v = &sMsgView;
+    u32 hash = 2166136261u;
+    s32 row = 0, col = 0;
+    u8 colour = 0;
+    u16 i, end = msgCtx->textDrawPos;
+    s32 r, c;
+
+    for (r = 0; r < OOT_CORE_MSG_ROWS; r++) {
+        for (c = 0; c < OOT_CORE_MSG_COLS; c++) {
+            v->text[r][c] = ' ';
+            v->colour[r][c] = 0;
+        }
+        v->text[r][OOT_CORE_MSG_COLS] = '\0';
+    }
+    if (end > sizeof(msgCtx->msgBufDecoded)) {
+        end = sizeof(msgCtx->msgBufDecoded);
+    }
+    for (i = 0; i < end; i++) {
+        u8 ch = msgCtx->msgBufDecoded[i];
+        switch (ch) {
+            case MESSAGE_NEWLINE:
+                row++;
+                col = 0;
+                break;
+            case MESSAGE_COLOR:
+                colour = msgCtx->msgBufDecoded[++i] & 0xF;
+                break;
+            case MESSAGE_SHIFT:
+                col += msgCtx->msgBufDecoded[++i] / 8;
+                break;
+            case MESSAGE_TEXT_SPEED:
+            case MESSAGE_ITEM_ICON:
+                i++;
+                break;
+            case MESSAGE_SFX:
+                i += 2;
+                break;
+            case MESSAGE_QUICKTEXT_ENABLE:
+            case MESSAGE_QUICKTEXT_DISABLE:
+            case MESSAGE_AWAIT_BUTTON_PRESS:
+            case MESSAGE_UNSKIPPABLE:
+            case MESSAGE_TWO_CHOICE:
+            case MESSAGE_THREE_CHOICE:
+            case MESSAGE_BACKGROUND:
+            case MESSAGE_OCARINA:
+                break;
+            case MESSAGE_BOX_BREAK:
+            case MESSAGE_TEXTID:
+            case MESSAGE_BOX_BREAK_DELAYED:
+            case MESSAGE_FADE:
+            case MESSAGE_FADE2:
+            case MESSAGE_PERSISTENT:
+            case MESSAGE_EVENT:
+            case MESSAGE_END:
+                i = end; /* page ends here (Message_DrawText returns) */
+                break;
+            default:
+                if (row < OOT_CORE_MSG_ROWS && col < OOT_CORE_MSG_COLS) {
+                    v->text[row][col] = MsgView_Glyph(ch);
+                    v->colour[row][col] = colour;
+                }
+                col++;
+                break;
+        }
+    }
+    v->rows = (row + 1 > OOT_CORE_MSG_ROWS) ? OOT_CORE_MSG_ROWS : (u8)(row + 1);
+    v->choices = (msgCtx->textboxEndType == TEXTBOX_ENDTYPE_2_CHOICE)   ? 2
+                 : (msgCtx->textboxEndType == TEXTBOX_ENDTYPE_3_CHOICE) ? 3
+                                                                        : 0;
+    v->choice = msgCtx->choiceIndex;
+    v->prompt = OOT_CORE_MSG_PROMPT_NONE;
+    if (msgCtx->msgMode == MSGMODE_TEXT_AWAIT_NEXT || msgCtx->msgMode == MSGMODE_TEXT_AWAIT_INPUT) {
+        v->prompt = OOT_CORE_MSG_PROMPT_NEXT;
+    } else if (msgCtx->msgMode == MSGMODE_TEXT_DONE && v->choices == 0) {
+        v->prompt = (msgCtx->textboxEndType == TEXTBOX_ENDTYPE_DEFAULT) ? OOT_CORE_MSG_PROMPT_END
+                    : (msgCtx->textboxEndType == TEXTBOX_ENDTYPE_HAS_NEXT ||
+                       msgCtx->textboxEndType == TEXTBOX_ENDTYPE_EVENT)
+                        ? OOT_CORE_MSG_PROMPT_NEXT
+                        : OOT_CORE_MSG_PROMPT_NONE;
+    }
+    v->box_pos = msgCtx->textBoxPos;
+    for (r = 0; r < OOT_CORE_MSG_ROWS; r++) {
+        for (c = 0; c < OOT_CORE_MSG_COLS; c++) {
+            hash = (hash ^ (u8)v->text[r][c]) * 16777619u;
+            hash = (hash ^ v->colour[r][c]) * 16777619u;
+        }
+    }
+    hash = (hash ^ (u32)(v->prompt | (v->choice << 4) | (v->rows << 8) | (v->box_pos << 12))) * 16777619u;
+    if (hash != sMsgHash) {
+        sMsgHash = hash;
+        v->serial++;
+    }
+}
+
+/* Box on screen: from the box opening until it closes (Message_Update's
+ * MSGMODE_TEXT_CLOSING ends it). Ocarina and other modes are not shown. */
+const OotCoreMessageView* OotCore_MessageView(void) {
+    PlayState* play = gOotCorePlay;
+    u8 mode;
+
+    if (play == NULL) {
+        sMsgView.active = false;
+        return &sMsgView;
+    }
+    mode = play->msgCtx.msgMode;
+    sMsgView.active = (mode >= MSGMODE_TEXT_BOX_GROWING && mode <= MSGMODE_TEXT_DELAYED_BREAK) ||
+                      mode == MSGMODE_TEXT_AWAIT_NEXT || mode == MSGMODE_TEXT_DONE;
+    if (sMsgView.active) {
+        MsgView_Layout(play);
+    }
+    return &sMsgView;
+}
+
+#define NPC_VIEW_MAX 16
+static OotCoreNpcView sNpcView[NPC_VIEW_MAX];
+
+/* NPCs whose actor struct the view knows. Others are left to the C game. */
+int OotCore_NpcView(const OotCoreNpcView** out) {
+    PlayState* play = gOotCorePlay;
+    Actor* actor;
+    int n = 0;
+
+    *out = sNpcView;
+    if (play == NULL) {
+        return 0;
+    }
+    for (actor = play->actorCtx.actorLists[ACTORCAT_NPC].head; actor != NULL && n < NPC_VIEW_MAX;
+         actor = actor->next) {
+        OotCoreNpcView* v = &sNpcView[n];
+
+        if (actor->update == NULL || actor->id != ACTOR_EN_KO) {
+            continue;
+        }
+        {
+            EnKo* ko = (EnKo*)actor;
+            s32 alpha = (s32)ko->modelAlpha;
+
+            v->head_x = ko->interactInfo.headRot.x;
+            v->head_y = ko->interactInfo.headRot.y;
+            v->torso_x = ko->interactInfo.torsoRot.x;
+            v->torso_y = ko->interactInfo.torsoRot.y;
+            v->frame = (u16)(s32)ko->skelAnime.curFrame;
+            v->alpha = (u8)(alpha < 0 ? 0 : alpha > 255 ? 255 : alpha);
+        }
+        v->id = actor->id;
+        v->params = actor->params;
+        v->x = (s32)actor->world.pos.x;
+        v->y = (s32)actor->world.pos.y;
+        v->z = (s32)actor->world.pos.z;
+        v->yaw = (u16)actor->shape.rot.y;
+        v->flags = (actor->draw != NULL) ? OOT_CORE_VIEW_DRAWN : 0;
+        n++;
+    }
+    return n;
+}
+
+/* Bit 0: the player proxy is in a conversation. Bit 1: a decomp actor
+ * offered talk this frame (A would accept it). */
+unsigned int OotCore_TalkState(void) {
+    PlayState* play = gOotCorePlay;
+    Player* player;
+
+    if (play == NULL || (player = GET_PLAYER(play)) == NULL) {
+        return 0;
+    }
+    return ((player->stateFlags1 & PLAYER_STATE1_TALKING) ? 1u : 0u) | (player->talkActor != NULL ? 2u : 0u);
+}

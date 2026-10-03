@@ -881,6 +881,10 @@ static void __attribute__((optimize("Os"))) dialogue_box(void)
         was_talking = false;
         return;
     }
+    if (oot_core_message_box()) {
+        was_talking = false;   /* the decomp box owns the rows now */
+        return;
+    }
     if (!gameplay_is_talking()) {
         if (was_talking) {
             for (i = 0; i < DIALOGUE_ROWS; ++i)

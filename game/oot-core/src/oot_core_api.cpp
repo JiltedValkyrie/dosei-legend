@@ -16,6 +16,11 @@
 #include "zelda_arena.h"
 #include "item.h"
 #include "save.h"
+#include "message.h"
+#include "animation.h"
+#include "gfx.h"
+#include "libu64/pad.h"
+#include "object.h"
 #include "oot_core_api.h"
 #include "oot_scene_blob.h"
 
@@ -27,6 +32,15 @@ extern s16 gOotCorePlayerYaw;
 extern s32 gOotCoreSwordActive;
 extern Vec3f gOotCoreSwordBase;
 extern Vec3f gOotCoreSwordTip;
+extern s32 gOotCorePlayerPushX;
+extern s32 gOotCorePlayerPushZ;
+/* bridge_message.cpp / oot_core_views.cpp */
+void OotCore_SetText(const void* data, u32 bytes);
+GraphicsContext* OotCore_GfxCtx(void);
+void OotCore_GfxReset(void);
+const OotCoreMessageView* OotCore_MessageView(void);
+int OotCore_NpcView(const OotCoreNpcView** out);
+unsigned int OotCore_TalkState(void);
 
 /* Linker-script symbols: first address past the blob's .bss; ctor table. */
 extern "C" char oot_core_end[];
@@ -34,13 +48,13 @@ typedef void (*OotCoreCtor)(void);
 extern "C" OotCoreCtor oot_core_ctors_start[], oot_core_ctors_end[];
 
 static RegEditor sRegEditor; /* *REG macros read gRegEditor->data */
-static PlayState* sPlay;
+PlayState* gOotCorePlay; /* oot_core_views.cpp reads it */
 static ActorEntry sPlayerEntry;
 static const OotSceneBlob* sScene;
 
 /* Room-list actor ids the blob owns; every other id stays with the C game
  * until its overlay is imported (plan Phase 1 step 6). */
-static const s16 sRoomActorIds[] = { ACTOR_EN_ITEM00, ACTOR_EN_KUSA };
+static const s16 sRoomActorIds[] = { ACTOR_EN_ITEM00, ACTOR_EN_KUSA, ACTOR_EN_KO };
 #define ROOM_ENTRIES_MAX 64
 static ActorEntry sRoomEntries[ROOM_ENTRIES_MAX];
 
@@ -102,6 +116,9 @@ static void oot_core_init(const OotCoreHost* host) {
     }
     gOotCoreHost = host;
     gRegEditor = &sRegEditor;
+    /* No KSEG0 on Saturn: segment 2 maps cart pointers to themselves
+     * (SEGMENTED_TO_VIRTUAL, importer fixup). Segment 6 = current object. */
+    gSegments[2] = 0x02000000;
 }
 
 #define ALIGN16(n) (((n) + 15u) & ~15u)
@@ -126,6 +143,14 @@ static int oot_core_play_init(void* block, unsigned int bytes, int scene_id, con
     ZeldaArena_Init(mem, OOT_CORE_PLAY_ARENA_BYTES);
 
     play->sceneId = scene_id;
+    play->state.gfxCtx = OotCore_GfxCtx();
+    OotCore_GfxReset();
+    /* Slot 0: gameplay_keep, resident (placeholder symbols in the blob).
+     * set_objects adds the scene's data objects after it. */
+    play->objectCtx.slots[0].id = OBJECT_GAMEPLAY_KEEP;
+    play->objectCtx.slots[0].segment = NULL;
+    play->objectCtx.numEntries = 1;
+    play->objectCtx.numPersistentEntries = 1;
     /* Play_Init: the main camera exists; the C camera drives the real view. */
     play->cameraPtrs[CAM_ID_MAIN] = &play->mainCamera;
     play->activeCamId = CAM_ID_MAIN;
@@ -133,7 +158,10 @@ static int oot_core_play_init(void* block, unsigned int bytes, int scene_id, con
     LightContext_Init(play, &play->lightCtx);
     Effect_InitContext(play);
     EffectSs_InitInfo(play, 0x55);
+    Regs_InitData(play);
+    Message_Init(play);
     CollisionCheck_InitContext(play, &play->colChkCtx);
+    AnimTaskQueue_Reset(&play->animTaskQueue);
     sScene = (const OotSceneBlob*)scene;
     if (sScene != NULL && sScene->col_header != NULL) {
         BgCheck_Allocate(&play->colCtx, play, (CollisionHeader*)sScene->col_header);
@@ -142,6 +170,21 @@ static int oot_core_play_init(void* block, unsigned int bytes, int scene_id, con
     play->roomCtx.prevRoom.num = -1;
     /* set_save ran first, so age/time/cutscene index are the C save's. */
     gSaveContext.sceneLayer = scene_layer();
+    /* Scene_CommandPathList of the scene header the layer runs (Scene_
+     * CommandAlternateHeaderList fallback as for the room lists). */
+    if (sScene != NULL && sScene->num_path_layers > 0) {
+        const OotSceneLayer* paths = sScene->paths;
+        s32 layer = gSaveContext.sceneLayer;
+        const OotSceneLayer* use = &paths[0];
+
+        if (layer > 0 && (u32)layer < sScene->num_path_layers && paths[layer].present) {
+            use = &paths[layer];
+        } else if (layer == SCENE_LAYER_ADULT_NIGHT && SCENE_LAYER_ADULT_DAY < (s32)sScene->num_path_layers &&
+                   paths[SCENE_LAYER_ADULT_DAY].present) {
+            use = &paths[SCENE_LAYER_ADULT_DAY];
+        }
+        play->pathList = (Path*)use->actors;
+    }
 
     sPlayerEntry.id = ACTOR_PLAYER;
     sPlayerEntry.pos.x = x;
@@ -155,8 +198,56 @@ static int oot_core_play_init(void* block, unsigned int bytes, int scene_id, con
     Actor_InitContext(play, &play->actorCtx, play->playerEntry);
     load_room_actors(play, room);
 
-    sPlay = play;
+    gOotCorePlay = play;
     return GET_PLAYER(play) != NULL;
+}
+
+/* Scene_CommandObjectList outcome: the host loaded each listed object's
+ * data blob (linked at segment 6) somewhere in the cart. */
+static void oot_core_set_objects(const void* const* objects, unsigned int count) {
+    ObjectContext* objectCtx;
+    u32 i;
+
+    if (gOotCorePlay == NULL || sScene == NULL || objects == NULL) {
+        return;
+    }
+    objectCtx = &gOotCorePlay->objectCtx;
+    objectCtx->numEntries = 1;
+    for (i = 0; i < count && i < sScene->num_objects && objectCtx->numEntries < ARRAY_COUNT(objectCtx->slots);
+         i++) {
+        if (objects[i] == NULL) {
+            continue;
+        }
+        objectCtx->slots[objectCtx->numEntries].id = sScene->objects[i];
+        objectCtx->slots[objectCtx->numEntries].segment = (void*)objects[i];
+        objectCtx->numEntries++;
+    }
+}
+
+static void oot_core_player_push(int* x, int* z) {
+    *x = gOotCorePlayerPushX;
+    *z = gOotCorePlayerPushZ;
+    gOotCorePlayerPushX = 0;
+    gOotCorePlayerPushZ = 0;
+}
+
+static Input sHostInput;
+static s8 sPendingStickY;
+
+static void oot_core_set_input(unsigned short held, unsigned short press, signed char stick_x, signed char stick_y) {
+    sHostInput.prev = sHostInput.cur;
+    sHostInput.cur.button = held;
+    sHostInput.cur.stick_x = stick_x;
+    sHostInput.cur.stick_y = stick_y;
+    /* Saturn steps the decomp 2 of 3 gameplay steps: keep presses until
+     * an update consumes them, or a press on the skipped step is lost. */
+    sHostInput.press.button |= press;
+    sHostInput.rel.stick_x = stick_x;
+    /* A one-step stick flick (menu step) must reach one update, then read as
+     * released: Message_HandleChoiceSelection steps on flick, not on hold. */
+    if (stick_y != 0) {
+        sPendingStickY = stick_y;
+    }
 }
 
 static void oot_core_set_player(int x, int y, int z, short yaw) {
@@ -228,11 +319,22 @@ static void oot_core_set_save(const OotCoreSave* in) {
     for (i = 0; i < OOT_CORE_INFTABLE_WORDS && in->inf_table; i++) {
         gSaveContext.save.info.infTable[i] = in->inf_table[i];
     }
-    if (in->scene_flags && sPlay != NULL) {
-        sPlay->actorCtx.flags.chest = in->scene_flags[0];
-        sPlay->actorCtx.flags.swch = in->scene_flags[1];
-        sPlay->actorCtx.flags.clear = in->scene_flags[2];
-        sPlay->actorCtx.flags.collect = in->scene_flags[3];
+    if (in->scene_flags && gOotCorePlay != NULL) {
+        gOotCorePlay->actorCtx.flags.chest = in->scene_flags[0];
+        gOotCorePlay->actorCtx.flags.swch = in->scene_flags[1];
+        gOotCorePlay->actorCtx.flags.clear = in->scene_flags[2];
+        gOotCorePlay->actorCtx.flags.collect = in->scene_flags[3];
+    }
+    gSaveContext.language = LANGUAGE_ENG;
+    /* MESSAGE_NAME: ASCII -> file name charset (Message_Decode reverses it). */
+    for (i = 0; i < ARRAY_COUNT(pd->playerName); i++) {
+        char ch = in->player_name[i];
+        pd->playerName[i] = (ch >= '0' && ch <= '9')   ? FILENAME_DIGIT(ch)
+                            : (ch >= 'A' && ch <= 'Z') ? FILENAME_UPPERCASE(ch)
+                            : (ch >= 'a' && ch <= 'z') ? FILENAME_LOWERCASE(ch)
+                            : (ch == '-')              ? FILENAME_DASH
+                            : (ch == '.')              ? FILENAME_PERIOD
+                                                       : FILENAME_SPACE;
     }
     pd->health = in->health;
     pd->healthCapacity = in->health_capacity;
@@ -262,7 +364,7 @@ static void oot_core_set_save(const OotCoreSave* in) {
  * Room_FinishRoomChange (old room's actors die), done at once: the C game
  * has already swapped the room geometry. */
 static void oot_core_set_room(int room) {
-    PlayState* play = sPlay;
+    PlayState* play = gOotCorePlay;
 
     if (play == NULL || room == play->roomCtx.curRoom.num) {
         return;
@@ -276,12 +378,18 @@ static void oot_core_set_room(int room) {
 }
 
 static void oot_core_update(void) {
-    PlayState* play = sPlay;
+    PlayState* play = gOotCorePlay;
 
     if (play == NULL) {
         return;
     }
+    sHostInput.rel.stick_y = sPendingStickY;
+    sHostInput.cur.stick_y = sPendingStickY;
+    sPendingStickY = 0;
+    play->state.input[0] = sHostInput;
+    sHostInput.press.button = 0;
     /* Play_Update order. */
+    AnimTaskQueue_Reset(&play->animTaskQueue);
     CollisionCheck_AT(play, &play->colChkCtx);
     CollisionCheck_OC(play, &play->colChkCtx);
     CollisionCheck_Damage(play, &play->colChkCtx);
@@ -289,39 +397,44 @@ static void oot_core_update(void) {
     Actor_UpdateAll(play, &play->actorCtx);
     Effect_UpdateAll(play);
     EffectSs_UpdateAll(play);
+    Message_Update(play);
+    AnimTaskQueue_Update(play, &play->animTaskQueue);
+    /* Play_Draw's Message_Draw: it advances the text reveal (textDrawPos)
+     * and page state; its display list goes to a scratch buffer. */
+    OotCore_GfxReset();
+    Message_Draw(play);
     save_copy_out(play);
     play->gameplayFrames++;
     play->state.frames++;
 }
 
 static void oot_core_draw(void) {
-    /* Phase 2: Actor_DrawAll needs a GraphicsContext with display-list
-     * buffers for the draw shim. Until then actors update but do not draw. */
+    /* Phase 2: Actor_DrawAll into the shim. Message_Draw runs in update. */
 }
 
 static int oot_core_spawn(short actor_id, short params, short x, short y, short z, short rot_y) {
-    if (sPlay == NULL || actor_id < 0 || actor_id >= ACTOR_ID_MAX ||
+    if (gOotCorePlay == NULL || actor_id < 0 || actor_id >= ACTOR_ID_MAX ||
         gActorOverlayTable[actor_id].profile == NULL) {
         return 0;
     }
-    return Actor_Spawn(&sPlay->actorCtx, sPlay, actor_id, x, y, z, 0, rot_y, 0, params) != NULL;
+    return Actor_Spawn(&gOotCorePlay->actorCtx, gOotCorePlay, actor_id, x, y, z, 0, rot_y, 0, params) != NULL;
 }
 
 static int oot_core_actor_count(int category) {
-    if (sPlay == NULL || category < 0 || category >= ACTORCAT_MAX) {
+    if (gOotCorePlay == NULL || category < 0 || category >= ACTORCAT_MAX) {
         return 0;
     }
-    return sPlay->actorCtx.actorLists[category].length;
+    return gOotCorePlay->actorCtx.actorLists[category].length;
 }
 
 static int oot_core_actor_view(int category, OotCoreActorView* out, int max) {
     Actor* actor;
     int n = 0;
 
-    if (sPlay == NULL || out == NULL || category < 0 || category >= ACTORCAT_MAX) {
+    if (gOotCorePlay == NULL || out == NULL || category < 0 || category >= ACTORCAT_MAX) {
         return 0;
     }
-    for (actor = sPlay->actorCtx.actorLists[category].head; actor != NULL && n < max; actor = actor->next) {
+    for (actor = gOotCorePlay->actorCtx.actorLists[category].head; actor != NULL && n < max; actor = actor->next) {
         if (actor->update == NULL) {
             continue; /* killed, removed next frame */
         }
@@ -346,6 +459,13 @@ extern "C" const OotCoreEntry oot_core_entry __attribute__((section(".oot_entry"
     oot_core_init,
     oot_core_play_bytes,
     oot_core_play_init,
+    oot_core_set_objects,
+    OotCore_SetText,
+    oot_core_set_input,
+    OotCore_MessageView,
+    OotCore_NpcView,
+    OotCore_TalkState,
+    oot_core_player_push,
     oot_core_set_player,
     oot_core_set_room,
     oot_core_set_sword,

@@ -38,7 +38,8 @@ typedef char carve_titlepth_before_dialogue[CARVE_END(RAM_CART_TITLEPTH) <= RAM_
 typedef char carve_musictrg_before_linkmesh[CARVE_END(RAM_CART_MUSICTRG) <= RAM_CART_LINKMESH_OFFSET ? 1 : -1];
 typedef char carve_linkmesh_inside[CARVE_END(RAM_CART_LINKMESH) <= RAM_CART_FIXED_BYTES ? 1 : -1];
 #ifdef DOSEI_OOT_CORE
-typedef char carve_linkmesh_before_scenecol[CARVE_END(RAM_CART_LINKMESH) <= RAM_CART_SCENECOL_OFFSET ? 1 : -1];
+typedef char carve_linkmesh_before_msgdata[CARVE_END(RAM_CART_LINKMESH) <= RAM_CART_MSGDATA_OFFSET ? 1 : -1];
+typedef char carve_msgdata_before_scenecol[CARVE_END(RAM_CART_MSGDATA) <= RAM_CART_SCENECOL_OFFSET ? 1 : -1];
 typedef char carve_scenecol_before_ootcore[CARVE_END(RAM_CART_SCENECOL) <= RAM_CART_OOTCORE_OFFSET ? 1 : -1];
 typedef char carve_scenecol_at_link_address[RAM_CART_FIXED_ADDRESS + RAM_CART_SCENECOL_OFFSET == (OOT_SCENECOL_ADDR | 0x20000000u) ? 1 : -1];
 typedef char carve_ootcore_inside[CARVE_END(RAM_CART_OOTCORE) <= RAM_CART_FIXED_BYTES ? 1 : -1];

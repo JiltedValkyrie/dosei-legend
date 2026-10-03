@@ -132,7 +132,7 @@ bool                gameplay_npc_present(unsigned int npc)
         return p->scene == SAVE_SCENE_KOKIRI_FOREST &&
                !save_check_quest_item(QUEST_KOKIRI_EMERALD);
     default:
-        return true;
+        return !oot_core_owns_children();   /* En_Ko: the decomp's (npc_draw draws it) */
     }
 }
 
@@ -2242,7 +2242,8 @@ bool                gameplay_is_paused(void)
 
 bool                gameplay_blocks_world(void)
 {
-    return gameplay.paused || gameplay.talking || gohma_cinematic() || gohma_warp_active();
+    return gameplay.paused || gameplay.talking || gohma_cinematic() || gohma_warp_active() ||
+           (oot_core_talk() & 1u);
 }
 
 /* Four OoT pause pages. Start closes; B opens the save confirmation.

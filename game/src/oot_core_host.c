@@ -1,5 +1,7 @@
 #include "oot_core_host.h"
 #ifdef DOSEI_OOT_CORE
+/* Glue, not per-vertex work: size over speed (work RAM). */
+#pragma GCC optimize("Os")
 #include <jo/jo.h>
 #include "action_audio.h"
 #include "demo.h"
@@ -11,6 +13,8 @@
 #include "ram_cart.h"
 #include "ram_low.h"
 #include "save_state.h"
+#include "oot_scene_blob.h"
+#include <string.h>
 
 
 #define ENTRY ((const OotCoreEntry *)OOT_CORE_LOAD_ADDR)
@@ -65,19 +69,21 @@ static unsigned int play_scene = 0xFFFFu;
 static unsigned int step_phase;
 
 /* Read a disc file into a cache-through cart carve: zero the carve first
-** (.bss is not in the file), refuse a file larger than the carve. */
-static bool load_carve(const char *name, unsigned int offset, unsigned int bytes)
+** (.bss is not in the file), refuse a file larger than the carve. Returns
+** the file length, 0 on failure. GFS_NameToId first: a missing file is
+** fatal inside jo_fs. */
+static int load_carve(const char *name, unsigned int offset, unsigned int bytes)
 {
     unsigned char *carve = (unsigned char *)ram_cart_fixed(offset, bytes);
     jo_file probe;
     int length;
     unsigned int i;
-    if (!carve || !jo_fs_open(&probe, name)) return false;
+    if (!carve || GFS_NameToId((Sint8 *)name) < 0 || !jo_fs_open(&probe, name)) return 0;
     length = probe.size;
     jo_fs_close(&probe);
-    if (length <= 0 || length > (int)bytes) return false;
+    if (length <= 0 || length > (int)bytes) return 0;
     for (i = 0; i < bytes; ++i) carve[i] = 0;
-    return jo_fs_read_file_ptr(name, carve, &length) != JO_NULL;
+    return jo_fs_read_file_ptr(name, carve, &length) != JO_NULL ? length : 0;
 }
 
 bool oot_core_boot(void)
@@ -96,6 +102,12 @@ bool oot_core_boot(void)
     }
     jo_printf(0, 20, "oc 2 init  ");
     ENTRY->init(&host);
+    {
+        /* ROM message text (NESMSG.BIN): z_message DMAs from it. */
+        int bytes = load_carve("NESMSG.BIN", RAM_CART_MSGDATA_OFFSET, RAM_CART_MSGDATA_BYTES);
+        if (bytes) ENTRY->set_text(ram_cart_fixed(RAM_CART_MSGDATA_OFFSET, RAM_CART_MSGDATA_BYTES),
+                                   (unsigned int)bytes);
+    }
     jo_printf(0, 20, "oc 3 bench ");
     ENTRY->bench(&bench, frame_timer_ticks, frame_timer_ticks_to_us);
     jo_printf(0, 20, "                    ");
@@ -135,22 +147,61 @@ static void mirror_save(void)
         mirror.nut_ammo = save_state.nut_ammo;
         mirror.slingshot_owned = save_state.slingshot;
         mirror.seed_ammo = save_state.ammo_seeds;
+        memcpy(mirror.player_name, "Link    ", 8); /* no file name in the C save */
         ENTRY->set_save(&mirror);
     }
 }
 
-/* <scene>.OOC (asset_scene_name, like the room banks) into the scene carve.
-** GFS_NameToId first: a missing file is fatal inside jo_fs. */
+/* <scene>.OOC (asset_scene_name, like the room banks) into the scene carve,
+** then each data object it lists (O<id>.OOB) packed after it. Objects are
+** used through the cached alias like the blob. */
+#define SCENE_OBJECTS_MAX 16
+static const void *scene_objects[SCENE_OBJECTS_MAX];
+static unsigned int scene_object_count;
+
 static bool load_scene_blob(unsigned int scene)
 {
+    static const char hex[] = "0123456789ABCDEF";
     char name[12];
-    if (!asset_scene_name(name, scene, -1, "OOC") || GFS_NameToId((Sint8 *)name) < 0) return false;
-    if (!load_carve(name, RAM_CART_SCENECOL_OFFSET, RAM_CART_SCENECOL_BYTES)) return false;
+    const OotSceneBlob *blob = (const OotSceneBlob *)OOT_SCENECOL_ADDR;
+    unsigned char *carve = (unsigned char *)ram_cart_fixed(RAM_CART_SCENECOL_OFFSET, RAM_CART_SCENECOL_BYTES);
+    unsigned int used, i;
+    int length;
+    scene_object_count = 0;
+    if (!asset_scene_name(name, scene, -1, "OOC")) return false;
+    length = load_carve(name, RAM_CART_SCENECOL_OFFSET, RAM_CART_SCENECOL_BYTES);
+    if (!length) return false;
+    slCashPurge();
+    used = ((unsigned int)length + 15u) & ~15u;
+    for (i = 0; i < blob->num_objects && i < SCENE_OBJECTS_MAX; ++i) {
+        unsigned int id = blob->objects[i];
+        char file[] = "O000.OOB";
+        jo_file probe;
+        file[1] = hex[(id >> 8) & 15]; file[2] = hex[(id >> 4) & 15]; file[3] = hex[id & 15];
+        scene_objects[i] = 0;
+        if (GFS_NameToId((Sint8 *)file) < 0 || !jo_fs_open(&probe, file)) continue;
+        length = probe.size;
+        jo_fs_close(&probe);
+        if (length <= 0 || used + (unsigned int)length > RAM_CART_SCENECOL_BYTES ||
+            !jo_fs_read_file_ptr(file, carve + used, &length)) continue;
+        scene_objects[i] = (const void *)((unsigned int)(carve + used) & ~0x20000000u);
+        used += ((unsigned int)length + 15u) & ~15u;
+    }
+    scene_object_count = i;
     slCashPurge();
     return true;
 }
 
-void oot_core_frame(void)
+/* Saturn pad -> N64 buttons the decomp reads (z_message, talk). The
+** Saturn layout keeps A for A and B for B; the D-pad/stick menu step drives
+** text choices as an N64 stick flick. */
+static void send_input(const gameplay_input_t *in)
+{
+    unsigned short press = (unsigned short)((in->interact ? 0x8000u : 0u) | (in->cancel ? 0x4000u : 0u));
+    ENTRY->set_input(press, press, 0, (signed char)(in->menu_step < 0 ? 60 : in->menu_step > 0 ? -60 : 0));
+}
+
+void oot_core_frame(const gameplay_input_t *in)
 {
     unsigned int scene = scene_flow_scene();
     if (!loaded) return;
@@ -164,10 +215,12 @@ void oot_core_frame(void)
                                    (int)kokiri_bank_room(),
                                    (short)demo_link.x, (short)(demo_link.y - DEMO_LINK_EYE_HEIGHT),
                                    (short)demo_link.z, (short)demo_link_yaw) != 0;
+        if (playing) ENTRY->set_objects(scene_objects, scene_object_count);
         step_phase = 0;
     }
     if (!playing) return;
     sync_player();
+    send_input(in);
     mirror_save();
     ENTRY->set_room((int)kokiri_bank_room());
     {
@@ -182,7 +235,63 @@ void oot_core_frame(void)
         unsigned int t0 = frame_timer_ticks();
         ENTRY->update();
         update_us = frame_timer_ticks_to_us(frame_timer_ticks() - t0);
+        {
+            int dx, dz;   /* decomp actors pushing the player (En_Ko blockers) */
+            ENTRY->player_push(&dx, &dz);
+            demo_link.x += dx;
+            demo_link.z += dz;
+        }
     }
+}
+
+unsigned int oot_core_talk(void)
+{
+    return playing ? ENTRY->talk_state() | (ENTRY->message_view()->active ? 1u : 0u) : 0u;
+}
+int oot_core_npcs(const OotCoreNpcView **out) { return playing ? ENTRY->npc_view(out) : 0; }
+
+/* The decomp text box on the VDP2 text layer, in the C dialogue rows.
+** VDP2 keeps text, so rows are reprinted only when the view changes and
+** cleared once when the box closes. Returns true while it is up. */
+#define OC_MSG_ROW 20
+#define OC_MSG_ROWS (OOT_CORE_MSG_ROWS + 2)
+bool oot_core_message_box(void)
+{
+    static unsigned short shown_serial;
+    static bool was_active;
+    /* z_message colour index -> Jo palette: white red green blue lightblue purple yellow black. */
+    static const unsigned char colour_map[8] = { 0, 2, 3, 5, 5, 6, 4, 1 };
+    const OotCoreMessageView *v = playing ? ENTRY->message_view() : 0;
+    unsigned int r, c;
+    if (!v || !v->active) {
+        if (was_active)
+            for (r = 0; r < OC_MSG_ROWS; ++r) jo_printf(0, OC_MSG_ROW + (int)r, "%-40s", "");
+        was_active = false;
+        return false;
+    }
+    kokiri_message_box_draw(160, OC_MSG_ROW * 8 + OC_MSG_ROWS * 4, 320, OC_MSG_ROWS * 8);
+    if (!was_active || v->serial != shown_serial) {
+        for (r = 0; r < OOT_CORE_MSG_ROWS; ++r) {
+            int row = OC_MSG_ROW + 1 + (int)r;
+            bool choice_row = v->choices && r + v->choices >= v->rows && r < v->rows;
+            jo_printf(0, row, "%-40s", "");
+            for (c = 0; c < OOT_CORE_MSG_COLS; ) {
+                unsigned int start = c, colour = v->colour[r][c] & 7;
+                while (c < OOT_CORE_MSG_COLS && (v->colour[r][c] & 7) == colour) ++c;
+                jo_printf_with_color(1 + (int)start + (choice_row ? 2 : 0), row, colour_map[colour],
+                                     "%.*s", (int)(c - start), &v->text[r][start]);
+            }
+            if (choice_row)
+                jo_printf(1, row, "%c", r + v->choices - v->rows == v->choice ? '>' : ' ');
+        }
+        jo_set_printf_color_index(JO_COLOR_INDEX_White);
+        shown_serial = v->serial;
+    }
+    was_active = true;
+    if (v->prompt)
+        kokiri_message_mark_draw(160, (OC_MSG_ROW + OC_MSG_ROWS - 1) * 8 + 4,
+                                 v->prompt == OOT_CORE_MSG_PROMPT_END);
+    return true;
 }
 
 bool oot_core_is_loaded(void) { return loaded; }
