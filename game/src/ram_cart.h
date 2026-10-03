@@ -135,6 +135,11 @@
  * temporarily borrowed for pause. Original font and scene bitmap stay live. */
 #define RAM_CART_PAUSE_BACKUP_OFFSET 0x43000u
 #define RAM_CART_PAUSE_BACKUP_BYTES  0x29880u
+/* Whole-file load scratch: the pause page + backup carves, idle unless the
+ * pause menu is open. Scene/menu loaders read a file here in ONE GFS_Load
+ * instead of one 2 KB jo_fs_read_next_bytes CD request per sector. */
+#define RAM_CART_LOAD_SCRATCH_OFFSET RAM_CART_PAUSE_OFFSET
+#define RAM_CART_LOAD_SCRATCH_BYTES  (RAM_CART_PAUSE_BYTES + RAM_CART_PAUSE_BACKUP_BYTES)
 #define RAM_CART_SKULL_OFFSET       0x6C900u
 #define RAM_CART_SKULL_BYTES        0x900u
 #define RAM_CART_WALL_SKULL_OFFSET  0x6D200u
@@ -154,6 +159,9 @@
 
 /* Pointer into the fixed carve, or 0 when no cart / out of range. */
 void   *ram_cart_fixed(unsigned int offset, unsigned int bytes);
+/* Read `name` whole into the load scratch. NULL if missing, larger than the
+** scratch, or unreadable. Never call while the pause menu is open. */
+const void *ram_cart_load_scratch(const char *name, int *bytes);
 
 /* True when a 32 Mbit cart is present. Cheap; reads the cart id byte. */
 bool    ram_cart_present(void);

@@ -18,7 +18,8 @@
 /* Default half-fade length; music_fade_to() takes an explicit one. */
 #define FADE_DEFAULT     15
 #define LOAD_CHUNK       8192          /* staging buffer, word-copied to SCSP */
-#define LOAD_PER_FRAME   4             /* chunks per rendered frame: 32 KB */
+#define STREAM_SECTORS   (LOAD_CHUNK / 2048) /* most sectors copied per frame */
+#define STREAM_STALL     20            /* empty frames before restarting the drive */
 
 enum { MUSIC_IDLE, MUSIC_FADE_OUT, MUSIC_SWAP, MUSIC_FADE_IN };
 
@@ -48,13 +49,70 @@ static unsigned int transition_start, transition_frames;
 static unsigned int audible_frames, worst_stall, last_service, swap_count;
 
 /* Swap progress, owned by music_service() on the main thread. */
-static jo_file level_file;
+/* A swap streams during gameplay. Blocking reads cost real CD time every
+ * frame (2x drive: ~150 sectors/s), which Kronos hides and Mednafen/hardware
+ * do not. So the drive reads ahead into the CD buffer (GFS_NwCdRead) and each
+ * frame copies only sectors that have already arrived. */
+typedef struct {
+    GfsHn gfs;
+    unsigned int size, offset, idle;
+} cd_stream_t;
+extern Sint32 GFS_GetNumCdbuf(GfsHn gfs);  /* LIBCD; Jo has no prototype */
+
+static cd_stream_t level_stream;
 static bool level_file_open;
 static unsigned int level_offset;
-static jo_file swap_file;
+static cd_stream_t swap_stream;
 static bool swap_file_open;
 static unsigned short *swap_staging;
 static unsigned int swap_offset;
+
+static bool stream_open(cd_stream_t *s, const char *name, unsigned int size)
+{
+    Sint32 fid = GFS_NameToId((Sint8 *)name), sector, count, last;
+    if (fid < 0 || !(s->gfs = GFS_Open(fid))) { s->gfs = 0; return false; }
+    GFS_GetFileSize(s->gfs, &sector, &count, &last);
+    if ((unsigned int)(sector * (count - 1) + last) != size) {
+        GFS_Close(s->gfs); s->gfs = 0; return false;
+    }
+    s->size = size; s->offset = 0; s->idle = 0;
+    GFS_SetTmode(s->gfs, GFS_TMODE_CPU);
+    GFS_NwCdRead(s->gfs, count);
+    return true;
+}
+
+static void stream_close(cd_stream_t *s)
+{
+    if (s->gfs) GFS_Close(s->gfs);
+    s->gfs = 0;
+}
+
+/* Bytes copied into buf (0 = nothing buffered yet), or -1 on error. Never
+ * waits on the drive, except one sector after a long stall: another file's
+ * read stops our read-ahead, and a blocking read always resumes it. */
+static int stream_read(cd_stream_t *s, void *buf, unsigned int max)
+{
+    Sint32 have, want = (Sint32)(max / 2048), got;
+    unsigned int bytes;
+    if (s->offset >= s->size) return 0;
+    GFS_NwExecOne(s->gfs);
+    have = GFS_GetNumCdbuf(s->gfs);
+    if (have <= 0) {
+        ++s->idle;
+        if (s->idle == STREAM_STALL)
+            GFS_NwCdRead(s->gfs, (Sint32)((s->size - s->offset + 2047) / 2048));
+        if (s->idle < 2 * STREAM_STALL) return 0;
+        have = 1;
+    }
+    s->idle = 0;
+    if (want > have) want = have;
+    bytes = (unsigned int)want * 2048;
+    if (bytes > s->size - s->offset) bytes = s->size - s->offset;
+    got = GFS_Fread(s->gfs, want, buf, (Sint32)bytes);
+    if (got != (Sint32)bytes) return -1;
+    s->offset += bytes;
+    return (int)bytes;
+}
 static bool swap_failed;
 static const music_bank_t *once_bank,*once_resume;
 static volatile bool once_done;
@@ -306,7 +364,6 @@ void music_service(void)
 {
     /* Do not seek the drive back to data while a Red Book track owns it. */
     if (cdda_muted) return;
-    unsigned int chunk;
     if(once_done && state==MUSIC_IDLE){
         const music_bank_t *resume=once_resume;
         once_done=false;once_bank=once_resume=JO_NULL;
@@ -357,9 +414,7 @@ void music_service(void)
                 swap_failed = true; swap_stage = 0; set_volume(VOLUME_MAX);
                 state = MUSIC_IDLE; return;
             }
-            if (!jo_fs_open(&level_file, incoming->level_file) ||
-                (unsigned int)level_file.size != incoming->level_bytes) {
-                if (level_file.size) jo_fs_close(&level_file);
+            if (!stream_open(&level_stream, incoming->level_file, incoming->level_bytes)) {
                 jo_free(pending_levels); pending_levels = JO_NULL;
                 swap_failed = true; swap_stage = 0; set_volume(VOLUME_MAX);
                 state = MUSIC_IDLE; return;
@@ -367,23 +422,16 @@ void music_service(void)
             level_offset = 0;
             level_file_open = true;
         }
-        for (chunk = 0; chunk < LOAD_PER_FRAME &&
-                        level_offset < incoming->level_bytes; ++chunk) {
-            unsigned int want = incoming->level_bytes - level_offset;
-            if (want > LOAD_CHUNK) want = LOAD_CHUNK;
-            got = jo_fs_read_next_bytes(&level_file,
-                                        (char *)pending_levels + level_offset,
-                                        want);
-            if (got != (int)want) {
-                jo_fs_close(&level_file); level_file_open = false;
-                jo_free(pending_levels); pending_levels = JO_NULL;
-                swap_failed = true; swap_stage = 0; set_volume(VOLUME_MAX);
-                state = MUSIC_IDLE; return;
-            }
-            level_offset += (unsigned int)got;
+        got = stream_read(&level_stream, (char *)pending_levels + level_offset, LOAD_CHUNK);
+        if (got < 0) {
+            stream_close(&level_stream); level_file_open = false;
+            jo_free(pending_levels); pending_levels = JO_NULL;
+            swap_failed = true; swap_stage = 0; set_volume(VOLUME_MAX);
+            state = MUSIC_IDLE; return;
         }
+        level_offset += (unsigned int)got;
         if (level_offset < incoming->level_bytes) return;
-        jo_fs_close(&level_file);
+        stream_close(&level_stream);
         level_file_open = false;
         swap_stage = 2;
         return;
@@ -392,42 +440,35 @@ void music_service(void)
     if (state != MUSIC_SWAP) return;
 
     if (!swap_file_open) {
-        if (!jo_fs_open(&swap_file, incoming->pcm_file)) {
-            swap_failed = true; swap_stage = 0; set_volume(VOLUME_MAX); state = MUSIC_IDLE; return;
-        }
-        if ((unsigned int)swap_file.size != incoming->pcm_bytes ||
-            incoming->sample_base + incoming->pcm_bytes > 0x80000) {
-            jo_fs_close(&swap_file); swap_failed = true; swap_stage = 0; set_volume(VOLUME_MAX);
+        if (incoming->sample_base + incoming->pcm_bytes > 0x80000 ||
+            !stream_open(&swap_stream, incoming->pcm_file, incoming->pcm_bytes)) {
+            swap_failed = true; swap_stage = 0; set_volume(VOLUME_MAX);
             state = MUSIC_IDLE; return;
         }
         swap_staging = jo_malloc(LOAD_CHUNK);
         if (!swap_staging) {
-            jo_fs_close(&swap_file); swap_failed = true; swap_stage = 0; set_volume(VOLUME_MAX);
+            stream_close(&swap_stream); swap_failed = true; swap_stage = 0; set_volume(VOLUME_MAX);
             state = MUSIC_IDLE; return;
         }
         swap_offset = 0;
         swap_file_open = true;
     }
 
-    for (chunk = 0; chunk < LOAD_PER_FRAME && swap_offset < incoming->pcm_bytes;
-         ++chunk) {
-        unsigned int want = incoming->pcm_bytes - swap_offset;
-        int got;
-        if (want > LOAD_CHUNK) want = LOAD_CHUNK;
-        got = jo_fs_read_next_bytes(&swap_file, (char *)swap_staging, want);
-        if (got != (int)want || (got & 1)) {
-            jo_fs_close(&swap_file); jo_free(swap_staging);
+    {
+        int got = stream_read(&swap_stream, swap_staging, LOAD_CHUNK);
+        if (got < 0 || (got & 1)) {
+            stream_close(&swap_stream); jo_free(swap_staging);
             swap_staging = JO_NULL; swap_file_open = false;
             swap_failed = true; swap_stage = 0; set_volume(VOLUME_MAX); state = MUSIC_IDLE;
             return;
         }
-        upload(swap_staging, incoming->sample_base, swap_offset, (unsigned int)got);
+        if (got) upload(swap_staging, incoming->sample_base, swap_offset, (unsigned int)got);
         swap_offset += (unsigned int)got;
     }
 
     if (swap_offset < incoming->pcm_bytes) return;   /* more next frame */
 
-    jo_fs_close(&swap_file);
+    stream_close(&swap_stream);
     jo_free(swap_staging);
     swap_staging = JO_NULL;
     swap_file_open = false;

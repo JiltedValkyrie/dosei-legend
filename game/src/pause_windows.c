@@ -29,18 +29,16 @@ static void copy_words(volatile unsigned short *to, const volatile unsigned shor
 }
 static bool read_file(const char *name, void *data, unsigned size)
 {
+    /* One GFS_Load, not one CD request per 2 KB sector (seconds on hardware).
+     * The read writes one terminator byte after `size`: a page clears font
+     * byte 0 (char 0, never printed); the font's lands in carve slack. */
     jo_file file;
-    unsigned i;
+    int len=0;
     bool ok;
     if (!jo_fs_open(&file, (char *)name)) return false;
     ok = file.size == size;
-    for (i=0; ok && i<size; i+=2048) {
-        unsigned n=size-i;
-        if (n>2048) n=2048;
-        ok=jo_fs_read_next_bytes(&file,(char *)data+i,n)==(int)n;
-    }
     jo_fs_close(&file);
-    return ok;
+    return ok && jo_fs_read_file_ptr(name,data,&len) && len==(int)size;
 }
 static bool begin(void)
 {

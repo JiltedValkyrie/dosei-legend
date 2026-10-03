@@ -4,6 +4,7 @@
 #pragma GCC optimize ("Os")
 #endif
 #include <jo/jo.h>
+#include "ram_cart.h"
 #include "action_audio.h"
 #include "action_audio_data.h"
 #include "opening_audio_data.h"
@@ -34,24 +35,16 @@ static void navi_vblank(void);
 ** sample limit, never past the end of sound RAM. */
 static bool upload(const char *name, unsigned int base, unsigned int bytes)
 {
-    jo_file file;
-    unsigned short buffer[256];
-    unsigned int offset = 0, i;
+    /* Whole bank in one CD read through the cart scratch, then copy. */
+    const unsigned short *data;
+    int size = 0;
+    unsigned int i;
     volatile unsigned short *ram = (volatile unsigned short *)0x25a00000UL;
-    if (base < MUSIC_SAMPLE_LIMIT || (base & 1) || base + bytes > 0x80000 ||
-        !jo_fs_open(&file, name)) return false;
-    if ((unsigned int)file.size != bytes) { jo_fs_close(&file); return false; }
-    while (offset < bytes) {
-        unsigned int count = bytes - offset;
-        if (count > sizeof(buffer)) count = sizeof(buffer);
-        if (jo_fs_read_next_bytes(&file, (char *)buffer, count) != (int)count) {
-            jo_fs_close(&file); return false;
-        }
-        for (i = 0; i < count/2; ++i)
-            ram[(base + offset)/2+i] = buffer[i];
-        offset += count;
-    }
-    jo_fs_close(&file);
+    if (base < MUSIC_SAMPLE_LIMIT || (base & 1) || base + bytes > 0x80000) return false;
+    data = (const unsigned short *)ram_cart_load_scratch(name, &size);
+    if (!data || (unsigned int)size != bytes) return false;
+    for (i = 0; i < bytes/2; ++i)
+        ram[base/2 + i] = data[i];
     return true;
 }
 

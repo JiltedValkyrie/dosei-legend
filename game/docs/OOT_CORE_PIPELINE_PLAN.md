@@ -238,6 +238,58 @@ PHASE 4: content in bulk, zone by zone (story order)
  Known gaps to keep logged: Navi targeting of decomp actors needs C proxies (done for
  Kokiri NPC registry, generalise in G); no Saria (z_demo cues); ocarina; get-item hold-up.
 
+## Mednafen accuracy check (2026-10-03, Claude; human runtime test pending)
+**Why:** Frogbull advised Mednafen (most accurate Saturn emu). Mednafen has accurate CD
+(2x, ~150 sectors/s, real seeks), SH-2 and VDP timing. Kronos hid every problem below.
+Treat Mednafen as the reference from now on; Kronos is only a fast smoke test.
+
+**Launcher (done, smoke test passes):** Config > "Paths and emulator..." has tabs Paths +
+Emulator. Emulator tab: Kronos/Mednafen, mednafen.exe, cart (must be `extram4`),
+fullscreen, extra args, BIOS check. config.ini gains `mednafen` path + `[Emulator]`
+section. Run = `mednafen -ss.cart extram4 -video.fs N <cue>`. BIOS in
+`mednafen-1.32.1-win64/firmware/`: sega_101.bin (JP 1.01), mpr-17933.bin (EU 1.00).
+Files: tools/launcher/{project-config,config-dialog,kronos-launcher}.ps1, SETUP.md.
+
+**1. Slow loads: root cause found.** Jo `jo_fs_read_next_bytes` = one blocking GFS_Fread
+per 2 KB sector. New `ram_cart_load_scratch(name,&len)` (ram_cart.c/.h) = one GFS_Load
+into the pause page+backup carves (0x1D000, 325 KB, idle unless paused; never call while
+paused). Converted: pause pages (pause_windows.c; human confirmed menu much faster),
+room .MSH (kokiri_sgl.c room_load_bank, parsed via the opening-cache path), interior
+backdrops .RGB, SFX/action PCM banks (action_audio.c upload), TITLE.RGB (demo.c).
+Still streamed (small): minimap/health HUD files. Pause `paint()` still copies 76,800
+cart pixels per cursor move: next suspect if cursor lag remains.
+
+**2. Game crawled while music loaded.** music.c swap read 32 KB/frame with blocking reads
+(~8 fps for ~600 KB). Now `cd_stream_t`: GFS_NwCdRead read-ahead, each frame copies only
+sectors already in the CD buffer (GFS_GetNumCdbuf, prototype declared locally, in LIBCD),
+max 8 KB/frame; after STREAM_STALL empty frames re-issues NwCdRead, then one blocking
+sector. UNTESTED: confirm no stall and music start delay; if GFS rejects Fread during
+NwCdRead, fall back to bulk load during the black transition.
+
+**3. HGANON.ANM "Out of memory"** (Jo error at 53% heap). actor_mesh_swap_clip
+(cutscene_actor.c) held old clip while allocating 224 KB new one -> no contiguous block.
+Now stages in cart scratch, validates, frees old, mallocs, copies. If malloc still fails
+the mesh is marked unloaded (no motion) instead of a fatal error.
+
+**4. Speckle "garbage" picture: NOT fixed.** Seen in opening (Link's house, Navi lines).
+- Link's house = prerendered NBG1 RGB bitmap (VDP2), not VDP1.
+- Ruled out: CLUT MSB (all set), backdrop pixel MSB (all set), CL32KRGB rewrite at
+  kokiri_sgl.c fog code (also switches to untextured polygon).
+- Added harmless `slDMAWait` between per-tile `jo_dma_copy` (mesh_load, field_upload).
+  Did not fix it.
+- Lead: VDP2 VRAM cycle patterns. Jo/SGL `slScrAutoDisp` picks them; Kronos ignores
+  them, Mednafen/hardware obey. NBG1 bitmap sits in A0/A1 (needs 2 slots per bank);
+  NBG0 text in B1, NBG2 minimap in B0. Pause path already sets them explicitly
+  (demo.c slScrCycleSet). Waiting on human: Mednafen Ctrl+1..7 layer toggles to name
+  the bad layer. Then set explicit cycles for backdrop/cutscene. Other open lead:
+  SGL MaxPolygons 3750 vs vdp1_budget.py 2200 command reserve (GAME_TEXTURE_BASE 0x13300).
+
+**Build:** `./build.sh --clean --quick OOT_CORE=1` (WSL) passes; game-clean.cue rebuilt.
+**Ownership:** Claude edited only the files named above + config.example.ini/README.md.
+Other uncommitted work in the tree (build.sh, makefile, oot-core/*, npc_draw.c,
+oot_core_host.c, npc_sprite.*, build_npc_*.py, BUILD.md) is NOT Claude's this session:
+leave it alone. Nothing committed.
+
 ## NEXT SESSION: GAME CONTENT ROUTE (approved by human 2026-10-02)
 Goal: the actual game through the decomp: NPCs, dialogue paths, event triggers, actors
 present/absent by progress flags, child/adult and day/night layers. No more perf tuning

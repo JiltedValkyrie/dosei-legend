@@ -45,11 +45,12 @@ legacy/libyaul/                 Archived reference only; not an active build tar
 
 ## Build and play
 
-Open **[launch-game.bat](launch-game.bat) > Config > Paths...** first. Select
+Open **[launch-game.bat](launch-game.bat) > Config > Paths and emulator...** first. Select
 your tools, validate paths/ROM, and save the local `config.ini`.
 [Developer setup](tools/launcher/SETUP.md) explains the Jo Engine SDK, MSYS2,
 Python/Pillow, Kronos, BIOS and required US 1.2 ROM/decomp inputs.
 Enable a **4 MB RAM expansion cartridge** in Kronos.
+Emulator tab switches Run to Mednafen (see [SETUP.md](tools/launcher/SETUP.md#mednafen-optional-most-accurate)).
 
 | Build option | Purpose | Windows command from repository root | Image |
 | --- | --- | --- | --- |

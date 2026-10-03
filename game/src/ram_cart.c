@@ -24,6 +24,7 @@ typedef char carve_dekubaba_before_karebaba[CARVE_END(RAM_CART_DEKUBABA) <= RAM_
 typedef char carve_karebaba_before_linktex[CARVE_END(RAM_CART_KAREBABA) <= RAM_CART_LINKTEX_OFFSET ? 1 : -1];
 typedef char carve_linktex_before_pause[CARVE_END(RAM_CART_LINKTEX) <= RAM_CART_PAUSE_OFFSET ? 1 : -1];
 typedef char carve_pause_before_pause_backup[CARVE_END(RAM_CART_PAUSE) <= RAM_CART_PAUSE_BACKUP_OFFSET ? 1 : -1];
+typedef char carve_scratch_is_contiguous[RAM_CART_PAUSE_OFFSET + RAM_CART_PAUSE_BYTES == RAM_CART_PAUSE_BACKUP_OFFSET ? 1 : -1];
 typedef char carve_pause_backup_before_titlepth[CARVE_END(RAM_CART_PAUSE_BACKUP) <= RAM_CART_TITLEPTH_OFFSET ? 1 : -1];
 typedef char carve_pause_backup_before_skull[CARVE_END(RAM_CART_PAUSE_BACKUP) <= RAM_CART_SKULL_OFFSET ? 1 : -1];
 typedef char carve_skull_before_titlepth[CARVE_END(RAM_CART_SKULL) <= RAM_CART_TITLEPTH_OFFSET ? 1 : -1];
@@ -82,6 +83,23 @@ void           *ram_cart_fixed(unsigned int offset, unsigned int bytes)
         bytes > RAM_CART_FIXED_BYTES - offset)
         return ((void *)0);
     return ((void *)(RAM_CART_FIXED_ADDRESS + offset));
+}
+
+const void     *ram_cart_load_scratch(const char *name, int *bytes)
+{
+    void        *scratch = ram_cart_fixed(RAM_CART_LOAD_SCRATCH_OFFSET, RAM_CART_LOAD_SCRATCH_BYTES);
+    jo_file     file;
+    int         size;
+
+    if (!scratch || !jo_fs_open(&file, (char *)name))
+        return ((void *)0);
+    size = file.size;
+    jo_fs_close(&file);
+    /* jo_fs_read_file_ptr writes a terminator after the data. */
+    if (size <= 0 || size >= (int)RAM_CART_LOAD_SCRATCH_BYTES ||
+        !jo_fs_read_file_ptr(name, scratch, bytes))
+        return ((void *)0);
+    return (scratch);
 }
 
 unsigned int    ram_cart_total_bytes(void)

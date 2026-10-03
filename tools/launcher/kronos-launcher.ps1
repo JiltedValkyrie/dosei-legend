@@ -65,6 +65,19 @@ function Start-Variant($entry) {
     $paths = Get-ProjectPaths
     $problems = @(Get-PathProblems $paths)
     if ($problems.Count) { throw ($problems -join "`r`n") }
+    $emu = Get-EmulatorSettings
+    if ($emu.emulator -eq 'mednafen') {
+        if (Get-Process -Name mednafen -ErrorAction SilentlyContinue) {
+            throw 'Mednafen is already running. Close it before starting another variant.'
+        }
+        # Mednafen has no GUI: the CUE is the last argument. Command-line
+        # settings override mednafen.cfg for this run only.
+        $medArgs = @('-ss.cart', $emu.cart, '-video.fs', $emu.fullscreen)
+        if ($emu.extra_args) { $medArgs += $emu.extra_args }
+        $medArgs += ('"' + (Get-ImagePath $entry) + '"')
+        Start-Process -FilePath $paths.mednafen -WorkingDirectory (Split-Path $paths.mednafen -Parent) -WindowStyle Normal -ArgumentList $medArgs | Out-Null
+        return
+    }
     # Do not silently run two competing performance experiments.
     if (Get-Process -Name kronos -ErrorAction SilentlyContinue) {
         throw 'Kronos is already running. Close it before starting another variant.'
@@ -96,7 +109,7 @@ if ($Variant) {
 }
 
 $form = New-Object Windows.Forms.Form
-$form.Text = 'Dosei Legend - Kronos variants'
+$form.Text = 'Dosei Legend - launcher'
 $form.ClientSize = New-Object Drawing.Size(980, 410)
 $form.StartPosition = 'CenterScreen'
 $form.FormBorderStyle = 'FixedDialog'
@@ -104,8 +117,8 @@ $form.MaximizeBox = $false
 $form.Font = New-Object Drawing.Font('Segoe UI', 10)
 $menu = New-Object Windows.Forms.MenuStrip
 $configMenu = New-Object Windows.Forms.ToolStripMenuItem('Config')
-$pathsItem = $configMenu.DropDownItems.Add('Paths...')
-$pathsItem.Add_Click({ Show-ConfigDialog $form })
+$pathsItem = $configMenu.DropDownItems.Add('Paths and emulator...')
+$pathsItem.Add_Click({ Show-ConfigDialog $form; Update-EmulatorStatus })
 $guideItem = $configMenu.DropDownItems.Add('Developer setup guide')
 $guideItem.Add_Click({ Start-Process (Join-Path $project 'tools/launcher/SETUP.md') })
 [void]$menu.Items.Add($configMenu)
@@ -130,7 +143,11 @@ $form.Controls.Add($details)
 $status = New-Object Windows.Forms.Label
 $status.Location = New-Object Drawing.Point(16, 350)
 $status.Size = New-Object Drawing.Size(490, 48)
-$status.Text = 'Rebuild builds the images; Run starts Kronos. Close Kronos between comparisons.'
+function Update-EmulatorStatus {
+    $name = if ((Get-EmulatorSettings).emulator -eq 'mednafen') { 'Mednafen' } else { 'Kronos' }
+    $status.Text = "Emulator: $name (Config to change). Rebuild builds the images; Run starts $name."
+}
+Update-EmulatorStatus
 $form.Controls.Add($status)
 $refresh = New-Object Windows.Forms.Button
 $refresh.Text = 'Refresh'
@@ -179,7 +196,7 @@ $runAction = {
     try {
         $entry = $list.SelectedItems[0].Tag
         Start-Variant $entry
-        $status.Text = 'Started: ' + $entry.Name + '. Close Kronos before the next run.'
+        $status.Text = 'Started: ' + $entry.Name + '. Close the emulator before the next run.'
     } catch { [Windows.Forms.MessageBox]::Show($_.Exception.Message, 'Kronos launcher') | Out-Null }
 }
 $launch.Add_Click($runAction)

@@ -16,6 +16,16 @@ Paths may be absolute or relative to the repository root; do not quote them.
 | Kronos executable | Your local `kronos.exe`. Keep its supplied plugins and libraries together. |
 | Kronos DLLs | Optional additional DLL directory. Our MSYS2 build uses `mingw64/bin` for OpenAL, SDL2 and compiler runtime DLLs. Leave blank for a self-contained Kronos release. Use libraries matching your emulator build. |
 | Saturn BIOS | Your own Saturn BIOS file. This project has been run with the European v1.00 BIOS. |
+
+## Mednafen (optional, most accurate)
+
+Config > **Paths and emulator...** > **Emulator** tab: pick Kronos or Mednafen,
+set `mednafen.exe`, cartridge (keep `extram4`: game needs 4 MB RAM cart),
+fullscreen, extra args. Saved under `[Emulator]` in `config.ini`.
+Mednafen has no menu: double-click `mednafen.exe` alone just quits. Launcher passes the CUE.
+Put your BIOS in `<mednafen>/firmware/`: `sega_101.bin` (JP 1.01) and
+`mpr-17933.bin` (US/EU 1.00). Tab shows OK/MISSING. In Mednafen: Esc quit,
+Alt+Enter fullscreen, Alt+Shift+1 map pad 1.
 | zeldaret/oot checkout | The repository root described below, not its `src` or `baseroms` directory. |
 | US 1.2 ROM directory | Folder containing your original US NTSC 1.2 `.z64`. Blank means `<oot checkout>/baseroms/ntsc-1.2`. |
 

@@ -1,4 +1,5 @@
 #include <jo/jo.h>
+#include "ram_cart.h"
 #include "demo.h"
 #include "oot_core_host.h"
 #include "pause_windows.h"
@@ -1093,8 +1094,7 @@ static void demo_vblank(void)
 
 bool __attribute__((optimize("Os"))) demo_init(void)
 {
-    int length = 0, row;
-    jo_file file;
+    int length = 0;
     jo_img strip;
     jo_color *sky;
     unsigned int sky_lines, sky_row;
@@ -1130,20 +1130,12 @@ bool __attribute__((optimize("Os"))) demo_init(void)
      * A black final scanline preserves the original black surround there. */
     sky[sky_lines - 1] = JO_COLOR_Black;
     slBackColTable(sky);
-    if (!jo_fs_open(&file, "TITLE.RGB")) return false;
-    if (file.size != 512 * 256 * 2) { jo_fs_close(&file); return false; }
-    strip.width = 512; strip.height = 1;
-    strip.data = jo_malloc(1024);
-    if (!strip.data) { jo_fs_close(&file); return false; }
+    /* Whole image in one CD read, one VDP2 upload (row reads drew visibly). */
+    strip.data = (jo_color *)ram_cart_load_scratch("TITLE.RGB", &length);
+    if (!strip.data || length != 512 * 256 * 2) return false;
+    strip.width = 512; strip.height = 256;
     jo_clear_background(0);
-    for (row = 0; row < 256; ++row) {
-        if (jo_fs_read_next_bytes(&file, (char *)strip.data, 1024) != 1024) {
-            jo_fs_close(&file); jo_free(strip.data); return false;
-        }
-        jo_set_background_sprite(&strip, 0, row);
-    }
-    jo_fs_close(&file);
-    jo_free(strip.data);
+    jo_set_background_sprite(&strip, 0, 0);
     prompt = (unsigned short *)jo_fs_read_file("START.RGB", &length);
     if (!prompt || length != 84 * 14 * 2) return false;
     refresh = (JO_VDP2_TVSTAT & 1) ? 50 : 60;

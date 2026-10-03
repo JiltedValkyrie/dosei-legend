@@ -311,9 +311,13 @@ static bool __attribute__((optimize("Os"))) mesh_load(const char *file, unsigned
                 tiles[i].length > (unsigned int)opening_pixel_pool_bytes - offsets[i] ||
                 tiles[i].offset > pixel_bytes || tiles[i].length > pixel_bytes - tiles[i].offset)
                 return false;
+            /* slDMACopy is async: never reprogram the channel mid-transfer.
+            ** Kronos finishes DMA instantly; Mednafen/hardware do not. */
+            slDMAWait();
             jo_dma_copy(opening_pixel_pool + offsets[i],
                         pixel_vram + tiles[i].offset, tiles[i].length);
         }
+        slDMAWait();
         loaded = (char *)pixel_vram;
         length = pixel_bytes;
     } else {
@@ -339,6 +343,7 @@ static bool __attribute__((optimize("Os"))) mesh_load(const char *file, unsigned
     clut_vram = pixel_vram + pixel_bytes;
     if (pdata == &kokiri_pdata) forest_palette = clut_vram;
     jo_dma_copy((void *)cluts, clut_vram, clut_bytes);
+    slDMAWait();
     vram_used += pixel_bytes + clut_bytes;
 
     /* Publish one SGL TEXTURE entry per tile. __jo_sprite_def is the table
@@ -653,31 +658,18 @@ bool __attribute__((optimize("Os"))) kokiri_scene_load_backdrop(unsigned int sce
     field_stream_free();
     relocate_resident(GAME_TEXTURE_BASE);
     char        name[12];
-    jo_file     file;
-    jo_img      strip;
-    int         row;
-    bool        ok = true;
+    jo_img      image;
+    int         bytes = 0;
 
     if (!asset_scene_name(name, scene, (int)room, "RGB") || !kokiri_bank_allocate()) return false;
     asset_loading(name);
-    asset_loading(name);
-    if (!jo_fs_open(&file, name)) return false;
-    if (file.size != 320 * 240 * 2) { jo_fs_close(&file); return false; }
-    strip.width = 320; strip.height = 1;
-    strip.data = (jo_color *)jo_malloc(320 * 2);
-    if (!strip.data) { jo_fs_close(&file); return false; }
-    jo_clear_background(0);
-    for (row = 0; row < 240; ++row) {
-        if (jo_fs_read_next_bytes(&file, (char *)strip.data, 320 * 2) != 320 * 2) {
-            ok = false;
-            break;
-        }
-        jo_set_background_sprite(&strip, 0, row);
-    }
-    jo_fs_close(&file);
-    jo_free(strip.data);
+    /* Whole image in one CD read, then one VDP2 upload. */
+    image.data = (jo_color *)ram_cart_load_scratch(name, &bytes);
     asset_loading_done();
-    if (!ok) return false;
+    if (!image.data || bytes != 320 * 240 * 2) return false;
+    image.width = 320; image.height = 240;
+    jo_clear_background(0);
+    jo_set_background_sprite(&image, 0, 0);
     vram_used = resident_bytes;
     sprite_next = resident_sprites;
     actor_vram_base = vram_used;
@@ -832,6 +824,7 @@ static void field_upload(unsigned int tile, unsigned int slot)
     volatile unsigned short *clut = (volatile unsigned short *)(field_clut_vram + slot * 32);
     jo_texture_definition *texture = &__jo_sprite_def[forest_sprite_base + slot];
     unsigned int i;
+    slDMAWait(); /* async DMA: one transfer at a time */
     jo_dma_copy((void *)(field_pool + t->offset), (void *)(JO_VDP1_VRAM + addr), t->length);
     for (i = 0; i < 16; ++i) {
         clut[i] = field_cluts[tile][i];
@@ -1089,15 +1082,16 @@ static bool __attribute__((optimize("Os"))) room_load_bank(unsigned int scene, u
         !asset_scene_name(pixel_name, scene, (int)room, "TEX") || !kokiri_bank_allocate()) return false;
     const unsigned char *cached = scene == 2 && room < 10 ? opening_cache[room].mesh : 0;
     bool from_cache = cached != 0;
-    if (from_cache && opening_cache[room].mesh_bytes < (int)sizeof(header)) return false;
+    int mesh_bytes = from_cache ? opening_cache[room].mesh_bytes : 0;
     if (!from_cache) {
+        /* Whole .MSH in one CD read; then parse it like the opening cache. */
         asset_loading(mesh_name);
-        if (!jo_fs_open(&file, mesh_name)) return false;
+        cached = (const unsigned char *)ram_cart_load_scratch(mesh_name, &mesh_bytes);
+        asset_loading_done();
+        if (!cached) return false;
     }
-    if (!room_read(&file, header, sizeof(header), &cached)) {
-        if (!from_cache) jo_fs_close(&file);
+    if (mesh_bytes < (int)sizeof(header) || !room_read(&file, header, sizeof(header), &cached))
         return false;
-    }
     expected = 32 + header[1]*12 + header[2]*32 + header[3]*44 +
                ((header[2]+3)&~3u) + header[5]*24 + header[6]*sizeof(mesh_lod_t);
     /* A bank with no tiles is flat shaded: every face carries its own colour
@@ -1109,9 +1103,8 @@ static bool __attribute__((optimize("Os"))) room_load_bank(unsigned int scene, u
         header[3] > KOKIRI_TILE_COUNT || header[4] > KOKIRI_PIXEL_BYTES ||
         header[5] > KOKIRI_OBJECT_COUNT || header[6] > MESH_LOD_MAX ||
         (header[6] && !ram_cart_fixed(RAM_CART_MESH_LOD_OFFSET, RAM_CART_MESH_LOD_BYTES)) ||
-        (unsigned int)(from_cache ? opening_cache[room].mesh_bytes : file.size) != expected ||
+        (unsigned int)mesh_bytes != expected ||
         (from_cache && (unsigned int)opening_cache[room].pixel_bytes != header[3]*4)) {
-        if (!from_cache) jo_fs_close(&file);
         return false;
     }
     /* Check the destination layout, before relocating or overwriting a bank.
@@ -1121,8 +1114,6 @@ static bool __attribute__((optimize("Os"))) room_load_bank(unsigned int scene, u
                                   CUTSCENE_TEXTURE_BASE : GAME_TEXTURE_BASE);
         unsigned int required = resident_bytes + header[4] + header[3]*32;
         if (required > capacity || resident_sprites + header[3] > JO_MAX_SPRITE) {
-            if (!from_cache) jo_fs_close(&file);
-            asset_loading_done();
             jo_core_error("%s: VRAM %d/%d, sprites %d/%d", mesh_name,
                           (int)required, (int)capacity,
                           (int)(resident_sprites + header[3]), (int)JO_MAX_SPRITE);
@@ -1144,7 +1135,6 @@ static bool __attribute__((optimize("Os"))) room_load_bank(unsigned int scene, u
         ok = forest_lods[i].lod1_object < header[5] &&
              (forest_lods[i].lod0_object == MESH_LOD_NONE ||
               forest_lods[i].lod0_object < header[5]);
-    if (!from_cache) { jo_fs_close(&file); asset_loading_done(); }
     if (!ok) return false;
     forest_lod_count = header[6];
     relocate_resident(scene == KOKIRI_FIELD_SCENE ? CUTSCENE_TEXTURE_BASE : GAME_TEXTURE_BASE);

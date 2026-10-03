@@ -3,6 +3,7 @@
 */
 
 #include <jo/jo.h>
+#include "ram_cart.h"
 #include "asset_loading.h"
 #include <stdint.h>
 #include "cutscene_actor.h"
@@ -452,9 +453,10 @@ actor_mesh_t * __attribute__((optimize("Os"))) actor_mesh_load(const char *file)
 bool actor_mesh_swap_clip(actor_mesh_t *mesh, const char *stem)
 {
     char name[13];
+    const unsigned char *staged;
     unsigned char *animation = 0, *tracking = 0;
     unsigned int vertices, poses, ticks, flags, n, stem_len = 0;
-    int length = 0;
+    int length = 0, anim_length;
 
     if (!mesh || !mesh->loaded || !mesh->animation) return false;
     vertices = (unsigned int)mesh->pdata.nbPoint;
@@ -462,17 +464,20 @@ bool actor_mesh_swap_clip(actor_mesh_t *mesh, const char *stem)
     name[stem_len] = '.'; name[stem_len+1] = 'A';
     name[stem_len+2] = 'N'; name[stem_len+3] = 'M'; name[stem_len+4] = 0;
     asset_loading(name);
-    animation = (unsigned char *)jo_fs_read_file(name, &length);
-    if (!animation || length < 16 || read_be32(animation) != 0x43564131u ||
-        read_be32(animation + 4) != vertices)
+    /* Stage in the cart scratch: a clip can be 224 KB, and holding it next
+    ** to the old one needed a contiguous block the heap no longer had. */
+    staged = (const unsigned char *)ram_cart_load_scratch(name, &length);
+    if (!staged || length < 16 || read_be32(staged) != 0x43564131u ||
+        read_be32(staged + 4) != vertices)
         goto reject;
-    poses = read_be32(animation + 8);
-    ticks = read_be32(animation + 12);
+    poses = read_be32(staged + 8);
+    ticks = read_be32(staged + 12);
     if (!poses || poses > 1024 || !ticks || ticks > 1024 ||
         (unsigned int)length != 16 + ticks * 2 + poses * vertices * 6)
         goto reject;
     for (n = 0; n < ticks; ++n)
-        if (read_be16(animation + 16 + n * 2) >= poses) goto reject;
+        if (read_be16(staged + 16 + n * 2) >= poses) goto reject;
+    anim_length = length;
 
     name[stem_len+1] = 'T'; name[stem_len+2] = 'R'; name[stem_len+3] = 'K';
     asset_loading(name);
@@ -487,6 +492,19 @@ bool actor_mesh_swap_clip(actor_mesh_t *mesh, const char *stem)
         if (tracking[16 + n] > 3) goto reject;
 
     jo_free(mesh->animation);
+    mesh->animation = 0;
+    animation = (unsigned char *)jo_malloc(anim_length);
+    if (!animation) {
+        /* Old clip is gone: drop the mesh's motion rather than pose garbage. */
+        jo_free(tracking);
+        jo_free(mesh->tracking);
+        mesh->tracking = 0;
+        mesh->loaded = false;
+        asset_loading_done();
+        return false;
+    }
+    for (n = 0; n < (unsigned int)anim_length; n += 4)
+        *(unsigned int *)(animation + n) = *(const unsigned int *)(staged + n);
     jo_free(mesh->tracking);
     mesh->animation = animation;
     mesh->tracking = tracking;
