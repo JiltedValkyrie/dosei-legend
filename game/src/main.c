@@ -1241,7 +1241,7 @@ static void __attribute__((optimize("Os"))) viewer_hud(void)
             jo_printf(0, 15, "oc p%d pl%d pr%d mi%d   ", (int)oot_core_is_playing(),
                       oot_core_actors(2), oot_core_actors(6), oot_core_actors(8));
             /* Row 16: decomp update cost per 20 Hz step (budget check). */
-            jo_printf(0, 16, "ou %uus      ", oot_core_update_us());
+            jo_printf(0, 16, "ou %uus %-28s", oot_core_update_us(), oot_core_debug_text());
         }
 #endif
         /* Marked when stale: on a cache hit these hold the last rebuild's

@@ -120,8 +120,9 @@ bool                gameplay_npc_present(unsigned int npc)
     if (npc >= KOKIRI_NPC_COUNT)
         return false;
     p = &kokiri_npcs[npc];
-    if (p->scene != save_state.scene_id)
-        return false;
+    if (p->scene != save_state.scene_id ||
+        (p->kind != KOKIRI_NPC_SARIA && oot_core_owns_kokiri_npcs()))
+        return false;   /* En_Ko / En_Md: the decomp's (npc_draw draws them) */
     left = save_get_event_chk_inf(EVENTCHKINF_MIDO_LEFT_FOR_HIS_HOUSE) ||
            save_get_event_chk_inf(EVENTCHKINF_OBTAINED_ZELDAS_LETTER);
     switch (p->kind) {
@@ -132,7 +133,7 @@ bool                gameplay_npc_present(unsigned int npc)
         return p->scene == SAVE_SCENE_KOKIRI_FOREST &&
                !save_check_quest_item(QUEST_KOKIRI_EMERALD);
     default:
-        return !oot_core_owns_children();   /* En_Ko: the decomp's (npc_draw draws it) */
+        return true;
     }
 }
 
@@ -883,7 +884,7 @@ bool                gameplay_boulder_body(unsigned int room, int32_t *x, int32_t
 
 bool                gameplay_mido_body(unsigned int room, int32_t *x, int32_t *z)
 {
-    if (!in_forest() || room != MIDO_ROOM ||
+    if (!in_forest() || room != MIDO_ROOM || oot_core_owns_kokiri_npcs() ||
         save_get_event_chk_inf(EVENTCHKINF_MIDO_LEFT_FOR_HIS_HOUSE) ||
         save_get_event_chk_inf(EVENTCHKINF_OBTAINED_ZELDAS_LETTER))
         return false;
@@ -3068,7 +3069,7 @@ void                gameplay_step(const gameplay_input_t *in)
     world_props_step(in);
     if (gameplay.talking) return;
     collect_rupees(in);
-    update_wonders(in);
+    if (!oot_core_owns_kokiri_npcs()) update_wonders(in);   /* else En_Wonder_Item */
     if(gameplay.hurt_flash_timer){
         unsigned rate=50-gameplay.hurt_flash_timer*2/3;
         if(rate<8)rate=8;if(rate>40)rate=40;

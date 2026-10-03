@@ -87,7 +87,9 @@ JO_MAX_FS_BACKGROUND_JOBS = 2
 # largest camera track ~13 KB, small blocks); 52 KB keeps >1.5x that.
 # Header-complete rebuild + permanent shot skip crossed the normal boundary
 # by 16 bytes. Keep ~2 KB clear; jo_malloc spills into the cart zones.
-JO_GLOBAL_MEMORY_SIZE_FOR_MALLOC ?= 51200
+# 2026-10-02 oot-core route: 44 KB (still 1.37x the known ~32 KB demand) to
+# give the decomp glue static RAM; overflow goes to the cart zones.
+JO_GLOBAL_MEMORY_SIZE_FOR_MALLOC ?= 45056
 
 SRCS = src/main.c src/ram_cart.c src/game_mode.c src/message.c src/cutscene.c src/cutscene_actor.c src/save_state.c src/item_drop.c src/world_props.c src/world_signs.c src/world_props_draw.c src/actor_sys.c src/attention.c src/karebaba.c src/karebaba_draw.c src/game_over.c src/collide.c src/save_file.c src/save_device.c src/ui_preferences.c src/file_select.c src/scene_flow.c src/kokiri_sgl.c ../shared/lib/music/music.c src/music_banks.c src/demo.c src/navi.c src/player_input.c src/gameplay.c src/dialogue_text.c src/text_pool.c src/minimap.c src/health_hud.c src/pause_windows.c src/pause_window_state.c src/cdda.c src/music_songs.c src/action_audio.c src/demo_camera.c src/demo_collision.c src/demo_follow.c src/link_anim.c src/link_anim_state.c src/player_air.c src/player_bg.c src/player_climb.c src/player_crawl.c src/frame_timer.c build/generated/kokiri_scene.c build/generated/kokiri_textures.c build/generated/link_scene.c build/generated/link_textures.c build/generated/link_clips.c build/generated/scene_table.c build/generated/kokiri_actors.c build/generated/kokiri_dialogue.c build/generated/cutscenes.c
 override ASSETS_DIR = ./build/cd

@@ -48,3 +48,4 @@ u64 gOcarinaBtnIconCLeftTex[1];
 u64 gOcarinaBtnIconCRightTex[1];
 u64 gOcarinaBtnIconCUpTex[1];
 u64 gOcarinaTrebleClefTex[1];
+u64 gSignRectangularDL[1];

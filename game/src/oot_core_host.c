@@ -249,6 +249,8 @@ unsigned int oot_core_talk(void)
     return playing ? ENTRY->talk_state() | (ENTRY->message_view()->active ? 1u : 0u) : 0u;
 }
 int oot_core_npcs(const OotCoreNpcView **out) { return playing ? ENTRY->npc_view(out) : 0; }
+int oot_core_prop(short id, int x, int z) { return playing ? ENTRY->prop_query(id, x, z) : -1; }
+const char *oot_core_debug_text(void) { return playing ? ENTRY->debug_text() : ""; }
 
 /* The decomp text box on the VDP2 text layer, in the C dialogue rows.
 ** VDP2 keeps text, so rows are reprinted only when the view changes and

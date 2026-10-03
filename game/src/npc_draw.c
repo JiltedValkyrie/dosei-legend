@@ -447,8 +447,9 @@ static void shop_items_draw(unsigned int steps)
 ** (the frame still comes from its SkelAnime). */
 static unsigned int core_npc_model(const OotCoreNpcView *v)
 {
-    unsigned int model = 2u + (unsigned int)(v->params & 0xFF);
-    return (v->flags & OOT_CORE_VIEW_DRAWN) && v->alpha && model < NPC_SHOPKEEPER && models[model] ? model : 0;
+    /* ACTOR_EN_MD (0x016D) = model 0 (Mido); En_Ko = 2 + ENKO_TYPE. */
+    unsigned int model = v->id == 0x016D ? 0u : 2u + (unsigned int)(v->params & 0xFF);
+    return (v->flags & OOT_CORE_VIEW_DRAWN) && v->alpha && model < NPC_SHOPKEEPER && models[model] ? model + 1 : 0;
 }
 #endif
 
@@ -459,7 +460,7 @@ void npc_draw(unsigned int tick)
     const OotCoreNpcView *core;
     int core_n = oot_core_npcs(&core), k;
     for (k = 0; k < core_n; ++k)
-        if (core_npc_model(&core[k])) visible |= 1u << core_npc_model(&core[k]);
+        if (core_npc_model(&core[k])) visible |= 1u << (core_npc_model(&core[k]) - 1);
 #endif
     unsigned int steps = tick / 3 - previous_step;
     unsigned int generation = kokiri_actor_bank_generation();
@@ -528,7 +529,7 @@ void npc_draw(unsigned int tick)
         unsigned int model = core_npc_model(v);
         npc_track_t t = {{v->head_x, v->head_y}, {v->torso_x, v->torso_y}};
         int32_t focus[3];
-        if (model) draw_pose(model, v->frame * 3u, v->x, v->y, v->z, v->yaw, &t, focus);
+        if (model) draw_pose(model - 1, v->frame * 3u, v->x, v->y, v->z, v->yaw, &t, focus);
     }
 #endif
 }

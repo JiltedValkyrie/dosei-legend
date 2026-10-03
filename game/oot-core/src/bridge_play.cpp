@@ -44,6 +44,10 @@ Gfx* Play_SetFog(PlayState* this, Gfx* gfx) { /* STUB: Saturn fog is the C rende
     return gfx;
 }
 
+int Play_InCsMode(PlayState* this) { /* REAL */
+    return (this->csCtx.state != CS_STATE_IDLE) || Player_InCsMode(this);
+}
+
 int FrameAdvance_IsEnabled(PlayState* this) { /* STUB: no frame advance on Saturn */
     return false;
 }

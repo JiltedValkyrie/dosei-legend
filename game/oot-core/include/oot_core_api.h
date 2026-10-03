@@ -17,7 +17,7 @@
 #include "oot_core_host.h"
 
 #define OOT_CORE_MAGIC 0x4F4F5443u /* 'OOTC' */
-#define OOT_CORE_VERSION 9u
+#define OOT_CORE_VERSION 10u
 
 /* PlayState (~78 KB with Fx) + TwoHeadArena + ZeldaArena come from one block
  * the host allocates, so they never take the blob's fixed cart carve. */
@@ -124,6 +124,11 @@ typedef struct OotCoreEntry {
     /* OC push the decomp gave the player proxy since the last call (world
      * units, x and z): the C game moves C Link by it. Clears it. */
     void (*player_push)(int* x, int* z);
+    /* State word of the live actor `actor_id` nearest (x, z) within 24 units,
+     * -1 if none. En_Kanban: partFlags (11 sign pieces, C draws them). */
+    int (*prop_query)(short actor_id, int x, int z);
+    /* One debug-panel line: player proxy talk state, message mode, counts. */
+    const char* (*debug_text)(void);
     /* C Link -> player proxy (Q0 world units). Call before update. */
     void (*set_player)(int x, int y, int z, short yaw);
     /* Player entered another room: z_room room change (kills the old

@@ -73,6 +73,12 @@ SOURCES = [
     'src/code/gfxalloc.c',
     'src/code/z_memory_utils.c',
     'src/code/z_construct.c',  # Message_Init, Regs_InitData
+    # Route step 5, Kokiri Forest batch 1.
+    'src/overlays/actors/ovl_En_Md/z_en_md.c',
+    'src/overlays/actors/ovl_En_Wonder_Item/z_en_wonder_item.c',
+    'src/overlays/actors/ovl_En_Wonder_Talk2/z_en_wonder_talk2.c',
+    'src/overlays/actors/ovl_Obj_Mure2/z_obj_mure2.c',
+    'src/overlays/actors/ovl_En_Kanban/z_en_kanban.c',
 ]
 COL_HEADER = re.compile(r'^CollisionHeader (\w+)_Col = \{$', re.M)
 COL_ARRAY = re.compile(r'^\w+ (\w+)\[\] = \{\n#include "[^"]+"\n\};\n', re.M)
@@ -207,7 +213,7 @@ def scene_blob_source(path, asset_root, objects=()):
 
 # Decomp objects built as data blobs (<O><id hex>.OOB): what the imported
 # actors read from their object segment (skeletons, limbs, animations).
-OBJECTS = ['object_os_anime', 'object_km1', 'object_kw1', 'object_fa']
+OBJECTS = ['object_os_anime', 'object_km1', 'object_kw1', 'object_fa', 'object_md', 'object_kanban']
 # Definitions kept verbatim; everything else (Gfx, Vtx, textures, palettes)
 # becomes a one-element placeholder: the draw shim keys on its address.
 OBJECT_KEEP_TYPES = {'AnimationHeader', 'JointIndex', 's16', 'StandardLimb', 'LodLimb',
@@ -362,6 +368,29 @@ MACRO_REWRITES = {
     'include/ultra64/convert.h': [
         ('#define OS_K0_TO_PHYSICAL(x)    (u32)(((char*)(x)-0x80000000))', '#define OS_K0_TO_PHYSICAL(x)    (u32)(uintptr_t)(x)'),
         ('#define OS_PHYSICAL_TO_K0(x)    (void*)(((u32)(x)+0x80000000))', '#define OS_PHYSICAL_TO_K0(x)    (void*)(uintptr_t)(x)'),
+    ],
+    # Weak profiles (bridge_tables.cpp): an actor or effect that is not
+    # imported has a NULL profile. Spawning it must fail like an overlay
+    # that cannot load, never call through NULL.
+    'src/code/z_actor.c': [
+        ('''        ACTOR_DEBUG_PRINTF(T("オーバーレイではありません\\n", "Not an overlay\\n"));
+
+        profile = overlayEntry->profile;''',
+         '''        ACTOR_DEBUG_PRINTF(T("オーバーレイではありません\\n", "Not an overlay\\n"));
+
+        profile = overlayEntry->profile;
+        if (profile == NULL) { /* oot-core: actor not imported */
+            return NULL;
+        }'''),
+    ],
+    'src/code/z_effect_soft_sprite.c': [
+        ('''                 "EffectSoftSprite2_makeEffect(): Not an overlay.\\n"));
+        profile = overlayEntry->profile;''',
+         '''                 "EffectSoftSprite2_makeEffect(): Not an overlay.\\n"));
+        profile = overlayEntry->profile;
+        if (profile == NULL) { /* oot-core: effect not imported */
+            return;
+        }'''),
     ],
     # English only (gSaveContext.language = LANGUAGE_ENG): the Japanese
     # entry table would be 17 KB of blob for text that is never shown.

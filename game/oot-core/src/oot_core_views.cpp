@@ -17,9 +17,12 @@
 #include "play_state.h"
 #include "player.h"
 #include "overlays/actors/ovl_En_Ko/z_en_ko.h"
+#include "overlays/actors/ovl_En_Md/z_en_md.h"
+#include "overlays/actors/ovl_En_Kanban/z_en_kanban.h"
 #include "oot_core_api.h"
 
 extern PlayState* gOotCorePlay; /* oot_core_api.cpp */
+unsigned int OotCore_TalkState(void);
 
 static OotCoreMessageView sMsgView;
 static u32 sMsgHash;
@@ -182,20 +185,32 @@ int OotCore_NpcView(const OotCoreNpcView** out) {
          actor = actor->next) {
         OotCoreNpcView* v = &sNpcView[n];
 
-        if (actor->update == NULL || actor->id != ACTOR_EN_KO) {
+        const NpcInteractInfo* info;
+        const SkelAnime* skel;
+        s32 alpha;
+
+        if (actor->update == NULL) {
             continue;
         }
-        {
+        if (actor->id == ACTOR_EN_KO) {
             EnKo* ko = (EnKo*)actor;
-            s32 alpha = (s32)ko->modelAlpha;
-
-            v->head_x = ko->interactInfo.headRot.x;
-            v->head_y = ko->interactInfo.headRot.y;
-            v->torso_x = ko->interactInfo.torsoRot.x;
-            v->torso_y = ko->interactInfo.torsoRot.y;
-            v->frame = (u16)(s32)ko->skelAnime.curFrame;
-            v->alpha = (u8)(alpha < 0 ? 0 : alpha > 255 ? 255 : alpha);
+            info = &ko->interactInfo;
+            skel = &ko->skelAnime;
+            alpha = (s32)ko->modelAlpha;
+        } else if (actor->id == ACTOR_EN_MD) {
+            EnMd* md = (EnMd*)actor;
+            info = &md->interactInfo;
+            skel = &md->skelAnime;
+            alpha = md->alpha;
+        } else {
+            continue;
         }
+        v->head_x = info->headRot.x;
+        v->head_y = info->headRot.y;
+        v->torso_x = info->torsoRot.x;
+        v->torso_y = info->torsoRot.y;
+        v->frame = (u16)(s32)skel->curFrame;
+        v->alpha = (u8)(alpha < 0 ? 0 : alpha > 255 ? 255 : alpha);
         v->id = actor->id;
         v->params = actor->params;
         v->x = (s32)actor->world.pos.x;
@@ -206,6 +221,80 @@ int OotCore_NpcView(const OotCoreNpcView** out) {
         n++;
     }
     return n;
+}
+
+int OotCore_PropQuery(short actor_id, int x, int z) {
+    PlayState* play = gOotCorePlay;
+    Actor* actor;
+    s32 i;
+
+    if (play == NULL) {
+        return -1;
+    }
+    for (i = 0; i < ACTORCAT_MAX; i++) {
+        for (actor = play->actorCtx.actorLists[i].head; actor != NULL; actor = actor->next) {
+            s32 dx, dz;
+
+            if (actor->update == NULL || actor->id != actor_id) {
+                continue;
+            }
+            dx = (s32)actor->home.pos.x - x;
+            dz = (s32)actor->home.pos.z - z;
+            if (dx * dx + dz * dz > 24 * 24) {
+                continue;
+            }
+            if (actor_id == ACTOR_EN_KANBAN) {
+                if (actor->params == ENKANBAN_PIECE) {
+                    continue; /* flying piece: not drawn yet (APPROXIMATE) */
+                }
+                return ((EnKanban*)actor)->partFlags;
+            }
+            return 0;
+        }
+    }
+    return -1;
+}
+
+/* "oc t<talk> m<msgMode> x<textId> n<npcs> c<AT>/<AC>/<OC>" for the debug panel. */
+const char* OotCore_DebugText(void) {
+    static char sText[40];
+    static const char hex[] = "0123456789ABCDEF";
+    PlayState* play = gOotCorePlay;
+    Player* player;
+    char* p = sText;
+    u32 v;
+    s32 k;
+
+    if (play == NULL || (player = GET_PLAYER(play)) == NULL) {
+        sText[0] = '\0';
+        return sText;
+    }
+#define PUT_HEX(val, digits)                         \
+    v = (u32)(val);                                  \
+    for (k = (digits) - 1; k >= 0; k--) {            \
+        *p++ = hex[(v >> (k * 4)) & 0xF];            \
+    }
+    *p++ = 't';
+    PUT_HEX(OotCore_TalkState(), 1);
+    *p++ = ' ';
+    *p++ = 'm';
+    PUT_HEX(play->msgCtx.msgMode, 2);
+    *p++ = ' ';
+    *p++ = 'x';
+    PUT_HEX(play->msgCtx.textId, 4);
+    *p++ = ' ';
+    *p++ = 'n';
+    PUT_HEX(play->actorCtx.actorLists[ACTORCAT_NPC].length, 2);
+    *p++ = ' ';
+    *p++ = 'c';
+    PUT_HEX(play->colChkCtx.colATCount, 2);
+    *p++ = '/';
+    PUT_HEX(play->colChkCtx.colACCount, 2);
+    *p++ = '/';
+    PUT_HEX(play->colChkCtx.colOCCount, 2);
+#undef PUT_HEX
+    *p = '\0';
+    return sText;
 }
 
 /* Bit 0: the player proxy is in a conversation. Bit 1: a decomp actor

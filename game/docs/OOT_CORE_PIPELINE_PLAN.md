@@ -178,8 +178,26 @@ Steps (in order):
     Link; walk up, A opens real ROM text, A pages/closes, choices (if any) by D-pad; kid
     blocking the exit pushes Link; row 15 `oc p1 ...` no freeze; one Kokiri house; heap row
     no failed allocations (bank-2 heap is now 598 KB, was ~1 MB).
- 5. Next: En_Md (Mido), En_Sa (Saria), Kokiri signs/props, then other areas, each with
-    drops + flag checks. Then archive the C Kokiri child code to legacy/ once 3+4 confirmed.
+    Human 2026-10-02 on 82c0ac4: C Mido talks and blocks; decomp grass NOT cut by sword.
+    Cause found: Actor_UpdateAll only updates actors with INSIDE_CULLING_VOLUME (set by
+    Actor_DrawAll's culling, which never runs) or UPDATE_CULLING_DISABLED; En_Kusa clears
+    the latter once ready, so it stopped updating. Fix: OotCore_CullActors (sphere of the
+    actor's culling distance around the player) before Actor_UpdateAll. APPROXIMATE.
+ 5a. BUILT, runtime NOT checked (API v10; Debug spare 6320 B, Clean 10272 B after the Jo
+    work-RAM malloc arena 51200 -> 45056, overflow goes to cart zones):
+    - En_Md (Mido, object_md blob, drawn as model 0 by npc_draw), En_Wonder_Item,
+      En_Wonder_Talk2, Obj_Mure2, En_Kanban (object_kanban blob).
+    - C Mido, C wonder spots, C sign read/cut off while the decomp plays; C still draws
+      signs, parts from decomp partFlags (prop_query). Flying sign pieces not drawn.
+    - Null-profile guards (importer): spawning a not-imported actor/effect returns
+      nothing (Obj_Mure2 rock circles -> En_Ishi not imported yet).
+    - Debug row 16 adds `t<talk> m<msgMode> x<textId> n<npcs> c<AT>/<AC>/<OC>`.
+    Human check: grass cuts again; kids/Mido visible; Mido blocks the Deku path (push)
+    until sword+shield, talks ROM text; signs read with A (ROM text), sword cuts pieces off;
+    hidden wonder spots drop items; row 16 numbers if anything is wrong.
+ 5. Next: Phase 2 generic draw (Actor_DrawAll -> prebuilt meshes) so new actors need no C
+    glue; then En_Ishi, Obj_Hana, En_A_Obj, En_Sa (needs z_demo cues), other areas.
+    Archive the C Kokiri child/Mido/sign code to legacy/ once confirmed.
  6. Later: z_demo cutscenes, z_player, z_camera. Then archive C counterparts.
 
 ## SPEED (2026-10-02, human Kronos kronos-fix, Debug, ns per call, cart)

@@ -24,6 +24,9 @@ unsigned int oot_core_talk(void);
 int oot_core_npcs(const OotCoreNpcView **out);
 /* Draw the decomp text box (VDP2 text + VDP1 panel); true while it is up. */
 bool oot_core_message_box(void);
+/* prop_query: decomp state word of actor `id` near (x, z), -1 if none. */
+int oot_core_prop(short id, int x, int z);
+const char *oot_core_debug_text(void);
 
 bool oot_core_is_loaded(void);
 /* Play state active for the current scene. */
@@ -37,14 +40,17 @@ int oot_core_view(int category, OotCoreActorView *out, int max);
 /* Kokiri Forest grass (En_Kusa) and floor rupees (En_Item00) belong to the
 ** decomp while it plays: the C copies stop drawing, cutting and collecting. */
 static inline bool oot_core_owns_kokiri_props(void) { return oot_core_is_playing(); }
-/* Kokiri children (En_Ko) belong to the decomp while it plays. */
-static inline bool oot_core_owns_children(void) { return oot_core_is_playing(); }
+/* Kokiri children (En_Ko), Mido (En_Md) and the wonder spots (En_Wonder_
+** Item/Talk2) belong to the decomp while it plays. Saria stays C (her
+** greeting is a C cutscene until z_demo). */
+static inline bool oot_core_owns_kokiri_npcs(void) { return oot_core_is_playing(); }
 #else
 #define oot_core_frame(in) ((void)0)
 static inline bool oot_core_owns_kokiri_props(void) { return false; }
-static inline bool oot_core_owns_children(void) { return false; }
+static inline bool oot_core_owns_kokiri_npcs(void) { return false; }
 static inline unsigned int oot_core_talk(void) { return 0; }
 static inline bool oot_core_message_box(void) { return false; }
+static inline int oot_core_prop(short id, int x, int z) { (void)id; (void)x; (void)z; return -1; }
 #endif
 
 #endif

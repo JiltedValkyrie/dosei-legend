@@ -21,6 +21,8 @@
 #include "gfx.h"
 #include "libu64/pad.h"
 #include "object.h"
+#include "z_lib.h"
+#include "player.h"
 #include "oot_core_api.h"
 #include "oot_scene_blob.h"
 
@@ -41,6 +43,8 @@ void OotCore_GfxReset(void);
 const OotCoreMessageView* OotCore_MessageView(void);
 int OotCore_NpcView(const OotCoreNpcView** out);
 unsigned int OotCore_TalkState(void);
+int OotCore_PropQuery(short actor_id, int x, int z);
+const char* OotCore_DebugText(void);
 
 /* Linker-script symbols: first address past the blob's .bss; ctor table. */
 extern "C" char oot_core_end[];
@@ -54,7 +58,10 @@ static const OotSceneBlob* sScene;
 
 /* Room-list actor ids the blob owns; every other id stays with the C game
  * until its overlay is imported (plan Phase 1 step 6). */
-static const s16 sRoomActorIds[] = { ACTOR_EN_ITEM00, ACTOR_EN_KUSA, ACTOR_EN_KO };
+static const s16 sRoomActorIds[] = {
+    ACTOR_EN_ITEM00, ACTOR_EN_KUSA,       ACTOR_EN_KO,        ACTOR_EN_MD,
+    ACTOR_EN_WONDER_ITEM, ACTOR_EN_WONDER_TALK2, ACTOR_OBJ_MURE2, ACTOR_EN_KANBAN,
+};
 #define ROOM_ENTRIES_MAX 64
 static ActorEntry sRoomEntries[ROOM_ENTRIES_MAX];
 
@@ -377,6 +384,35 @@ static void oot_core_set_room(int room) {
     func_80031B14(play, &play->actorCtx);
 }
 
+/* Actor_DrawAll's culling pass (Actor_CullingCheck) is what sets
+ * ACTOR_FLAG_INSIDE_CULLING_VOLUME, and Actor_UpdateAll only updates an actor
+ * with that flag or UPDATE_CULLING_DISABLED. Actor_DrawAll does not run yet
+ * (Phase 2), so without this an actor such as En_Kusa stops updating once it
+ * clears UPDATE_CULLING_DISABLED. APPROXIMATE: a sphere around the player of
+ * the actor's culling distance (projected z ~ world distance for the default
+ * view), no frustum sides. */
+static void OotCore_CullActors(PlayState* play) {
+    Player* player = GET_PLAYER(play);
+    s32 i;
+
+    if (player == NULL) {
+        return;
+    }
+    for (i = 0; i < ACTORCAT_MAX; i++) {
+        Actor* actor;
+
+        for (actor = play->actorCtx.actorLists[i].head; actor != NULL; actor = actor->next) {
+            f32 dist = Math_Vec3f_DistXYZ(&actor->world.pos, &player->actor.world.pos);
+
+            if (dist < actor->cullingVolumeDistance + actor->cullingVolumeScale) {
+                actor->flags |= ACTOR_FLAG_INSIDE_CULLING_VOLUME;
+            } else {
+                actor->flags &= ~ACTOR_FLAG_INSIDE_CULLING_VOLUME;
+            }
+        }
+    }
+}
+
 static void oot_core_update(void) {
     PlayState* play = gOotCorePlay;
 
@@ -394,6 +430,7 @@ static void oot_core_update(void) {
     CollisionCheck_OC(play, &play->colChkCtx);
     CollisionCheck_Damage(play, &play->colChkCtx);
     CollisionCheck_ClearContext(play, &play->colChkCtx);
+    OotCore_CullActors(play);
     Actor_UpdateAll(play, &play->actorCtx);
     Effect_UpdateAll(play);
     EffectSs_UpdateAll(play);
@@ -466,6 +503,8 @@ extern "C" const OotCoreEntry oot_core_entry __attribute__((section(".oot_entry"
     OotCore_NpcView,
     OotCore_TalkState,
     oot_core_player_push,
+    OotCore_PropQuery,
+    OotCore_DebugText,
     oot_core_set_player,
     oot_core_set_room,
     oot_core_set_sword,
