@@ -27,6 +27,32 @@ static unsigned long isqrt64(unsigned long long n) {
     return (unsigned long)res;
 }
 
+#if defined(__sh__) && !defined(OOT_CORE_NO_DIVU)
+/*
+ * floor(sqrt(n)) for n < 2^62 on the SH-2 divider (method after SaturnMath++,
+ * MIT, (c) 2024 Roberto Daniel Alves Duarte: hardware DIVU instead of a
+ * bit loop; here exact, not its estimate). Start at 2^ceil(bits/2) >= sqrt(n);
+ * Newton then falls monotonically to the floor. Each step is one 64/32
+ * divide (~39 cycles) vs 31 rounds of 64-bit compare/subtract in isqrt64.
+ */
+static unsigned long isqrt64_divu(unsigned long long n) {
+    unsigned long hi = (unsigned long)(n >> 32);
+    int bits = hi ? 64 - __builtin_clz(hi) : (n ? 32 - __builtin_clz((unsigned long)n) : 0);
+    long x = 1L << ((bits + 1) / 2); /* n < 2^60: x <= 2^30, n/x < 2^31 */
+    for (;;) {
+        /* x and n/x are both < 2^31; their sum needs the 32nd bit. */
+        long y = (long)(((unsigned long)x + (unsigned long)fx_divu64_32((fx_raw)n, x)) >> 1);
+        if (y >= x) {
+            return (unsigned long)x;
+        }
+        x = y;
+    }
+}
+#define ISQRT64 isqrt64_divu
+#else
+#define ISQRT64 isqrt64
+#endif
+
 f32 sqrtf(f32 f) {
 #if OOT_CORE_HWFLOAT
     return __builtin_sqrtf(f);
@@ -35,6 +61,18 @@ f32 sqrtf(f32 f) {
         return Fx::raw(0);
     }
     /* sqrt(v / 2^F) * 2^F == sqrt(v * 2^F); exact while v * 2^F fits. */
+    if (f.v < ((fx_raw)1 << (60 - FX_FRAC))) {
+        return Fx::raw((fx_raw)ISQRT64((unsigned long long)fx_shl_frac(f.v)));
+    }
+    if (f.v < ((fx_raw)1 << 60)) {
+        /* sqrt(v * 2^24) = sqrt(v * 2^s) * 2^((24 - s) / 2), s even, the
+         * largest keeping v * 2^s < 2^60 (ISQRT64's range): >= 30 bits kept. */
+        int s = FX_FRAC;
+        while ((unsigned long long)f.v >= (1ULL << (60 - s))) {
+            s -= 2;
+        }
+        return Fx::raw((fx_raw)ISQRT64((unsigned long long)f.v << s) << ((FX_FRAC - s) / 2));
+    }
     if (f.v < ((fx_raw)1 << (63 - FX_FRAC))) {
         return Fx::raw((fx_raw)isqrt64((unsigned long long)f.v << FX_FRAC));
     }
@@ -52,8 +90,9 @@ f32 sqrtf(f32 f) {
  */
 #define Q30_MUL(a, b) (((long long)(a) * (b)) >> 30)
 
-/* sin(x) for x in [0, pi/2] as Q30. x^2 reaches 2.47, so terms are 64-bit. */
-static s32 sin_q30_quadrant(s32 x) {
+/* sin(x) for x in [0, pi/2] as Q30. x^2 reaches 2.47, so terms are 64-bit.
+ * Compile time only now: it fills kSinQuadrant below. */
+static constexpr s32 sin_q30_quadrant(s32 x) {
     long long x2 = Q30_MUL(x, x);
     /* Horner: x * (1 - x2/6 * (1 - x2/20 * (1 - x2/42 * (1 - x2/72)))) */
     long long r = (1 << 30) - x2 / 72;
@@ -61,6 +100,31 @@ static s32 sin_q30_quadrant(s32 x) {
     r = (1 << 30) - Q30_MUL(x2 / 20, r);
     r = (1 << 30) - Q30_MUL(x2 / 6, r);
     return (s32)Q30_MUL(x, r);
+}
+
+/* Quarter-wave table, interpolated (lookup + interpolation as in
+ * SaturnMath++ Trigonometry, at Q30 and 256 steps instead of its 16.16 and
+ * 5.6-degree steps). Built at compile time from the series above, so no
+ * runtime series, 64-bit divides or float. Interpolation error <= 5e-6. */
+#define SIN_STEPS 256
+struct SinQuadrant {
+    s32 v[SIN_STEPS + 1];
+    constexpr SinQuadrant() : v() {
+        for (int i = 0; i <= SIN_STEPS; i++) {
+            u32 inq = (u32)i << 22; /* 2^30 = pi/2 */
+            v[i] = sin_q30_quadrant((s32)(((unsigned long long)inq * 0x6487ED51ULL) >> 30));
+        }
+    }
+};
+static constexpr SinQuadrant kSinQuadrant{};
+
+/* inq: position in the quadrant, 2^30 = pi/2. Returns sin as Q30. */
+static inline s32 sin_q30_lookup(u32 inq) {
+    u32 i = inq >> 22;
+    s32 a = kSinQuadrant.v[i];
+    s32 d = kSinQuadrant.v[i + (i < SIN_STEPS)] - a;
+    fx_raw p = fx_dmuls(d, (long)((inq >> 6) & 0xFFFF)); /* d * frac16 */
+    return a + (s32)(((unsigned long)(p >> 32) << 16) | ((unsigned long)p >> 16));
 }
 
 /* b: binang * 2^16 (any sign, wraps per turn). Returns sin as Fx. */
@@ -72,8 +136,7 @@ static f32 sin_binang_q16(fx_raw b) {
         inq = 0x40000000 - inq;
     }
     /* x = inq / 2^30 * pi/2, in Q30: inq * (pi/2) */
-    s32 x = (s32)(((unsigned long long)inq * 0x6487ED51ULL) >> 30); /* pi/2 in Q30 */
-    s32 s = sin_q30_quadrant(x);
+    s32 s = sin_q30_lookup(inq);
     if (quadrant & 2) {
         s = -s;
     }
@@ -83,12 +146,20 @@ static f32 sin_binang_q16(fx_raw b) {
 /* 32768/pi * 2^16 */
 #define RAD_TO_BINANG_Q16 0x28BE60DBLL
 
+/* Radians (Fx) -> binang * 2^16. |angle| < 128 rad takes one dmuls.l. */
+static inline fx_raw rad_to_binang_q16(fx_raw v) {
+    if (fx_fits32(v)) {
+        return fx_sar_frac(fx_dmuls((long)v, (long)RAD_TO_BINANG_Q16));
+    }
+    return (v * RAD_TO_BINANG_Q16) >> FX_FRAC;
+}
+
 f32 sinf(f32 angle) {
-    return sin_binang_q16((angle.v * RAD_TO_BINANG_Q16) >> FX_FRAC);
+    return sin_binang_q16(rad_to_binang_q16(angle.v));
 }
 
 f32 cosf(f32 angle) {
-    return sin_binang_q16(((angle.v * RAD_TO_BINANG_Q16) >> FX_FRAC) + ((fx_raw)0x4000 << 16));
+    return sin_binang_q16(rad_to_binang_q16(angle.v) + ((fx_raw)0x4000 << 16));
 }
 
 #define FX_FRAC_MASK (FX_ONE - 1)
