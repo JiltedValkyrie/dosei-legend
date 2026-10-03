@@ -195,8 +195,29 @@ Steps (in order):
     Human check: grass cuts again; kids/Mido visible; Mido blocks the Deku path (push)
     until sword+shield, talks ROM text; signs read with A (ROM text), sword cuts pieces off;
     hidden wonder spots drop items; row 16 numbers if anything is wrong.
- 5. Next: Phase 2 generic draw (Actor_DrawAll -> prebuilt meshes) so new actors need no C
-    glue; then En_Ishi, Obj_Hana, En_A_Obj, En_Sa (needs z_demo cues), other areas.
+ 5b. Phase 2 generic draw, BUILT, runtime NOT checked (API v11; Debug spare 5104 B,
+    Clean 9072 B; blob 395 KB of 448 KB):
+    - oot_core_draw.cpp: per generic-draw actor, real Actor_Draw into scratch Gfx
+      (now in the low-WRAM play block, RAM_LOW_OOTPLAY 0x70000), then a Gfx walker
+      (G_MTX/POPMTX/DL/ENDDL/segment) turns each call of a placeholder DL into a draw
+      item: mesh key + transform as translate*Ry*Rx*Rz*scale (no raw SGL matrix).
+    - Placeholders are indexed: keep ones in section .keep_ph (importer KEEP_PLACEHOLDERS,
+      append only, keep_ph.txt); object ones after an 'OOB1' header in each .OOB
+      (O<id>_ph.txt). tools/build_core_meshes.py builds K<idx>.MSH / Q<obj><idx>.MSH
+      with build_shop_props.static_mesh at scale 1 for every DL the generic actors name.
+    - C (oot_core_host.c): loads the scene's meshes after set_objects, uploads them last
+      in npc_draw upload_visible (a full bank skips them, never errors), draws items in
+      world_props_draw via actor_mesh_draw_euler (Y flip negates pitch/roll).
+    - Generic-draw actors (importer GENERIC_DRAW_SOURCES): Obj_Tsubo, En_Gs, Obj_Hana.
+      They spawn ONLY in generic scenes (save scene >= SAVE_SCENE_COUNT); slice scenes keep
+      the C copies, so Kokiri is unchanged by this step. En_Ishi left out (38 KB, needs
+      carry). Gossip stone material/squished DLs fail the converter (only base DL drawn).
+    Human check: level select into a generic scene with pots/gossip stones/flowers (e.g.
+    Kakariko, Death Mountain trail, a dungeon room with pots): props appear at the right
+    place/size/orientation; sword breaks a pot (drop appears). If props are mirrored or
+    tipped: report it (pitch/roll sign in actor_mesh_draw_euler is the first suspect).
+ 5. Next: more generic actors (crates, trees, torches), En_Sa (needs z_demo cues),
+    skeleton (flex) meshes per limb, then other areas.
     Archive the C Kokiri child/Mido/sign code to legacy/ once confirmed.
  6. Later: z_demo cutscenes, z_player, z_camera. Then archive C counterparts.
 

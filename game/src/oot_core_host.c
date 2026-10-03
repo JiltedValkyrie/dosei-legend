@@ -14,6 +14,8 @@
 #include "ram_low.h"
 #include "save_state.h"
 #include "oot_scene_blob.h"
+#include "actor_mesh.h"
+#include "npc_draw.h"
 #include <string.h>
 
 
@@ -148,6 +150,7 @@ static void mirror_save(void)
         mirror.slingshot_owned = save_state.slingshot;
         mirror.seed_ammo = save_state.ammo_seeds;
         memcpy(mirror.player_name, "Link    ", 8); /* no file name in the C save */
+        mirror.generic_scene = save_scene >= SAVE_SCENE_COUNT;
         ENTRY->set_save(&mirror);
     }
 }
@@ -192,6 +195,70 @@ static bool load_scene_blob(unsigned int scene)
     return true;
 }
 
+/* ---- Phase 2 draw shim: prebuilt meshes for the decomp's draw items ---- */
+#define CORE_MESHES_MAX 24
+static actor_mesh_t *core_mesh[CORE_MESHES_MAX];
+static OotCoreMeshKey core_mesh_key[CORE_MESHES_MAX];
+static unsigned char core_mesh_ready[CORE_MESHES_MAX];
+static unsigned int core_mesh_count;
+
+static void load_meshes(void)
+{
+    static const char hex[] = "0123456789ABCDEF";
+    const OotCoreMeshKey *keys;
+    int n = ENTRY->mesh_list(&keys), i;
+    for (i = 0; i < (int)core_mesh_count; ++i) { actor_mesh_free(core_mesh[i]); core_mesh[i] = 0; }
+    core_mesh_count = 0;
+    for (i = 0; i < n && core_mesh_count < CORE_MESHES_MAX; ++i) {
+        char file[] = "Q00000.MSH";
+        const OotCoreMeshKey *k = &keys[i];
+        if (k->kind == OOT_CORE_DRAW_KEEP) {
+            file[0] = 'K'; file[1] = hex[(k->index >> 8) & 15];
+            file[2] = hex[(k->index >> 4) & 15]; file[3] = hex[k->index & 15];
+            file[4] = '.'; file[5] = 'M'; file[6] = 'S'; file[7] = 'H'; file[8] = 0;
+        } else {
+            file[1] = hex[(k->object >> 8) & 15]; file[2] = hex[(k->object >> 4) & 15];
+            file[3] = hex[k->object & 15]; file[4] = hex[(k->index >> 4) & 15]; file[5] = hex[k->index & 15];
+        }
+        if (GFS_NameToId((Sint8 *)file) < 0) continue;
+        core_mesh[core_mesh_count] = actor_mesh_load_static(file);
+        if (!core_mesh[core_mesh_count]) continue;
+        core_mesh_key[core_mesh_count] = *k;
+        core_mesh_ready[core_mesh_count] = 0;
+        core_mesh_count++;
+    }
+    npc_draw_reupload();
+}
+
+/* From world_props_draw_upload, after the bank reset: a mesh that does not
+** fit is skipped (not drawn), never an error. */
+void oot_core_meshes_upload(void)
+{
+    unsigned int i;
+    for (i = 0; i < core_mesh_count; ++i)
+        core_mesh_ready[i] = playing && actor_mesh_upload(core_mesh[i]);
+}
+
+/* From world_props_draw: one prebuilt mesh per decomp draw item. */
+void oot_core_meshes_draw(void)
+{
+    const OotCoreDrawItem *items;
+    int n = playing ? ENTRY->draw_items(&items) : 0, i;
+    unsigned int m;
+    for (i = 0; i < n; ++i) {
+        const OotCoreDrawItem *it = &items[i];
+        int dx = it->x - demo_camera.x, dz = it->z - demo_camera.z;
+        if (dx < -2000 || dx > 2000 || dz < -2000 || dz > 2000) continue;
+        for (m = 0; m < core_mesh_count; ++m)
+            if (core_mesh_ready[m] && core_mesh_key[m].kind == it->kind &&
+                core_mesh_key[m].object == it->object && core_mesh_key[m].index == it->index) {
+                actor_mesh_draw_euler(core_mesh[m], it->x, it->y, it->z, it->yaw, it->pitch,
+                                      it->roll, it->sx, it->sy, it->sz);
+                break;
+            }
+    }
+}
+
 /* Saturn pad -> N64 buttons the decomp reads (z_message, talk). The
 ** Saturn layout keeps A for A and B for B; the D-pad/stick menu step drives
 ** text choices as an N64 stick flick. */
@@ -215,7 +282,10 @@ void oot_core_frame(const gameplay_input_t *in)
                                    (int)kokiri_bank_room(),
                                    (short)demo_link.x, (short)(demo_link.y - DEMO_LINK_EYE_HEIGHT),
                                    (short)demo_link.z, (short)demo_link_yaw) != 0;
-        if (playing) ENTRY->set_objects(scene_objects, scene_object_count);
+        if (playing) {
+            ENTRY->set_objects(scene_objects, scene_object_count);
+            load_meshes();
+        }
         step_phase = 0;
     }
     if (!playing) return;

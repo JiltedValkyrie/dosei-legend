@@ -175,3 +175,21 @@ u8 Player_GetMask(PlayState* play) { /* REAL (z_player_lib.c) */
 
     return this->currentMask;
 }
+
+/* ---- z_quake.c / rumble: the C camera owns shake; Saturn has no rumble ---- */
+#include "quake.h"
+#include "rumble.h"
+s16 Quake_Request(Camera* camera, u32 type) { /* STUB: no shake yet */
+    return 0;
+}
+u32 Quake_SetSpeed(s16 index, s16 speed) { /* STUB */
+    return 0;
+}
+u32 Quake_SetPerturbations(s16 index, s16 y, s16 x, s16 fov, s16 roll) { /* STUB */
+    return 0;
+}
+u32 Quake_SetDuration(s16 index, s16 duration) { /* STUB */
+    return 0;
+}
+void Rumble_Request(f32 distSq, u8 sourceStrength, u8 duration, u8 decreaseRate) { /* STUB */
+}

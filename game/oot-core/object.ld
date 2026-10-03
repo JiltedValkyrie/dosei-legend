@@ -9,6 +9,9 @@ OUTPUT_ARCH(sh)
 SECTIONS
 {
     . = 0x06000000;
+    /* Header + placeholders first: the draw shim finds them at base + 8. */
+    .ph_head : { KEEP(*(.ph_head)) }
+    .ph : { *(.ph) }
     .data : { *(.rodata .rodata.* .data .data.*) *(.bss .bss.*) *(COMMON) }
     _oot_object_end = .;
     ASSERT(_oot_object_end <= 0x06000000 + OOT_OBJECT_MAX_BYTES, "object blob exceeds its limit")

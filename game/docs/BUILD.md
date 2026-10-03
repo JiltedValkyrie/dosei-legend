@@ -185,6 +185,15 @@ sudo apt-get install -y python3-pil genisoimage   # Pillow + mkisofs
     newline into a joined line (makefile recipes still work, but read badly). Write patch
     scripts with the Write tool into the scratchpad and run them (gotcha 12 again).
 
+38. **Removing an oot-core source did not relink OOTCORE** (stale elf, old size): the
+    elf now depends on build/oot-core/sources.mk. Same trap for any generated list.
+39. **Phase 2 meshes:** tools/build_core_meshes.py runs after the importer (needs the
+    ROM). Keep placeholder indices are positions in KEEP_PLACEHOLDERS: append only, or
+    every K<idx>.MSH name shifts. Stale K/Q*.MSH files in build/cd are harmless but
+    count toward the disc directory.
+40. **Blob size watch:** a single actor can cost 30-40 KB (Fx int64 code at -Os, e.g.
+    En_Ishi). Check the per-object sizes in oot-core.map before importing in bulk.
+
 ## Playtest package
 
 Build Clean, then run `tools/package_playtest.sh` in WSL with `OOT_SAT_REV` set.

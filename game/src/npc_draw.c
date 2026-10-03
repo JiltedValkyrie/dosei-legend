@@ -295,6 +295,8 @@ static void draw_pose(unsigned int model, unsigned int tick,
                     turn_head ? head : 0, turn_torso ? torso : 0, focus);
 }
 
+void npc_draw_reupload(void) { uploaded = 0xFFFFFFFFu; }
+
 static bool upload_visible(unsigned int visible, unsigned int generation)
 {
     unsigned int i;
@@ -343,6 +345,9 @@ static bool upload_visible(unsigned int visible, unsigned int generation)
             jo_core_error("NPC texture bank full: masks");
             return false;
         }
+#ifdef DOSEI_OOT_CORE
+        oot_core_meshes_upload();   /* last: never starves the C uploads */
+#endif
         uploaded = visible;
     }
     return true;

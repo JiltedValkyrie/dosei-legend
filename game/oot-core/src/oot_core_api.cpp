@@ -40,11 +40,18 @@ extern s32 gOotCorePlayerPushZ;
 void OotCore_SetText(const void* data, u32 bytes);
 GraphicsContext* OotCore_GfxCtx(void);
 void OotCore_GfxReset(void);
+u32 OotCore_GfxBytes(void);
+void OotCore_GfxInit(void* mem);
 const OotCoreMessageView* OotCore_MessageView(void);
 int OotCore_NpcView(const OotCoreNpcView** out);
 unsigned int OotCore_TalkState(void);
 int OotCore_PropQuery(short actor_id, int x, int z);
 const char* OotCore_DebugText(void);
+s32 OotCore_DrawActors(PlayState* play);
+int OotCore_DrawItems(const OotCoreDrawItem** out);
+int OotCore_MeshList(const OotCoreMeshKey** out);
+s32 OotCore_IsGenericDraw(s16 id);
+static u8 sGenericScene;
 
 /* Linker-script symbols: first address past the blob's .bss; ctor table. */
 extern "C" char oot_core_end[];
@@ -112,6 +119,11 @@ static void load_room_actors(PlayState* play, int room) {
                 break;
             }
         }
+        /* Generic-draw actors: only where no C copy exists. */
+        if (k == ARRAY_COUNT(sRoomActorIds) && sGenericScene && n < ROOM_ENTRIES_MAX &&
+            OotCore_IsGenericDraw(list[i].id & 0x1FFF)) {
+            sRoomEntries[n++] = list[i];
+        }
     }
     play->actorEntryList = sRoomEntries;
     play->numActorEntries = n;
@@ -131,7 +143,8 @@ static void oot_core_init(const OotCoreHost* host) {
 #define ALIGN16(n) (((n) + 15u) & ~15u)
 
 static unsigned int oot_core_play_bytes(void) {
-    return ALIGN16(sizeof(PlayState)) + OOT_CORE_PLAY_THA_BYTES + OOT_CORE_PLAY_ARENA_BYTES;
+    return ALIGN16(sizeof(PlayState)) + OOT_CORE_PLAY_THA_BYTES + OOT_CORE_PLAY_ARENA_BYTES +
+           ALIGN16(OotCore_GfxBytes());
 }
 
 static int oot_core_play_init(void* block, unsigned int bytes, int scene_id, const void* scene, int room,
@@ -148,6 +161,8 @@ static int oot_core_play_init(void* block, unsigned int bytes, int scene_id, con
     THA_Init(&play->state.tha, mem, OOT_CORE_PLAY_THA_BYTES);
     mem += OOT_CORE_PLAY_THA_BYTES;
     ZeldaArena_Init(mem, OOT_CORE_PLAY_ARENA_BYTES);
+    mem += OOT_CORE_PLAY_ARENA_BYTES;
+    OotCore_GfxInit(mem); /* scratch display lists (never executed) */
 
     play->sceneId = scene_id;
     play->state.gfxCtx = OotCore_GfxCtx();
@@ -333,6 +348,7 @@ static void oot_core_set_save(const OotCoreSave* in) {
         gOotCorePlay->actorCtx.flags.collect = in->scene_flags[3];
     }
     gSaveContext.language = LANGUAGE_ENG;
+    sGenericScene = in->generic_scene;
     /* MESSAGE_NAME: ASCII -> file name charset (Message_Decode reverses it). */
     for (i = 0; i < ARRAY_COUNT(pd->playerName); i++) {
         char ch = in->player_name[i];
@@ -439,6 +455,7 @@ static void oot_core_update(void) {
     /* Play_Draw's Message_Draw: it advances the text reveal (textDrawPos)
      * and page state; its display list goes to a scratch buffer. */
     OotCore_GfxReset();
+    OotCore_DrawActors(play);
     Message_Draw(play);
     save_copy_out(play);
     play->gameplayFrames++;
@@ -505,6 +522,8 @@ extern "C" const OotCoreEntry oot_core_entry __attribute__((section(".oot_entry"
     oot_core_player_push,
     OotCore_PropQuery,
     OotCore_DebugText,
+    OotCore_DrawItems,
+    OotCore_MeshList,
     oot_core_set_player,
     oot_core_set_room,
     oot_core_set_sword,

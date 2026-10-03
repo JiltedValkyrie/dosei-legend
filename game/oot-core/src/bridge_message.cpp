@@ -134,8 +134,24 @@ s32 AudioOcarina_MemoryGameNextNote(void) {
 /* ---- graph.c: scratch display lists for Message_Draw (never executed) ---- */
 #define OVERLAY_GFX 256
 #define POLY_OPA_GFX 4096
-static Gfx sOverlayGfx[OVERLAY_GFX];
-static Gfx sPolyOpaGfx[POLY_OPA_GFX];
+#define POLY_XLU_GFX 1024
+/* In the host's play block (low work RAM), not the blob's cart carve. */
+static Gfx* sOverlayGfx;
+static Gfx* sPolyOpaGfx;
+static Gfx* sPolyXluGfx;
+#define OVERLAY_BYTES (OVERLAY_GFX * sizeof(Gfx))
+#define POLY_OPA_BYTES (POLY_OPA_GFX * sizeof(Gfx))
+#define POLY_XLU_BYTES (POLY_XLU_GFX * sizeof(Gfx))
+
+u32 OotCore_GfxBytes(void) {
+    return OVERLAY_BYTES + POLY_OPA_BYTES + POLY_XLU_BYTES;
+}
+
+void OotCore_GfxInit(void* mem) {
+    sOverlayGfx = (Gfx*)mem;
+    sPolyOpaGfx = (Gfx*)((u8*)mem + OVERLAY_BYTES);
+    sPolyXluGfx = (Gfx*)((u8*)mem + OVERLAY_BYTES + POLY_OPA_BYTES);
+}
 static GraphicsContext sGfxCtx;
 
 GraphicsContext* OotCore_GfxCtx(void) {
@@ -144,15 +160,19 @@ GraphicsContext* OotCore_GfxCtx(void) {
 
 /* Graph_Update order: a fresh frame for each draw. */
 void OotCore_GfxReset(void) {
-    sGfxCtx.overlay.size = sizeof(sOverlayGfx);
+    sGfxCtx.overlay.size = OVERLAY_BYTES;
     sGfxCtx.overlay.start = sOverlayGfx;
     sGfxCtx.overlay.p = sOverlayGfx;
-    sGfxCtx.overlay.d = (u8*)sOverlayGfx + sizeof(sOverlayGfx);
-    sGfxCtx.polyOpa.size = sizeof(sPolyOpaGfx);
+    sGfxCtx.overlay.d = (u8*)sOverlayGfx + OVERLAY_BYTES;
+    sGfxCtx.polyOpa.size = POLY_OPA_BYTES;
     sGfxCtx.polyOpa.start = sPolyOpaGfx;
     sGfxCtx.polyOpa.p = sPolyOpaGfx;
-    sGfxCtx.polyOpa.d = (u8*)sPolyOpaGfx + sizeof(sPolyOpaGfx);
-    sGfxCtx.polyXlu = sGfxCtx.polyOpa;
+    sGfxCtx.polyOpa.d = (u8*)sPolyOpaGfx + POLY_OPA_BYTES;
+    sGfxCtx.polyXlu.size = POLY_XLU_BYTES;
+    sGfxCtx.polyXlu.start = sPolyXluGfx;
+    sGfxCtx.polyXlu.p = sPolyXluGfx;
+    sGfxCtx.polyXlu.d = (u8*)sPolyXluGfx + POLY_XLU_BYTES;
+    sGfxCtx.polyXluBuffer = sPolyXluGfx;
     sGfxCtx.overlayBuffer = sOverlayGfx;
     sGfxCtx.polyOpaBuffer = sPolyOpaGfx;
 }

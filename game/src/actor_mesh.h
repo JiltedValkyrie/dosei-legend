@@ -13,6 +13,10 @@ void actor_mesh_draw_static(actor_mesh_t *mesh, int32_t x, int32_t y, int32_t z,
 void actor_mesh_draw_transform(actor_mesh_t *mesh, int32_t x,int32_t y,int32_t z,
     uint16_t yaw,uint16_t pitch,uint16_t roll,int32_t scale);
 bool actor_mesh_upload(actor_mesh_t *mesh);
+/* translate * Ry(yaw) * Rx(pitch) * Rz(roll) * scale, OoT axes and angles,
+** scale Q16 (oot-core draw items). */
+void actor_mesh_draw_euler(actor_mesh_t *mesh, int32_t x, int32_t y, int32_t z,
+    int16_t yaw, int16_t pitch, int16_t roll, int32_t sx, int32_t sy, int32_t sz);
 bool actor_mesh_load_scroll(actor_mesh_t *mesh, const char *file);
 /* Replace only the clip on a loaded mesh: same geometry, same uploaded
 ** tiles, different .ANM/.TRK. `stem` is the file name without extension. */

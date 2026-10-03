@@ -222,7 +222,8 @@ OOT_CORE_SRCS = $(OOT_CORE_DECOMP_SRCS) \
 	oot-core/src/oot_core_bench.cpp oot-core/src/oot_core_link_stubs.cpp \
 	oot-core/src/oot_core_api.cpp oot-core/src/bridge_tables.cpp oot-core/src/bridge_libc.cpp \
 	oot-core/src/bridge_play.cpp oot-core/src/bridge_assets.cpp oot-core/src/bridge_player.cpp \
-	oot-core/src/bridge_message.cpp oot-core/src/oot_core_views.cpp
+	oot-core/src/bridge_message.cpp oot-core/src/oot_core_views.cpp \
+	oot-core/src/oot_core_draw.cpp build/oot-core/keep_ph.cpp
 OOT_CORE_OBJS = $(patsubst %.cpp,$(OOT_CORE_OBJDIR)/%.o,$(notdir $(OOT_CORE_SRCS)))
 _CCFLAGS += -DDOSEI_OOT_CORE -DOOT_CORE_LOAD_ADDR=$(OOT_CORE_LOAD_ADDR)u \
 	-DOOT_SCENECOL_ADDR=$(OOT_SCENECOL_ADDR)u -Ioot-core/include
@@ -232,7 +233,7 @@ $(OOT_CORE_OBJDIR):
 # Static ctors are fine: OotCoreEntry.init runs the blob's ctor table.
 $(OOT_CORE_OBJDIR)/%.o: %.cpp oot-core/include/fx.h oot-core/include/oot_prelude.h oot-core/include/oot_core_bench.h oot-core/include/oot_core_api.h oot-core/include/oot_core_host.h | $(OOT_CORE_OBJDIR)
 	$(OOT_CORE_CXX) $(OOT_CORE_CXXFLAGS) -c $< -o $@
-build/oot-core/oot-core.elf: $(OOT_CORE_OBJS) oot-core/oot-core.ld build/oot-core/obj_syms.ld build/oot-core/msg_syms.ld
+build/oot-core/oot-core.elf: $(OOT_CORE_OBJS) build/oot-core/sources.mk oot-core/oot-core.ld build/oot-core/obj_syms.ld build/oot-core/msg_syms.ld
 	$(OOT_CORE_CXX) -m2 -nostdlib -nostartfiles -T oot-core/oot-core.ld \
 		-Wl,--defsym,OOT_CORE_LOAD_ADDR=$(OOT_CORE_LOAD_ADDR) \
 		-Wl,--defsym,OOT_CORE_MAX_BYTES=$(OOT_CORE_MAX_BYTES) \

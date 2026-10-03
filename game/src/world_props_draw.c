@@ -25,6 +25,7 @@
 #include "gohma_larva.h"
 #include "gohma.h"
 #include "tree_mouth.h"
+#include "oot_core_host.h"
 static actor_mesh_t *door,*web,*tree_mouth;
 static actor_mesh_t *torches[3];
 static actor_mesh_t *walls[5];
@@ -157,6 +158,9 @@ static void draw_sign(unsigned int mask,int x,int y,int z,uint16_t yaw,bool fall
 void world_props_draw(unsigned int tick)
 {
     actor_t *a=0; unsigned int i,delta=tick-last_tick;last_tick=tick;
+#ifdef DOSEI_OOT_CORE
+    oot_core_meshes_draw();
+#endif
     if(delta>12) delta=12;
     if(tree_mouth && kokiri_scene_room()==1) {
         int32_t x,y,z;tree_mouth_position(&x,&y,&z);actor_mesh_draw_static(tree_mouth,x,y,z,0);

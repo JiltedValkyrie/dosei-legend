@@ -542,6 +542,23 @@ void actor_mesh_draw_transform(actor_mesh_t *mesh,int32_t x,int32_t y,int32_t z,
     slScale(scale,scale,scale);kokiri_submit_pdata(&mesh->pdata);jo_3d_pop_matrix();
 }
 
+/* Y is flipped between OoT and SGL space, which mirrors rotations about X
+** and Z (F*Rx(a)*F = Rx(-a)); Y rotations keep their sign, as in
+** actor_mesh_draw_static. */
+void actor_mesh_draw_euler(actor_mesh_t *mesh, int32_t x, int32_t y, int32_t z,
+    int16_t yaw, int16_t pitch, int16_t roll, int32_t sx, int32_t sy, int32_t sz)
+{
+    if (!mesh || !mesh->loaded) return;
+    jo_3d_push_matrix();
+    jo_3d_translate_matrix(x, -y, z);
+    slRotY((ANGLE)yaw);
+    slRotX((ANGLE)(int16_t)-pitch);
+    slRotZ((ANGLE)(int16_t)-roll);
+    slScale(sx, sy, sz);
+    kokiri_submit_pdata(&mesh->pdata);
+    jo_3d_pop_matrix();
+}
+
 void actor_mesh_free(actor_mesh_t *mesh)
 {
     if (mesh) { free_actor(mesh); jo_free(mesh); }

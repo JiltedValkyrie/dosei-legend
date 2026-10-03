@@ -17,7 +17,7 @@
 #include "oot_core_host.h"
 
 #define OOT_CORE_MAGIC 0x4F4F5443u /* 'OOTC' */
-#define OOT_CORE_VERSION 10u
+#define OOT_CORE_VERSION 11u
 
 /* PlayState (~78 KB with Fx) + TwoHeadArena + ZeldaArena come from one block
  * the host allocates, so they never take the blob's fixed cart carve. */
@@ -67,6 +67,28 @@ typedef struct OotCoreMessageView {
     unsigned char colour[OOT_CORE_MSG_ROWS][OOT_CORE_MSG_COLS];
 } OotCoreMessageView;
 
+/* Phase 2 draw item: one placeholder display list the real draw code called,
+ * and the modelview at the call as translate * Ry(yaw) * Rx(pitch) * Rz(roll)
+ * * scale (OoT axes, binary angles; scale Q16). kind KEEP: index into
+ * keep_ph.txt; kind OBJECT: index into the object's O<id>_ph.txt. */
+#define OOT_CORE_DRAW_KEEP   0
+#define OOT_CORE_DRAW_OBJECT 1
+#define OOT_CORE_DRAW_ITEMS_MAX 96
+typedef struct OotCoreDrawItem {
+    unsigned short kind, object, index;
+    short actor;                 /* actor id */
+    short yaw, pitch, roll;
+    unsigned char xlu;           /* from the translucent list */
+    unsigned char pad;
+    int x, y, z;                 /* world units */
+    int sx, sy, sz;              /* Q16 */
+} OotCoreDrawItem;
+
+/* A prebuilt mesh the scene may draw (K/Q<key>.MSH, build_core_meshes.py). */
+typedef struct OotCoreMeshKey {
+    unsigned short kind, object, index;
+} OotCoreMeshKey;
+
 /* C save <-> gSaveContext. Values are copied in before each update; the
  * flag words and scene flags behind the pointers are copied back after it,
  * so flags the decomp sets reach the C save. Health in 1/16 hearts. Items
@@ -89,6 +111,9 @@ typedef struct OotCoreSave {
     unsigned long* scene_flags;
     /* File name, ASCII, space padded (z_message MESSAGE_NAME). */
     char player_name[8];
+    /* Not one of the slice scenes: the decomp also spawns (and the Phase 2
+     * shim draws) the generic-draw actors, which C owns in slice scenes. */
+    unsigned char generic_scene;
 } OotCoreSave;
 
 typedef struct OotCoreEntry {
@@ -129,6 +154,10 @@ typedef struct OotCoreEntry {
     int (*prop_query)(short actor_id, int x, int z);
     /* One debug-panel line: player proxy talk state, message mode, counts. */
     const char* (*debug_text)(void);
+    /* Draw items of the last update (Phase 2 shim); returns the count. */
+    int (*draw_items)(const OotCoreDrawItem** out);
+    /* Meshes the current scene can draw (keep + loaded objects); count. */
+    int (*mesh_list)(const OotCoreMeshKey** out);
     /* C Link -> player proxy (Q0 world units). Call before update. */
     void (*set_player)(int x, int y, int z, short yaw);
     /* Player entered another room: z_room room change (kills the old
