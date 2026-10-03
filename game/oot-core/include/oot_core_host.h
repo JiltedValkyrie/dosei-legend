@@ -16,6 +16,9 @@ typedef struct OotCoreHost {
     unsigned char (*give_item)(unsigned char item);
     /* z_parameter Health_ChangeBy, amount in 1/16 hearts. Nonzero = alive. */
     int (*health_change)(short amount);
+    /* Free-running timer and its conversion to microseconds (profiling). */
+    unsigned int (*ticks)(void);
+    unsigned int (*ticks_to_us)(unsigned int ticks);
 } OotCoreHost;
 
 #endif

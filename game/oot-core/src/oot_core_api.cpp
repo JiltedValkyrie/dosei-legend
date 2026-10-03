@@ -51,6 +51,7 @@ int OotCore_PropQuery(short actor_id, int x, int z);
 const char* OotCore_DebugText(void);
 s32 OotCore_DrawActors(PlayState* play);
 int OotCore_DrawItems(const OotCoreDrawItem** out);
+const char* OotCore_DebugText2(void);
 int OotCore_MeshList(const OotCoreMeshKey** out);
 s32 OotCore_IsGenericDraw(s16 id);
 static u8 sGenericScene;
@@ -460,8 +461,20 @@ static void OotCore_CullActors(PlayState* play) {
     }
 }
 
+/* Per-phase decomp step time, us (debug row 16): collision checks, actor
+ * update, message, draw. */
+u32 gOotCorePhaseUs[4];
+static u32 Phase_Now(void) {
+    return (gOotCoreHost != NULL && gOotCoreHost->ticks != NULL) ? gOotCoreHost->ticks() : 0;
+}
+static u32 Phase_Us(u32 t0) {
+    return (gOotCoreHost != NULL && gOotCoreHost->ticks_to_us != NULL) ? gOotCoreHost->ticks_to_us(Phase_Now() - t0)
+                                                                        : 0;
+}
+
 static void oot_core_update(void) {
     PlayState* play = gOotCorePlay;
+    u32 t0;
 
     if (play == NULL) {
         return;
@@ -473,21 +486,29 @@ static void oot_core_update(void) {
     sHostInput.press.button = 0;
     /* Play_Update order. */
     AnimTaskQueue_Reset(&play->animTaskQueue);
+    t0 = Phase_Now();
     CollisionCheck_AT(play, &play->colChkCtx);
     CollisionCheck_OC(play, &play->colChkCtx);
     CollisionCheck_Damage(play, &play->colChkCtx);
     CollisionCheck_ClearContext(play, &play->colChkCtx);
+    gOotCorePhaseUs[0] = Phase_Us(t0);
+    t0 = Phase_Now();
     OotCore_CullActors(play);
     Actor_UpdateAll(play, &play->actorCtx);
     Effect_UpdateAll(play);
     EffectSs_UpdateAll(play);
+    gOotCorePhaseUs[1] = Phase_Us(t0);
+    t0 = Phase_Now();
     Message_Update(play);
     AnimTaskQueue_Update(play, &play->animTaskQueue);
     /* Play_Draw's Message_Draw: it advances the text reveal (textDrawPos)
      * and page state; its display list goes to a scratch buffer. */
     OotCore_GfxReset();
+    gOotCorePhaseUs[2] = Phase_Us(t0);
+    t0 = Phase_Now();
     OotCore_DrawActors(play);
     Message_Draw(play);
+    gOotCorePhaseUs[3] = Phase_Us(t0);
     save_copy_out(play);
     play->gameplayFrames++;
     play->state.frames++;
@@ -556,6 +577,7 @@ extern "C" const OotCoreEntry oot_core_entry __attribute__((section(".oot_entry"
     OotCore_DrawItems,
     OotCore_MeshList,
     oot_core_set_camera,
+    OotCore_DebugText2,
     oot_core_set_player,
     oot_core_set_room,
     oot_core_set_sword,

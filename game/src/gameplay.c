@@ -288,12 +288,48 @@ static void         npc_actors_kill(void)
     }
 }
 
+#ifdef DOSEI_OOT_CORE
+/* The decomp En_Ko/En_Md standing in for kokiri_npcs[i] (same ENKO_TYPE, or
+** Mido), so Navi's hover and Z-target keep working on decomp NPCs. */
+static const OotCoreNpcView *core_npc_for(const kokiri_npc_t *npc)
+{
+    const OotCoreNpcView *v;
+    int n, k;
+    if (npc->scene != save_state.scene_id || npc->kind == KOKIRI_NPC_SARIA ||
+        !oot_core_owns_kokiri_npcs())
+        return 0;
+    n = oot_core_npcs(&v);
+    for (k = 0; k < n; ++k)
+        if (npc->kind == KOKIRI_NPC_MIDO ? v[k].id == 0x016D /* ACTOR_EN_MD */ :
+            v[k].id == 0x0163 /* ACTOR_EN_KO */ && (v[k].params & 0xFF) == (npc->param & 0xFF))
+            return v[k].alpha ? &v[k] : 0;
+    return 0;
+}
+#endif
+
 static void         sync_npc_actors(void)
 {
     unsigned int i;
     for (i = 0; i < KOKIRI_NPC_COUNT; ++i) {
         const kokiri_npc_t *npc = npc_at(i);
         actor_t *a = actor_resolve(npc_actor[i]);
+#ifdef DOSEI_OOT_CORE
+        const OotCoreNpcView *core = core_npc_for(npc);
+        if (core) {
+            if (!a) {
+                a = actor_spawn(&npc_profile, save_state.scene_id, ACTOR_ROOM_NONE,
+                                core->x, core->y, core->z, 0, (uint16_t)i);
+                if (!a) continue;
+                a->attention = ATTN_NPC;
+                a->range = ATTN_RANGE_SLICE_NPC;
+                a->focus[1] = GP_NPC_FOCUS_Y;
+                a->arrow_y = GP_NPC_ARROW_Y;
+                npc_actor[i] = actor_handle(a);
+            }
+            a->x = core->x; a->y = core->y; a->z = core->z;
+            continue;
+        }
+#endif
         if (!gameplay_npc_present(i)) {
             npc_turned &= ~(1u << i);
             if (a) actor_kill(a);
@@ -2455,7 +2491,7 @@ static int16_t      find_speaker(const gameplay_input_t *in)
     unsigned int i;
     /* Only this scene's people (gameplay_npc_present): a Kokiri placed in
     ** another scene must never take A away from a door. */
-    if (gameplay_target_npc() >= 0) {
+    if (gameplay_target_npc() >= 0 && gameplay_npc_present((unsigned int)gameplay_target_npc())) {
         const kokiri_npc_t *npc = npc_at(gameplay_target_npc());
         int32_t dy = in->y - npc->y;
         if (dy < 0) dy = -dy;

@@ -270,6 +270,66 @@ int OotCore_PropQuery(short actor_id, int x, int z) {
     return -1;
 }
 
+extern u32 gOotCorePhaseUs[4];
+
+/* "oc t<talk> m<msgMode> x<textId> n<npcs> c<AT>/<AC>/<OC>" for the debug panel,
+ * then (second line) phase times in 0.1 ms: collision, actors, message, draw,
+ * and the nearest NPC: distance, talk distance, actor flags low byte. */
+const char* OotCore_DebugText2(void) {
+    static char sText[40];
+    static const char hex[] = "0123456789ABCDEF";
+    PlayState* play = gOotCorePlay;
+    Player* player;
+    Actor* near = NULL;
+    Actor* a;
+    char* p = sText;
+    u32 v;
+    s32 k, i;
+
+    if (play == NULL || (player = GET_PLAYER(play)) == NULL) {
+        sText[0] = '\0';
+        return sText;
+    }
+    for (a = play->actorCtx.actorLists[ACTORCAT_NPC].head; a != NULL; a = a->next) {
+        if (near == NULL || a->xzDistToPlayer < near->xzDistToPlayer) {
+            near = a;
+        }
+    }
+#define PUT_DEC(val)                              \
+    {                                             \
+        char tmp[8];                              \
+        s32 nd = 0;                               \
+        v = (u32)(val);                           \
+        do {                                      \
+            tmp[nd++] = (char)('0' + v % 10);     \
+            v /= 10;                              \
+        } while (v != 0 && nd < 7);               \
+        while (nd > 0) {                          \
+            *p++ = tmp[--nd];                     \
+        }                                         \
+    }
+    for (i = 0; i < 4; i++) {
+        PUT_DEC(gOotCorePhaseUs[i] / 100);
+        *p++ = i < 3 ? '/' : ' ';
+    }
+    if (near != NULL) {
+        *p++ = 'd';
+        PUT_DEC((s32)near->xzDistToPlayer);
+        *p++ = ' ';
+        *p++ = 'k';
+        PUT_DEC((u32)((s32)player->talkActorDistance > 99999 ? 99999 : (s32)player->talkActorDistance));
+        *p++ = ' ';
+        *p++ = 'f';
+        v = near->flags;
+        for (k = 1; k >= 0; k--) {
+            *p++ = hex[(v >> (k * 4)) & 0xF];
+        }
+    }
+#undef PUT_DEC
+    *p = '\0';
+    return sText;
+}
+
 /* "oc t<talk> m<msgMode> x<textId> n<npcs> c<AT>/<AC>/<OC>" for the debug panel. */
 const char* OotCore_DebugText(void) {
     static char sText[40];

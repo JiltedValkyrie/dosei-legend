@@ -58,7 +58,8 @@ static int host_health_change(short amount)
     return save_state.health != 0;
 }
 
-static const OotCoreHost host = { host_sfx, host_give_item, host_health_change };
+static const OotCoreHost host = { host_sfx, host_give_item, host_health_change,
+                                  frame_timer_ticks, frame_timer_ticks_to_us };
 
 static OotCoreBench bench;
 /* Last decomp update (Actor_UpdateAll etc.), microseconds. */
@@ -330,6 +331,7 @@ unsigned int oot_core_talk(void)
 int oot_core_npcs(const OotCoreNpcView **out) { return playing ? ENTRY->npc_view(out) : 0; }
 int oot_core_prop(short id, int x, int z) { return playing ? ENTRY->prop_query(id, x, z) : -1; }
 const char *oot_core_debug_text(void) { return playing ? ENTRY->debug_text() : ""; }
+const char *oot_core_debug_text2(void) { return playing ? ENTRY->debug_text2() : ""; }
 
 /* The decomp text box on the VDP2 text layer, in the C dialogue rows.
 ** VDP2 keeps text, so rows are reprinted only when the view changes and

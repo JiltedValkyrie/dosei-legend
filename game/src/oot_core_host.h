@@ -27,6 +27,7 @@ bool oot_core_message_box(void);
 /* prop_query: decomp state word of actor `id` near (x, z), -1 if none. */
 int oot_core_prop(short id, int x, int z);
 const char *oot_core_debug_text(void);
+const char *oot_core_debug_text2(void);
 /* Phase 2 draw shim meshes: upload after a bank reset, draw the items. */
 void oot_core_meshes_upload(void);
 void oot_core_meshes_draw(void);
