@@ -129,6 +129,27 @@ src/music_area.c, tables in jo heap). All 17 baked (converter now: channel io po
 hand music. Work RAM spare (Debug) 304 B. Next: raise caps (RAM cost) to admit the
 near-misses; multi-bg camera selection; per-scene music; En_Door room switches.
 
+## NEXT SESSION: GAME CONTENT ROUTE (approved by human 2026-10-02)
+Goal: the actual game through the decomp: NPCs, dialogue paths, event triggers, actors
+present/absent by progress flags, child/adult and day/night layers. No more perf tuning
+unless a real frame-time problem blocks content (row 16 `ou` = decomp update us/step).
+Rules: decomp HUD/pause/text stay on VDP2 (bridge their draw); held-up get-items are sprites,
+not 3D GI models. Old C game code: when a decomp system works in game, move the C version to
+legacy/ (archive, reference only) in the same batch; it still works slice start -> Field.
+Steps (in order):
+ 0. DONE (build only): `./build.sh --quick ...` skips asset steps (C/C++/oot-core changes).
+ 1. DONE (build only): gSaveContext mirror both ways each step: eventChkInf/itemGetInf/
+    infTable/scene flags (copy back after update), age (child), night (0), dayTime (noon).
+ 2. DONE (build only): every registered scene gets a blob (<scene>.OOC, all room layers:
+    main + AltHeaders); play_init in any scene, layer = Play_Init rule, per-room fallback =
+    Scene_CommandAlternateHeaderList. Still only En_Kusa/En_Item00 spawn (sRoomActorIds).
+    Decomp grass/drops now drawn in any scene. Scene-level alt headers (spawns, transition
+    actors) not yet.
+ 3. Phase 2 draw shim for NPCs: decomp SkelAnime/limb state -> existing npc_draw renderer.
+ 4. z_message logic -> VDP2 text box; text from ROM.
+ 5. NPC/event actors in bulk, area by area (Kokiri first), each with drops + flag checks.
+ 6. Later: z_demo cutscenes, z_player, z_camera. Then archive C counterparts.
+
 ## SPEED (2026-10-02, human Kronos kronos-fix, Debug, ns per call, cart)
 Low-WRAM copy (OOTBENCH.BIN, rows 16-17) is NOT faster than cart: cost is the math, not the bus.
 Fixes: fx.h dmuls.l inline 32x32 path + 32-bit shift helpers + always_inline (61769fc);

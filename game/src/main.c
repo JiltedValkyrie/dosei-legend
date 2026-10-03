@@ -139,10 +139,9 @@ static bool     dialogue_text_load(void)
                            RAM_CART_TITLEPTH_BYTES, demo_title_paths_bind));
 }
 
-#ifdef DOSEI_OOT_CORE
-/* oot-core: decomp code in OOTCORE.BIN (oot_core_host.c). */
+/* oot-core: decomp code in OOTCORE.BIN (oot_core_host.c); the header gives
+** inline no-op stubs when DOSEI_OOT_CORE is off. */
 #include "oot_core_host.h"
-#endif
 
 #ifdef DOSEI_TEXTURE_PROBE
 #include "texture_probe.h"
@@ -424,10 +423,11 @@ static void         viewer_draw(void)
      * that room must keep being drawn or the shot cuts to an empty forest. */
     if (!kokiri_scene_backdrop_active() && !cutscene_hides_scene() &&
         (!cutscene_is_playing() || cutscene_is_in_scene()) &&
-        save_state.scene_id == SAVE_SCENE_KOKIRI_FOREST) {
+        (save_state.scene_id == SAVE_SCENE_KOKIRI_FOREST || oot_core_owns_kokiri_props())) {
+        /* With the decomp playing, these draw its En_Kusa/En_Item00 in any scene. */
         kokiri_grass_draw();
         kokiri_rupees_draw(demo_world_clock());
-        kokiri_boulder_draw();
+        if (save_state.scene_id == SAVE_SCENE_KOKIRI_FOREST) kokiri_boulder_draw();
     }
     if (demo_link_active && !demo_title_is_visible() &&
           (!cutscene_is_playing() || cutscene_is_in_scene())) {
@@ -1353,7 +1353,7 @@ static void __attribute__((optimize("Os"))) file_select_screen(void)
     if(level_select.visible) {
         for(row=0;row<FS_ROWS;++row)jo_printf(0,FS_ROW+row,"                                      ");
         jo_printf(8,FS_ROW,"LEVEL SELECT");
-        jo_printf(4,FS_ROW+2,"AREA: %-24s",scene_names[level_select.scene]);
+        jo_printf(4,FS_ROW+2,"AREA: %-24s",scene_name(level_select.scene));
         jo_printf(4,FS_ROW+4,"ROOM: %u / %u",level_select.room,scene_entries[level_select.scene].rooms-1);
         jo_printf(4,FS_ROW+6,"UP/DOWN: AREA  LEFT/RIGHT: ROOM");
         jo_printf(4,FS_ROW+8,"A: ENTER  B: TITLE");

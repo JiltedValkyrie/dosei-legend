@@ -382,6 +382,11 @@ def main():
     from build_room_scene import transitions
 
     entrances = entrance_table(args.oot)
+    scene_ids = {}
+    for line in (args.oot / 'include/tables/scene_table.h').read_text(encoding='utf-8').splitlines():
+        hit = re.match(r'/\*\s*(0x[0-9A-Fa-f]+)\s*\*/\s*DEFINE_SCENE\(\s*\w+\s*,\s*\w+\s*,\s*(\w+)', line)
+        if hit:
+            scene_ids[hit.group(2)] = int(hit.group(1), 16)
     by_scene_name = {entry['scene']: i for i, entry in enumerate(SCENES)}
 
     args.out.mkdir(parents=True, exist_ok=True)
@@ -501,6 +506,7 @@ def main():
                '    uint8_t  save_scene;  /* SAVE_SCENE_* for the flag store */',
                '    uint8_t  sfx_bank;    /* build_action_audio AREA_BANKS index */',
                '    uint8_t  seq;         /* scene header seqId (NA_BGM_*), 0x7F none */',
+               '    uint8_t  oot_scene;   /* decomp SceneId (include/tables/scene_table.h) */',
                '} scene_entry_t;', '',
                'typedef struct {',
                '    int16_t  x, y, z;',
@@ -525,8 +531,8 @@ def main():
                'extern const scene_door_t  *scene_doors;',
                '# include <stdbool.h>',
                'bool scene_table_load(void);',
-               '/* Level-select labels: decomp SceneId names, upper case. */',
-               'extern const char *const scene_names[SCENE_COUNT];',
+               '/* Level-select label (decomp SceneId name), from SCENETAB.BIN. */',
+               'const char *scene_name(unsigned int scene);',
                '#endif', '']
     (args.out / 'scene_table.h').write_text('\n'.join(header))
 
@@ -538,12 +544,13 @@ def main():
         dist = 0
         if half > 0:
             dist = int(round(120.0 / math.tan(math.radians(half))))
-        body.append('    { %d, %d, %d, %d, 0x%04X, 0x%04X, %d, %d, %d, %d, %d, %s, %d, %d },'
+        body.append('    { %d, %d, %d, %d, 0x%04X, 0x%04X, %d, %d, %d, %d, %d, %s, %d, %d, %d },'
                     % (1 if entry['shape'] == 'image' else 0,
                        cam['x'], cam['y'], cam['z'],
                        cam['pitch'] & 0xFFFF, cam['yaw'] & 0xFFFF, cam['fov'],
                        dist, entry['rooms'], summary['first_spawn'],
-                       summary['spawns'], entry['save'], entry['sfx'], summary['seq']))
+                       summary['spawns'], entry['save'], entry['sfx'], summary['seq'],
+                       scene_ids[entry['scene']]))
     # Big-endian records in the C struct layout (SH-2 is big-endian):
     # scene_spawn_t 10 bytes, scene_door_t 17 + 1 pad.
     blob = bytearray()
@@ -553,23 +560,28 @@ def main():
     for door in (doors or [dict(xz=[(0, 0)] * 3, y=0, scene=0, target=0, spawn=0)]):
         blob += struct.pack('>7h3Bx', *[x for x, _ in door['xz']], *[z for _, z in door['xz']],
                             door['y'], door['scene'], door['target'], door['spawn'])
+    # Level-select names: 25-byte NUL-padded records (24 chars max).
+    for entry in SCENES:
+        blob += entry['scene'][6:].replace('_', ' ')[:24].encode('ascii').ljust(25, b'\0')
     (args.cd / 'SCENETAB.BIN').write_bytes(blob)
     body += ['};', '',
              'typedef char scene_spawn_size[sizeof(scene_spawn_t) == 10 ? 1 : -1];',
              'typedef char scene_door_size[sizeof(scene_door_t) == 18 ? 1 : -1];',
-             'const scene_spawn_t *scene_spawns;', 'const scene_door_t *scene_doors;', '',
+             'const scene_spawn_t *scene_spawns;', 'const scene_door_t *scene_doors;',
+             'static const char *scene_name_records;', '',
+             'const char *scene_name(unsigned int scene)', '{',
+             '    return scene_name_records && scene < SCENE_COUNT ? scene_name_records + scene * 25 : "";',
+             '}', '',
              'bool scene_table_load(void)', '{',
              '    int length = 0;',
              '    const unsigned char *data = (const unsigned char *)jo_fs_read_file("SCENETAB.BIN", &length);',
-             '    if (!data || length != (int)(SCENE_SPAWN_COUNT * 10 + SCENE_DOOR_COUNT * 18))',
+             '    if (!data || length != (int)(SCENE_SPAWN_COUNT * 10 + SCENE_DOOR_COUNT * 18 + SCENE_COUNT * 25))',
              '        return false;',
              '    scene_spawns = (const scene_spawn_t *)data;',
              '    scene_doors = (const scene_door_t *)(data + SCENE_SPAWN_COUNT * 10);',
+             '    scene_name_records = (const char *)(data + SCENE_SPAWN_COUNT * 10 + SCENE_DOOR_COUNT * 18);',
              '    return true;', '}', '']
-    body += ['const char *const scene_names[SCENE_COUNT] = {']
-    for entry in SCENES:
-        body.append('    "%s",' % entry['scene'][6:].replace('_', ' ')[:24])
-    body += ['};', '', '/* END OF FILE */', '']
+    body += ['/* END OF FILE */', '']
     (args.out / 'scene_table.c').write_text('\n'.join(body))
 
     (args.out / 'scene_table.json').write_text(json.dumps(

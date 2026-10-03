@@ -48,6 +48,18 @@ elif [ "${1:-}" = "--clean" ]; then
     variant=game-clean
     mode_args=(CLEAN_TEST=1)
 fi
+# --quick (after --clean/--hires, before make args): skip asset generation and
+# reuse build/cd + build/generated from the last full build of this variant.
+# For C/C++ (and oot-core) changes only; never for asset/tool changes.
+quick=0
+if [ "${1:-}" = "--quick" ]; then
+    shift
+    quick=1
+    if [ ! -f "$here/build/generated/scene_table.c" ] || [ ! -f "$here/build/cd/LINK.TEX" ]; then
+        echo "--quick needs one full build first" >&2
+        exit 1
+    fi
+fi
 
 if [ ! -x "$cc_check" ]; then
     echo "Jo Engine SDK not found at $compiler" >&2
@@ -59,6 +71,7 @@ mkdir -p "$here/build/cd" "$here/build/generated"
 # Retired overlength filenames cannot be addressed by Saturn GFS.
 rm -f "$here/build/cd/TREEMOUTH.BIN" "$here/build/cd/BOSSHEART.BIN" \
       "$here/build/cd/BOSSCLEAR.PCM" "$here/build/cd/BOSSCLEAR.LVL"
+if [ "$quick" != 1 ]; then
 # Freeze the chosen layout once so mid-build GUI changes cannot mix versions.
 "$python" "$here/tools/layout_variants.py" --snapshot "$here/build/generated/layout-build.json" --oot "$oot" --rom-dir "$roms"
 export DOSEI_LAYOUT_SNAPSHOT="$(cygpath -w "$here/build/generated/layout-build.json")"
@@ -203,6 +216,7 @@ done
 cd "$here"
 "$python" "$here/tools/check_disc_directory.py"
 "$python" "$here/tools/check_forest_budget.py"
+fi  # quick
 # oot-core (fork Phase 0): `./build.sh OOT_CORE=1` mirrors the decomp first.
 # Without it, drop a stale OOTCORE.BIN so it never ships on a normal disc.
 oot_core=0

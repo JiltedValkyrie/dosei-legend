@@ -237,16 +237,19 @@ build/oot-core/oot-core.elf: $(OOT_CORE_OBJS) oot-core/oot-core.ld
 		$(OOT_CORE_OBJS) -lgcc -o $@
 $(ASSETS_DIR)/OOTCORE.BIN: build/oot-core/oot-core.elf
 	$(CONV) -O binary $< $@
-	$(CONV) -O binary $< $@
-build/oot-core/scenecol/%COL.elf: build/oot-core/scenecol/%COL.cpp oot-core/scenecol.ld
-	$(OOT_CORE_CXX) $(OOT_CORE_CXXFLAGS) -c $< -o build/oot-core/scenecol/$*COL.o
+# One blob per registered scene (oot_core_import.py registered_scenes), named
+# by scene index like the room banks (S1, Z20). A scene whose blob does not fit
+# the carve is left out (recipe removes the target); the runtime skips it.
+build/oot-core/scenecol/%.elf: build/oot-core/scenecol/%.cpp oot-core/scenecol.ld oot-core/include/oot_scene_blob.h
+	$(OOT_CORE_CXX) $(OOT_CORE_CXXFLAGS) -c $< -o build/oot-core/scenecol/$*.o || \
+		{ rm -f build/oot-core/scenecol/$*.o; echo "scene blob $* compile failed"; }
 	$(OOT_CORE_CXX) -m2 -nostdlib -nostartfiles -T oot-core/scenecol.ld \
 		-Wl,--defsym,OOT_SCENECOL_ADDR=$(OOT_SCENECOL_ADDR) \
 		-Wl,--defsym,OOT_SCENECOL_MAX_BYTES=$(OOT_SCENECOL_MAX_BYTES) \
-		build/oot-core/scenecol/$*COL.o -o $@
-$(ASSETS_DIR)/%COL.BIN: build/oot-core/scenecol/%COL.elf
-	$(CONV) -O binary $< $@
-$(TARGET2): $(ASSETS_DIR)/OOTCORE.BIN $(patsubst %,$(ASSETS_DIR)/%COL.BIN,$(OOT_SCENECOL_NAMES))
+		build/oot-core/scenecol/$*.o -o $@ || { rm -f $@; echo "scene blob $* left out"; }
+$(ASSETS_DIR)/%.OOC: build/oot-core/scenecol/%.elf
+	[ ! -f $< ] || $(CONV) -O binary $< $@
+$(TARGET2): $(ASSETS_DIR)/OOTCORE.BIN $(patsubst %,$(ASSETS_DIR)/%.OOC,$(OOT_SCENECOL_NAMES))
 endif
 # Header layout changes must rebuild every consumer (save v2 otherwise wrote
 # 300 bytes into a stale 220-byte stack buffer). makefile bootstraps .d files

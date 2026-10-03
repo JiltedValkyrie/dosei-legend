@@ -6,13 +6,12 @@
 #include "frame_timer.h"
 #include "gameplay.h"
 #include "kokiri_sgl.h"
+#include "asset_names.h"
+#include "scene_flow.h"
 #include "ram_cart.h"
 #include "ram_low.h"
 #include "save_state.h"
 
-/* Decomp SceneId values (include/tables/scene_table.h) for scenes with a
-** scene blob (tools/oot_core_import.py SCENE_COLLISION). */
-#define OOT_SCENE_KOKIRI_FOREST 0x55
 
 #define ENTRY ((const OotCoreEntry *)OOT_CORE_LOAD_ADDR)
 
@@ -60,6 +59,9 @@ static OotCoreBench bench;
 static unsigned int update_us;
 static bool loaded;
 static bool playing;
+/* Scene index the play state belongs to (or whose blob is missing/failed):
+** a failed scene is not retried every frame. */
+static unsigned int play_scene = 0xFFFFu;
 static unsigned int step_phase;
 
 /* Read a disc file into a cache-through cart carve: zero the carve first
@@ -82,8 +84,7 @@ bool oot_core_boot(void)
 {
     /* Boot progress on row 20: a hang leaves the last marker on screen. */
     jo_printf(0, 20, "oc 1 load ");
-    loaded = load_carve("OOTCORE.BIN", RAM_CART_OOTCORE_OFFSET, RAM_CART_OOTCORE_BYTES) &&
-             load_carve("SPT04COL.BIN", RAM_CART_SCENECOL_OFFSET, RAM_CART_SCENECOL_BYTES);
+    loaded = load_carve("OOTCORE.BIN", RAM_CART_OOTCORE_OFFSET, RAM_CART_OOTCORE_BYTES);
     /* Code and data are used through the cached aliases: drop stale lines. */
     slCashPurge();
     loaded = loaded && ENTRY->magic == OOT_CORE_MAGIC && ENTRY->version == OOT_CORE_VERSION &&
@@ -109,25 +110,22 @@ static void sync_player(void)
                       (short)demo_link_yaw);
 }
 
-void oot_core_frame(void)
+/* C save -> decomp mirror. Static: the blob keeps the pointer and copies
+** flags back after each update. */
+static void mirror_save(void)
 {
-    if (!loaded) return;
-    if (save_state.scene_id != SAVE_SCENE_KOKIRI_FOREST) {
-        playing = false;
-        return;
-    }
-    if (!playing) {
-        playing = ENTRY->play_init(RAM_LOW(RAM_LOW_OOTPLAY_OFFSET), RAM_LOW_OOTPLAY_BYTES,
-                                   OOT_SCENE_KOKIRI_FOREST, (const void *)OOT_SCENECOL_ADDR,
-                                   (int)kokiri_scene_room(),
-                                   (short)demo_link.x, (short)(demo_link.y - DEMO_LINK_EYE_HEIGHT),
-                                   (short)demo_link.z, (short)demo_link_yaw) != 0;
-        step_phase = 0;
-        if (!playing) return;
-    }
-    sync_player();
     {
-        OotCoreSave mirror;
+        /* Static: the blob keeps the pointer and copies flags back after update. */
+        static OotCoreSave mirror;
+        unsigned int save_scene = scene_flow_entry()->save_scene;
+        mirror.link_age = 1;   /* LINK_AGE_CHILD: the C game has no adult yet */
+        mirror.night = 0;      /* C game has no day/night clock yet */
+        mirror.day_time = 0x8000; /* noon */
+        mirror.event_chk_inf = save_state.event_chk_inf;
+        mirror.item_get_inf = save_state.item_get_inf;
+        mirror.inf_table = save_state.inf_table;
+        mirror.scene_flags = save_scene < SAVE_SCENE_COUNT
+            ? (unsigned long *)&save_state.scene[save_scene] : 0;
         mirror.health = save_state.health;
         mirror.health_capacity = save_state.health_capacity;
         mirror.rupees = save_state.rupees;
@@ -139,7 +137,39 @@ void oot_core_frame(void)
         mirror.seed_ammo = save_state.ammo_seeds;
         ENTRY->set_save(&mirror);
     }
-    ENTRY->set_room((int)kokiri_scene_room());
+}
+
+/* <scene>.OOC (asset_scene_name, like the room banks) into the scene carve.
+** GFS_NameToId first: a missing file is fatal inside jo_fs. */
+static bool load_scene_blob(unsigned int scene)
+{
+    char name[12];
+    if (!asset_scene_name(name, scene, -1, "OOC") || GFS_NameToId((Sint8 *)name) < 0) return false;
+    if (!load_carve(name, RAM_CART_SCENECOL_OFFSET, RAM_CART_SCENECOL_BYTES)) return false;
+    slCashPurge();
+    return true;
+}
+
+void oot_core_frame(void)
+{
+    unsigned int scene = scene_flow_scene();
+    if (!loaded) return;
+    if (scene != play_scene) {
+        playing = false;
+        play_scene = scene;
+        if (!load_scene_blob(scene)) return;
+        mirror_save(); /* age/time/flags before play_init picks the layer */
+        playing = ENTRY->play_init(RAM_LOW(RAM_LOW_OOTPLAY_OFFSET), RAM_LOW_OOTPLAY_BYTES,
+                                   scene_flow_entry()->oot_scene, (const void *)OOT_SCENECOL_ADDR,
+                                   (int)kokiri_bank_room(),
+                                   (short)demo_link.x, (short)(demo_link.y - DEMO_LINK_EYE_HEIGHT),
+                                   (short)demo_link.z, (short)demo_link_yaw) != 0;
+        step_phase = 0;
+    }
+    if (!playing) return;
+    sync_player();
+    mirror_save();
+    ENTRY->set_room((int)kokiri_bank_room());
     {
         int32_t base[3], tip[3];
         int live = gameplay_sword_active() && gameplay_blade_points(base, tip);

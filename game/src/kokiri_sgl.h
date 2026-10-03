@@ -94,6 +94,8 @@ extern unsigned int kokiri_sprite_peak;  /* peak sprite slots used */
 void            kokiri_navi_draw(int x, int y, int z);
 void            kokiri_grass_draw(void);
 unsigned int    kokiri_scene_room(void);
+/* Room of the loaded bank (any scene). */
+unsigned int    kokiri_bank_room(void);
 void            kokiri_rupees_draw(unsigned int tick);
 void            kokiri_rupee_hud_draw(void);
 /* Pause equipment grid, drawn over the frozen world. */

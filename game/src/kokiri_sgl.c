@@ -2176,6 +2176,12 @@ void                kokiri_nut_draw(void)
     jo_3d_pop_matrix();
 }
 
+/* Room of the bank actually loaded (any scene, streaming or not). */
+unsigned int kokiri_bank_room(void)
+{
+    return forest_room < 0 ? 0 : (unsigned int)forest_room;
+}
+
 unsigned int kokiri_scene_room(void)
 {
 #ifdef KOKIRI_STREAM_ROOMS

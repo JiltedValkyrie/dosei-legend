@@ -10,9 +10,10 @@ SECTIONS
 {
     . = OOT_SCENECOL_ADDR;
     .scene_header : { KEEP(*(.scene_header)) }
-    .data : { *(.rodata .rodata.* .data .data.*) }
+    /* Zero-filled arrays (empty BgCam lists) land in .bss: keep them as data. */
+    .data : { *(.rodata .rodata.* .data .data.*) *(.bss .bss.*) *(COMMON) }
     _oot_scene_col_end = .;
     ASSERT(SIZEOF(.scene_header) > 0, "scene blob has no header")
     ASSERT(_oot_scene_col_end <= OOT_SCENECOL_ADDR + OOT_SCENECOL_MAX_BYTES, "scene collision exceeds its cart carve")
-    /DISCARD/ : { *(.comment) *(.text .text.*) *(.bss .bss.*) *(COMMON) }
+    /DISCARD/ : { *(.comment) *(.text .text.*) }
 }

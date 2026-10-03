@@ -158,6 +158,14 @@ sudo apt-get install -y python3-pil genisoimage   # Pillow + mkisofs
     work RAM: 75 scenes put 10 KB of tables over the static RAM limit. build.sh copies
     `Z*R*.MSH/.TEX` banks too; a new name pattern must be added to that copy loop
     (missed once: `Z20R3.MSH: File not found`).
+32. **`--quick` skips every asset step** (`./build.sh --quick OOT_CORE=1`, or
+    `--clean --quick`). Only for C/C++/oot-core changes after one full build of that
+    variant; tool, asset or scene-table changes need a full build.
+33. **Decomp scene blobs are `<scene>.OOC`** (S1.OOC, Z20.OOC: asset_scene_name), one per
+    registered scene, written by oot_core_import.py from build/generated/scene_table.json
+    (so the full build must have run first). A blob over its 256 KB carve or failing to
+    compile is left out with a "scene blob ... left out" line; the runtime skips it.
+    The runtime checks GFS_NameToId before opening: jo_fs treats a missing file as fatal.
 
 ## Playtest package
 

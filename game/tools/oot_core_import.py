@@ -17,6 +17,7 @@ Anything the fixups cannot handle must be listed in the import report, not
 hand-patched in the generated tree.
 """
 import argparse
+import json
 import pathlib
 import re
 import sys
@@ -62,16 +63,14 @@ SOURCES = [
     'src/code/z_malloc.c',
     'src/libc64/__osMalloc_n64.c',
 ]
-# Scenes whose collision + room actor lists go into a <NAME>COL.BIN data blob (makefile). Key = blob
-# name prefix (ISO 8.3: <= 5 chars), value = scene .c relative to extracted/<VERSION>.
-SCENE_COLLISION = {
-    'SPT04': 'assets/scenes/overworld/spot04/spot04_scene.c',
-}
 COL_HEADER = re.compile(r'^CollisionHeader (\w+)_Col = \{$', re.M)
 COL_ARRAY = re.compile(r'^\w+ (\w+)\[\] = \{\n#include "[^"]+"\n\};\n', re.M)
 
 
 ROOM_ACTORS = re.compile(r'^ActorEntry (\w+)\[\w+\] = \{\n#include "[^"]+"\n\};\n', re.M)
+ALT_TABLE = re.compile(r'^SceneCmd\* (\w+_AltHeaders)\[\] = \{\n#include "([^"]+)"\n\};', re.M)
+# Registered runtime scenes (build_scene_table.py): one blob per scene index.
+SCENE_TABLE_JSON = GAME / 'build' / 'generated' / 'scene_table.json'
 
 
 def asset_includes(path, text):
@@ -92,13 +91,35 @@ def room_files(scene_path):
     return rooms
 
 
-def scene_blob_source(path):
+def room_layers(room, rtext, asset_root):
+    """Per scene layer: (actor list name or None, present). Layer 0 is the
+    main header. Layer L >= 1 is AltHeaders[L - 1]: NULL there means the
+    layer is absent (runtime falls back like Scene_CommandAlternateHeaderList);
+    a header with no ACTOR_LIST command is present with no actors."""
+    lists = [a.group(1) for a in ROOM_ACTORS.finditer(rtext)]
+    main = [n for n in lists if 'AltHeaders' not in n]
+    if len(main) > 1:
+        raise SystemExit(f'{room}: {len(main)} main-header ActorEntryLists')
+    layers = [(main[0] if main else None, True)]
+    alt = ALT_TABLE.search(rtext)
+    if alt:
+        entries = re.findall(r'^\s*(\w+),', (asset_root / alt.group(2)).read_text(encoding='utf-8'), re.M)
+        for cmds in entries:
+            if cmds == 'NULL':
+                layers.append((None, False))
+            else:
+                found = [n for n in lists if n.startswith(cmds + '_')]
+                layers.append((found[0] if found else None, True))
+    return layers
+
+
+def scene_blob_source(path, asset_root):
     """Cut a scene .c down to its collision (CollisionHeader + every array
     named with its prefix: BgCam, SurfaceTypes, PolyList, VtxList,
-    WaterBoxes) and each room .c down to its main-header ActorEntryList
-    (AltHeaders = other scene setups, not yet). Verbatim slices of the
-    extracted files, no edits. OotSceneBlob (oot_scene_blob.h) goes in
-    .scene_header so it sits at the blob's load address."""
+    WaterBoxes) and each room .c down to its ActorEntryLists for every scene
+    layer (main header + AltHeaders: child/adult day/night, cutscene setups).
+    Verbatim slices of the extracted files, no edits. OotSceneBlob
+    (oot_scene_blob.h) goes in .scene_header at the blob's load address."""
     text = path.read_text(encoding='utf-8')
     m = COL_HEADER.search(text)
     if not m:
@@ -108,28 +129,45 @@ def scene_blob_source(path):
     arrays = [a.group(0) for a in COL_ARRAY.finditer(text) if a.group(1).startswith(prefix + '_')]
     end = text.index('};\n', m.end()) + 3
     body = '\n'.join(arrays) + '\n' + text[m.start():end]
-    rooms = []
+    per_room = []
     for room in room_files(path):
         rtext = room.read_text(encoding='utf-8')
-        lists = [a for a in ROOM_ACTORS.finditer(rtext) if 'AltHeaders' not in a.group(1)]
-        if len(lists) > 1:
-            raise SystemExit(f'{room}: {len(lists)} main-header ActorEntryLists')
         includes += [l for l in asset_includes(room, rtext) if l not in includes]
-        if lists:
-            name = lists[0].group(1)
-            body += '\n' + lists[0].group(0)
-            rooms.append(f'        {{ {name}, ARRAY_COUNT({name}) }},')
-        else:
-            rooms.append('        { 0, 0 },')
-    if len(rooms) > 32:
-        raise SystemExit(f'{path}: {len(rooms)} rooms > OOT_SCENE_MAX_ROOMS')
+        layers = room_layers(room, rtext, asset_root)
+        wanted = {n for n, _ in layers if n}
+        body += ''.join('\n' + a.group(0) for a in ROOM_ACTORS.finditer(rtext) if a.group(1) in wanted)
+        per_room.append(layers)
+    if len(per_room) > 32:
+        raise SystemExit(f'{path}: {len(per_room)} rooms > OOT_SCENE_MAX_ROOMS')
+    num_layers = max((len(l) for l in per_room), default=1)
+    rows = []
+    for layers in per_room:
+        layers = layers + [(None, False)] * (num_layers - len(layers))
+        rows += [f'    {{ {n}, ARRAY_COUNT({n}), 1 }},' if n else f'    {{ 0, 0, {int(p)} }},'
+                 for n, p in layers]
+    table = ('static const OotSceneLayer oot_scene_layers[] = {\n'
+             + ('\n'.join(rows) if rows else '    { 0, 0, 0 },') + '\n};\n')
     header = ('extern "C" const OotSceneBlob oot_scene_blob'
               ' __attribute__((section(".scene_header"), used)) = {\n'
-              f'    &{prefix}_Col,\n    {len(rooms)},\n    {{\n' + '\n'.join(rooms) + '\n    },\n};\n')
+              f'    &{prefix}_Col, {len(per_room)}, {num_layers}, oot_scene_layers,\n}};\n')
     return ('// Generated by tools/oot_core_import.py from ' + path.name
-            + ' (collision + room actor lists only).\n'
+            + ' (collision + room actor lists, all layers).\n'
             + '\n'.join(includes) + '\n#include "array_count.h"\n#include "oot_scene_blob.h"\n\n'
-            + body + '\n' + header)
+            + body + '\n' + table + header)
+
+
+def registered_scenes(asset_root):
+    """(blob stem, scene .c) for every runtime scene, by scene index."""
+    if not SCENE_TABLE_JSON.exists():
+        raise SystemExit(f'{SCENE_TABLE_JSON} missing: run the full build first')
+    sys.path.insert(0, str(GAME / 'tools'))
+    import asset_names
+    out = []
+    for s in json.loads(SCENE_TABLE_JSON.read_text())['scenes']:
+        found = list((asset_root / 'assets/scenes').glob('*/%s/%s_scene.c' % (s['prefix'], s['prefix'])))
+        if found:
+            out.append((asset_names.scene_stem(s['index']), found[0]))
+    return out
 
 
 # Whole trees mirrored for headers.
@@ -298,9 +336,9 @@ def main():
     mk += ['\t$(OOT_CORE_D)/' + str(pathlib.PurePosixPath(s).with_suffix('.cpp')) + ' \\'
            for s in SOURCES]
     scenes = []
-    for name, rel in SCENE_COLLISION.items():
-        src = args.out / 'scenecol' / (name + 'COL.cpp')
-        write_if_changed(src, scene_blob_source(asset_root / rel))
+    for name, scene_c in registered_scenes(asset_root):
+        src = args.out / 'scenecol' / (name + '.cpp')
+        write_if_changed(src, scene_blob_source(scene_c, asset_root))
         scenes.append(name)
     mk += ['', 'OOT_SCENECOL_NAMES = ' + ' '.join(scenes)]
     write_if_changed(args.out / 'sources.mk', '\n'.join(mk) + '\n\n')

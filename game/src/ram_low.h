@@ -36,11 +36,12 @@
 #define RAM_LOW_ROOM_BOUNDS_BYTES   0x1000u
 #define RAM_LOW_SPRITES_OFFSET      0xB800u
 #define RAM_LOW_SPRITES_BYTES       0xC000u
-#define RAM_LOW_MUSICTRG_OFFSET     0x51500u
-#define RAM_LOW_MUSICTRG_BYTES      0x20000u
+/* MUSICTRG.BIN is ~90 KB (2026-10-02); the carve shrank to grow the CD directory. */
+#define RAM_LOW_MUSICTRG_OFFSET     0x59500u
+#define RAM_LOW_MUSICTRG_BYTES      0x18000u
 /* Old 0x27800..0x2B800 directory carve is reserved, now unused. */
 #define RAM_LOW_FS_DIRECTORY_OFFSET 0x49500u
-#define RAM_LOW_FS_DIRECTORY_BYTES  0x8000u
+#define RAM_LOW_FS_DIRECTORY_BYTES  0x10000u
 #define RAM_LOW_GOMA_OFFSET         0x2B800u
 #define RAM_LOW_GOMA_BYTES          0x1000u
 #define RAM_LOW_QUADS_OFFSET        0x2C800u

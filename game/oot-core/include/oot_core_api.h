@@ -17,7 +17,7 @@
 #include "oot_core_host.h"
 
 #define OOT_CORE_MAGIC 0x4F4F5443u /* 'OOTC' */
-#define OOT_CORE_VERSION 7u
+#define OOT_CORE_VERSION 8u
 
 /* PlayState (~78 KB with Fx) + TwoHeadArena + ZeldaArena come from one block
  * the host allocates, so they never take the blob's fixed cart carve. */
@@ -33,12 +33,26 @@ typedef struct OotCoreActorView {
     unsigned int flags;   /* OOT_CORE_VIEW_* */
 } OotCoreActorView;
 
-/* C save -> gSaveContext fields the decomp reads (drop tables, Item00
- * filters). Health in 1/16 hearts. Items not listed are ITEM_NONE. */
+/* C save <-> gSaveContext. Values are copied in before each update; the
+ * flag words and scene flags behind the pointers are copied back after it,
+ * so flags the decomp sets reach the C save. Health in 1/16 hearts. Items
+ * not listed are ITEM_NONE. Flag words use the decomp layout (save.h). */
+#define OOT_CORE_EVENTCHKINF_WORDS 14
+#define OOT_CORE_ITEMGETINF_WORDS 4
+#define OOT_CORE_INFTABLE_WORDS 30
 typedef struct OotCoreSave {
     unsigned short health, health_capacity, rupees;
     unsigned char stick_owned, stick_ammo, nut_owned, nut_ammo;
     unsigned char slingshot_owned, seed_ammo;
+    unsigned char link_age;   /* LinkAge: 0 adult, 1 child */
+    unsigned char night;      /* nightFlag */
+    unsigned short day_time;  /* dayTime, 0x10000 per day */
+    unsigned short* event_chk_inf; /* [OOT_CORE_EVENTCHKINF_WORDS] */
+    unsigned short* item_get_inf;  /* [OOT_CORE_ITEMGETINF_WORDS] */
+    unsigned short* inf_table;     /* [OOT_CORE_INFTABLE_WORDS] */
+    /* Current scene's persistent flags: chest, swch, clear, collect (the
+     * C save_scene_flags_t order), or NULL when the scene keeps none. */
+    unsigned long* scene_flags;
 } OotCoreSave;
 
 typedef struct OotCoreEntry {
