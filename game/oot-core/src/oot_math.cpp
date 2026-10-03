@@ -73,10 +73,14 @@ f32 sqrtf(f32 f) {
         }
         return Fx::raw((fx_raw)ISQRT64((unsigned long long)f.v << s) << ((FX_FRAC - s) / 2));
     }
-    if (f.v < ((fx_raw)1 << (63 - FX_FRAC))) {
-        return Fx::raw((fx_raw)isqrt64((unsigned long long)f.v << FX_FRAC));
+    {
+        /* v >= 2^60: sqrt(v * 2^24) = sqrt(v >> t) * 2^((24 + t) / 2), t even. */
+        int t = 2;
+        while (((unsigned long long)f.v >> t) >= (1ULL << 60)) {
+            t += 2;
+        }
+        return Fx::raw((fx_raw)ISQRT64((unsigned long long)f.v >> t) << ((FX_FRAC + t) / 2));
     }
-    return Fx::raw((fx_raw)isqrt64((unsigned long long)f.v) << (FX_FRAC / 2));
 #endif
 }
 
