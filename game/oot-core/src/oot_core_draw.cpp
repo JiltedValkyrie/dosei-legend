@@ -293,6 +293,23 @@ static s32 Draw_IsSkinned(s16 id) {
 
 extern SkelAnime* OotCore_ActorSkel(Actor* actor); /* oot_core_views.cpp */
 
+#define SKIN_RANGE 350.0f
+#define SKIN_NEAREST 3
+
+/* True if fewer than SKIN_NEAREST skinned actors are closer to the player. */
+static s32 Skin_IsNearest(PlayState* play, Actor* actor) {
+    Actor* other;
+    s32 closer = 0;
+
+    for (other = play->actorCtx.actorLists[ACTORCAT_NPC].head; other != NULL; other = other->next) {
+        if (other != actor && other->update != NULL && Draw_IsSkinned(other->id) &&
+            other->xzDistToPlayer < actor->xzDistToPlayer) {
+            closer++;
+        }
+    }
+    return closer < SKIN_NEAREST;
+}
+
 /* Mtx -> 12 Q16 ints: rows of the column-vector rotation*scale, then t. */
 static void Skin_Store(const Mtx* mtx, s32* out) {
     MtxF mf;
@@ -344,6 +361,12 @@ s32 OotCore_DrawActors(PlayState* play) {
             }
             if (Draw_IsSkinned(actor->id)) {
                 SkelAnime* skel = OotCore_ActorSkel(actor);
+
+                /* Cost: a real flex draw is several ms on SH-2. Only the
+                 * nearest few get it; the rest keep the baked clip. */
+                if (actor->xzDistToPlayer > SKIN_RANGE || !Skin_IsNearest(play, actor)) {
+                    continue;
+                }
                 SkinCapture* cap;
                 s32 n;
 
