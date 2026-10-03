@@ -55,8 +55,9 @@ static int host_health_change(short amount)
 
 static const OotCoreHost host = { host_sfx, host_give_item, host_health_change };
 
-static OotCoreBench bench, bench_wram;
-static bool bench_wram_ok;
+static OotCoreBench bench;
+/* Last decomp update (Actor_UpdateAll etc.), microseconds. */
+static unsigned int update_us;
 static bool loaded;
 static bool playing;
 static unsigned int step_phase;
@@ -96,31 +97,6 @@ bool oot_core_boot(void)
     ENTRY->init(&host);
     jo_printf(0, 20, "oc 3 bench ");
     ENTRY->bench(&bench, frame_timer_ticks, frame_timer_ticks_to_us);
-    /* Speed check: the same code linked into low work RAM (OOTBENCH.BIN at
-    ** RAM_LOW_OOTPLAY, free until play_init). Same bench, other memory:
-    ** separates cart (A-bus) fetch cost from Fx math cost. */
-    {
-        const OotCoreEntry *wram = (const OotCoreEntry *)OOT_BENCH_LOAD_ADDR;
-        unsigned char *carve = (unsigned char *)RAM_LOW(RAM_LOW_OOTPLAY_OFFSET);
-        int length = RAM_LOW_OOTPLAY_BYTES;
-        unsigned int i;
-        jo_file probe;
-        jo_printf(0, 20, "oc 4 wram  ");
-        if ((unsigned int)carve == OOT_BENCH_LOAD_ADDR && jo_fs_open(&probe, "OOTBENCH.BIN")) {
-            bool fits = probe.size > 0 && probe.size <= (int)RAM_LOW_OOTPLAY_BYTES;
-            jo_fs_close(&probe);
-            for (i = 0; fits && i < RAM_LOW_OOTPLAY_BYTES; ++i) carve[i] = 0;
-            if (fits && jo_fs_read_file_ptr("OOTBENCH.BIN", carve, &length)) {
-                slCashPurge();
-                if (wram->magic == OOT_CORE_MAGIC && wram->version == OOT_CORE_VERSION &&
-                    (unsigned int)wram->end <= OOT_BENCH_LOAD_ADDR + RAM_LOW_OOTPLAY_BYTES) {
-                    wram->init(NULL);
-                    wram->bench(&bench_wram, frame_timer_ticks, frame_timer_ticks_to_us);
-                    bench_wram_ok = true;
-                }
-            }
-        }
-    }
     jo_printf(0, 20, "                    ");
     return true;
 }
@@ -173,14 +149,16 @@ void oot_core_frame(void)
     step_phase += 2;
     if (step_phase >= 3) {
         step_phase -= 3;
+        unsigned int t0 = frame_timer_ticks();
         ENTRY->update();
+        update_us = frame_timer_ticks_to_us(frame_timer_ticks() - t0);
     }
 }
 
 bool oot_core_is_loaded(void) { return loaded; }
 bool oot_core_is_playing(void) { return playing; }
 const OotCoreBench *oot_core_bench_result(void) { return &bench; }
-const OotCoreBench *oot_core_bench_wram(void) { return bench_wram_ok ? &bench_wram : 0; }
+unsigned int oot_core_update_us(void) { return update_us; }
 int oot_core_actors(int category) { return playing ? ENTRY->actor_count(category) : 0; }
 int oot_core_view(int category, OotCoreActorView *out, int max)
 {

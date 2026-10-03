@@ -1236,15 +1236,8 @@ static void __attribute__((optimize("Os"))) viewer_hud(void)
                       b->ns[OOT_BENCH_SIN], b->ns[OOT_BENCH_ATAN2]);
             jo_printf(0, 15, "oc p%d pl%d pr%d mi%d   ", (int)oot_core_is_playing(),
                       oot_core_actors(2), oot_core_actors(6), oot_core_actors(8));
-            /* Rows 16-17: same bench from low work RAM ("ow"), vs cart above. */
-            b = oot_core_bench_wram();
-            if (!b) jo_printf(0, 16, "ow OOTBENCH not run       ");
-            else {
-                jo_printf(0, 16, "ow ma%u dv%u ss%u   ", b->ns[OOT_BENCH_MULADD],
-                          b->ns[OOT_BENCH_DIV], b->ns[OOT_BENCH_SMOOTHSTEP]);
-                jo_printf(0, 17, "ow ds%u sn%u at%u   ", b->ns[OOT_BENCH_DIST],
-                          b->ns[OOT_BENCH_SIN], b->ns[OOT_BENCH_ATAN2]);
-            }
+            /* Row 16: decomp update cost per 20 Hz step (budget check). */
+            jo_printf(0, 16, "ou %uus      ", oot_core_update_us());
         }
 #endif
         /* Marked when stale: on a cache hit these hold the last rebuild's

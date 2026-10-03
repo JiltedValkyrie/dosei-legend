@@ -212,7 +212,7 @@ done
 if [ "$oot_core" = 1 ]; then
     "$python" "$here/tools/oot_core_import.py" --oot "$oot"
 else
-    rm -f "$here/build/cd/OOTCORE.BIN" "$here/build/cd/OOTBENCH.BIN"
+    rm -f "$here/build/cd/OOTCORE.BIN"
 fi
 # jo_engine_makefile picks its toolchain from $(OS), which does not reach make
 # from every shell that can run this script; it then falls back to the LINUX

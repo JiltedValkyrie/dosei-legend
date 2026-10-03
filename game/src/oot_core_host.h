@@ -21,8 +21,8 @@ bool oot_core_is_loaded(void);
 /* Play state active for the current scene. */
 bool oot_core_is_playing(void);
 const OotCoreBench *oot_core_bench_result(void);
-/* Same bench run from low work RAM (OOTBENCH.BIN); NULL if it did not run. */
-const OotCoreBench *oot_core_bench_wram(void);
+/* Time of the last decomp update step (Actor_UpdateAll, collision, effects), us. */
+unsigned int oot_core_update_us(void);
 int oot_core_actors(int category);
 /* Live actors of a category, for C drawing (see OotCoreActorView). */
 int oot_core_view(int category, OotCoreActorView *out, int max);

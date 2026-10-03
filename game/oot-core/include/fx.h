@@ -174,6 +174,41 @@ static inline fx_raw fx_divu64_32(fx_raw n, long d) {
 }
 #endif
 
+static inline int fx_bits64(unsigned long long v) {
+    unsigned long hi = (unsigned long)(v >> 32);
+    return hi ? 64 - __builtin_clz(hi) : ((unsigned long)v ? 32 - __builtin_clz((unsigned long)v) : 0);
+}
+
+/*
+ * |a| * 2^24 / |b| (ua, ub > 0) as one 64/32 divide: the divisor is cut to
+ * 31 bits and the numerator scaled so the quotient fits 31 bits, then the
+ * result is shifted back. >= 30 significant bits (relative error ~2^-29);
+ * exact when nothing is dropped (divisor < 2^31, quotient < 2^31). Most
+ * game values (positions in the thousands are > 2^31 in Q24) missed the old
+ * hardware path, which required b.v to fit 32 bits.
+ */
+static inline fx_raw fx_div_norm(unsigned long long ua, unsigned long long ub) {
+    int k = fx_bits64(ub) - 31;
+    if (k < 0) k = 0;
+    unsigned long d = (unsigned long)(ub >> k);
+    int s = FX_FRAC - k;                                       /* N = ua * 2^s */
+    /* Low estimate of quotient bits over 31; one direct check fixes it up, so
+     * no bit is dropped when the quotient really fits. */
+    int e = fx_bits64(ua) + s - (32 - __builtin_clz(d)) - 31;
+    if (e < 0) e = 0;
+    unsigned long long n = s - e >= 0 ? ua << (s - e) : ua >> (e - s);
+    if ((n >> 31) >= d) {
+        e++;
+        n = s - e >= 0 ? ua << (s - e) : ua >> (e - s);
+    }
+#if defined(__sh__) && !defined(OOT_CORE_NO_DIVU)
+    unsigned long long q = (unsigned long)fx_divu64_32((fx_raw)n, (long)d);
+#else
+    unsigned long long q = n / d;
+#endif
+    return (fx_raw)(q << e);
+}
+
 /* Inline so constant/constant (e.g. 1.0f / SHT_MAX) folds at compile time. */
 static constexpr Fx fx_div(Fx a, Fx b) {
     if (b.v == 0) {
@@ -181,16 +216,13 @@ static constexpr Fx fx_div(Fx a, Fx b) {
         return Fx::raw(a.v < 0 ? -((fx_raw)1 << 62) : ((fx_raw)1 << 62));
     }
     fx_raw ua = a.v < 0 ? -a.v : a.v;
-#if defined(__sh__) && !defined(OOT_CORE_NO_DIVU)
-    if (FX_RUNTIME(a.v, b.v) && fx_fits32(b.v)) {
-        /* Hardware path when the Q24 quotient fits 32 bits:
-         * |a / b| < 2^(31 - FX_FRAC)  <=>  |a.v| < |b.v| << 7 (with margin). */
-        fx_raw ub = b.v < 0 ? -b.v : b.v;
-        if (ua < (ub << (31 - FX_FRAC - 1))) {
-            return Fx::raw(fx_divu64_32(fx_shl_frac(a.v), (long)b.v));
+    if (!__builtin_is_constant_evaluated()) {
+        if (ua == 0) {
+            return Fx::raw(0);
         }
+        fx_raw q = fx_div_norm((unsigned long long)ua, (unsigned long long)(b.v < 0 ? -b.v : b.v));
+        return Fx::raw(((a.v < 0) != (b.v < 0)) ? -q : q);
     }
-#endif
     if (ua < ((fx_raw)1 << (62 - FX_FRAC))) {
         return Fx::raw(fx_shl_frac(a.v) / b.v);
     }
