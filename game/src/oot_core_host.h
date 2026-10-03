@@ -47,7 +47,9 @@ static inline bool oot_core_owns_kokiri_props(void) { return oot_core_is_playing
 /* Kokiri children (En_Ko), Mido (En_Md) and the wonder spots (En_Wonder_
 ** Item/Talk2) belong to the decomp while it plays. Saria stays C (her
 ** greeting is a C cutscene until z_demo). */
-static inline bool oot_core_owns_kokiri_npcs(void) { return oot_core_is_playing(); }
+/* 2026-10-03: off. Decomp NPC logic in 64-bit Fx cost 11.5 ms per step;
+** C keeps them (fast) until the 32-bit Fx conversion lands. */
+static inline bool oot_core_owns_kokiri_npcs(void) { return false; }
 #else
 #define oot_core_frame(in) ((void)0)
 static inline bool oot_core_owns_kokiri_props(void) { return false; }

@@ -72,10 +72,9 @@ static const OotSceneBlob* sScene;
 
 /* Room-list actor ids the blob owns; every other id stays with the C game
  * until its overlay is imported (plan Phase 1 step 6). */
-static const s16 sRoomActorIds[] = {
-    ACTOR_EN_ITEM00, ACTOR_EN_KUSA,       ACTOR_EN_KO,        ACTOR_EN_MD,
-    ACTOR_EN_WONDER_ITEM, ACTOR_EN_WONDER_TALK2, ACTOR_OBJ_MURE2, ACTOR_EN_KANBAN,
-};
+/* 2026-10-03: grass and drops only (NPCs/signs/wonder spots back to C until
+ * the 32-bit Fx conversion; their imports stay compiled). */
+static const s16 sRoomActorIds[] = { ACTOR_EN_ITEM00, ACTOR_EN_KUSA };
 #define ROOM_ENTRIES_MAX 64
 static ActorEntry sRoomEntries[ROOM_ENTRIES_MAX];
 
