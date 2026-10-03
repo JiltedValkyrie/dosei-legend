@@ -135,13 +135,17 @@ save flags and triggers exactly like OoT. Must work in BULK for all actors (impo
 and library level, no per-actor hand work) and stay fast, or the game is unplayable.
 Human rules this chat: caveman talk; big batches, one Kronos test per batch; never leave
 the playable game worse (the fast C slice is the baseline: targeting, talk, combat).
+SATURN CUTS ALLOWED (human 2026-10-03): playable beats 1:1. Cut cost freely: no NPC head
+or torso turning, no limb callbacks, lower animation rate, fewer drawn NPCs, simpler
+draw. Keep what the player needs: right NPCs in the right place by save state, talk,
+correct text and events, collision blocking where the game depends on it.
 
 Current runtime facts (human Kronos, Debug, 2026-10-03):
 - Kokiri: C NPCs/Mido/signs/wonder spots again (oot_core_owns_kokiri_npcs() false),
   decomp = grass + drops only. C talk works. REGRESSION: decomp grass no longer exists
   after the FX_FRAC 24->16 change (suspect EnKusa_SnapToFloor -> BgCheck raycast fails
-  -> Actor_Kill). REGRESSION?: the C Kokiri boy no longer blocks the bridge exit (check
-  whether it ever did at e57ec80 before chasing).
+  -> Actor_Kill). The Kokiri boy never blocked the bridge exit in the C game (only Mido does):
+  not a regression; the real En_Ko blocker comes back when Kokiri moves to the decomp (G).
 - Lon Lon (generic scene): decomp runs (p1). Only Ingo spawned (others: real spawn
   flags). Ingo update 1.0 ms; decomp draw phase 12.8 ms; Ingo invisible (VRAM 99%:
   skin texture upload skipped). Buildings cannot be entered in ANY non-Kokiri map.
@@ -156,11 +160,11 @@ Order (each step = one batch, build both images, one human test):
     at every Kokiri En_Kusa spawn, Fx vs float). Fix the Fx/bgcheck issue in the library
     (likely tiny reciprocals like COLPOLY normal scale or subdivision sizes at 16 frac
     bits). Gate: probe matches, row 15 pr24 in Kokiri.
- B. Fast skinned NPC matrices: replace "Actor_Draw + Gfx walker" for NPCs with a direct
-    port of SkelAnime_DrawFlex/DrawOpa's matrix walk in 32-bit integer math (Q16 rotation
-    from the decomp sin table), calling the actor's OverrideLimbDraw/PostLimbDraw with a
-    stub Gfx so head turns and held items still apply. Output the same per-slot matrices
-    (generic_skins.h slots). Gate: Ingo draw < 1 ms on row 17.
+ B. Fast skinned NPC matrices: drop "Actor_Draw + Gfx walker" for NPCs. Walk the
+    skeleton from SkelAnime.jointTable in 32-bit integer math (Q14 sin table, int
+    translation) and write the per-slot matrices (generic_skins.h slots) directly. CUT:
+    no Override/PostLimbDraw callbacks (no head turns, no held items), recompute only
+    every other decomp step and only for NPCs within range. Gate: Ingo draw < 1 ms.
  C. VRAM for skins: per-scene texture budget; skins use the character rule (flat body,
     small face tiles); report skipped uploads on a debug row instead of failing silently.
     Gate: Lon Lon NPCs visible.
