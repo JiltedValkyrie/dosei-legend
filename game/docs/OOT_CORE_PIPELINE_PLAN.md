@@ -129,6 +129,62 @@ src/music_area.c, tables in jo heap). All 17 baked (converter now: channel io po
 hand music. Work RAM spare (Debug) 304 B. Next: raise caps (RAM cost) to admit the
 near-misses; multi-bg camera selection; per-scene music; En_Door room switches.
 
+## NEXT CHAT START HERE (written 2026-10-03, state = commit 736982c + docs)
+Human goal: ALL NPCs in EVERY zone, ALL dialogue, spawn/talk/events checked against
+save flags and triggers exactly like OoT. Must work in BULK for all actors (importer
+and library level, no per-actor hand work) and stay fast, or the game is unplayable.
+Human rules this chat: caveman talk; big batches, one Kronos test per batch; never leave
+the playable game worse (the fast C slice is the baseline: targeting, talk, combat).
+
+Current runtime facts (human Kronos, Debug, 2026-10-03):
+- Kokiri: C NPCs/Mido/signs/wonder spots again (oot_core_owns_kokiri_npcs() false),
+  decomp = grass + drops only. C talk works. REGRESSION: decomp grass no longer exists
+  after the FX_FRAC 24->16 change (suspect EnKusa_SnapToFloor -> BgCheck raycast fails
+  -> Actor_Kill). REGRESSION?: the C Kokiri boy no longer blocks the bridge exit (check
+  whether it ever did at e57ec80 before chasing).
+- Lon Lon (generic scene): decomp runs (p1). Only Ingo spawned (others: real spawn
+  flags). Ingo update 1.0 ms; decomp draw phase 12.8 ms; Ingo invisible (VRAM 99%:
+  skin texture upload skipped). Buildings cannot be entered in ANY non-Kokiri map.
+- Debug rows: 15 `oc p pl pr mi`, 16 `ou` total + talk/msg/npc/colliders/draw items,
+  17 `op` phase times (0.1 ms: collision/actors/message/draw), top-3 actor ids x count =
+  cost, `o<n>w<n>` talk-offer fail reason (1 player busy, 2 height, 3 talk dist, 4 range).
+- Static RAM spare: Debug 640 B, Clean 4672 B. FREE RAM FIRST before any C addition
+  (candidates: move C tables to cart; archive C systems the decomp replaced).
+
+Order (each step = one batch, build both images, one human test):
+ A. Grass back: host bgcheck probe (compile z_bgcheck + scene blob on host, raycast down
+    at every Kokiri En_Kusa spawn, Fx vs float). Fix the Fx/bgcheck issue in the library
+    (likely tiny reciprocals like COLPOLY normal scale or subdivision sizes at 16 frac
+    bits). Gate: probe matches, row 15 pr24 in Kokiri.
+ B. Fast skinned NPC matrices: replace "Actor_Draw + Gfx walker" for NPCs with a direct
+    port of SkelAnime_DrawFlex/DrawOpa's matrix walk in 32-bit integer math (Q16 rotation
+    from the decomp sin table), calling the actor's OverrideLimbDraw/PostLimbDraw with a
+    stub Gfx so head turns and held items still apply. Output the same per-slot matrices
+    (generic_skins.h slots). Gate: Ingo draw < 1 ms on row 17.
+ C. VRAM for skins: per-scene texture budget; skins use the character rule (flat body,
+    small face tiles); report skipped uploads on a debug row instead of failing silently.
+    Gate: Lon Lon NPCs visible.
+ D. True 32-bit Fx (human requirement): FX_STORAGE32 build switch; Debug build traps
+    32-bit overflow in Fx ops and logs the caller PC (row shows count + last PC, map ->
+    file:line via addr2line); importer rules rewrite the overflow patterns in bulk
+    (squared distances -> compare distances / 64-bit helper, Rand*0xFFFF -> s16 wrap
+    helper). Gate: host probe 0 over tolerance, target 0 traps in Kokiri + Lon Lon walk,
+    actor update cost on row 17 well below the 64-bit build.
+ E. Talk for every decomp NPC: use row 17 `w` reason to fix the player-proxy talk path
+    (offer -> A -> Message_StartTextbox). Gate: Ingo/Malon talk with ROM text.
+ F. Doors and exits in generic scenes (C scene flow): En_Door/Door_Shutter room changes,
+    Door_Ana grottos, scene exits for every registered scene. Gate: enter Lon Lon
+    buildings, Kakariko houses, Market shops.
+ G. Bulk NPC content, zone by zone (Kokiri back to decomp, then Lon Lon, Market, Kakariko,
+    ...): import the zone's NPC overlays + objects (importer lists), skins build
+    automatically (build_core_skins.py), spawn/talk/events come from the real actor code
+    and the save mirror (eventChkInf/itemGetInf/infTable/scene flags both ways). Per zone,
+    a checklist from the decomp: every actor in the zone's room lists, its spawn
+    conditions (age, day/night, flags), its text ids by flag state; human checks a sample.
+    Grow the blob carve only with heap data (row 4 heap: cart peak 1467-1516 KB).
+ Known gaps to keep logged: Navi targeting of decomp actors needs C proxies (done for
+ Kokiri NPC registry, generalise in G); no Saria (z_demo cues); ocarina; get-item hold-up.
+
 ## NEXT SESSION: GAME CONTENT ROUTE (approved by human 2026-10-02)
 Goal: the actual game through the decomp: NPCs, dialogue paths, event triggers, actors
 present/absent by progress flags, child/adult and day/night layers. No more perf tuning
