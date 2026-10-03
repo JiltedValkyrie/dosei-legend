@@ -59,8 +59,8 @@
 /* oot-core play block (oot_core_host.c): PlayState + TwoHeadArena + ZeldaArena,
 ** OotCoreEntry.play_bytes() must fit (checked at boot). Faster than the cart. */
 #define RAM_LOW_OOTPLAY_OFFSET      0x71500u
-#define RAM_LOW_OOTPLAY_BYTES       0x78000u   /* + 74 KB scratch display lists */
-#define RAM_LOW_USED_BYTES          0xE9500u
+#define RAM_LOW_OOTPLAY_BYTES       0x80000u   /* play_bytes() 0x7F440 measured on target 2026-10-03 */
+#define RAM_LOW_USED_BYTES          0xF1500u
 #else
 #define RAM_LOW_USED_BYTES          0x71500u
 #endif
