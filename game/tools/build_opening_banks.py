@@ -125,8 +125,8 @@ def emit_flight_cache(out):
     """Share identical tiles across flight banks; keep original VRAM layouts."""
     pool, offsets = bytearray(), {}
     for bank in range(10):
-        mesh = (out / asset_names.room_asset(2, bank, 'MSH')).read_bytes()
-        pixels = (out / asset_names.room_asset(2, bank, 'TEX')).read_bytes()
+        mesh = (out / asset_names.room_asset(asset_names.STORY_BANK_NAVI, bank, 'MSH')).read_bytes()
+        pixels = (out / asset_names.room_asset(asset_names.STORY_BANK_NAVI, bank, 'TEX')).read_bytes()
         header = struct.unpack_from('>8I', mesh)
         refs = bytearray()
         for tile in range(header[3]):
@@ -140,7 +140,7 @@ def emit_flight_cache(out):
                 pool.extend(blob)
                 pool.extend(bytes((-len(pool)) % 8))
             refs.extend(struct.pack('>I', offsets[blob]))
-        (out / asset_names.room_asset(2, bank, 'MAP')).write_bytes(refs)
+        (out / asset_names.room_asset(asset_names.STORY_BANK_NAVI, bank, 'MAP')).write_bytes(refs)
     (out / 'NAVIPOOL.TEX').write_bytes(pool)
     print('Opening shared texture cache: %d bytes' % len(pool))
 
@@ -148,7 +148,7 @@ def emit_flight_cache(out):
 def emit_opening_banks(oot, out, rooms, normal):
     from build_room_scene import pack_room
     import build_cutscenes as cutscenes
-    from vdp1_budget import VDP1_USER_AREA, RUNTIME_SPRITE_BYTES
+    from vdp1_budget import VDP1_USER_AREA, RUNTIME_SPRITE_BYTES, bank_bytes
     summaries = []
 
     def emit(scene, room, content):
@@ -156,7 +156,7 @@ def emit_opening_banks(oot, out, rooms, normal):
         records = [dict(object=0, indices=list(f['idx'])) for f in faces]
         mesh, pixels, bounds = pack_room(vertices, faces, tiles, records, normal)
         # Reserve resident Link and all overlays, including the message panel.
-        used = len(pixels) + len(tiles) * 32
+        used = bank_bytes(len(pixels), len(tiles))
         if used + RUNTIME_SPRITE_BYTES + 20000 + 2048 > VDP1_USER_AREA:
             raise ValueError('Opening S%dR%d exceeds texture budget: %d' %
                              (scene, room, used))
@@ -176,8 +176,8 @@ def emit_opening_banks(oot, out, rooms, normal):
     if len(track) > BANK_FRAMES * 10:
         raise ValueError('Navi track exceeds single-digit room bank names')
     for room, start in enumerate(range(0, len(track), BANK_FRAMES)):
-        emit(2, room, forest_bank(rooms, track[start:start + BANK_FRAMES]))
-    emit(4, 0, house_panorama(oot))
+        emit(asset_names.STORY_BANK_NAVI, room, forest_bank(rooms, track[start:start + BANK_FRAMES]))
+    emit(asset_names.STORY_BANK_PANORAMA, 0, house_panorama(oot))
     emit_flight_cache(out)
     import json
     (out / 'opening_banks.json').write_text(json.dumps(summaries, indent=2) + '\n')

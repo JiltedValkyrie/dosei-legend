@@ -16,6 +16,7 @@ unsigned push_block_bg(const actor_t *actor);
 bool push_block_request(actor_t *actor, uint16_t facing, int direction,
                          unsigned strength);
 bool push_block_moving(const actor_t *actor);
+void push_block_lock(actor_t *actor);
 /* Called by the profile draw callback; installed by the target renderer. */
 void push_block_set_draw(void (*draw)(const actor_t *, int32_t half_size));
 #endif

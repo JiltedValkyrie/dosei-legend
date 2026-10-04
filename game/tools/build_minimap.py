@@ -172,7 +172,7 @@ def build(oot, out_cd, out_gen):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--oot', type=Path, default=Path('D:/Workspace-Claude/game-decomps/n64/oot'))
+    parser.add_argument('--oot', type=Path, default=Path((__import__('os').environ.get('DOSEI_OOT') or 'D:/Workspace-Claude/game-decomps/n64/oot')))
     parser.add_argument('--cd', type=Path, default=ROOT / 'build/cd')
     parser.add_argument('--out', type=Path, default=ROOT / 'build/generated')
     args = parser.parse_args()

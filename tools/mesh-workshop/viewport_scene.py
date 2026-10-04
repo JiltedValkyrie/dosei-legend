@@ -51,8 +51,8 @@ def read_room(path):
     """KRM1 baked POINT/POLYGON/ATTR data; undo the baker's Y negation."""
     data = Path(path).read_bytes()
     if len(data)<32: raise ValueError('Truncated room header')
-    magic,nv,nf,nt,pixels,no,_,_ = struct.unpack_from('>8I',data)
-    expected = 32+nv*12+nf*32+nt*44+((nf+3)&~3)+no*24
+    magic,nv,nf,nt,pixels,no,nl,_ = struct.unpack_from('>8I',data)
+    expected = 32+nv*12+nf*32+nt*44+((nf+3)&~3)+no*24+nl*16  # nl: per-mesh LOD rows
     if magic!=0x4b524d31 or not nv or not nf or expected!=len(data):
         raise ValueError('Invalid KRM1 room ranges')
     vertices = [(x/65536,-y/65536,z/65536) for x,y,z in struct.iter_unpack('>3i',data[32:32+nv*12])]
@@ -107,7 +107,8 @@ def category(oot, name):
 
 def load_room(prefix, scene_index, room, project=PROJECT, paths=None, document=None):
     paths = paths or project_config.read_paths(project.parent)
-    mesh_path = project/'build/generated'/f'S{scene_index}R{room}.MSH'
+    import asset_names  # scene ids >= 10 use letters (S10 -> 'SAR0.MSH')
+    mesh_path = project/'build/generated'/asset_names.room_asset(scene_index,room,'MSH')
     result = dict(version=1, prefix=prefix, room=room, entities=[], faces=[], warnings=[],
                   mesh_source=str(mesh_path), metadata_source='Verified US 1.2 ROM; main header only')
     if document is None and mesh_path.is_file():
@@ -133,9 +134,9 @@ def load_room(prefix, scene_index, room, project=PROJECT, paths=None, document=N
                 subset=[f for f in faces if f['object']==obj]
                 key=f'{prefix}_room_{room}/object/{obj}'
                 replacement=document.get('meshes',{}).get(key)
-                result['entities'].append(dict(id=eid,label=f'Mesh object {obj}'+(' (replaced)' if replacement else ''),kind='Mesh',
+                result['entities'].append(dict(id=eid,label=f'Mesh object {obj}'+(' (replaced)' if replacement else '')+(' (LOD0)' if (document.get('lods',{}).get(key) or {}).get('bundle') else ''),kind='Mesh',
                     bounds=bounds(p for f in subset for p in f['points']),details=dict(source=result['mesh_source'],
-                    polygons=len(subset),mesh_key=key,replacement=replacement,
+                    polygons=len(subset),mesh_key=key,replacement=replacement,lod=document.get('lods',{}).get(key),
                     code=[str(ROOT/'game/tools/build_hybrid_scene.py'),str(ROOT/'game/src/kokiri_sgl.c'),str(ROOT/'shared/tools/build_kokiri_scene.py')],
                     note='Room mesh objects are ROM display-list groups, not necessarily individual props.')))
                 result['faces'].extend(dict(f,entity=eid,layer='Mesh') for f in subset)
@@ -195,4 +196,7 @@ def load_room(prefix, scene_index, room, project=PROJECT, paths=None, document=N
         if document is not None: raise ValueError('Original/alternate load failed: '+str(exc)) from exc
         result['warnings'].append('Original metadata unavailable: '+str(exc)+'. Check launcher Config paths.')
     result.setdefault('bounds',((-100,-100,-100),(100,100,100)))
+    for entity in result['entities']:
+        entity['details']['original_label']=entity['label']
+        if document is not None: entity['label']=document.get('labels',{}).get(entity['id'],entity['label'])
     return result

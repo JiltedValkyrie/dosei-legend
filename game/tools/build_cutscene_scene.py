@@ -40,10 +40,9 @@ import asset_names
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 
-# Scene 2 is the cutscene forest. Scenes 0 and 1 are Link's house and the
-# streamed Kokiri Forest; this one is never entered by walking into it, so it
+# The cutscene forest uses a dedicated virtual bank. It is never entered by walking into it, so it
 # needs no scene_table entry, only a bank the cutscene can ask for by number.
-CUTSCENE_SCENE_ID = 2
+CUTSCENE_SCENE_ID = asset_names.STORY_BANK_NAVI
 
 
 def convert(obj_path, atlas_path, units_per_texel, max_tile, cull):

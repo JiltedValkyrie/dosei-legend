@@ -86,19 +86,22 @@ class CheatCode(unittest.TestCase):
         self.lib.reset()
 
     def test_code_completes_on_start(self):
-        code = [UP, UP, DOWN, DOWN, LEFT, RIGHT, LEFT, RIGHT, A]
+        code = [UP, UP, DOWN, DOWN, LEFT, RIGHT, LEFT, RIGHT, B, A]
         self.assertFalse(self.press(code))
         self.assertTrue(self.press([START]))
 
     def test_wrong_press_breaks_it_and_extra_up_is_kept(self):
-        self.assertFalse(self.press([UP, UP, DOWN, B, DOWN, LEFT, RIGHT, LEFT, RIGHT, A, START]))
-        self.assertTrue(self.press([UP, UP, UP, DOWN, DOWN, LEFT, RIGHT, LEFT, RIGHT, A, START]))
+        self.assertFalse(self.press([UP, UP, DOWN, B, DOWN, LEFT, RIGHT, LEFT, RIGHT, B, A, START]))
+        self.assertTrue(self.press([UP, UP, UP, DOWN, DOWN, LEFT, RIGHT, LEFT, RIGHT, B, A, START]))
 
     def test_holding_does_not_repeat(self):
         self.lib.feed(UP)
         self.lib.feed(UP)           # still held: not a second press
         self.lib.feed(0)
-        self.assertFalse(self.press([DOWN, DOWN, LEFT, RIGHT, LEFT, RIGHT, A, START]))
+        self.assertFalse(self.press([DOWN, DOWN, LEFT, RIGHT, LEFT, RIGHT, B, A, START]))
+
+    def test_old_code_without_b_does_not_unlock(self):
+        self.assertFalse(self.press([UP,UP,DOWN,DOWN,LEFT,RIGHT,LEFT,RIGHT,A,START]))
 
 
 @unittest.skipUnless(GCC.is_file(), 'host compiler required')
@@ -123,9 +126,10 @@ class CheatSession(unittest.TestCase):
         body = demo.index('{', start)+1
         prefix = demo[body:demo.index('    skip_input_sample(',body)]
         src = '#include "cheat_code.h"\n#include "input_edge.h"\n'
-        src += 'static cheat_code_t cheat; static volatile bool enemy_dots,chime;\n'
+        src += 'void minimap_cheat_refill_reset(void); static cheat_code_t cheat, refill_cheat; static volatile bool enemy_dots,chime,refill_pending;\n'
         src += '\n'.join(function(n) for n in ('minimap_cheat_sample', 'minimap_session_reset',
-                                              'minimap_enemy_dots', 'minimap_cheat_chime'))
+                                              'minimap_enemy_dots', 'minimap_cheat_chime',
+                                              'minimap_cheat_refill_take', 'minimap_cheat_refill_reset'))
         src += '\nstatic input_edge_t start_edge; static uint16_t pad;\n'
         src += 'static bool jo_is_pad1_available(void) { return true; }\n'
         src += 'static uint16_t demo_pad_snapshot(void) { return pad; }\n'
@@ -136,7 +140,7 @@ class CheatSession(unittest.TestCase):
         env = dict(os.environ, PATH=str(GCC.parent)+os.pathsep+os.environ.get('PATH',''))
         subprocess.run([str(GCC),'-shared','-O2','-I'+str(ROOT/'src'),
                         '-I'+str(ROOT.parent/'shared/lib/camera'),
-                        '-I'+str(ROOT.parent/'shared/lib/collision'),str(c),'-o',str(dll)],check=True,env=env)
+                        '-I'+str(ROOT.parent/'shared/lib/collision'),str(c),'-o',str(dll)],check=True,env=env)  # noqa
         cls.lib = ctypes.CDLL(str(dll))
 
     @classmethod
@@ -145,7 +149,7 @@ class CheatSession(unittest.TestCase):
         self.lib.minimap_session_reset()
         self.lib.tick(0)
     def code(self):
-        for button in (UP,UP,DOWN,DOWN,LEFT,RIGHT,LEFT,RIGHT,A):
+        for button in (UP,UP,DOWN,DOWN,LEFT,RIGHT,LEFT,RIGHT,B,A):
             self.lib.tick(button)
             self.lib.tick(0)
         return self.lib.tick(START)
@@ -166,6 +170,44 @@ class CheatSession(unittest.TestCase):
         self.lib.minimap_session_reset()
         self.assertFalse(self.lib.minimap_enemy_dots())
         self.assertFalse(self.lib.minimap_cheat_chime())
+
+
+    def refill_code(self, ups=4):
+        for button in (UP,)*ups + (DOWN,)*4 + (B, A):
+            self.lib.tick(button)
+            self.lib.tick(0)
+        return self.lib.tick(START)
+
+    def test_refill_code_triggers_once_and_swallows_final_start(self):
+        self.assertFalse(self.refill_code())         # Start edge swallowed
+        self.assertFalse(self.lib.tick(START))
+        self.assertTrue(self.lib.minimap_cheat_refill_take())
+        self.assertFalse(self.lib.minimap_cheat_refill_take())
+        self.assertFalse(self.lib.minimap_enemy_dots())   # not the dots code
+
+    def test_refill_code_tolerates_extra_ups_but_not_wrong_buttons(self):
+        self.refill_code(ups=6)
+        self.assertTrue(self.lib.minimap_cheat_refill_take())
+        for button in (UP,UP,UP,UP,DOWN,DOWN,A,DOWN,DOWN,B,A):
+            self.lib.tick(button); self.lib.tick(0)
+        self.lib.tick(START)
+        self.assertFalse(self.lib.minimap_cheat_refill_take())
+
+    def test_refill_reset_discards_partial_progress_and_stale_trigger(self):
+        for button in (UP,UP,UP,UP,DOWN,DOWN):
+            self.lib.tick(button); self.lib.tick(0)
+        self.lib.minimap_cheat_refill_reset()
+        for button in (DOWN,DOWN,B,A):
+            self.lib.tick(button); self.lib.tick(0)
+        self.lib.tick(START)
+        self.assertFalse(self.lib.minimap_cheat_refill_take())
+        self.refill_code()
+        self.lib.minimap_cheat_refill_reset()            # not allowed to consume
+        self.assertFalse(self.lib.minimap_cheat_refill_take())
+
+    def test_original_dots_code_does_not_refill(self):
+        self.code()
+        self.assertFalse(self.lib.minimap_cheat_refill_take())
 
     def test_second_code_turns_dots_off(self):
         self.code()

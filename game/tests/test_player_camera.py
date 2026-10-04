@@ -51,6 +51,18 @@ class TraversalCamera(unittest.TestCase):
     def step(self,mode=0,facing=0,moving=False):
         self.lib.player_camera_update(C.byref(self.camera),C.byref(self.follow),mode,
             C.byref(self.player),facing,moving,C.byref(self.eye),C.byref(self.yaw),C.byref(self.pitch))
+    def test_stationary_climb_keeps_far_distance_and_returns_on_exit(self):
+        for _ in range(120): self.step(mode=0)
+        near = self.follow.distance
+        for _ in range(120): self.step(mode=1)
+        self.assertGreater(self.follow.distance, near + 30)
+        self.assertEqual(self.follow.distance, 139 * 3 // 2)
+        far = self.follow.distance
+        for _ in range(60): self.step(mode=1)
+        self.assertEqual(self.follow.distance, far)
+        for _ in range(120): self.step(mode=0)
+        self.assertLess(self.follow.distance, far - 30)
+
     def world(self,triangles):
         self.tris=(bg.Triangle*len(triangles))(*[t for t,_ in triangles])
         self.info=(C.c_uint16*len(triangles))(*[i for _,i in triangles])
@@ -128,10 +140,18 @@ class TraversalCamera(unittest.TestCase):
         self.assertEqual((point.x,point.y,point.z),(-784,132,1037))
         self.assertEqual(tuple(direction),(0,0,364))
 
-    def view_step(self, x=0, y=0, facing=0):
+    def view_step(self, x=0, y=0, facing=0, aim=False):
         focus=bg.Vec(0, 44, 0)
         self.lib.player_camera_first_person(C.byref(self.follow), C.byref(focus),
-            facing, x, y, C.byref(self.eye), C.byref(self.yaw), C.byref(self.pitch))
+            facing, x, y, C.byref(self.eye), C.byref(self.yaw), C.byref(self.pitch), aim)
+
+    def test_slingshot_aim_holds_pitch_after_releasing_direction(self):
+        for _ in range(20): self.view_step(420,280,aim=True)
+        yaw,pitch=self.yaw.value,self.pitch.value
+        for _ in range(100): self.view_step(aim=True)
+        self.assertEqual((self.yaw.value,self.pitch.value),(yaw,pitch))
+        for _ in range(100): self.view_step(y=280,aim=True)
+        self.assertEqual(self.pitch.value,-14400)
 
     def test_first_person_turns_full_circle_and_pitch_returns_to_level(self):
         for i in range(180): self.view_step(420, 280)

@@ -6,3 +6,5 @@
 *.mid binary
 *.png binary
 *.sh text eol=lf
+# Immutable mesh directory names hash exact file bytes, including line endings.
+game/assets/layouts/meshes/** -text

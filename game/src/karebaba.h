@@ -25,6 +25,7 @@
 */
 
 #define KAREBABA_MAX        8
+#define KAREBABA_ACTOR_ID   0x00C7
 
 typedef enum {
     KAREBABA_GROW, KAREBABA_IDLE, KAREBABA_AWAKEN, KAREBABA_UPRIGHT,
@@ -53,6 +54,7 @@ unsigned int karebaba_bytes(void);
 bool    karebaba_init(void *storage, unsigned int bytes);
 /* Spawn/sync the forest babas (room 1 live, killed elsewhere). */
 void    karebaba_sync(bool in_scene, unsigned int room);
+void    karebaba_sync_scene(unsigned int scene, unsigned int room);
 void    karebaba_reset(void);
 /* One gameplay step: reads last run's collider results first. */
 void    karebaba_update(int32_t link_x, int32_t link_y, int32_t link_z, bool can_take);

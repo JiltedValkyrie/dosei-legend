@@ -33,6 +33,7 @@ import xml.etree.ElementTree as ET
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
+import actor_meshes
 import cutscene_animation
 import build_link_model as link                                 # noqa: E402
 
@@ -147,7 +148,8 @@ def read_animation(data, offset, limb_count, frame):
     return frames, values[0], values[1:]
 
 
-def build(oot, rom_dir, name, out, frame, clip_frames, stride, flat):
+def build(oot, rom_dir, name, out, frame, clip_frames, stride, flat,
+          export_obj=None, mesh_obj=None):
     spec = ACTORS[name]
     data = link.read_object(oot, spec['object'], rom_dir)
     skeleton, head_offset, animations = read_spec(oot, name)
@@ -226,6 +228,7 @@ def build(oot, rom_dir, name, out, frame, clip_frames, stride, flat):
     # These actors draw at Actor_SetScale(0.01) -- z_en_zl1.c:100 and the rest
     # agree -- so the object's units are a hundred times the world's, exactly
     # as Epona's are. Unscaled, Zelda would stand taller than the castle.
+    faces = actor_meshes.exchange(name, faces, poses, export_obj, mesh_obj)
     faces = link.scale_faces(faces, ACTOR_SCALE)
     # Keep faces that are tiny in this pose; later poses can expose them.
     print('  model : %d faces, %d flattened'
@@ -288,11 +291,17 @@ def main():
     parser.add_argument('--clip-frames', type=int, default=16)
     parser.add_argument('--stride', type=int, default=2)
     parser.add_argument('--flat', action='store_true')
+    parser.add_argument('--export-obj', type=pathlib.Path,
+                        help='with one --actor: write its unedited mesh as a named OBJ')
+    parser.add_argument('--mesh-obj', type=str,
+                        help='with one --actor: edited OBJ (default: recipe mesh_override)')
     args = parser.parse_args()
+    if (args.export_obj or args.mesh_obj is not None) and len(args.actor or ()) != 1:
+        parser.error('--export-obj/--mesh-obj need exactly one --actor')
 
     for name in (args.actor or sorted(ACTORS)):
         build(args.oot, args.rom_dir, name, args.out, args.frame,
-              args.clip_frames, args.stride, args.flat)
+              args.clip_frames, args.stride, args.flat, args.export_obj, args.mesh_obj)
 
 
 if __name__ == '__main__':

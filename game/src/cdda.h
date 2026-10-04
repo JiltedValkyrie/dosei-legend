@@ -1,5 +1,6 @@
 #ifndef DOSEI_CDDA_H
 #define DOSEI_CDDA_H
+#include <stdbool.h>
 
 /*
 ** Red Book tracks (tools/build_cdda.py, write_cue.py). Track 01 is data.
@@ -8,7 +9,8 @@
 **
 ** Rule (DOSEI-LEGEND-BIBLE.md, Red Book): only while the world is frozen --
 ** chest open (mini cutscene), cutscenes, first-stick get-item show (text box
-** freezes the world), death/Game Over. Never in live play or combat.
+** freezes the world), heart-container get-item (fanfare holds the world),
+** death/Game Over. Never in live play or combat.
 */
 /*
 ** Track numbers and names are generated from assets/audio/cdda_tracks.json by
@@ -22,5 +24,6 @@
 void    cdda_play(int track);
 /* Main thread: wait for pending music loads, then monitor actual CD status. */
 void    cdda_service(void);
+bool    cdda_busy(void);
 
 #endif

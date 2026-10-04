@@ -1,4 +1,13 @@
 #include "gameplay.h"
+#include "oot_core_host.h"
+#include "player_items.h"
+#include "dungeon_puzzles.h"
+#include "skulltula.h"
+#include "wall_skull.h"
+#include "dekubaba.h"
+#include "hintnuts.h"
+#include "gohma_larva.h"
+#include "gohma.h"
 #include "kokiri_actors.h"
 #include "kokiri_dialogue.h"
 #include "dialogue_text.h"
@@ -78,8 +87,8 @@ static int32_t      yaw_delta(uint16_t from, uint16_t to)
     return (int32_t)(int16_t)(uint16_t)(to - from);
 }
 
-static void         sync_gear_to_save(void);
-static void         sync_gear_from_save(void);
+static void __attribute__((optimize("Os"))) sync_gear_to_save(void);
+static void __attribute__((optimize("Os"))) sync_gear_from_save(void);
 static void         grant_rupee(unsigned int value);
 
 /* ---- Mido (EnMd, z_en_md.c) --------------------------------------------- */
@@ -111,8 +120,9 @@ bool                gameplay_npc_present(unsigned int npc)
     if (npc >= KOKIRI_NPC_COUNT)
         return false;
     p = &kokiri_npcs[npc];
-    if (p->scene != save_state.scene_id)
-        return false;
+    if (p->scene != save_state.scene_id ||
+        (p->kind != KOKIRI_NPC_SARIA && oot_core_owns_kokiri_npcs()))
+        return false;   /* En_Ko / En_Md: the decomp's (npc_draw draws them) */
     left = save_get_event_chk_inf(EVENTCHKINF_MIDO_LEFT_FOR_HIS_HOUSE) ||
            save_get_event_chk_inf(EVENTCHKINF_OBTAINED_ZELDAS_LETTER);
     switch (p->kind) {
@@ -152,13 +162,20 @@ static bool exit_blocker(unsigned int npc)
 static void update_exit_blocker(const gameplay_input_t *in)
 {
     unsigned int i;
-    if (!in_forest() || save_check_quest_item(QUEST_KOKIRI_EMERALD)) return;
+    if (!in_forest()) return;
     for (i = 0; i < KOKIRI_NPC_COUNT; ++i) if (exit_blocker(i)) {
         int32_t sine, cosine;
         const kokiri_npc_t *home = &kokiri_npcs[i];
         uint16_t yaw = gameplay_facing(in->x - home->x, in->z - home->z);
         gameplay_sincos(yaw, &sine, &cosine);
         exit_blocker_live = *home;
+        if (save_check_quest_item(QUEST_KOKIRI_EMERALD)) {
+            exit_blocker_live.x = KOKIRI_EXIT_MOVED_X;
+            exit_blocker_live.y = KOKIRI_EXIT_MOVED_Y;
+            exit_blocker_live.z = KOKIRI_EXIT_MOVED_Z;
+            exit_blocker_valid = true;
+            return;
+        }
         exit_blocker_live.x += (80 * sine) >> 16;
         exit_blocker_live.z += (80 * cosine) >> 16;
         exit_blocker_live.yaw = gameplay_facing(in->x - exit_blocker_live.x,
@@ -231,18 +248,17 @@ static const kokiri_npc_t *npc_at(int npc)
         mido_live.yaw = mido_yaw;
         return &mido_live;
     }
-    if (exit_blocker(npc) && exit_blocker_valid &&
-        !save_check_quest_item(QUEST_KOKIRI_EMERALD)) return &exit_blocker_live;
+    if (exit_blocker(npc) && exit_blocker_valid) return &exit_blocker_live;
     return &kokiri_npcs[npc];
 }
 
 /* Kokiri NPCs as registry actors, so Link's lock and Navi share one
 ** identity (M2d). Drawing and talking stay on kokiri_npcs; each step copies
 ** the live position (Mido's included) onto the actor. Focus: a head-height
-** stand-in above the feet; arrow: Actor_Init lockOnArrowOffset 2000 x 0.01.
+** stand-in above the feet; arrow: 0 (no source lockOnArrowOffset; hover adds +17).
 ** Source per-NPC attentionRangeType is a logged gap (ATTN_RANGE_SLICE_NPC). */
 #define GP_NPC_FOCUS_Y  40
-#define GP_NPC_ARROW_Y  20
+#define GP_NPC_ARROW_Y  0       /* En_Ko/Md/Sa set no lockOnArrowOffset */
 #define GP_NPC_ACTOR_ID 0xF001
 static const actor_profile_t npc_profile = {
     GP_NPC_ACTOR_ID, ACTORCAT_NPC, ACTOR_FLAG_TARGETABLE, 0, 0, 0, 0
@@ -272,12 +288,48 @@ static void         npc_actors_kill(void)
     }
 }
 
+#ifdef DOSEI_OOT_CORE
+/* The decomp En_Ko/En_Md standing in for kokiri_npcs[i] (same ENKO_TYPE, or
+** Mido), so Navi's hover and Z-target keep working on decomp NPCs. */
+static const OotCoreNpcView *core_npc_for(const kokiri_npc_t *npc)
+{
+    const OotCoreNpcView *v;
+    int n, k;
+    if (npc->scene != save_state.scene_id || npc->kind == KOKIRI_NPC_SARIA ||
+        !oot_core_owns_kokiri_npcs())
+        return 0;
+    n = oot_core_npcs(&v);
+    for (k = 0; k < n; ++k)
+        if (npc->kind == KOKIRI_NPC_MIDO ? v[k].id == 0x016D /* ACTOR_EN_MD */ :
+            v[k].id == 0x0163 /* ACTOR_EN_KO */ && (v[k].params & 0xFF) == (npc->param & 0xFF))
+            return v[k].alpha ? &v[k] : 0;
+    return 0;
+}
+#endif
+
 static void         sync_npc_actors(void)
 {
     unsigned int i;
     for (i = 0; i < KOKIRI_NPC_COUNT; ++i) {
         const kokiri_npc_t *npc = npc_at(i);
         actor_t *a = actor_resolve(npc_actor[i]);
+#ifdef DOSEI_OOT_CORE
+        const OotCoreNpcView *core = core_npc_for(npc);
+        if (core) {
+            if (!a) {
+                a = actor_spawn(&npc_profile, save_state.scene_id, ACTOR_ROOM_NONE,
+                                core->x, core->y, core->z, 0, (uint16_t)i);
+                if (!a) continue;
+                a->attention = ATTN_NPC;
+                a->range = ATTN_RANGE_SLICE_NPC;
+                a->focus[1] = GP_NPC_FOCUS_Y;
+                a->arrow_y = GP_NPC_ARROW_Y;
+                npc_actor[i] = actor_handle(a);
+            }
+            a->x = core->x; a->y = core->y; a->z = core->z;
+            continue;
+        }
+#endif
         if (!gameplay_npc_present(i)) {
             npc_turned &= ~(1u << i);
             if (a) actor_kill(a);
@@ -408,7 +460,8 @@ bool                gameplay_saria_greeting_step(void)
 
 static void         mido_place(void)
 {
-    if (save_get_event_chk_inf(EVENTCHKINF_MIDO_STOOD_ASIDE_KOKIRI)) {
+    if (save_get_event_chk_inf(EVENTCHKINF_MIDO_STOOD_ASIDE_KOKIRI) &&
+        !save_check_quest_item(QUEST_KOKIRI_EMERALD)) {
         gameplay.mido_state = 2;
         gameplay.mido_x = MIDO_MOVED_X;
         gameplay.mido_z = MIDO_MOVED_Z;
@@ -442,6 +495,9 @@ static void         update_mido(const gameplay_input_t *in)
             gameplay.mido_x = MIDO_MOVED_X;
             gameplay.mido_z = MIDO_MOVED_Z;
             gameplay.mido_state = 2;
+            /* EnMd_Walk commits departure only after the path completes. */
+            if (save_check_quest_item(QUEST_KOKIRI_EMERALD))
+                save_set_event_chk_inf(EVENTCHKINF_MIDO_LEFT_FOR_HIS_HOUSE);
             return;
         }
         /* Q8 accumulation would be smoother; a unit a step is his speed. */
@@ -665,6 +721,7 @@ static void         register_nut(void)
     collide_set_ac(c);
 }
 
+static bool         jump_guard;     /* jump attack still owns its no-hit window */
 #define STEPS_OF(frames) (((frames) * 3 + 1) / 2)    /* 20 Hz frames -> steps */
 
 /* The one damage entry: enemy contact, fall and void all come through here
@@ -672,6 +729,7 @@ static void         register_nut(void)
 static void         link_damage(unsigned int units)
 {
     save_damage(units);
+    if(units){gameplay.hurt_flash_timer=GP_INTANGIBLE_STEPS;gameplay.hurt_flash_phase=0;}
 }
 
 /* Player_UpdateDamage -> func_80837C0C, response NONE (grounded): pushed
@@ -685,8 +743,14 @@ static void         consume_link_damage(const gameplay_input_t *in)
     if (!gameplay.hurt_pending)
         return;
     gameplay.hurt_pending = 0;
-    link_damage(gameplay.hurt_damage);
-    gameplay.intangible = GP_INTANGIBLE_STEPS;
+    /* Invulnerable (dodge): the hit lands, knocks back, but costs nothing,
+    ** and Player_SetIntangibility leaves an invulnerable timer alone. */
+    if (gameplay.invulnerable) {
+        link_damage(0);
+    } else {
+        link_damage(gameplay.hurt_damage);
+        gameplay.intangible = GP_INTANGIBLE_STEPS;
+    }
     gameplay.knock_yaw = gameplay.hurt_yaw;
     gameplay.knock_speed = GP_HIT_SPEED_Q16;
     gameplay.knock_down = false;
@@ -709,6 +773,7 @@ void                gameplay_land(int32_t fell, bool rolled)
     if (rolled || fell < 400 || gameplay.dead)
         return;
     link_damage(fell < 800 ? 8 : 16);
+    gameplay.hurt_flash_timer=STEPS_OF(40);
     gameplay.intangible = STEPS_OF(40);      /* Player_SetIntangibility(40) */
     gameplay.events2 |= GP2_EVENT_LAND_DAMAGE;
 }
@@ -748,6 +813,9 @@ static void         check_death(const gameplay_input_t *in)
     if (gameplay.dead || save_state.health != 0 || !in->grounded)
         return;
     gameplay.dead = true;
+    gameplay.hurt_flash_timer=0;gameplay.hurt_flash_phase=0;
+    gameplay.world_sfx=0;gameplay.opened_chest=0;
+    player_items_reset();
     gameplay.swing = 0;
     gameplay.attack_phase = 0;
     gameplay.shielding = false;
@@ -852,7 +920,9 @@ bool                gameplay_boulder_body(unsigned int room, int32_t *x, int32_t
 
 bool                gameplay_mido_body(unsigned int room, int32_t *x, int32_t *z)
 {
-    if (!in_forest() || room != MIDO_ROOM)
+    if (!in_forest() || room != MIDO_ROOM || oot_core_owns_kokiri_npcs() ||
+        save_get_event_chk_inf(EVENTCHKINF_MIDO_LEFT_FOR_HIS_HOUSE) ||
+        save_get_event_chk_inf(EVENTCHKINF_OBTAINED_ZELDAS_LETTER))
         return false;
     *x = gameplay.mido_x;
     *z = gameplay.mido_z;
@@ -867,7 +937,8 @@ static void         mido_talk_closed(uint16_t text_id)
     if (text_id == 0x102F) {
         save_set_event_chk_inf(EVENTCHKINF_MIDO_DENIED_DEKU_TREE_ACCESS);
         save_set_inf_table(INFTABLE_MIDO_REFUSED_ONCE);
-    } else if (text_id == 0x1033 && gameplay.mido_state == 0) {
+    } else if ((text_id == 0x1033 || (text_id == 0x1045 &&
+                save_check_quest_item(QUEST_KOKIRI_EMERALD))) && gameplay.mido_state == 0) {
         save_set_event_chk_inf(EVENTCHKINF_MIDO_STOOD_ASIDE_KOKIRI);
         gameplay.mido_state = 1;
         gameplay.events |= GP_EVENT_MIDO_ASIDE;
@@ -896,10 +967,34 @@ static bool         open_system_text(uint16_t text_id)
 void gameplay_drop_message(unsigned int item)
 {
     if (open_system_text(item == 12 ? 0x0034 : 0x0037)) {
+        gameplay.events2 |= GP2_EVENT_ITEM_FANFARE;
         gameplay.get_item = item == 12 ? GP_GET_NUT : GP_GET_STICK;
         gameplay.get_item_age = 0;
         gameplay.events |= GP_EVENT_PICKUP;
     }
+}
+bool gameplay_token_message(void)
+{
+    if(gameplay.talking || !open_system_text(0x00B4))return false;
+    gameplay.events2|=GP2_EVENT_SMALL_FANFARE;
+    gameplay.events|=GP_EVENT_PICKUP;return true;
+}
+bool gameplay_boss_heart(void)
+{
+    if (gameplay.talking || gameplay.dead || gameplay.paused ||
+        save_state.scene_id != SAVE_SCENE_DEKU_TREE_BOSS || !gohma_defeated() ||
+        save_get_collectible(SAVE_SCENE_DEKU_TREE_BOSS, 0x1f) ||
+        !open_system_text(0x00c6)) return false;
+    save_item_give(SAVE_ITEM_HEART_CONTAINER);
+    save_set_collectible(SAVE_SCENE_DEKU_TREE_BOSS, 0x1f);
+    gameplay.get_item = GP_GET_CONTAINER;
+    gameplay.get_item_age = 0;
+    gameplay.events |= GP_EVENT_PICKUP;
+    return true;
+}
+bool gameplay_actor_message(uint16_t text_id)
+{
+    return !gameplay.talking && open_system_text(text_id);
 }
 
 /* ---- En_Box (z_en_box.c) --------------------------------------------------- */
@@ -941,7 +1036,7 @@ static int16_t      chest_in_reach(const gameplay_input_t *in)
     return -1;
 }
 
-static bool         update_chest(const gameplay_input_t *in)
+static bool __attribute__((optimize("Os"))) update_chest(const gameplay_input_t *in)
 {
     const kokiri_chest_t *c;
     gameplay.chest_prompt = chest_in_reach(in);
@@ -953,6 +1048,9 @@ static bool         update_chest(const gameplay_input_t *in)
         save_item_t item;
         unsigned int text;
         switch (reward) {
+        case 0x05: item = SAVE_ITEM_SLINGSHOT; text = 0x30; break;
+        case 0x40: item = SAVE_ITEM_DEKU_COMPASS; text = 0x67; break;
+        case 0x41: item = SAVE_ITEM_DEKU_MAP; text = 0x66; break;
         case 0x27: item = SAVE_ITEM_SWORD_KOKIRI; text = 0xA4; break;
         case 0x48: item = SAVE_ITEM_RECOVERY_HEART; text = 0x55; break;
         case 0x4C: item = SAVE_ITEM_RUPEE_GREEN; text = 0x6F; break;
@@ -962,12 +1060,18 @@ static bool         update_chest(const gameplay_input_t *in)
         /* EnBox opens even when its heart/wallet reward is already full.
          * The shared grant clamps/refuses the excess; this is not a purchase. */
         save_item_give(item);
+        gameplay.opened_chest=(uint8_t)(gameplay.chest_prompt+1);
+        if((c->param>>12)!=5 && (c->param>>12)!=6 && (c->param>>12)!=7 && (c->param>>12)!=8)
+            gameplay.events2|=GP2_EVENT_CHEST_OPEN;
+        if(reward==0x05 || reward==0x40 || reward==0x41 || reward==0x27)
+            gameplay.events2|=GP2_EVENT_ITEM_FANFARE;
+        else gameplay.world_sfx|=1u<<GP_SFX_BOX_ITEM;
         save_set_treasure(c->scene, CHEST_FLAG(c));
-        gameplay.rupees = (uint8_t)save_state.rupees;
+        gameplay.rupees = save_state.rupees;
         if (reward == 0x27) gameplay.owned |= GP_SWORD;
         gameplay.chest_prompt = -1;
         gameplay.get_item_age = 0;
-        gameplay.get_item = reward == 0x27 ? GP_SWORD : reward == 0x48 ? GP_GET_HEART : 0;
+        gameplay.get_item = reward == 0x27 ? GP_SWORD : reward == 0x48 ? GP_GET_HEART : GP_GET_CHEST_ITEM;
         gameplay.events |= GP_EVENT_PICKUP;
         open_system_text(text);
     }
@@ -1108,9 +1212,12 @@ bool                gameplay_wonder_drop(unsigned int index)
            gameplay.wonder_age[index] >= GP_DROP_DELAY;
 }
 
-void                gameplay_reset(void)
+void __attribute__((optimize("Os"))) gameplay_reset(void)
 {
     unsigned int i;
+    gameplay.hurt_flash_timer=0;gameplay.hurt_flash_phase=0;
+    gameplay.world_sfx=0;gameplay.opened_chest=0;
+    player_items_reset();
     exit_blocker_valid = false;
     /* A new scene spawns a new En_Sa, so its type is chosen again here. Any
     ** greeting still running belonged to the scene being left. */
@@ -1176,6 +1283,8 @@ void                gameplay_reset(void)
     boulder_reset();
     gameplay.boulder_live = false;
     gameplay.intangible = 0;
+    gameplay.invulnerable = 0;
+    jump_guard = false;
     gameplay.knock_speed = 0;
     gameplay.knock_down = false;
     gameplay.hurt_pending = 0;
@@ -1192,7 +1301,7 @@ void                gameplay_reset(void)
     gameplay.talking = false;
     gameplay.paused = false;
     gameplay.cursor = GP_SLOT_SWORD;
-    gameplay.pause_window = (pause_window_state_t){ .page = PAUSE_EQUIPMENT, .cursor = {0, 0, 18, 1} };
+    gameplay.pause_window = (pause_window_state_t){ .page = PAUSE_EQUIPMENT, .cursor = {0, 2, 18, 1} };
     gameplay.rupees = 0;
     gameplay.rupee_taken = 0;
     gameplay.drop_rng = 0x12345678u;
@@ -1216,7 +1325,7 @@ bool                gameplay_grass_cut(unsigned int index)
            (gameplay.grass_cut & (1u << index)) != 0;
 }
 
-/* Session-only wallet and collectible flags. Child wallet: z_inventory.c. */
+/* Wallet capacity comes from the saved source upgrade (z_inventory.c). */
 bool gameplay_rupee_taken(unsigned int index)
 {
     return index < KOKIRI_RUPEE_COUNT && (gameplay.rupee_taken & (1u << index));
@@ -1236,7 +1345,7 @@ static void grant_rupee(unsigned int value)
     save_state.rupees = gameplay.rupees;
     save_item_give(value >= 20 ? SAVE_ITEM_RUPEE_RED :
                    value >= 5 ? SAVE_ITEM_RUPEE_BLUE : SAVE_ITEM_RUPEE_GREEN);
-    gameplay.rupees = (uint8_t)save_state.rupees;
+    gameplay.rupees = save_state.rupees;
     gameplay.events |= GP_EVENT_RUPEE;
 }
 
@@ -1246,7 +1355,8 @@ static void collect_rupees(const gameplay_input_t *in)
     if (!in_forest()) return;
     for (i = 0; i < KOKIRI_RUPEE_COUNT; ++i) {
         const kokiri_rupee_t *r = &kokiri_rupees[i];
-        if (!gameplay_rupee_taken(i) && rupee_near(in, r->x, r->y, r->z, r->room)) {
+        if (!gameplay_rupee_taken(i) && !oot_core_owns_kokiri_props() &&
+            rupee_near(in, r->x, r->y, r->z, r->room)) {
             gameplay.rupee_taken |= (uint16_t)(1u << i);
             /* Per-scene collectible flag, where OoT keeps them, so a rupee
             ** already picked up does not reappear after a save and reload. */
@@ -1269,7 +1379,7 @@ static void collect_rupees(const gameplay_input_t *in)
 }
 
 /* Gear, rupees and one-off pickups live in the SAVE. gameplay_t holds them as
-** GP_* bits and a small wallet only because the per-step actions read them
+** GP_* bits and a wallet cache only because the per-step actions read them
 ** constantly and a bitmask is cheaper than four accessor calls.
 **
 ** The save is the owner; these two functions keep the cache agreeing with it.
@@ -1280,7 +1390,7 @@ static void collect_rupees(const gameplay_input_t *in)
 **
 ** Mido's gate is decided by save_cur_equip_value(), so the two must not drift
 ** in either direction. */
-static void         sync_gear_to_save(void)
+static void __attribute__((optimize("Os"))) sync_gear_to_save(void)
 {
     save_give_equip(EQUIP_TYPE_SWORD,
                     (gameplay.owned & GP_SWORD) ? EQUIP_VALUE_SWORD_KOKIRI : 0);
@@ -1293,9 +1403,10 @@ static void         sync_gear_to_save(void)
     save_state.rupees = gameplay.rupees;
 }
 
-static void         sync_gear_from_save(void)
+static void __attribute__((optimize("Os"))) sync_gear_from_save(void)
 {
     unsigned int    i;
+    unsigned int    wallet_capacity = save_wallet_capacity();
 
     gameplay.owned = 0;
     gameplay.equipped = 0;
@@ -1307,8 +1418,8 @@ static void         sync_gear_from_save(void)
         gameplay.equipped |= GP_SWORD;
     if (save_cur_equip_value(EQUIP_TYPE_SHIELD) == EQUIP_VALUE_SHIELD_DEKU)
         gameplay.equipped |= GP_SHIELD;
-    gameplay.rupees = (uint8_t)(save_state.rupees > GP_WALLET_CAPACITY
-                                ? GP_WALLET_CAPACITY : save_state.rupees);
+    gameplay.rupees = (uint16_t)(save_state.rupees > wallet_capacity
+                                ? wallet_capacity : save_state.rupees);
     /* The retired ground-pickup ITEMGETINF bits are left as they are and not
     ** read: gear earned that way stays in the equipment words above, and they
     ** are never reinterpreted as chest or shop flags. */
@@ -1575,6 +1686,7 @@ static bool         register_blade_quads(void)
         c->radius = GP_BLADE_RADIUS;
         c->at_type = AT_TYPE_PLAYER;
         c->at_dmg = player_attack_damage_flags(gameplay.attack_id);
+        if (player_items_stick()) c->at_dmg = DMG_DEKU_STICK;
         if (!c->at_dmg) c->at_dmg = DMG_SLASH_KOKIRI;
         c->ac_flags = COL_OUTSIDE_ACTOR;        /* Link owns it: AC_HARD bounces */
         c->attack_id = gameplay.swing_count ? gameplay.swing_count : 1;
@@ -1606,6 +1718,7 @@ static void         register_blade(const gameplay_input_t *in)
                   gameplay.attack_id == ATTACK_BIG_SPIN) ? 32768 : 16384;
     blade->at_type = AT_TYPE_PLAYER;
     blade->at_dmg = player_attack_damage_flags(gameplay.attack_id);
+    if (player_items_stick()) blade->at_dmg = DMG_DEKU_STICK;
     if (!blade->at_dmg) blade->at_dmg = DMG_SLASH_KOKIRI;
     blade->attack_id = gameplay.swing_count ? gameplay.swing_count : 1;
     blade->tag = GP_TAG_BLADE;
@@ -1615,7 +1728,8 @@ targets:
     for (i = 0; i < KOKIRI_GRASS_COUNT; ++i) {
         const kokiri_prop_t *tuft = &kokiri_grass[i];
         collider_t *c = &contacts->tufts[i];
-        if (!in_forest() || in->room != tuft->room || (gameplay.grass_cut & (1u << i)))
+        if (!in_forest() || in->room != tuft->room || (gameplay.grass_cut & (1u << i)) ||
+            oot_core_owns_kokiri_props())
             continue;
         c->shape = COLSHAPE_CYLINDER;
         c->actor = 0;
@@ -1715,11 +1829,34 @@ static void         run_contacts(const gameplay_input_t *in)
     if (in_forest())
         register_boulder(in);
     register_nut();
+    player_items_register();
+    dungeon_puzzles_register();
+    skulltula_register();
+    wall_skull_register();
+    dekubaba_register();
+    hintnuts_register();
+    gohma_larva_register();
+    gohma_register();
     karebaba_register();
     world_props_register(contacts->props, 4, in);
     collide_run();
     world_props_collect();
     karebaba_collect();
+    skulltula_collect();
+    wall_skull_collect();
+    dekubaba_collect();
+    hintnuts_collect();
+    gohma_larva_collect();
+    gohma_collect();
+    player_items_collect();
+    if (blade_live && player_items_stick())
+        for (i = 0; i < 3; ++i)
+            if (contacts->blade[i].attack_id == gameplay.swing_count &&
+                (contacts->blade[i].result & COL_RES_AT_HIT)) {
+                player_items_break_stick();
+                gameplay_attack_cancel();
+                break;
+            }
     if (contacts->boulder.result & COL_RES_AT_HIT)
         gameplay.boulder_hit = true;
     if (blade_live)
@@ -1766,6 +1903,18 @@ static void         attack_start_id(unsigned int id);
 static void         attack_start(const gameplay_input_t *in)
 {
     bool targeting = gameplay.face_locked || in->target_held;
+
+    /* Player_Action_80845308 always selects FORWARD_SLASH_1H for a held
+     * Deku Stick. It is a one-hand item attack: no directional sword rows,
+     * third-hit combo, charge, or spin attack. */
+    if (player_items_stick()) {
+        attack_start_id(ATTACK_FORWARD);
+        gameplay.combo_count = 0;
+        gameplay.combo_timer = 0;
+        gameplay.charge_ok = false;
+        gameplay.lunge_pending = false;
+        return;
+    }
     attack_start_id(player_attack_select(in->stick_dir, targeting, 0));
     /* D_80854480 forward row is STAB: PLAYER_STATE2_30 even when not
     ** targeting turns it into the forward slash. */
@@ -1792,12 +1941,19 @@ static void         attack_start_id(unsigned int id)
     gameplay.events |= GP_EVENT_SWING;
 }
 
+void                gameplay_set_invulnerable(unsigned steps)
+{
+    if (steps > 255) steps = 255;
+    if (gameplay.invulnerable < steps) gameplay.invulnerable = (uint8_t)steps;
+}
+
 bool                gameplay_jump_attack_start(void)
 {
     if (!(gameplay.equipped & GP_SWORD) || gameplay.shielding)
         return false;
     attack_start_id(ATTACK_JUMP_START);
     gameplay.attack_phase = 6;
+    jump_guard = true;
     return true;
 }
 
@@ -2053,7 +2209,7 @@ static void         update_sword(const gameplay_input_t *in)
         /* Recovery runs under the idle action: X attacks again, the stick
         ** walks away (both end the recovery clip). */
         /* Player_ActionHandler_8: X still held at unk_844 == 1 charges. */
-        if (in->attack_held && gameplay.charge_ok && gameplay.combo_timer == 1 &&
+        if (!player_items_stick() && in->attack_held && gameplay.charge_ok && gameplay.combo_timer == 1 &&
             !gameplay.shielding) {
             charge_start();
             return;
@@ -2072,7 +2228,7 @@ static void         update_sword(const gameplay_input_t *in)
     } else if (!in->attack) {
         return;
     }
-    if (!(gameplay.equipped & GP_SWORD)) {
+    if (!(gameplay.equipped & GP_SWORD) && !player_items_stick()) {
         /* No sword means no attack, not a substitute action. */
         gameplay.events |= GP_EVENT_DENIED;
         return;
@@ -2124,12 +2280,13 @@ bool                gameplay_is_paused(void)
 
 bool                gameplay_blocks_world(void)
 {
-    return gameplay.paused || gameplay.talking;
+    return gameplay.paused || gameplay.talking || gohma_cinematic() || gohma_warp_active() ||
+           (oot_core_talk() & 1u);
 }
 
 /* Four OoT pause pages. Start closes; B opens the save confirmation.
 ** Only real owned gear can be equipped. Save emits the existing device request. */
-static void         update_menu(const gameplay_input_t *in)
+static void __attribute__((optimize("Os"))) update_menu(const gameplay_input_t *in)
 {
     if (in->pause) {
         gameplay.paused = !gameplay.paused;
@@ -2146,7 +2303,8 @@ static void         update_menu(const gameplay_input_t *in)
         gameplay.pause_window.page == PAUSE_ITEMS) {
         unsigned cursor = gameplay.pause_window.cursor[PAUSE_ITEMS];
         unsigned item = cursor == 0 && save_state.stick_owned ? 1 :
-                        cursor == 6 && save_state.slingshot ? 2 : 0;
+                        cursor == 6 && save_state.slingshot ? 2 :
+                        cursor == 1 && save_state.nut_owned ? 3 : 0;
         if (item) {
             unsigned i;
             for (i = 0; i < 3; ++i)
@@ -2156,10 +2314,25 @@ static void         update_menu(const gameplay_input_t *in)
         } else gameplay.events |= GP_EVENT_DENIED;
         return;
     }
+    if (gameplay.pause_window.page == PAUSE_MAP &&
+        !gameplay.pause_window.save_prompt && !gameplay.pause_window.system_confirm &&
+        !in->menu_page && !in->cancel &&
+        (save_state.scene_id == SAVE_SCENE_DEKU_TREE || save_state.scene_id == SAVE_SCENE_DEKU_TREE_BOSS) &&
+        (in->menu_dy || in->menu_dx)) {
+        int step = in->menu_dy ? in->menu_dy : in->menu_dx;
+        gameplay.pause_window.cursor[PAUSE_MAP] =
+            (gameplay.pause_window.cursor[PAUSE_MAP] + (step > 0 ? 1 : 4)) % 5;
+        gameplay.events |= GP_EVENT_MENU_MOVE;
+        return;
+    }
     unsigned result = pause_window_step(&gameplay.pause_window,
         in->menu_dx, in->menu_dy, in->menu_page,
         in->cancel, in->interact, gameplay.owned);
     switch (result) {
+    case PAUSE_TUNIC_GREEN: case PAUSE_TUNIC_RED: case PAUSE_TUNIC_BLUE:
+        gameplay.events |= save_equip_tunic(result==PAUSE_TUNIC_GREEN?0:result==PAUSE_TUNIC_RED?2:1)
+            ? GP_EVENT_EQUIP : GP_EVENT_DENIED;
+        break;
     case PAUSE_MOVE: gameplay.events |= GP_EVENT_MENU_MOVE; break;
     case PAUSE_WRITE_SAVE: gameplay.events |= GP_EVENT_SAVE; break;
     case PAUSE_LABELS: gameplay.events2 |= GP2_EVENT_LABELS; break;
@@ -2319,7 +2492,7 @@ static int16_t      find_speaker(const gameplay_input_t *in)
     unsigned int i;
     /* Only this scene's people (gameplay_npc_present): a Kokiri placed in
     ** another scene must never take A away from a door. */
-    if (gameplay_target_npc() >= 0) {
+    if (gameplay_target_npc() >= 0 && gameplay_npc_present((unsigned int)gameplay_target_npc())) {
         const kokiri_npc_t *npc = npc_at(gameplay_target_npc());
         int32_t dy = in->y - npc->y;
         if (dy < 0) dy = -dy;
@@ -2418,7 +2591,7 @@ static void         shop_turn(int8_t target)
 }
 
 /* EnOssan_HandleCanBuyItem, through the shared grant transaction. */
-static void         shop_buy(void)
+static void __attribute__((optimize("Os"))) shop_buy(void)
 {
     unsigned int slot = gameplay.shop_cursor;
     save_canbuy_t result = SAVE_CANBUY_CANT_GET_NOW;
@@ -2430,11 +2603,14 @@ static void         shop_buy(void)
         gameplay.events |= GP_EVENT_DENIED;
         return;
     }
-    gameplay.rupees = (uint8_t)save_state.rupees;
+    gameplay.rupees = save_state.rupees;
     if (shop_stock[slot].item == SAVE_ITEM_SHIELD_DEKU)
         gameplay.owned |= GP_SHIELD;
+    if (shop_stock[slot].item == SAVE_ITEM_RECOVERY_HEART)
+        gameplay.events2 |= GP2_EVENT_HP_RECOVER;
     if (result == SAVE_CANBUY_SUCCESS_FANFARE) {
         /* EnOssan_GiveItemWithFanfare: locked view, Link holds it up. */
+        gameplay.events2 |= GP2_EVENT_ITEM_FANFARE;
         shop_text(shop_stock[slot].get_text, GP_SHOP_GET);
         gameplay.get_item_age = 0;
         gameplay.get_item = shop_stock[slot].item == SAVE_ITEM_SHIELD_DEKU ? GP_SHIELD :
@@ -2445,7 +2621,7 @@ static void         shop_buy(void)
     shop_text(0x0084, GP_SHOP_QUICK);               /* quick buy */
 }
 
-static void         shop_choice(const gameplay_input_t *in)
+static void __attribute__((optimize("Os"))) shop_choice(const gameplay_input_t *in)
 {
     int next = (int)gameplay.choice + in->menu_dy;
     if (next < 0) next = 0;
@@ -2482,7 +2658,7 @@ static void         shop_enter_shelf(unsigned int offset)
     gameplay.shop_cursor = (uint8_t)(offset | (gameplay.shop_cursor & 1));
 }
 
-static void         shop_browse(const gameplay_input_t *in)
+static void __attribute__((optimize("Os"))) shop_browse(const gameplay_input_t *in)
 {
     unsigned int cursor = gameplay.shop_cursor, next = cursor;
     bool left_shelf = cursor >= 4;
@@ -2514,7 +2690,7 @@ static void         shop_browse(const gameplay_input_t *in)
     }
 }
 
-static void         shop_update(const gameplay_input_t *in)
+static void __attribute__((optimize("Os"))) shop_update(const gameplay_input_t *in)
 {
     bool moved_y;
     gameplay.prompt = -1;
@@ -2639,7 +2815,7 @@ static const dialogue_branch_t *choice_branch(void)
 }
 
 /* Message_ContinueTextbox: same box and speaker, next text by id. */
-static bool         continue_text(uint16_t text_id)
+static bool __attribute__((optimize("Os"))) continue_text(uint16_t text_id)
 {
     int16_t speaker = gameplay.speaker;
     if (!open_system_text(text_id))
@@ -2652,7 +2828,7 @@ static bool         continue_text(uint16_t text_id)
 }
 
 /* End the box. Speaker side effects fire on close, as in the source. */
-static void         close_talk_as(bool accepted);
+static void __attribute__((optimize("Os"))) close_talk_as(bool accepted);
 static void         close_talk(void)
 {
     close_talk_as(true);
@@ -2660,7 +2836,7 @@ static void         close_talk(void)
 
 /* Source EnKo/EnSa TEXT_STATE_CLOSING: remember conversations on close.
  * Only the original actor kind may write a flag; system text cannot. */
-static void npc_talk_closed(unsigned int kind, unsigned int text)
+static void __attribute__((optimize("Os"))) npc_talk_closed(unsigned int kind, unsigned int text)
 {
     static const uint16_t ko[][2] = {
         {0x1005,0x1E},{0x1008,0x22},{0x100A,0x24},{0x100C,0x26},
@@ -2685,7 +2861,7 @@ static void npc_talk_closed(unsigned int kind, unsigned int text)
     }
 }
 
-static void         close_talk_as(bool accepted)
+static void __attribute__((optimize("Os"))) close_talk_as(bool accepted)
 {
     uint16_t text_id = gameplay.rule >= 0 ? dialogue_rules[gameplay.rule].text_id : 0;
     bool mido = gameplay.speaker >= 0 && gate_mido(gameplay.speaker);
@@ -2703,7 +2879,7 @@ static void         close_talk_as(bool accepted)
 /* One press does one thing. A opens, then advances, then closes on the last
 ** page; B closes early. The opening press is consumed by the open, so it
 ** cannot also skip page one, and every transition needs a fresh press edge. */
-static void         update_talk(const gameplay_input_t *in)
+static void __attribute__((optimize("Os"))) update_talk(const gameplay_input_t *in)
 {
     if (gameplay.shop_state) {
         shop_update(in);
@@ -2871,7 +3047,13 @@ static void         update_babas(const gameplay_input_t *in)
     uint32_t ev;
     bool free = in->grounded && !gameplay.talking &&
                 !(gameplay.attack_phase >= 3 && gameplay.attack_phase <= 5);
-    karebaba_sync(in_forest(), in->room);
+    karebaba_sync_scene(save_state.scene_id, in->room);
+    skulltula_step(in);
+    wall_skull_step(in);
+    dekubaba_step(in);
+    hintnuts_step(in);
+    gohma_larva_step(in);
+    gohma_step(in);
     karebaba_update(in->x, in->y, in->z, free);
     ev = karebaba_events();
     gameplay.baba_events = ev;
@@ -2887,11 +3069,15 @@ void                gameplay_step(const gameplay_input_t *in)
     /* Dead: the Game Over flow owns the pad (demo.c steps game_over). */
     if (gameplay.dead)
         return;
+    /* A lethal landing outranks new conversations, props and pause input. */
+    if (!gameplay.paused) check_death(in);
+    if (gameplay.dead) return;
     /* Saria's greeting takes the scene before the pad does: while it runs
     ** nothing else in the world steps, the way a cutscene owns the frame in
     ** the source. It starts itself on the first forest step of a fresh file. */
     if (gameplay_saria_greeting_step())
         return;
+    if(gohma_cinematic() || gohma_warp_active()) {gohma_step(in);gameplay_attack_cancel();gameplay.shielding=false;return;}
     /* Pause outranks everything, including an open text box: Start freezes the
     ** world wherever it is. Nothing below runs while the menu is up, so no
     ** menu press can reach a swing, a jump, a talk or the walk/run toggle. */
@@ -2920,9 +3106,27 @@ void                gameplay_step(const gameplay_input_t *in)
     world_props_step(in);
     if (gameplay.talking) return;
     collect_rupees(in);
-    update_wonders(in);
+    if (!oot_core_owns_kokiri_npcs()) update_wonders(in);   /* else En_Wonder_Item */
+    if(gameplay.hurt_flash_timer){
+        unsigned rate=50-gameplay.hurt_flash_timer*2/3;
+        if(rate<8)rate=8;if(rate>40)rate=40;
+        gameplay.hurt_flash_phase+=(rate*256*2)/3;--gameplay.hurt_flash_timer;
+    }
     if (gameplay.intangible)
         --gameplay.intangible;
+    if (gameplay.invulnerable)
+        --gameplay.invulnerable;
+    if (jump_guard) {
+        /* Human rule: untouchable through the airborne slash, then one more
+         * second once it ends (landing cut, rebound or cancel). */
+        if (gameplay.attack_phase == 6) {
+            if (gameplay.intangible < 2) gameplay.intangible = 2;
+        } else {
+            jump_guard = false;
+            if (gameplay.intangible < GP_JUMP_ATTACK_GUARD_STEPS)
+                gameplay.intangible = GP_JUMP_ATTACK_GUARD_STEPS;
+        }
+    }
     consume_link_damage(in);
     check_death(in);
     if (gameplay.dead)
@@ -2944,7 +3148,7 @@ void                gameplay_step(const gameplay_input_t *in)
     update_attention(in);
     update_navi(in);
     update_babas(in);
-    if (gameplay.talking) {
+    if (gameplay.talking || gohma_cinematic() || gohma_warp_active()) {
         gameplay.shielding = false;
         return;
     }
@@ -2962,8 +3166,41 @@ void                gameplay_step(const gameplay_input_t *in)
         return;
     }
     (void)drop_random(); /* vary outcomes with play timing, even before a cut */
+    player_items_step();
+    if (in->c_use && in->c_use <= 3 && in->grounded &&
+        !world_props_carrying() && !gameplay.attack_phase && !in->shield) {
+        unsigned item = save_state.c_items[in->c_use - 1];
+        uint16_t yaw = in->yaw;
+        int16_t pitch = in->item_pitch;
+        actor_t *target = actor_resolve(gameplay.target);
+        if (item == PLAYER_ITEM_SEED && in->target_held && target) {
+            int32_t focus[3], dx, dz, distance;
+            attention_focus(target, focus);
+            dx = focus[0]-in->x; dz = focus[2]-in->z;
+            distance = (int32_t)collide_isqrt((uint32_t)(dx*dx+dz*dz));
+            yaw = gameplay_facing(dx,dz);
+            pitch = (int16_t)gameplay_facing(focus[1]-(in->y+35),distance>12?distance-12:1);
+        }
+        if (!(in->item_from_eye && item == PLAYER_ITEM_SEED ?
+                player_items_use_from(item, in->item_eye, yaw, pitch) :
+                player_items_use(item, in->x, in->y, in->z, yaw, pitch)))
+            gameplay.events |= GP_EVENT_DENIED;
+    }
+    /* Player_ProcessItemButtons: B carries the sword, so a B tap while a stick
+     * is held lowers the stick and returns to the sword (no stick swing). */
+    if (in->cancel && !in->c_use && player_items_stick() && !gameplay.attack_phase)
+        player_items_putaway();
     blade_live = false;
-    update_sword(in);
+    if (in->c_use && in->c_use <= 3 && save_state.c_items[in->c_use - 1] == 1 &&
+        player_items_stick() && in->grounded && !world_props_carrying()) {
+        /* Player_InitDekuStickIA holds the stick after C use. It does not
+         * force a slash: the burning tip can simply touch a torch. */
+        update_sword(in);
+    } else {
+        /* X swings a held stick. A sword attack puts a non-stick item away. */
+        if (in->attack && !gameplay.attack_phase && !player_items_stick()) player_items_putaway();
+        update_sword(in);
+    }
     update_shield(in);
     run_contacts(in);
 }

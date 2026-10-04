@@ -13,10 +13,11 @@
 ** and from a device. Keeping the split means a save bug is almost always
 ** reproducible on the host.
 **
-** Not host tested, and deliberately not pretended to be: it needs a real BUP
-** device. Every call reports success or failure and nothing here silently
-** succeeds, so a missing or full cartridge shows up as a refusal the file
-** select can display.
+** Host tests cover device failure handling using a mocked BIOS/SDK boundary.
+** Actual backup persistence still needs an emulator or console check. Writes
+** succeed only after the SDK's BIOS verify succeeds; read failures on a mounted
+** device are distinct from empty slots. Mount failures allow unsaved play and
+** display a device error instead of silently claiming saving is available.
 **
 ** Slot files are DOSEI0..DOSEI2 on the console's internal backup memory.
 ** Internal memory is used rather than the cartridge because the 4 MB RAM
@@ -35,6 +36,8 @@ bool                save_device_init(void);
 
 /* True when save_device_init() found a device. */
 bool                save_device_ready(void);
+/* Last device failure, including an unformatted BIOS backup device. */
+const char *save_device_error(void);
 /* Global UI configuration, separate from the three adventure save slots. */
 bool save_device_write_preferences(void);
 int save_device_preferences_report(void);

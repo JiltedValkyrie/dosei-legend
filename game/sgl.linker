@@ -1,0 +1,68 @@
+OUTPUT_FORMAT(coff-sh)
+SECTIONS {		
+	SLSTART 0x06004000 : {	
+		___Start = .;	
+		*(SLSTART)	
+	}			
+	.text ALIGN(0x20) :			
+	{			
+		* (.text)			
+		*(.strings)			
+		*("SEGA_P")		
+	
+		*(.eh_frame_hdr)
+		*(.eh_frame)		
+        __etext = .;    			
+	}			
+			
+	SLPROG ALIGN(0x20): {	
+		__slprog_start = .;	
+		*(SLPROG)	
+		__slprog_end = .;	
+	}			
+	.tors  ALIGN(0x10) :			
+	{			
+		___ctors = . ;			
+		*(.ctors)			
+		___ctors_end = . ;			
+		___dtors = . ;			
+		*(.dtors)			
+		___dtors_end = . ;			
+	}			
+	.data ALIGN(0x10):			
+	{			
+		* (.data)			
+		__edata = . ;			
+	}	
+	.rodata ALIGN(0x20) :			
+	{			
+		*(.rodata)			
+	}
+	.bss ALIGN(0x10) (NOLOAD):			
+	{			
+		__bstart = . ;			
+		*(EXCLUDE_FILE (*core.o) .bss)
+		* ( COMMON )			
+		__bend = . ;			
+	_end = .;			
+	}			
+    /* Explicitly initialised before jo_core_init. No bytes in the CD image. */
+    .lowmeta 0x0020B800 (NOLOAD) : {
+        __lowmeta_start = .;
+        *(.lowmeta)
+        __lowmeta_end = .;
+    }
+    ASSERT(SIZEOF(.lowmeta) <= 0xC000, "Low RAM sprite tables exceed carve")
+    .lowfs 0x00249500 (NOLOAD) : {
+        *(.lowfs)
+    }
+    ASSERT(SIZEOF(.lowfs) <= 0x10000, "Low RAM CD directory exceeds carve")
+    .lowcore 0x0023C500 (NOLOAD) : {
+        *core.o(.bss)
+    }
+    ASSERT(SIZEOF(.lowcore) <= 0xD000, "Low RAM core heap exceeds carve")
+    .lowquad 0x0022C800 (NOLOAD) : {
+        *(.lowquad)
+    }
+    ASSERT(SIZEOF(.lowquad) <= 0x2800, "Low RAM quad directory exceeds carve")
+}

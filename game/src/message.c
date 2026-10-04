@@ -1,9 +1,15 @@
+#pragma GCC optimize ("Os") /* Cold HUD/text updates; preserve high RAM. */
 /*
 ** Cutscene message player. Contract in message.h.
 */
 
 #include "message.h"
 #include "text_pool.h"
+#include "ui_preferences.h"
+#include <string.h>
+#ifdef __sh__
+#include "ram_cart.h"
+#endif
 
 /* Run text: CUTTEXT.TXT, line = run index (BUG-037). */
 static text_pool_t      cutscene_pool;
@@ -53,6 +59,7 @@ bool                message_start(uint16_t text_id)
             continue;
         message_state.active = true;
         message_state.message = (unsigned short)i;
+        message_state.choice = 0;
         message_state.page = 0;
         message_state.page_ticks = 0;
         message_state.revealed = 0;
@@ -85,6 +92,7 @@ static void         advance(void)
     message_state.revealed = 0;
     message_state.fade = 0;
     if (!message || message_state.page + 1 >= message->pages) {
+        if(message && message->next && message_start(message->next))return;
         message_state.active = false;
         message_state.finished = true;
         return;
@@ -158,110 +166,145 @@ bool                message_finished(void)
     return (message_state.finished);
 }
 
-unsigned int        message_lines(void)
+/* Cutscene tokens use the same saved labels as NPC dialogue, before wrapping.
+ * Keep source colour per character while expanded labels cross source runs. */
+#define MESSAGE_ROWS 16
+typedef struct { char text[39]; unsigned char colour[38], indent; } message_row_t;
+typedef struct {
+    message_row_t row[MESSAGE_ROWS];
+    char run[39], text[192], expanded[192];
+    unsigned char colours[192];
+} message_layout_t;
+#ifdef __sh__
+typedef char message_layout_fits[sizeof(message_layout_t) <= RAM_CART_MESSAGE_LAYOUT_BYTES ? 1 : -1];
+#define layout (*(message_layout_t *)(RAM_CART_FIXED_ADDRESS + RAM_CART_MESSAGE_LAYOUT_OFFSET))
+#else
+static message_layout_t layout;
+#endif
+static const cutscene_page_t *layout_page;
+static unsigned layout_revision, layout_count;
+static bool layout_expanded;
+
+static void prepare(void)
 {
     const cutscene_page_t *page = current_page();
-
-    return (page ? page->lines : 0);
+    unsigned revision = ui_text_revision(), i, j;
+    if (page == layout_page && revision == layout_revision) return;
+    layout_page = page; layout_revision = revision;
+    layout_expanded = false; layout_count = 0;
+    if (!page) return;
+    for (i = 0; i < page->lines; ++i) {
+        const cutscene_line_t *line = &cutscene_text_lines[page->first_line+i];
+        for (j = 0; j < line->runs; ++j)
+            if (strchr(text_pool_line(&cutscene_pool,line->first_run+j),'['))
+                layout_expanded = true;
+    }
+    if (!layout_expanded) return;
+    for (i = 0; i < page->lines; ++i) {
+        const cutscene_line_t *line = &cutscene_text_lines[page->first_line+i];
+        char *text = layout.text, *expanded = layout.expanded;
+        unsigned char *colours = layout.colours;
+        unsigned used = 0, at = 0, indent = line->indent;
+        for (j = 0; j < line->runs; ++j) {
+            unsigned k, run = line->first_run+j;
+            ui_text_expand(text_pool_line(&cutscene_pool,run),expanded,sizeof(layout.expanded));
+            for (k = 0; expanded[k] && used < sizeof(layout.text)-1; ++k) {
+                text[used] = expanded[k]; colours[used++] = cutscene_runs[run].colour;
+            }
+        }
+        text[used] = 0;
+        do {
+            unsigned n = 0, split = 0, width = 38-indent;
+            bool button = false;
+            if (layout_count >= MESSAGE_ROWS) return;
+            while (at+n < used && n < width) {
+                if (text[at+n] == '[') button = true;
+                if (text[at+n] == ']') button = false;
+                if (text[at+n] == ' ' && !button) split = n;
+                ++n;
+            }
+            if (at+n < used && split) n = split;
+            message_row_t *row = &layout.row[layout_count++];
+            memcpy(row->text,text+at,n); row->text[n] = 0;
+            memcpy(row->colour,colours+at,n); row->indent = indent;
+            at += n; while (text[at] == ' ') ++at;
+            indent = 0;
+        } while (at < used);
+    }
 }
 
-static const cutscene_line_t *line_at(unsigned int line)
+unsigned int message_lines(void)
+{
+    prepare();
+    return layout_expanded ? layout_count : layout_page ? layout_page->lines : 0;
+}
+static const cutscene_line_t *line_at(unsigned line)
 {
     const cutscene_page_t *page = current_page();
-
-    if (!page || line >= page->lines)
-        return ((const cutscene_line_t *)0);
-    return (&cutscene_text_lines[page->first_line + line]);
+    return page && line < page->lines ? &cutscene_text_lines[page->first_line+line] : 0;
 }
-
-unsigned int        message_line_runs(unsigned int line)
+static unsigned run_start(unsigned line, unsigned run)
 {
-    const cutscene_line_t *entry = line_at(line);
-
-    return (entry ? entry->runs : 0);
+    unsigned at = 0;
+    const message_row_t *row = &layout.row[line];
+    while (row->text[at] && run) {
+        unsigned colour = row->colour[at++];
+        while (row->text[at] && row->colour[at] == colour) ++at;
+        --run;
+    }
+    return at;
 }
-
-unsigned int        message_line_indent(unsigned int line)
+unsigned int message_line_runs(unsigned line)
 {
-    const cutscene_line_t *entry = line_at(line);
-
-    return (entry ? entry->indent : 0);
+    unsigned at = 0, count = 0;
+    prepare();
+    if (!layout_expanded) { const cutscene_line_t *p = line_at(line); return p ? p->runs : 0; }
+    if (line >= layout_count) return 0;
+    while (layout.row[line].text[at]) {
+        unsigned colour = layout.row[line].colour[at++]; ++count;
+        while (layout.row[line].text[at] && layout.row[line].colour[at] == colour) ++at;
+    }
+    return count;
 }
-
-static const cutscene_run_t *run_at(unsigned int line, unsigned int run)
+unsigned int message_line_indent(unsigned line)
 {
-    const cutscene_line_t *entry = line_at(line);
-
-    if (!entry || run >= entry->runs)
-        return ((const cutscene_run_t *)0);
-    return (&cutscene_runs[entry->first_run + run]);
+    prepare();
+    if (layout_expanded) return line < layout_count ? layout.row[line].indent : 0;
+    const cutscene_line_t *p = line_at(line); return p ? p->indent : 0;
 }
-
-const char         *message_run_text(unsigned int line, unsigned int run)
+const char *message_run_text(unsigned line, unsigned run)
 {
-    const cutscene_run_t *entry = run_at(line, run);
-
-    return (entry ? text_pool_line(&cutscene_pool,
-                                   (unsigned int)(entry - cutscene_runs)) : "");
+    prepare();
+    if (run >= message_line_runs(line)) return "";
+    if (!layout_expanded) return text_pool_line(&cutscene_pool,line_at(line)->first_run+run);
+    unsigned start = run_start(line,run), end = run_start(line,run+1);
+    memcpy(layout.run,layout.row[line].text+start,end-start);
+    layout.run[end-start] = 0;
+    return layout.run;
 }
-
-unsigned int        message_run_colour(unsigned int line, unsigned int run)
+unsigned int message_run_colour(unsigned line, unsigned run)
 {
-    const cutscene_run_t *entry = run_at(line, run);
-
-    return (entry ? entry->colour : CUTSCENE_COLOUR_WHITE);
+    prepare();
+    if (run >= message_line_runs(line)) return CUTSCENE_COLOUR_WHITE;
+    return layout_expanded ? layout.row[line].colour[run_start(line,run)] :
+        cutscene_runs[line_at(line)->first_run+run].colour;
 }
-
-/* Characters on the current page, counted across its lines and runs. */
 static unsigned int page_length(void)
 {
-    const cutscene_page_t *page = current_page();
-    unsigned int           total = 0;
-    unsigned int           line, run;
-
-    if (!page)
-        return (0);
-    for (line = 0; line < page->lines; ++line) {
-        const cutscene_line_t *entry =
-            &cutscene_text_lines[page->first_line + line];
-
-        for (run = 0; run < entry->runs; ++run) {
-            const char *text = text_pool_line(&cutscene_pool, entry->first_run + run);
-
-            while (*text++)
-                ++total;
-        }
-    }
-    return (total);
+    unsigned total = 0, line, run;
+    for (line = 0; line < message_lines(); ++line)
+        for (run = 0; run < message_line_runs(line); ++run)
+            total += strlen(message_run_text(line,run));
+    return total;
 }
-
-unsigned int        message_run_visible(unsigned int line, unsigned int run)
+unsigned int message_run_visible(unsigned line, unsigned run)
 {
-    const cutscene_page_t *page = current_page();
-    unsigned int           before = 0;
-    unsigned int           i, j;
-
-    if (!page || line >= page->lines)
-        return (0);
-    /* Count the characters ahead of this run in reading order; whatever is
-    ** left of the reveal belongs to it. */
-    for (i = 0; i <= line; ++i) {
-        const cutscene_line_t *entry =
-            &cutscene_text_lines[page->first_line + i];
-        unsigned int last = (i == line) ? run : entry->runs;
-
-        if (i == line && run >= entry->runs)
-            return (0);
-        for (j = 0; j < last; ++j) {
-            const char *text = text_pool_line(&cutscene_pool, entry->first_run + j);
-
-            while (*text++)
-                ++before;
-        }
-    }
-    if (message_state.revealed <= before)
-        return (0);
-    return (message_state.revealed - before);
+    unsigned before = 0, i, j;
+    if (line >= message_lines() || run >= message_line_runs(line)) return 0;
+    for (i = 0; i <= line; ++i)
+        for (j = 0; j < (i == line ? run : message_line_runs(i)); ++j)
+            before += strlen(message_run_text(i,j));
+    return message_state.revealed > before ? message_state.revealed-before : 0;
 }
 
 bool                message_is_revealing(void)
@@ -306,3 +349,13 @@ bool                message_waits_for_button(void)
 /*
 ** END OF FILE
 */
+
+unsigned message_choices(void) {
+    const cutscene_message_t *m=current();
+    return m && message_is_last_page() && !message_is_revealing() ? m->choices : 0;
+}
+unsigned message_choice(void) { return message_state.choice; }
+void message_choose(int direction) {
+    unsigned count=message_choices();
+    if(count && direction) message_state.choice=(message_state.choice+count+(direction>0?1:-1))%count;
+}

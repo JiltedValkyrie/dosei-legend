@@ -7,11 +7,32 @@ set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 config="$here/../tools/launcher/project_config.py"
-python="$("${DOSEI_PYTHON:-python}" "$config" python)"
-python="$(cygpath -u "$python")"
-sdk="$("$python" "$config" jo_engine)"
-compiler="$(cygpath -u "$sdk")/Compiler/WINDOWS"
+# Linux (incl. WSL): host bash/make/python3 and Jo's Compiler/LINUX toolchain.
+# Windows: MSYS2 and Compiler/WINDOWS, as before.
+linux=0
+if [ "$(uname -s)" = Linux ]; then
+    linux=1
+    cygpath() { printf '%s\n' "${@: -1}"; }   # paths are already POSIX
+    python="${DOSEI_PYTHON:-python3}"
+    sdk="$("$python" "$config" jo_engine)"
+    # gcc 9.3 built by tools/toolchain/build-sh-elf-linux.sh matches the
+    # Windows compiler. Jo's own Compiler/LINUX gcc 8.2 overflows work RAM.
+    sh_elf="${SH_ELF_LINUX:-$(cd "$here/../.." && pwd)/sh-elf-9.3-linux}"
+    if [ ! -x "$sh_elf/bin/sh-elf-gcc" ]; then
+        echo "Linux sh-elf gcc 9.3 missing at $sh_elf: run tools/toolchain/build-sh-elf-linux.sh" >&2
+        exit 1
+    fi
+    compiler="$sh_elf"
+    cc_check="$sh_elf/bin/sh-elf-gcc"
+else
+    python="$("${DOSEI_PYTHON:-python}" "$config" python)"
+    python="$(cygpath -u "$python")"
+    sdk="$("$python" "$config" jo_engine)"
+    compiler="$(cygpath -u "$sdk")/Compiler/WINDOWS"
+    cc_check="$compiler/bin/sh-elf-gcc.exe"
+fi
 oot="$("$python" "$config" oot_decomp)"
+export DOSEI_OOT="$oot"
 roms="$("$python" "$config" oot_roms)"
 prepared="$("$python" "$config" --prepare)"
 mapfile -t dependencies <<< "${prepared//$'\r'/}"
@@ -27,14 +48,30 @@ elif [ "${1:-}" = "--clean" ]; then
     variant=game-clean
     mode_args=(CLEAN_TEST=1)
 fi
+# --quick (after --clean/--hires, before make args): skip asset generation and
+# reuse build/cd + build/generated from the last full build of this variant.
+# For C/C++ (and oot-core) changes only; never for asset/tool changes.
+quick=0
+if [ "${1:-}" = "--quick" ]; then
+    shift
+    quick=1
+    if [ ! -f "$here/build/generated/scene_table.c" ] || [ ! -f "$here/build/cd/LINK.TEX" ]; then
+        echo "--quick needs one full build first" >&2
+        exit 1
+    fi
+fi
 
-if [ ! -x "$compiler/bin/sh-elf-gcc.exe" ]; then
+if [ ! -x "$cc_check" ]; then
     echo "Jo Engine SDK not found at $compiler" >&2
     exit 1
 fi
 
 export PATH="$compiler/Other Utilities:$compiler/bin:$PATH"
 mkdir -p "$here/build/cd" "$here/build/generated"
+# Retired overlength filenames cannot be addressed by Saturn GFS.
+rm -f "$here/build/cd/TREEMOUTH.BIN" "$here/build/cd/BOSSHEART.BIN" \
+      "$here/build/cd/BOSSCLEAR.PCM" "$here/build/cd/BOSSCLEAR.LVL"
+if [ "$quick" != 1 ]; then
 # Freeze the chosen layout once so mid-build GUI changes cannot mix versions.
 "$python" "$here/tools/layout_variants.py" --snapshot "$here/build/generated/layout-build.json" --oot "$oot" --rom-dir "$roms"
 export DOSEI_LAYOUT_SNAPSHOT="$(cygpath -w "$here/build/generated/layout-build.json")"
@@ -82,6 +119,9 @@ fi
 if [ -n "${AUTHORED_OBJ:-}" ]; then
     quad_args+=(--skip-scene)
 fi
+# Ranch must reserve the live actor bank before room registration/staging.
+# The generic-scene cache predates NPC support; do not reuse that oversized bake.
+"$python" "$here/tools/build_all_scenes.py" --oot "$oot" --rom-dir "$roms" --only spot20
 "$python" "$here/tools/build_sgl_scene.py" --texture-path "${TEXTURE_PATH:-hybrid}" --oot "$oot" --rom-dir "$roms" "${quad_args[@]}"
 # Overwrite the generated forest with the authored import. Link's tables and
 # vdp1_layout.h come from the run above and are left alone.
@@ -89,8 +129,11 @@ if [ -n "${AUTHORED_OBJ:-}" ]; then
     "$python" "$here/tools/build_authored_scene.py" --obj "$AUTHORED_OBJ" ${AUTHORED_UV_FROM:+--uv-from "$AUTHORED_UV_FROM"} ${AUTHORED_ATLAS:+--atlas "$AUTHORED_ATLAS"}          ${AUTHORED_UNITS_PER_TEXEL:+--units-per-texel "$AUTHORED_UNITS_PER_TEXEL"}         ${AUTHORED_MAX_TILE:+--max-tile "$AUTHORED_MAX_TILE"}         ${AUTHORED_SPLIT_SPAN:+--split-span "$AUTHORED_SPLIT_SPAN"}         ${AUTHORED_MAX_DEPTH:+--max-depth "$AUTHORED_MAX_DEPTH"}         ${AUTHORED_POLYGON_CAP:+--polygon-cap "$AUTHORED_POLYGON_CAP"}
 fi
 "$python" "$here/tools/build_scene_table.py" --oot "$oot" --rom-dir "$roms"
+"$python" "$here/tools/build_area_music.py" --oot "$oot"
+cp "$here"/build/generated/owl/OWL*.BIN "$here"/build/generated/owl/OWL*.ANM "$here/build/cd/"
 "$python" "$here/tools/build_npc_models.py" --oot "$oot" --rom-dir "$roms"
-cp "$here"/build/generated/npcs/NPC*.BIN "$here"/build/generated/npcs/NPC*.ANM "$here"/build/generated/npcs/NPC*.TRK "$here/build/cd/"
+"$python" "$here/tools/build_npc_sprites.py" --oot "$oot" --rom-dir "$roms"   # NPC sprite sheets (Clean)
+cp "$here"/build/generated/npcs/NPC*.BIN "$here"/build/generated/npcs/NPC*.ANM "$here"/build/generated/npcs/NPC*.TRK "$here"/build/generated/npcs/NPC*.SKN "$here"/build/generated/npcs/NPC*.SPR "$here/build/cd/"
 # Surface bits now live inside S<n>.COL (KBG2); drop the retired .SUR files.
 rm -f "$here"/build/cd/S*.SUR
 "$python" "$here/tools/build_scene_backdrops.py" --oot "$oot" --rom-dir "$roms"
@@ -123,22 +166,30 @@ fi
 "$python" "$here/tools/build_actor_model.py" --oot "$oot" --rom-dir "$roms"
 "$python" "$here/tools/build_horse_model.py" --oot "$oot" --rom-dir "$roms" --horse zelda
 "$python" "$here/tools/build_horse_model.py" --oot "$oot" --rom-dir "$roms" --horse ganon
+"$python" "$here/tools/build_npc_sprites.py" --story-only --out "$here/build/cd"
 "$python" "$here/tools/build_cutscene_props.py" --oot "$oot" --rom-dir "$roms"
 cp "$here/build/generated/BRIDGE.BIN" "$here/build/cd/BRIDGE.BIN"
 cp "$here/build/generated/CHAINS.BIN" "$here/build/cd/CHAINS.BIN"
 cp "$here/build/generated/GATEFIRE.BIN" "$here/build/cd/GATEFIRE.BIN"
 "$python" "$here/tools/build_cutscenes.py" --oot "$oot"
+cp "$here/build/generated/"{GODBODY,GODAURA,TRIFORCE,EMERALD}.BIN "$here/build/cd/"
 "$python" "$here/tools/build_title_paths.py"
 "$python" "$here/tools/build_interior_audio.py" --oot "$oot"
-for area_bank in HOUSE SHOP; do
-    cp "$here/build/generated/${area_bank}_PCM.RAW" "$here/build/cd/$area_bank.PCM"
-    cp "$here/build/generated/${area_bank}_LEVELS.RAW" "$here/build/cd/$area_bank.LVL"
+"$python" "$here/tools/build_gohma.py" --oot "$oot"
+"$python" "$here/tools/build_field_audio.py" --oot "$oot"
+for area_bank in HOUSE SHOP DUNGEON WOODS FAIRY BOSS BOSSCLEAR OWL FAIRYGET FIELD STONE; do
+    disc_bank="$area_bank"
+    [ "$area_bank" != BOSSCLEAR ] || disc_bank=BOSSCLR
+    cp "$here/build/generated/${area_bank}_PCM.RAW" "$here/build/cd/$disc_bank.PCM"
+    cp "$here/build/generated/${area_bank}_LEVELS.RAW" "$here/build/cd/$disc_bank.LVL"
 done
 "$python" "$here/tools/build_cart_tables.py"
 if [ "${STREAM_ROOMS:-1}" = 1 ]; then
     # One bank per (scene, room). Only scenes whose rooms are real geometry
     # have banks; OoT interiors are prerendered backdrops and have none.
-    for bank in "$here"/build/generated/S*R*.MSH "$here"/build/generated/S*R*.TEX "$here"/build/generated/S2R*.MAP "$here"/build/generated/NAVIPOOL.TEX; do
+    # Hyrule Field streams from one KRM2 file; drop its retired KRM1 bank.
+    rm -f "$here/build/cd/SAR0.MSH" "$here/build/cd/SAR0.TEX"
+    for bank in "$here"/build/generated/S*R*.MSH "$here"/build/generated/S*R*.TEX "$here"/build/generated/Z*R*.MSH "$here"/build/generated/Z*R*.TEX "$here"/build/generated/C*R*.MSH "$here"/build/generated/C*R*.TEX "$here"/build/generated/S*R*.STM "$here"/build/generated/C0R*.MAP "$here"/build/generated/NAVIPOOL.TEX; do
         [ -e "$bank" ] && cp "$bank" "$here/build/cd/"
     done
 else
@@ -146,10 +197,10 @@ else
 fi
 cp "$here/build/generated/link_pixels.bin" "$here/build/cd/LINK.TEX"
 cp "$here/build/generated/LINKANIM.BIN" "$here/build/cd/LINKANIM.BIN"
-for rider in GANON ZELDA IMPA HZELDA HGANON; do
-    cp "$here/build/generated/$rider.ANM" "$here/build/cd/$rider.ANM"
-    [ -f "$here/build/generated/$rider.BIN" ] &&         cp "$here/build/generated/$rider.BIN" "$here/build/cd/$rider.BIN"
+for rider in GANON ZELDA IMPA HZELDA HGANON OWLPERCH OWLFLY; do
+    rm -f "$here/build/cd/$rider.ANM" "$here/build/cd/$rider.BIN"
 done
+rm -f "$here"/build/cd/NPC*.BIN "$here"/build/cd/NPC*.ANM "$here"/build/cd/NPC*.TRK "$here"/build/cd/NPC*.SKN
 cp "$here/build/generated/ACTIONS.PCM" "$here/build/cd/ACTIONS.PCM"
 cp "$here/build/generated/OPENING.PCM" "$here/build/cd/OPENING.PCM"
 cp "$here"/build/generated/SFX*.PCM "$here/build/cd/"
@@ -170,16 +221,45 @@ done
 cd "$here"
 "$python" "$here/tools/check_disc_directory.py"
 "$python" "$here/tools/check_forest_budget.py"
+fi  # quick
+# oot-core (fork Phase 0): `./build.sh OOT_CORE=1` mirrors the decomp first.
+# Without it, drop a stale OOTCORE.BIN so it never ships on a normal disc.
+oot_core=0
+for arg in "$@"; do
+    [ "$arg" = OOT_CORE=1 ] && oot_core=1
+done
+if [ "$oot_core" = 1 ]; then
+    "$python" "$here/tools/oot_core_import.py" --oot "$oot"
+    # Phase 2 draw shim meshes (K/Q*.MSH) + build/oot-core/generic_meshes.h.
+    "$python" "$here/tools/build_core_meshes.py" --oot "$oot" --rom-dir "$roms"
+    # Sprite NPCs have no runtime skin models or limb draw registry.
+    printf '/* Sprite-only NPCs: no skinned draw entries. */\n { 0xFFFF, 0, 0, 0 },\n' > "$here/build/oot-core/generic_skins.h"
+    rm -f "$here"/build/cd/N????.BIN "$here"/build/cd/N????.SKN
+    # Sprite sheets + symbol manifest; make resolves keys after object linking.
+    rm -f "$here"/build/cd/G?????.SPR
+    "$python" "$here/tools/build_npc_sprites.py" --oot "$oot" --rom-dir "$roms" --generic-only --out "$here/build/cd"
+else
+    rm -f "$here/build/cd/OOTCORE.BIN"
+fi
 # jo_engine_makefile picks its toolchain from $(OS), which does not reach make
 # from every shell that can run this script; it then falls back to the LINUX
 # binaries and dies with "Exec format error". Compiler/WINDOWS is already
 # required above, so name that toolchain outright instead of letting make guess.
+if [ "$linux" = 1 ]; then
+    # CC/CONV override Jo's Compiler/LINUX (gcc 8.2) choice.
+    make "${mode_args[@]}" \
+        "JO_ENGINE_SRC_DIR=${dependencies[0]}/jo_engine" \
+        "COMPILER_DIR=${dependencies[0]}/Compiler" \
+        "CC=$sh_elf/bin/sh-elf-gcc" "CONV=$sh_elf/bin/sh-elf-objcopy" \
+        "PYTHON=$python" "$@"
+else
 "${dependencies[1]}/usr/bin/make.exe" "${mode_args[@]}" \
     "JO_ENGINE_SRC_DIR=${dependencies[0]}/jo_engine" \
     "COMPILER_DIR=${dependencies[0]}/Compiler" \
     "SHELL=${dependencies[1]}/usr/bin/bash.exe" "PYTHON=$python" \
     "CC=$compiler/bin/sh-elf-gcc.exe" "CONV=$compiler/bin/sh-elf-objcopy.exe" \
     "CUE_MAKER=JoEngineCueMaker.exe" "$@"
+fi
 
 # The work area is laid out from the top of work RAM downwards, so .bss must
 # end below its base. Only the map just produced can prove that.
@@ -190,6 +270,9 @@ if ! "$python" "$here/tools/build_sgl_area.py" --source "$sgl_source" --max-poly
 fi
 
 echo
+if [ "$variant" = game-clean ]; then
+    "$python" "$here/tools/map_build_status.py" --game "$here"
+fi
 echo "built: $here/build/$variant.iso  (cue: build/$variant.cue)"
 if [ "$variant" = game-clean ]; then
     echo "run  : open game/build/game-clean.cue in Kronos"

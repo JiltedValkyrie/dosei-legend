@@ -69,7 +69,7 @@ def parse_obj(path):
         elif tag == 'o':
             obj = parts[1]
         elif tag == 'mtllib':
-            mtllib = parts[1]
+            mtllib = ' '.join(parts[1:])
         elif tag == 'f':
             corners = []
             for token in parts[1:]:

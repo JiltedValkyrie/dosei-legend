@@ -30,9 +30,9 @@
 #define SAVE_FILE_MAGIC_2       'S'
 #define SAVE_FILE_MAGIC_3       'V'
 
-/* v6 keeps v5 layout; migrates old forest pickup index bits to source flags.
-** Versions 2-5 migrate explicitly; unknown versions are rejected. */
-#define SAVE_FILE_VERSION       6
+/* v8 appends visited Deku rooms; v7 added map/compass. Versions 2-7 migrate;
+** v6 introduced source collectible flags without changing the v5 layout. */
+#define SAVE_FILE_VERSION       11
 /* v2 (M2d): v3 appends Deku Stick slot/ammo/upgrade and naviTimer. A v2
 ** block still loads; the new fields start at their new-file values. */
 #define SAVE_FILE_V2_PAYLOAD_BYTES 290
@@ -41,7 +41,13 @@
 #define SAVE_FILE_V3_PAYLOAD_BYTES 295
 #define SAVE_FILE_V4_PAYLOAD_BYTES 298
 /* v5 (M3a) appends Deku Nut owned/ammo/upgrade. */
-#define SAVE_FILE_PAYLOAD_BYTES 301
+#define SAVE_FILE_V6_PAYLOAD_BYTES 301
+#define SAVE_FILE_V7_PAYLOAD_BYTES 302
+#define SAVE_FILE_V8_PAYLOAD_BYTES 304
+#define SAVE_FILE_V9_PAYLOAD_BYTES 336
+#define SAVE_FILE_V10_PAYLOAD_BYTES 338 /* cosmetic tunic and Fairy Ocarina */
+/* v11 appends original-scene flags, dungeon inventory and age/time/cutscene. */
+#define SAVE_FILE_PAYLOAD_BYTES (SAVE_FILE_V10_PAYLOAD_BYTES + SAVE_SOURCE_SCENE_COUNT * 16 + SAVE_DUNGEON_ITEMS_COUNT + SAVE_DUNGEON_KEYS_COUNT + 62)
 #define SAVE_FILE_BYTES         (8 + SAVE_FILE_PAYLOAD_BYTES + 2)
 
 /* Why a load was refused, so the file select can say something true rather
@@ -53,7 +59,8 @@ typedef enum
     SAVE_FILE_BAD_MAGIC,        /* not one of ours */
     SAVE_FILE_BAD_VERSION,      /* ours, but a layout we no longer read */
     SAVE_FILE_BAD_CHECKSUM,     /* ours and current, but corrupt */
-    SAVE_FILE_BAD_SIZE
+    SAVE_FILE_BAD_SIZE,
+    SAVE_FILE_DEVICE_ERROR      /* read failed; never offer to overwrite as NEW FILE */
 }               save_file_status;
 
 /* What the file select needs to draw one slot without loading it. */

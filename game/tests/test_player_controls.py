@@ -331,31 +331,74 @@ class PlayerControls(unittest.TestCase):
         self.hold(Z, steps=5)
         self.assertFalse(self.lib.control_recenter())
 
-    # --- B walk/run toggle ------------------------------------------------
+    # --- B: hold walks, tap cancels / puts the item away -------------------
 
     def test_gameplay_starts_in_run_mode(self):
         self.hold(UP)
         self.assertFalse(self.lib.control_walking())
 
-    def test_b_toggles_walk_and_run_once_per_press(self):
-        self.tap(B)
-        self.assertTrue(self.lib.control_walking())
-        self.tap(B)
-        self.assertFalse(self.lib.control_walking())
-
-    def test_held_b_does_not_repeat_the_toggle(self):
+    def test_held_b_walks_and_release_returns_to_run(self):
         self.hold(B, steps=30)
         self.assertTrue(self.lib.control_walking())
+        self.hold(0)
+        self.assertFalse(self.lib.control_walking())
+
+    def test_held_b_does_not_cancel(self):
+        self.hold(B, steps=30)
+        self.assertFalse(self.lib.control_cancel())
+        self.hold(0)
+        self.assertFalse(self.lib.control_cancel())
+
+    def test_short_b_tap_cancels_once_on_release(self):
+        self.lib.control_sample(B)
+        self.lib.control_step(True)
+        self.assertFalse(self.lib.control_cancel())
+        self.lib.control_sample(0)
+        self.lib.control_step(True)
+        self.assertTrue(self.lib.control_cancel())
+        self.hold(0)
+        self.assertFalse(self.lib.control_cancel())
 
     def test_short_b_tap_survives_a_slow_frame(self):
-        # One VBlank down, many VBlanks up, and only then a rendered frame.
         self.tap(B, vblanks=20)
-        self.assertTrue(self.lib.control_walking())
+        self.assertTrue(self.lib.control_cancel())
 
-    def test_walk_mode_is_persistent_across_steps(self):
+    def test_b_press_that_closes_a_box_does_not_act_again_on_release(self):
+        self.lib.player_input_set_dialogue(True)
+        self.lib.control_sample(B)
+        self.lib.control_step(True)
+        self.assertTrue(self.lib.control_cancel())
+        self.lib.player_input_set_dialogue(False)     # the box closed
+        self.hold(B, steps=30)
+        self.assertFalse(self.lib.control_walking())  # claimed press never walks
+        self.assertFalse(self.lib.control_cancel())
+        self.hold(0)
+        self.assertFalse(self.lib.control_cancel())   # no put-away on release
+
+    def test_b_press_in_first_person_view_is_claimed(self):
+        self.lib.player_input_set_view_look(True)
+        self.lib.control_sample(B)
+        self.lib.control_step(True)
+        self.assertTrue(self.lib.control_cancel())
+        self.lib.player_input_set_view_look(False)
+        self.hold(0)
+        self.assertFalse(self.lib.control_cancel())
+
+    def test_claimed_b_survives_a_slow_frame(self):
+        self.lib.player_input_set_dialogue(True)
+        self.tap(B, vblanks=20)                       # press+release, one step
+        self.assertTrue(self.lib.control_cancel())
+        self.lib.player_input_set_dialogue(False)
+        self.hold(0)
+        self.assertFalse(self.lib.control_cancel())
+
+    def test_next_b_tap_after_a_claimed_press_works(self):
+        self.lib.player_input_set_dialogue(True)
         self.tap(B)
-        self.hold(UP, steps=10)
-        self.assertTrue(self.lib.control_walking())
+        self.lib.player_input_set_dialogue(False)
+        self.hold(0)
+        self.tap(B)
+        self.assertTrue(self.lib.control_cancel())
 
     # --- Y jump edges and rejection ---------------------------------------
 
@@ -451,6 +494,15 @@ class PlayerControls(unittest.TestCase):
         self.assertEqual(self.lib.control_move_buttons(), LEFT)
         self.assertTrue(self.lib.control_target_held())
         self.assertFalse(self.lib.control_look_mode())
+
+    def test_c_release_survives_aim_view_without_movement(self):
+        self.hold(C | DOWN)
+        self.lib.player_input_set_view_look(True)
+        self.hold(0)
+        self.assertEqual(self.lib.control_c_released(), C_DOWN)
+        self.assertEqual(self.lib.control_move_buttons(), 0)
+        self.hold(0)
+        self.assertEqual(self.lib.control_c_released(), C_NONE)
 
     def test_look_outranks_c(self):
         self.lib.player_input_set_view_look(True)
@@ -604,12 +656,12 @@ class PlayerControls(unittest.TestCase):
         self.assertEqual(self.travel(UP), 1650)
 
     def test_walk_mode_is_slower_than_run(self):
-        self.tap(B)
+        self.hold(B)
         self.assertTrue(self.lib.control_walking())
         self.assertEqual(self.travel(UP), 900)   # 3 units/step for 10 s
 
     def test_walk_diagonals_are_normalized(self):
-        self.tap(B)
+        self.hold(B)
         for buttons, yaw in ((UP, 0), (UP | RIGHT, 0), (UP, 8192),
                              (UP | RIGHT, 5000)):
             self.assertAlmostEqual(self.travel(buttons, yaw), 900, delta=4)
@@ -622,7 +674,7 @@ class PlayerControls(unittest.TestCase):
     def test_walk_speed_selects_the_walk_clip_from_actual_travel(self):
         """Animation must follow real movement, not the held button."""
         self.lib.kokiri_camera_reset_actor_motion()
-        self.tap(B)
+        self.hold(B)
         p, angle, pitch = Position(), ctypes.c_uint16(), ctypes.c_int32()
         self.lib.link_anim_reset_state()
         for _ in range(60):
@@ -654,8 +706,7 @@ class PlayerControls(unittest.TestCase):
             if analog:
                 self.analog(y=64)  # above the turn-only band
             else:
-                self.tap(B)
-                self.hold(UP)
+                self.hold(B | UP)
             p = Position()
             heading = self.lib.control_motion_heading(5000)
             speed = self.lib.control_motion_speed()

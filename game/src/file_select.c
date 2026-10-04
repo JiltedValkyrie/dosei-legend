@@ -11,7 +11,7 @@ file_select_t       file_select;
 
 /* Row detail text is rebuilt into this on request. No stdio on the SH-2 hot
 ** path, so the numbers are formatted by hand. */
-static char         detail[32];
+static char         detail[40];
 
 static char        *put_text(char *at, const char *text)
 {
@@ -240,6 +240,11 @@ const char         *file_select_row_detail(unsigned int row)
         at = put_text(at, "  EMERALD");
     *at = '\0';
     return (detail);
+}
+const char *file_select_row_location(unsigned int row)
+{
+    return row<SAVE_FILE_SLOTS && file_select.status[row]==SAVE_FILE_OK ?
+        save_scene_name(file_select.summary[row].scene_id):"";
 }
 
 const char         *file_select_open_label(unsigned int row)

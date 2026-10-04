@@ -7,11 +7,12 @@ param(
 
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'project-config.ps1')
+. (Join-Path $PSScriptRoot 'mednafen-saves.ps1')
 $project = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../..'))
 $variants = @(
-    [pscustomobject]@{ Id='normal'; Name='Dosei Legend - standard (320x240)'; Image='game/build/game.cue'; Batch='game/run-kronos.bat'; Note='Jo Engine game: Link, forest, controls and music.' },
-    [pscustomobject]@{ Id='hires'; Name='Dosei Legend - hi-res (320x480i)'; Image='game/build/game-hires.cue'; Batch='game/run-kronos-hires.bat'; Note='Same Jo game, native interlaced vertical-resolution experiment.' },
-    [pscustomobject]@{ Id='clean'; Name='Dosei Legend - clean player test'; Image='game/build/game-clean.cue'; Batch='game/run-kronos-clean.bat'; Note='320x240 player test with jump. No in-game debug overlay; safety checks retained.' }
+    [pscustomobject]@{ Id='clean'; Name='Play Dosei Legend (Standard)'; Image='game/build/game-clean.cue'; Batch='game/run-kronos-clean.bat'; Note='Play at 320x240 without the in-game debug overlay.' },
+    [pscustomobject]@{ Id='hires'; Name='Play Dosei Legend (320x480i)'; Image='game/build/game-hires.cue'; Batch='game/run-kronos-hires.bat'; Note='Play at 320x480i interlaced resolution.' },
+    [pscustomobject]@{ Id='normal'; Name='Debug Mode'; Image='game/build/game.cue'; Batch='game/run-kronos.bat'; Note='320x240 development build with diagnostic overlay.' }
 )
 
 function Get-ImagePath($entry) { Join-Path $project $entry.Image }
@@ -65,6 +66,20 @@ function Start-Variant($entry) {
     $paths = Get-ProjectPaths
     $problems = @(Get-PathProblems $paths)
     if ($problems.Count) { throw ($problems -join "`r`n") }
+    $emu = Get-EmulatorSettings
+    if ($emu.emulator -eq 'mednafen') {
+        if (Get-Process -Name mednafen -ErrorAction SilentlyContinue) {
+            throw 'Mednafen is already running. Close it before starting another variant.'
+        }
+        Initialize-MednafenSaves -Executable $paths.mednafen -Image (Get-ImagePath $entry)
+        # Mednafen has no GUI: the CUE is the last argument. Command-line
+        # settings override mednafen.cfg for this run only.
+        $medArgs = @('-ss.cart', $emu.cart, '-video.fs', $emu.fullscreen)
+        if ($emu.extra_args) { $medArgs += $emu.extra_args }
+        $medArgs += ('"' + (Get-ImagePath $entry) + '"')
+        Start-Process -FilePath $paths.mednafen -WorkingDirectory (Split-Path $paths.mednafen -Parent) -WindowStyle Normal -ArgumentList $medArgs | Out-Null
+        return
+    }
     # Do not silently run two competing performance experiments.
     if (Get-Process -Name kronos -ErrorAction SilentlyContinue) {
         throw 'Kronos is already running. Close it before starting another variant.'
@@ -96,7 +111,7 @@ if ($Variant) {
 }
 
 $form = New-Object Windows.Forms.Form
-$form.Text = 'Dosei Legend - Kronos variants'
+$form.Text = 'Dosei Legend - launcher'
 $form.ClientSize = New-Object Drawing.Size(980, 410)
 $form.StartPosition = 'CenterScreen'
 $form.FormBorderStyle = 'FixedDialog'
@@ -104,8 +119,8 @@ $form.MaximizeBox = $false
 $form.Font = New-Object Drawing.Font('Segoe UI', 10)
 $menu = New-Object Windows.Forms.MenuStrip
 $configMenu = New-Object Windows.Forms.ToolStripMenuItem('Config')
-$pathsItem = $configMenu.DropDownItems.Add('Paths...')
-$pathsItem.Add_Click({ Show-ConfigDialog $form })
+$pathsItem = $configMenu.DropDownItems.Add('Paths and emulator...')
+$pathsItem.Add_Click({ Show-ConfigDialog $form; Update-EmulatorStatus })
 $guideItem = $configMenu.DropDownItems.Add('Developer setup guide')
 $guideItem.Add_Click({ Start-Process (Join-Path $project 'tools/launcher/SETUP.md') })
 [void]$menu.Items.Add($configMenu)
@@ -119,7 +134,7 @@ $list.View = 'Details'
 $list.FullRowSelect = $true
 $list.MultiSelect = $false
 $list.HideSelection = $false
-foreach ($column in @(@('Variant', 275), @('Status', 190), @('Image built (local)', 285))) {
+foreach ($column in @(@('Variant', 340), @('Status', 190), @('Image built (local)', 285))) {
     [void]$list.Columns.Add($column[0], $column[1])
 }
 $form.Controls.Add($list)
@@ -130,7 +145,11 @@ $form.Controls.Add($details)
 $status = New-Object Windows.Forms.Label
 $status.Location = New-Object Drawing.Point(16, 350)
 $status.Size = New-Object Drawing.Size(490, 48)
-$status.Text = 'Rebuild builds the images; Run starts Kronos. Close Kronos between comparisons.'
+function Update-EmulatorStatus {
+    $name = if ((Get-EmulatorSettings).emulator -eq 'mednafen') { 'Mednafen' } else { 'Kronos' }
+    $status.Text = "Emulator: $name (Config to change). Rebuild builds the images; Run starts $name."
+}
+Update-EmulatorStatus
 $form.Controls.Add($status)
 $refresh = New-Object Windows.Forms.Button
 $refresh.Text = 'Refresh'
@@ -156,7 +175,7 @@ function Update-Selection {
     $launch.Enabled = (Test-Image $entry) -eq 'Ready'
 }
 function Update-List {
-    $selected = 'normal'
+    $selected = 'clean'
     if ($list.SelectedItems.Count) { $selected = $list.SelectedItems[0].Tag.Id }
     $list.Items.Clear()
     foreach ($entry in $variants) {
@@ -179,13 +198,13 @@ $runAction = {
     try {
         $entry = $list.SelectedItems[0].Tag
         Start-Variant $entry
-        $status.Text = 'Started: ' + $entry.Name + '. Close Kronos before the next run.'
+        $status.Text = 'Started: ' + $entry.Name + '. Close the emulator before the next run.'
     } catch { [Windows.Forms.MessageBox]::Show($_.Exception.Message, 'Kronos launcher') | Out-Null }
 }
 $launch.Add_Click($runAction)
 $list.Add_DoubleClick($runAction)
 $rebuild.Add_Click({
-    $preselect = 'normal'
+    $preselect = 'clean'
     if ($list.SelectedItems.Count) { $preselect = $list.SelectedItems[0].Tag.Id }
     try {
         $outcome = Show-BuildDialog -Owner $form -Project $project -Preselect $preselect
@@ -205,12 +224,13 @@ if ($SmokeTest) {
     # Construct real controls without showing a window or starting Kronos.
     $null = $form.Handle
     $null = $list.Handle
+    $list.Items[0].Selected = $false
     $list.Items[1].Selected = $true
     Update-Selection
     if ($list.Items.Count -ne $variants.Count) { throw 'Variant list incomplete' }
     if ($details.Text -notlike '*game-hires*') { throw 'Selection details missing' }
     $list.Items[1].Selected = $false
-    $list.Items[2].Selected = $true
+    $list.Items[0].Selected = $true
     Update-Selection
     if ($details.Text -notlike '*game-clean.cue*') { throw 'Clean selection details missing' }
     Write-Output 'GUI controls, hi-res and clean selection passed; no emulator launched.'

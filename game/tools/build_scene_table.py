@@ -70,11 +70,87 @@ SCENES = (
     dict(prefix='kokiri_home5', rooms=1, shape='image',
          scene='SCENE_SARIAS_HOUSE', sfx=0,
          save='SAVE_SCENE_SARIAS_HOUSE', name="Saria's House"),
-    # M5 entry shell: only room 0 is playable; source has 12 rooms.
-    dict(prefix='ydan', rooms=1, source_rooms=12, shape='mesh',
-         scene='SCENE_DEKU_TREE', sfx=0,
+    # M5: all source room banks; shutters retain their actual gate conditions.
+    dict(prefix='ydan', rooms=12, shape='mesh',
+         scene='SCENE_DEKU_TREE', sfx=2,
          save='SAVE_SCENE_DEKU_TREE', name='Inside the Deku Tree'),
+    dict(prefix='spot10', rooms=10, shape='mesh',
+         scene='SCENE_LOST_WOODS', sfx=1,
+         save='SAVE_SCENE_LOST_WOODS', name='Lost Woods'),
+    dict(prefix='ydan_boss', rooms=2, shape='mesh',
+         scene='SCENE_DEKU_TREE_BOSS', sfx=3,
+         save='SAVE_SCENE_DEKU_TREE_BOSS', name="Gohma's Lair"),
+    dict(prefix='spot00', rooms=1, shape='mesh',
+         scene='SCENE_HYRULE_FIELD', sfx=1,
+         save='SAVE_SCENE_HYRULE_FIELD', name='Hyrule Field'),
 )
+# All-scenes registration: every other decomp scene whose rooms the generic
+# importer baked (tools/build_all_scenes.py -> build/all-scenes/) and that fits
+# the runtime's current buffers. Appended after the slice scenes, so their
+# ids (and save ids) never move. A scene that does not fit is listed in
+# build/all-scenes/registered.json with the reason, never silently dropped.
+# Their save ids are SAVE_SCENE_COUNT + n: unique (respawn finds the scene)
+# but outside the flag store, so no persistent flags yet (save_state.c guards).
+RUNTIME_CAPS = dict(vertices=2047, polygons=1916, tiles=1426, pixel_bytes=353536,
+                    objects=59, collision=2321)   # kokiri_scene.h, scene_flow.c
+ALL_SCENES_DIR = pathlib.Path(__file__).resolve().parents[1] / 'build/all-scenes'
+
+
+def _room_header(path):
+    magic, vertices, polygons, tiles, pixel_bytes, objects = struct.unpack('>6I', path.read_bytes()[:24])
+    return dict(vertices=vertices, polygons=polygons, tiles=tiles, pixel_bytes=pixel_bytes, objects=objects)
+
+
+def _extra_scenes():
+    report_path = ALL_SCENES_DIR / 'scene_preflight.json'
+    cache_path = ALL_SCENES_DIR / 'registered.json'
+    if not report_path.exists():
+        return ()
+    if cache_path.exists() and cache_path.stat().st_mtime >= report_path.stat().st_mtime:
+        return tuple(e for e in json.loads(cache_path.read_text())['scenes'] if e['status'] == 'ok')
+    known = {e['prefix'] for e in SCENES}
+    by_scene = {}
+    for row in json.loads(report_path.read_text()):
+        by_scene.setdefault(row['prefix'], dict(scene=row['scene'], id=row['id'], rows=[]))['rows'].append(row)
+    oot = pathlib.Path(__import__('os').environ.get('DOSEI_OOT') or 'D:/Workspace-Claude/game-decomps/n64/oot')
+    out = []
+    for prefix, info in sorted(by_scene.items(), key=lambda kv: kv[1]['id']):
+        if prefix in known:
+            continue
+        rows = sorted((r for r in info['rows'] if r.get('room') is not None), key=lambda r: r['room'])
+        entry = dict(prefix=prefix, rooms=len(rows), scene=info['scene'], save='SAVE_SCENE_NONE',
+                     name=info['scene'][6:].replace('_', ' ').title(), generic=True, status='ok')
+        statuses = {r['status'] for r in rows}
+        sfx = 2 if '/dungeons/' in str(next(oot.glob('extracted/*/assets/scenes/*/' + prefix), '')) else 1
+        if not rows or 'blocked' in statuses or statuses == {'baked', 'image'}:
+            entry['status'] = 'rooms: ' + ', '.join('%d %s' % (r['room'], r.get('error', r['status']))
+                                                     for r in rows if r['status'] != 'baked')[:300]
+        elif statuses == {'image'}:
+            entry.update(shape='image', sfx=0)
+        else:
+            entry.update(shape='mesh', sfx=sfx)
+            for r in rows:
+                size = _room_header(ALL_SCENES_DIR / ('%s_room_%d' % (prefix, r['room'])) / 'room.msh')
+                over = [k for k, v in size.items() if v > RUNTIME_CAPS[k]]
+                if over:
+                    entry['status'] = 'room %d over runtime caps: %s' % (r['room'], ', '.join(
+                        '%s %d > %d' % (k, size[k], RUNTIME_CAPS[k]) for k in over))
+                    break
+        if entry['status'] == 'ok':
+            try:
+                segs = source.extract(oot, None, prefix=prefix)
+                tris = len(source.collision_surfaces(segs[prefix + '_scene']))
+                if tris > RUNTIME_CAPS['collision']:
+                    entry['status'] = 'collision %d > %d triangles' % (tris, RUNTIME_CAPS['collision'])
+            except Exception as error:  # noqa: BLE001
+                entry['status'] = 'collision: %s' % error
+        out.append(entry)
+    cache_path.write_text(json.dumps(dict(scenes=out), indent=1) + '\n')
+    return tuple(e for e in out if e['status'] == 'ok')
+
+
+SCENES = SCENES + tuple(dict(e, save='(SAVE_SCENE_COUNT + %d)' % n)
+                        for n, e in enumerate(_extra_scenes()))
 
 # A new file begins here: Link's house, spawn 0 (the bed).
 NEW_GAME_SCENE = 0
@@ -95,6 +171,26 @@ def entrance_table(oot):
     if not table:
         sys.exit('entrance table parsed as empty -- has its format changed?')
     return table
+
+
+def entrance_metadata(oot):
+    """Keep source BGM ownership and transition/camera presentation metadata."""
+    rows = {}
+    pattern = re.compile(r'/\*\s*(0x[0-9A-Fa-f]+)\s*\*/\s*DEFINE_ENTRANCE\(\s*(\w+)\s*,\s*(\w+)\s*,\s*(\d+)\s*,\s*(true|false)\s*,\s*(true|false)\s*,\s*(.+)\)', re.M)
+    for hit in pattern.finditer((oot / 'include/tables/entrance_table.h').read_text(encoding='utf-8')):
+        depth, split = 0, 0
+        for at, char in enumerate(hit[7]):
+            if char == '(':
+                depth += 1
+            elif char == ')':
+                depth -= 1
+            elif char == ',' and depth == 0:
+                split = at
+                break
+        rows[int(hit[1], 16)] = dict(name=hit[2], scene=hit[3], spawn=int(hit[4]),
+                                   keep_music=hit[5]=='true', title=hit[6]=='true',
+                                   enter_transition=hit[7][:split].strip(), exit_transition=hit[7][split+1:].strip())
+    return rows
 
 
 def fixed_camera(scene):
@@ -165,7 +261,36 @@ COLLISION_TRIANGLES_MAX = 2321      # scene_flow.c SCENE_COLLISION_MAX
 COLLISION_SURFACES_MAX = 256        # info keeps an 8-bit surface index
 
 
-def collision_file(data):
+def shutter_cap(poly, doors):
+    """Recognize only the ROM's rectangular seals inside shutter apertures.
+
+    Free walking replaces the source's scripted door traversal. The shutter
+    actor owns closed-door player blocking; these static seals must not block
+    the same aperture after it lifts. Keep camera/projectile flags and every
+    frame, lintel, floor and unrelated wall unchanged.
+    """
+    import math
+    if abs(poly['normal'][1]) > 100:
+        return False
+    for door in doors:
+        if door['kind'] < 8:
+            continue
+        angle = door['yaw'] * math.pi / 32768
+        sn, cs = math.sin(angle), math.cos(angle)
+        points = [((v[0]-door['x'])*cs-(v[2]-door['z'])*sn,
+                   v[1]-door['y'],
+                   (v[0]-door['x'])*sn+(v[2]-door['z'])*cs)
+                  for v in poly['vertices']]
+        xs, ys, zs = zip(*points)
+        if (min(xs) < -25 and max(xs) > 25 and
+                all(abs(x) <= 72 for x in xs) and min(ys) == 0 and
+                max(ys) in (100, 160) and all(y in (0, max(ys)) for y in ys) and
+                all(abs(z) <= 12 for z in zs) and max(zs)-min(zs) < 2):
+            return True
+    return False
+
+
+def collision_file(data, doors=()):
     polys = data['polys']
     if len(polys) > COLLISION_TRIANGLES_MAX:
         sys.exit('collision: %d triangles > %d' % (len(polys), COLLISION_TRIANGLES_MAX))
@@ -183,7 +308,7 @@ def collision_file(data):
         out += struct.pack('>18h', *([n for v in abc for n in v] + poly['normal']
                                      + minimum + maximum))
     for poly in polys:
-        out += struct.pack('>H', poly['surface'] | (poly['ignore'] << 8)
+        out += struct.pack('>H', poly['surface'] | ((poly['ignore'] | (2 if shutter_cap(poly, doors) else 0)) << 8)
                            | (poly['conveyor'] << 11))
     if len(polys) & 1:
         out += b'\0\0'
@@ -238,9 +363,14 @@ def scene_doors(index, prefix, scene, entrances, by_scene_name, report):
         return []
     # The exit list stores no count, so the highest exitIndex any polygon
     # carries is exactly how far it is safe to read.
-    exits = source.exit_list(scene, highest)
-    doors = []
-    for poly in surfaces:
+    from build_room_scene import transition_layers
+    doors = {}
+    for layer, commands in transition_layers(scene):
+      pointer = next((address & 0xffffff for cmd, _, address in commands if cmd == 0x13), None)
+      if pointer is None:
+        continue
+      exits = struct.unpack_from('>%dH' % highest, scene, pointer)
+      for poly in surfaces:
         slot = poly['exit']
         if not slot:
             continue
@@ -248,20 +378,20 @@ def scene_doors(index, prefix, scene, entrances, by_scene_name, report):
         if entrance not in entrances:
             report.append('%s exitIndex %d: entrance 0x%03X is not in the '
                           'decomp table' % (prefix, slot, entrance))
-            continue
-        target, spawn = entrances[entrance]
+        target, spawn = entrances.get(entrance+layer, ('UNRESOLVED_ENTRANCE',0))
         if target not in by_scene_name:
-            report.append('%s exitIndex %d leads to %s, which this slice does '
-                          'not contain -- door left inert'
-                          % (prefix, slot, target))
-            continue
+            report.append('%s layer %d exitIndex %d leads to missing %s -- blocked boundary'
+                          % (prefix, layer, slot, target))
         abc = poly['vertices']
-        doors.append(dict(scene=index, entrance=entrance,
-                          target=by_scene_name[target], spawn=spawn,
+        key = (entrance, target, spawn, tuple(tuple(v) for v in abc))
+        if key not in doors:
+            doors[key] = dict(scene=index, entrance=entrance,
+                          target=by_scene_name.get(target,255), spawn=spawn,
                           y=sum(v[1] for v in abc) // 3,
                           xz=[(v[0], v[2]) for v in abc],
-                          target_name=target))
-    return doors
+                          target_name=target, layers=0)
+        doors[key]['layers'] |= 1 << layer
+    return list(doors.values())
 
 
 def main():
@@ -270,11 +400,19 @@ def main():
     ap.add_argument('--out', type=pathlib.Path, default=here / 'build/generated')
     ap.add_argument('--cd', type=pathlib.Path, default=here / 'build/cd')
     ap.add_argument('--oot', type=pathlib.Path,
-                    default=pathlib.Path('D:/Workspace-Claude/game-decomps/n64/oot'))
+                    default=pathlib.Path((__import__('os').environ.get('DOSEI_OOT') or 'D:/Workspace-Claude/game-decomps/n64/oot')))
     ap.add_argument('--rom-dir', default=None)
     args = ap.parse_args()
 
+    from build_room_scene import transitions
+
     entrances = entrance_table(args.oot)
+    entrance_meta = entrance_metadata(args.oot)
+    scene_ids = {}
+    for line in (args.oot / 'include/tables/scene_table.h').read_text(encoding='utf-8').splitlines():
+        hit = re.match(r'/\*\s*(0x[0-9A-Fa-f]+)\s*\*/\s*DEFINE_SCENE\(\s*\w+\s*,\s*\w+\s*,\s*(\w+)', line)
+        if hit:
+            scene_ids[hit.group(2)] = int(hit.group(1), 16)
     by_scene_name = {entry['scene']: i for i, entry in enumerate(SCENES)}
 
     args.out.mkdir(parents=True, exist_ok=True)
@@ -288,12 +426,20 @@ def main():
         surfaces = source.collision_surfaces(scene)
         collision = source.collision_data(scene)
         (args.cd / asset_names.scene_asset(index, 'COL')).write_bytes(
-            collision_file(collision))
+            collision_file(collision, transitions(
+                args.oot, args.rom_dir, prefix=entry['prefix'], room_count=entry['rooms'],
+                strict=not entry.get('generic'), all_layers=True)))
         flags = [wall_flags(collision, poly) for poly in collision['polys']]
         first_spawn = len(spawns)
         entrance = source.scene_header(scene)[0x06][0]
         entrance_at = int.from_bytes(entrance[4:8], 'big') & 0xFFFFFF
-        for spawn_id, spawn in enumerate(source.spawn_points(scene)):
+        source_spawns = source.spawn_points(scene)
+        for spawn_id in range(len(source_spawns)):
+            source_spawn_id = scene[entrance_at + spawn_id * 2]
+            if source_spawn_id >= len(source_spawns):
+                raise ValueError('%s entrance spawn %d names missing actor spawn %d' %
+                                 (entry['prefix'], spawn_id, source_spawn_id))
+            spawn = source_spawns[source_spawn_id]
             room = scene[entrance_at + spawn_id * 2 + 1]
             spawns.append(dict(scene=index, room=room, **spawn))
         camera = fixed_camera(scene) if entry['shape'] == 'image' else None
@@ -305,7 +451,12 @@ def main():
         scene_doors_found = scene_doors(index, entry['prefix'], scene,
                                         entrances, by_scene_name, report)
         doors.extend(scene_doors_found)
-        summaries.append(dict(index=index, prefix=entry['prefix'],
+        for door in scene_doors_found:
+            door['keep_music'] = int(entrance_meta.get(door['entrance'],{}).get('keep_music',False))
+        # SCENE_CMD_SOUND_SETTINGS (0x15): byte 7 = seqId (NA_BGM_*), 0x7F none.
+        sound = source.scene_header(scene).get(0x15)
+        seq = sound[0][7] if sound else 0x7F
+        summaries.append(dict(index=index, prefix=entry['prefix'], seq=seq,
                               climbable=sum(1 for b in flags if b & 0x0E),
                               ladders=sum(1 for b in flags if b & 0x08),
                               crawlspaces=sum(1 for b in flags if b & 0x30),
@@ -362,8 +513,12 @@ def main():
               '# define SCENE_COUNT       %d' % len(SCENES),
               '# define SCENE_SPAWN_COUNT %d' % len(spawns),
               '# define SCENE_DOOR_COUNT  %d' % max(len(doors), 1),
+              '# define SCENE_ENTRANCE_COUNT %d' % (max(entrances)+1),
               '# define SCENE_NEW_GAME_SCENE %d' % NEW_GAME_SCENE,
-              '# define SCENE_NEW_GAME_SPAWN %d' % NEW_GAME_SPAWN, '']
+              '# define SCENE_NEW_GAME_SPAWN %d' % NEW_GAME_SPAWN,
+              '/* First all-scenes (generic import) entry; == SCENE_COUNT if none. */',
+              '# define SCENE_GENERIC_FIRST %d' % next((i for i, e in enumerate(SCENES)
+                                                        if e.get('generic')), len(SCENES)), '']
     for index, entry in enumerate(SCENES):
         header.append('# define SCENE_%s %d'
                       % (entry['prefix'].upper().replace('-', '_'), index))
@@ -381,10 +536,12 @@ def main():
                '       no FPU, so the tangent is never taken at runtime. */',
                '    int16_t  cam_dist;',
                '    uint8_t  rooms;       /* room banks on the disc */',
-               '    uint8_t  first_spawn; /* index into scene_spawns */',
+               '    uint16_t first_spawn; /* index into scene_spawns */',
                '    uint8_t  spawns;',
                '    uint8_t  save_scene;  /* SAVE_SCENE_* for the flag store */',
                '    uint8_t  sfx_bank;    /* build_action_audio AREA_BANKS index */',
+               '    uint8_t  seq;         /* scene header seqId (NA_BGM_*), 0x7F none */',
+               '    uint8_t  oot_scene;   /* decomp SceneId (include/tables/scene_table.h) */',
                '} scene_entry_t;', '',
                'typedef struct {',
                '    int16_t  x, y, z;',
@@ -401,14 +558,25 @@ def main():
                '    uint8_t  scene;       /* the side Link must be on */',
                '    uint8_t  target;      /* scene to load */',
                '    uint8_t  spawn;       /* spawn within that scene */',
+               '    uint8_t  keep_music;  /* source entrance BGM ownership */',
+               '    uint16_t entrance;    /* original entrance ID for save/respawn */',
+               '    uint32_t layers;      /* original header setup mask */',
                '} scene_door_t;', '',
+               'typedef struct { uint8_t target,spawn,keep_music,reserved; } scene_entrance_t;',
+               'extern const scene_entrance_t *scene_entrances;', '',
                'extern const scene_entry_t scene_entries[SCENE_COUNT];',
-               'extern const scene_spawn_t scene_spawns[SCENE_SPAWN_COUNT];',
-               'extern const scene_door_t  scene_doors[SCENE_DOOR_COUNT];',
+               '/* Spawns and doors live in SCENETAB.BIN (too big for work RAM',
+               '   with every scene); scene_table_load reads it once at boot. */',
+               'extern const scene_spawn_t *scene_spawns;',
+               'extern const scene_door_t  *scene_doors;',
+               '# include <stdbool.h>',
+               'bool scene_table_load(void);',
+               '/* Level-select label (decomp SceneId name), from SCENETAB.BIN. */',
+               'const char *scene_name(unsigned int scene);',
                '#endif', '']
     (args.out / 'scene_table.h').write_text('\n'.join(header))
 
-    body = [banner, '', '#include "scene_table.h"', '#include "save_state.h"', '',
+    body = [banner, '', '#include <jo/jo.h>', '#include "scene_table.h"', '#include "save_state.h"', '',
             'const scene_entry_t scene_entries[SCENE_COUNT] = {']
     for entry, summary, camera in zip(SCENES, summaries, cameras):
         cam = camera or dict(x=0, y=0, z=0, pitch=0, yaw=0, fov=0)
@@ -416,31 +584,58 @@ def main():
         dist = 0
         if half > 0:
             dist = int(round(120.0 / math.tan(math.radians(half))))
-        body.append('    { %d, %d, %d, %d, 0x%04X, 0x%04X, %d, %d, %d, %d, %d, %s, %d },'
+        body.append('    { %d, %d, %d, %d, 0x%04X, 0x%04X, %d, %d, %d, %d, %d, %s, %d, %d, %d },'
                     % (1 if entry['shape'] == 'image' else 0,
                        cam['x'], cam['y'], cam['z'],
                        cam['pitch'] & 0xFFFF, cam['yaw'] & 0xFFFF, cam['fov'],
                        dist, entry['rooms'], summary['first_spawn'],
-                       summary['spawns'], entry['save'], entry['sfx']))
-    body += ['};', '', 'const scene_spawn_t scene_spawns[SCENE_SPAWN_COUNT] = {']
+                       summary['spawns'], entry['save'], entry['sfx'], summary['seq'],
+                       scene_ids[entry['scene']]))
+    # Big-endian records in the C struct layout (SH-2 is big-endian):
+    # scene_spawn_t 10 bytes, scene_door_t 24 bytes (u32 aligned).
+    blob = bytearray()
     for spawn in spawns:
-        body.append('    { %d, %d, %d, 0x%04X, %d, %d },'
-                    % (spawn['x'], spawn['y'], spawn['z'], spawn['yaw'],
-                       spawn['scene'], spawn['room']))
-    body += ['};', '', 'const scene_door_t scene_doors[SCENE_DOOR_COUNT] = {']
-    for door in doors:
-        xs = ','.join(str(x) for x, _ in door['xz'])
-        zs = ','.join(str(z) for _, z in door['xz'])
-        body.append('    { {%s}, {%s}, %d, %d, %d, %d },'
-                    % (xs, zs, door['y'], door['scene'], door['target'],
-                       door['spawn']))
-    if not doors:
-        body.append('    { {0,0,0}, {0,0,0}, 0, 0, 0, 0 },')
-    body += ['};', '', '/* END OF FILE */', '']
+        blob += struct.pack('>3hH2B', spawn['x'], spawn['y'], spawn['z'], spawn['yaw'],
+                            spawn['scene'], spawn['room'])
+    # Align the following uint32_t layers field even with an odd spawn count.
+    blob += bytes((-len(blob)) % 4)
+    door_offset = len(blob)
+    for door in (doors or [dict(xz=[(0, 0)] * 3, y=0, scene=0, target=255, spawn=0, keep_music=0,layers=0,entrance=65535)]):
+        blob += struct.pack('>7h4BHI', *[x for x, _ in door['xz']], *[z for _, z in door['xz']],
+                            door['y'], door['scene'], door['target'], door['spawn'],door['keep_music'],door['entrance'],door['layers'])
+    entrance_offset = len(blob)
+    for index in range(max(entrances)+1):
+        row = entrance_meta.get(index)
+        blob += bytes((by_scene_name.get(row['scene'],255),row['spawn'],int(row['keep_music']),0)) if row else bytes((255,0,0,0))
+    name_offset = len(blob)
+    # Level-select names: 25-byte NUL-padded records (24 chars max).
+    for entry in SCENES:
+        blob += entry['scene'][6:].replace('_', ' ')[:24].encode('ascii').ljust(25, b'\0')
+    (args.cd / 'SCENETAB.BIN').write_bytes(blob)
+    body += ['};', '',
+             'typedef char scene_spawn_size[sizeof(scene_spawn_t) == 10 ? 1 : -1];',
+             'typedef char scene_door_size[sizeof(scene_door_t) == 24 ? 1 : -1];',
+             'const scene_spawn_t *scene_spawns;', 'const scene_door_t *scene_doors;',
+             'const scene_entrance_t *scene_entrances;',
+             'static const char *scene_name_records;', '',
+             'const char *scene_name(unsigned int scene)', '{',
+             '    return scene_name_records && scene < SCENE_COUNT ? scene_name_records + scene * 25 : "";',
+             '}', '',
+             'bool scene_table_load(void)', '{',
+             '    int length = 0;',
+             '    const unsigned char *data = (const unsigned char *)jo_fs_read_file("SCENETAB.BIN", &length);',
+             '    if (!data || length != %d)' % len(blob),
+             '        return false;',
+             '    scene_spawns = (const scene_spawn_t *)data;',
+             '    scene_doors = (const scene_door_t *)(data + %d);' % door_offset,
+             '    scene_entrances = (const scene_entrance_t *)(data + %d);' % entrance_offset,
+             '    scene_name_records = (const char *)(data + %d);' % name_offset,
+             '    return true;', '}', '']
+    body += ['/* END OF FILE */', '']
     (args.out / 'scene_table.c').write_text('\n'.join(body))
 
     (args.out / 'scene_table.json').write_text(json.dumps(
-        dict(scenes=summaries, doors=[{k: v for k, v in d.items()
+        dict(scenes=summaries, entrances=entrance_meta, doors=[{k: v for k, v in d.items()
                                        if k != 'xz'} for d in doors],
              notes=report), indent=2) + '\n')
 

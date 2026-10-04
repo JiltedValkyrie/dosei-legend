@@ -35,6 +35,7 @@ int  fs_status(unsigned int slot)
 }
 
 int  fs_rupees(void)        { return ((int)save_state.rupees); }
+void fs_set_scene(unsigned int n) {save_state.scene_id=(uint8_t)n;}
 
 void fs_set_rupees(int rupees)
 {

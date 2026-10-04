@@ -34,18 +34,32 @@ function Test-BuildLogLine {
     return $false
 }
 
+function Start-BuildProcess {
+    param([string]$Script, [string]$Variant, [string]$OutputPath, [string]$ErrorPath)
+    $process = Start-Process -FilePath 'powershell.exe' -PassThru `
+        -WindowStyle Hidden `
+        -RedirectStandardOutput $OutputPath -RedirectStandardError $ErrorPath `
+        -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass',
+                        '-File', ('"' + $Script + '"'), '-Variant', $Variant)
+    # Windows PowerShell's Start-Process returns a Process without a retained
+    # handle. Open it while the child is alive, so ExitCode remains available
+    # after Windows removes the process from its active process table.
+    $null = $process.Handle
+    return $process
+}
+
 function Show-BuildDialog {
     param(
         [Parameter(Mandatory = $true)] $Owner,
         [Parameter(Mandatory = $true)] $Project,
-        [string]$Preselect = 'normal',
+        [string]$Preselect = 'clean',
         [switch]$TestOnly
     )
 
     $order = @(
-        [pscustomobject]@{ Id = 'normal'; Label = 'Standard (320x240)  ->  game.iso' }
-        [pscustomobject]@{ Id = 'clean';  Label = 'Clean player test   ->  game-clean.iso' }
-        [pscustomobject]@{ Id = 'hires';  Label = 'Hi-res (320x480i)   ->  game-hires.iso' }
+        [pscustomobject]@{ Id = 'clean'; Label = 'Play Dosei Legend (Standard)' }
+        [pscustomobject]@{ Id = 'hires'; Label = 'Play Dosei Legend (320x480i)' }
+        [pscustomobject]@{ Id = 'normal'; Label = 'Debug Mode' }
     )
 
     $dialog = New-Object Windows.Forms.Form
@@ -63,10 +77,7 @@ function Show-BuildDialog {
     $prompt.Size = New-Object Drawing.Size(400, 22)
     $dialog.Controls.Add($prompt)
 
-    # Checkboxes rather than one choice: the standing rule is that all three
-    # get rebuilt together, because a stale clean or hi-res image silently
-    # tests old code. The selected variant is ticked by default and the others
-    # are one click away.
+    # Build the selected variant by default; additional variants are explicit.
     $boxes = @{}
     $y = 38
     foreach ($entry in $order) {
@@ -225,11 +236,8 @@ function Show-BuildDialog {
         $run.OutAt = 0
         $run.ErrAt = 0
         $script = Join-Path $PSScriptRoot 'build-game.ps1'
-        $run.Process = Start-Process -FilePath 'powershell.exe' -PassThru `
-            -WindowStyle Hidden `
-            -RedirectStandardOutput $run.Out -RedirectStandardError $run.Err `
-            -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass',
-                            '-File', $script, '-Variant', $variant)
+        $run.Process = Start-BuildProcess -Script $script -Variant $variant `
+            -OutputPath $run.Out -ErrorPath $run.Err
         $timer.Start()
     }
 
@@ -249,15 +257,11 @@ function Show-BuildDialog {
             $offset = $run.ErrAt
             & $append (& $tail $run.Err ([ref]$offset)); $run.ErrAt = $offset
             $variant = $run.Queue[$run.At]
-            # A Process from Start-Process -PassThru does NOT have a populated
-            # ExitCode until the handle is waited on, even once HasExited is
-            # true: reading it straight away yields $null, which compares
-            # unequal to 0 and reports a perfectly good build as FAILED.
-            # HasExited is already true here, so this returns immediately.
+            # The handle was retained at launch. Wait before reading status;
+            # do not discard cached process information with Refresh().
             $code = $null
             try {
                 $run.Process.WaitForExit()
-                $run.Process.Refresh()
                 $code = $run.Process.ExitCode
             } catch { $code = $null }
             if ($code -eq 0) {
@@ -273,6 +277,7 @@ function Show-BuildDialog {
                 & $append "`r`n--- $variant FAILED (exit $code) ---`r`n"
             }
             Remove-Item -LiteralPath $run.Out, $run.Err -ErrorAction SilentlyContinue
+            $run.Process.Dispose()
             $run.Process = $null
             $run.At++
             & $startNext

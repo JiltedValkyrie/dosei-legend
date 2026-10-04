@@ -4,6 +4,8 @@
 
 #ifndef __KOKIRI_SGL_H__
 # define __KOKIRI_SGL_H__
+#include <stdint.h>
+#include "asset_names.h"
 
 /** @brief Upload every mesh's textures/CLUTs and bind them to the SGL tables.
  *  @return true on success; on failure jo_core_error() describes the reason. */
@@ -11,7 +13,7 @@ bool            kokiri_scene_load(void);
 
 /* The flat cutscene field's bank number. It is seen end to end, unlike a
 ** forest room, so the loader gives it a far larger draw distance. */
-#define KOKIRI_FIELD_SCENE 3
+#define KOKIRI_FIELD_SCENE STORY_BANK_FIELD
 
 /* Load one (scene, room) VDP1 geometry bank: S<scene>R<room>.MSH/.TEX. */
 bool            kokiri_scene_load_bank(unsigned int scene, unsigned int room);
@@ -40,6 +42,20 @@ void            kokiri_scene_draw(void);
 
 /** @brief Submit Link at a world position, facing @p yaw (binang). */
 void            kokiri_link_draw(int x, int y, int z, int yaw);
+/* First-person slingshot arm, pinned to the camera focus (see kokiri_sgl.c). */
+void            kokiri_link_draw_first_person(int x, int y, int z, int yaw, int pitch);
+/* SGL display level: polygons and sprites nearer than screen distance >> level
+ * are rejected. OoT's gameplay view near plane is 10 (z_view.c); level 5 gives
+ * 240 >> 5 = 7 (play) and 290 >> 5 = 9 (first person, where the child's
+ * slingshot arm lies inside the old level-3 cut of 36). */
+/* Level 3 everywhere (240 >> 3 = 30). Level 5 let ground corners a few
+ * units from the eye project past VDP1's coordinate range and wrap into
+ * screen-wide wedges (BUG_FEATURE_LOG, tools/field_walk_probe.py). The
+ * first-person arm that wanted it was removed (human, 2026-10-01). */
+#define KOKIRI_ZDSP_LEVEL 3
+/* Screen-space HUD sprite depth just past the live near rejection, so every
+ * visible world polygon sorts behind it. `above` orders HUD layers (1 front). */
+int             kokiri_hud_depth(int above);
 /* Identity of the closest DISTANCE-stippled polygon this prep, for the near
 ** checkerboard. Facts only: authored stipple is excluded because it is
 ** legitimate at any depth, and near/far together distinguish a small close
@@ -79,6 +95,8 @@ extern unsigned int kokiri_sprite_peak;  /* peak sprite slots used */
 void            kokiri_navi_draw(int x, int y, int z);
 void            kokiri_grass_draw(void);
 unsigned int    kokiri_scene_room(void);
+/* Room of the loaded bank (any scene). */
+unsigned int    kokiri_bank_room(void);
 void            kokiri_rupees_draw(unsigned int tick);
 void            kokiri_rupee_hud_draw(void);
 /* Pause equipment grid, drawn over the frozen world. */
@@ -102,6 +120,16 @@ void            kokiri_message_box_draw(int x, int y, int width, int height);
 /* The prompt on the box's bottom edge: OoT's continue triangle, or its end
 ** square on the last page. */
 void            kokiri_message_mark_draw(int x, int y, bool last_page);
+/* Four flat source-geometry lock corners in the target's source attention
+** colour. The aim variant is white and stays at the shot ray centre. */
+typedef enum {
+    KOKIRI_RETICLE_ENEMY,
+    KOKIRI_RETICLE_NPC,
+    KOKIRI_RETICLE_POI,
+    KOKIRI_RETICLE_AIM,
+    KOKIRI_RETICLE_COUNT
+} kokiri_reticle_kind_t;
+void            kokiri_lock_reticle_draw(int x, int y, unsigned kind);
 
 /** @brief Submissions SGL refused this frame. Non-zero means some faces never
  *  reached VDP1, so the picture is incomplete. */
@@ -123,11 +151,13 @@ unsigned int    kokiri_order_error(void);
 #endif
 
 void kokiri_cutscene_effects_draw(void);
+void kokiri_flame_draw(int32_t x,int32_t y,int32_t z,unsigned tick);
 /* Release only transient nightmare textures; resident Link/UI remain. */
 void kokiri_cutscene_tiles_reset(void);
 /* NPC tiles live after the current room, never over its texture bank. */
 unsigned int kokiri_actor_bank_generation(void);
 void kokiri_actor_tiles_reset(void);
+void kokiri_hit_filter(unsigned level);
 #endif /* !__KOKIRI_SGL_H__ */
 
 /*

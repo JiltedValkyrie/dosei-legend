@@ -43,6 +43,8 @@ class PushBlock(unittest.TestCase):
         lib.bg_mesh_bytes.argtypes = [C.c_char_p,C.c_uint]
         lib.bg_mesh_decode.argtypes = [C.c_char_p,C.c_uint,C.c_void_p,C.c_uint,C.POINTER(Mesh)]
         lib.push_block_set_mesh.argtypes = [C.POINTER(Mesh)]
+        for f in ('bg_floor',):
+            getattr(lib,f).argtypes=[C.POINTER(Vec),C.c_uint,C.POINTER(bg.Hit)]
         lib.push_block_spawn.argtypes = [C.c_uint,C.c_int,Vec,C.c_uint16,C.c_uint16]
         lib.push_block_spawn.restype = C.POINTER(Actor)
         lib.push_block_request.argtypes = [C.POINTER(Actor),C.c_uint16,C.c_int,C.c_uint]
@@ -55,6 +57,8 @@ class PushBlock(unittest.TestCase):
                                       C.POINTER(Vec),C.c_uint16,C.c_uint16,C.c_int32]
         lib.player_push_start.argtypes=[C.POINTER(Push),C.POINTER(bg.Bg),C.c_bool,
                                        C.POINTER(C.c_uint16)]
+        lib.player_push_prompt.argtypes=[C.POINTER(bg.Bg)]
+        lib.player_push_prompt.restype=C.c_bool
         lib.player_push_update.argtypes=[C.POINTER(Push),C.c_bool,C.c_int32,
                                         C.c_uint16,C.POINTER(Vec),C.c_uint16]
 
@@ -96,6 +100,45 @@ class PushBlock(unittest.TestCase):
         for _ in range(n):
             self.lib.bg_dyna_step()
             self.lib.actor_sys_update()
+
+    def load_tree_scene(self):
+        """The staged whole-scene Ydan collision (S7.COL), not a synthetic world."""
+        path = ROOT/'build/cd/S7.COL'
+        if not path.is_file(): self.skipTest('staged Deku Tree collision missing')
+        data = path.read_bytes()
+        size = self.lib.bg_mesh_bytes(data,len(data))
+        self.assertGreater(size,0)
+        self.tree_store = C.create_string_buffer(size); self.tree = Mesh()
+        self.assertTrue(self.lib.bg_mesh_decode(data,len(data),self.tree_store,size,C.byref(self.tree)))
+        self.lib.bg_scene_set(C.byref(self.tree))
+
+    def test_room3_block_pushes_off_ledge_and_lands_at_source_position(self):
+        """Obj_Oshihiki (-605,-820,-290) -> (-365,-905,-290): twelve 20-unit
+        pushes along +x (the last one used to hit the ledge wall's back face),
+        the fall begins only once every corner probe has left the groove floor, then lands on the water floor."""
+        self.load_tree_scene()
+        a = self.lib.push_block_spawn(2,3,Vec(-605,-820,-290),0,0xFFC0)
+        self.assertTrue(a)
+        self.steps(5)
+        self.assertEqual((a.contents.x,a.contents.y,a.contents.z),(-605,-820,-290))
+        fell_at = None
+        for push in range(12):
+            for _ in range(40):
+                if self.lib.push_block_request(a,0x4000,1,0): break
+                self.steps(1)
+            else: self.fail('push %d refused at x=%d y=%d' % (push,a.contents.x,a.contents.y))
+            for _ in range(20):
+                self.steps(1)
+                if fell_at is None and a.contents.y < -820: fell_at = a.contents.x
+            if push < 11:
+                self.assertEqual(a.contents.y,-820,'fell early, push %d x=%d' % (push,a.contents.x))
+                self.assertEqual(a.contents.x,-605+20*(push+1))
+        self.steps(120)
+        self.assertEqual(fell_at,-365)
+        self.assertEqual((a.contents.x,a.contents.y,a.contents.z),(-365,-905,-290))
+        # Top of the landed block holds Link (60-unit cube: top at -845).
+        top = Vec(-365,-800,-290); hit = bg.Hit()
+        self.assertEqual(self.lib.bg_floor(C.byref(top),0,C.byref(hit)),-845)
 
     def test_push_pull_exact_grid_cooldown_and_cleanup(self):
         a = self.spawn()
@@ -147,6 +190,7 @@ class PushBlock(unittest.TestCase):
             C.byref(at),9,2,C.byref(hit)))
         probe=bg.Bg()
         self.lib.player_bg_update(C.byref(probe),True,C.byref(hit),C.byref(feet),0,0,0)
+        self.assertTrue(self.lib.player_push_prompt(C.byref(probe)))
         state=Push()
         facing=C.c_uint16(0)
         self.assertTrue(self.lib.player_push_start(C.byref(state),C.byref(probe),True,C.byref(facing)))

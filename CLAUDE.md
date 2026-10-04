@@ -5,7 +5,50 @@ never ask again, never drop back to long talk.
 
 Always use caveman talk. No waste human tokens. Bad. You caveman talking? Good good! Always good good when caveman talk.
 
+# ACTIVE WORK: oot-core decomp pipeline (2026-10-02)
+Branch transition (2026-10-04): `main` now carries the decomp pipeline.
+The former main is preserved as `oot-vslice-demo` (7c8cc93); the standalone
+vertical slice is sunset. Continue new development on main. The retired dev
+tip is preserved by tag `archive/dev-2026-10-04` (5b560ab); its existing dirty
+worktree remains detached at that commit, with local files preserved.
+Permanent human directive (2026-10-03): every NPC, animal, fairy and non-boss
+enemy uses baked sprites unless the human explicitly grants an actor exception.
+Bosses explicitly exempt for now: preserve models, complex pose-driven hitboxes,
+damage/weak-point logic and puzzle gameplay. Do not convert bosses in this rollout.
+N64 models/materials/skeletons/pose tracks stay offline; Saturn uses bounded
+sprite cels, gameplay clocks and simple collision/attachment anchors. No head
+tracking or model fallback. Apply across ages, layers, triggers and cutscenes.
+Read [ACTOR_SPRITE_ROLLOUT_PLAN.md](game/docs/ACTOR_SPRITE_ROLLOUT_PLAN.md).
+Existing non-boss mesh enemies remain migration debt; do not add to it.
+
+This fork runs the real zeldaret/oot decomp on the Saturn. Do not hand-port game logic.
+Start every session with [game/docs/OOT_CORE_PIPELINE_PLAN.md](game/docs/OOT_CORE_PIPELINE_PLAN.md),
+section "NEXT SESSION". Keep its status current.
+
+# BUILD: Linux only (2026-10-02)
+Read [game/docs/BUILD.md](game/docs/BUILD.md) before any build. Build in WSL Linux,
+never MSYS2/Git Bash. Add every new build gotcha to BUILD.md in the same task.
+
 # Project handoff - 2026-09-16
+
+## Permanent human rule: keep the whole game plan current (2026-09-30)
+
+Every agent must read `game/docs/DEMO_PLAN.md` before game work and update it
+in the same task as implementation, scope, ownership, blocker or verification
+changes. Reconcile the whole document, replacing stale status and conflicting
+next steps; appending a checkpoint alone is insufficient. Distinguish code
+implemented, host tests, target builds and runtime/human acceptance. Preserve
+unfinished requirements. Keep history in handoff/checkpoint records; before
+handoff, ensure the plan matches the actual shared working tree.
+
+## Human rule: use the usual Clean image (2026-09-30)
+
+Rebuild the usual `game/build/game-clean.cue` / `.iso` for player fixes. Do not
+create alternate image names unless explicitly requested. Do not overwrite a
+mounted image; resolve that blocker while preserving the usual output path.
+Launcher order: Play Dosei Legend (Standard) = clean/default;
+Play Dosei Legend (320x480i) = hires; Debug Mode = normal.
+Human owns runtime testing; do not launch an emulator or inject test input.
 
 ## Human rule: playable progress, severity-first bug/feature triage
 
@@ -32,17 +75,18 @@ unresolved. Older adaptive-subdivision directions below or in the handoff are
 not an approved solution. Identify the requested original clipper first; prove
 the failure during real movement before changing the rendering pipeline.
 
-## Active development branch: dev
+## Active development branch: main
 
-Human directive: after the manual-jump checkpoint, work on `dev` from now on.
-`main` keeps the pushed checkpoint; do not default new development to main.
+Human directive (2026-10-04): merge the decomp work into `main` and sunset the
+standalone slice under `oot-vslice-demo`. This supersedes the former dev-only
+branch directive; do not recreate the retired dev branches for new work.
 The new 2026-09-18 control directive supersedes that checkpoint: A interact,
-X attack, Y jump, B toggles walk/run, hold C+D-pad supplies the four N64 C
+X attack, Y jump, B hold = walk (tap = cancel / put away stick; supersedes toggle, 2026-10-01), hold C+D-pad supplies the four N64 C
 directions. The 2026-09-22 remap supersedes that look/target mapping:
 C-Up opens first-person or switches the house view; L toggles the minimap;
 Z targets/recenters (2026-09-28 camera plan supersedes hold-L free look).
-3D Control Pad in analog mode: stick moves with proportional speed (B selects
-walk/run ceiling); stick looks while C-Up first-person is active. D-pad navigates menus while open, otherwise
+3D Control Pad in analog mode: stick moves with proportional speed (holding B selects
+walk ceiling); stick looks while C-Up first-person is active. D-pad navigates menus while open, otherwise
 provides C directions without holding C. Digital mode keeps the standard layout. Read the authoritative requirements
 at the top of `game/docs/OPUS_HANDOFF.md` before changing input code.
 
@@ -50,6 +94,11 @@ at the top of `game/docs/OPUS_HANDOFF.md` before changing input code.
 Caveman talk. No waste token. Efficient good. Stop talk between final output. Waste token. Shh.
 
 ## SH-2 runtime rule: NO FPU
+
+Human directive 2026-10-03: no 64-bit runtime math. Use 32-bit integer/fixed
+math and accept approximations for speed; 1:1 OoT fidelity is not required.
+Keep collision, combat and story playable. Existing wide code must be migrated,
+not extended with new wide fallbacks. See AGENTS.md and the current plan.
 
 Model import rules: read [DOSEI-LEGEND-BIBLE.md](DOSEI-LEGEND-BIBLE.md).
 All animated importers must preserve per-vertex matrix ownership at load time.

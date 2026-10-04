@@ -43,6 +43,9 @@
 static const collision_triangle_t *triangles;
 static uint32_t triangle_count;
 static bg_mesh_t scene_mesh;
+/* Actor-controlled water remains separate from immutable decoded scene data. */
+static int32_t water_override[16];
+static uint16_t water_override_mask;
 
 /* Optional XZ lookup grid. Both queries below reject a triangle first on its
  * XZ bounds, so scanning all of them costs the same whether or not anything is
@@ -81,6 +84,7 @@ void kokiri_collision_init(const collision_triangle_t *data, uint32_t count)
 void bg_scene_set(const bg_mesh_t *mesh)
 {
         scene_mesh = *mesh;
+        water_override_mask = 0;
         triangles = mesh->triangles;
         triangle_count = mesh->triangle_count;
         grid_ready = false;
@@ -1096,6 +1100,17 @@ bool bg_wall(bg_vec_t *result, const bg_vec_t *next, const bg_vec_t *prev,
 }
 
 /* ---- Water ---- */
+bool bg_water_set_surface(uint32_t index, int32_t surface)
+{
+        if (index >= 16 || index >= scene_mesh.water_count) return false;
+        water_override[index] = surface;
+        water_override_mask |= (uint16_t)(1u << index);
+        return true;
+}
+void bg_water_reset_surface(uint32_t index)
+{
+        if (index < 16) water_override_mask &= (uint16_t)~(1u << index);
+}
 bool bg_water_surface(int32_t x, int32_t z, uint32_t room, int32_t *surface,
         const bg_waterbox_t **box)
 {
@@ -1107,7 +1122,7 @@ bool bg_water_surface(int32_t x, int32_t z, uint32_t room, int32_t *surface,
                 if (w->properties & BG_WATERBOX_DISABLED) continue;
                 if (w->x_min < x && x < w->x_min + w->x_length &&
                     w->z_min < z && z < w->z_min + w->z_length) {
-                        *surface = w->y_surface;
+                        *surface = i < 16 && (water_override_mask & (1u << i)) ? water_override[i] : w->y_surface;
                         if (box) *box = w;
                         return true;
                 }

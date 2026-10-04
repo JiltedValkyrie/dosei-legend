@@ -3,6 +3,7 @@
 */
 
 #include <jo/jo.h>
+#include "ram_cart.h"
 #include "asset_loading.h"
 #include <stdint.h>
 #include "cutscene_actor.h"
@@ -12,6 +13,7 @@
 #include "demo.h"
 #include "actor_mesh.h"
 #include "npc_pose.h"
+#include "npc_sprite.h"
 #include "vdp1_draw_wait.h"
 
 /* KFR1 v2, as tools/build_link_model.py writes it:
@@ -35,7 +37,7 @@
 #define KFR1_RECORD_BYTES   20
 
 static const char *const ACTOR_FILES[CUTSCENE_ACTOR_COUNT] = {
-    "GANON.BIN", "ZELDA.BIN", "IMPA.BIN", "HZELDA.BIN", "HGANON.BIN", "BRIDGE.BIN", "CHAINS.BIN", "GATEFIRE.BIN"
+    "GANON.SPR", "ZELDA.SPR", "IMPA.SPR", "HZELDA.SPR", "HGANON.SPR", "BRIDGE.BIN", "CHAINS.BIN", "GATEFIRE.BIN"
 };
 
 typedef struct actor_mesh
@@ -57,7 +59,9 @@ typedef struct actor_mesh
 
 static cutscene_actor_t actors[CUTSCENE_ACTOR_COUNT];
 static bool             actors_ready;
-static unsigned int     resident_mask;
+static unsigned int     resident_mask, resident_generation;
+static unsigned char *actor_sprites[CUTSCENE_ACTOR_BRIDGE];
+static npc_sprite_inst_t actor_sprite_inst[CUTSCENE_ACTOR_BRIDGE];
 
 static uint32_t read_be32(const unsigned char *p)
 {
@@ -96,7 +100,7 @@ static void free_actor(cutscene_actor_t *actor)
 ** 63 KB of tables, which does not fit below the SGL work area but is nothing
 ** against the 4 MB cart that src/ram_cart.c registers.
 */
-static bool load_actor(cutscene_actor_t *actor, const char *file, bool animated)
+static bool __attribute__((optimize("Os"))) load_actor(cutscene_actor_t *actor, const char *file, bool animated)
 {
     unsigned char *data;
     const unsigned char *records;
@@ -243,7 +247,11 @@ bool cutscene_actors_load(void)
         return (true);
     for (i = 0; i < CUTSCENE_ACTOR_COUNT; ++i) {
         asset_loading(ACTOR_FILES[i]);
-        if (!load_actor(&actors[i], ACTOR_FILES[i], i < CUTSCENE_ACTOR_BRIDGE)) {
+        if (i < CUTSCENE_ACTOR_BRIDGE) {
+            actor_sprites[i] = npc_sprite_load(ACTOR_FILES[i]);
+            if (actor_sprites[i]) continue;
+        } else if (load_actor(&actors[i], ACTOR_FILES[i], false)) continue;
+        {
             /* All or none: a shot missing one rider but not the others would
             ** be harder to read than one missing all three. */
             cutscene_actors_free();
@@ -263,8 +271,12 @@ void cutscene_actors_free(void)
 {
     unsigned int i;
 
-    for (i = 0; i < CUTSCENE_ACTOR_COUNT; ++i)
-        free_actor(&actors[i]);
+    for (i = 0; i < CUTSCENE_ACTOR_COUNT; ++i) {
+        if (i < CUTSCENE_ACTOR_BRIDGE) {
+            if (actor_sprites[i]) jo_free(actor_sprites[i]);
+            actor_sprites[i] = 0;
+        } else free_actor(&actors[i]);
+    }
     actors_ready = false;
     resident_mask = 0;
 }
@@ -272,61 +284,6 @@ void cutscene_actors_free(void)
 bool cutscene_actors_ready(void)
 {
     return (actors_ready);
-}
-
-/* SGL's vertex pool is shared by the whole frame. A cue remains latched
- * after a rider leaves the shot; submitting that invisible horse can exhaust
- * the pool before the visible rider. Bound the actual posed mesh, and use
- * enclosing spheres/cones so this rejects no partially visible geometry. */
-static bool actor_in_view(const cutscene_actor_t *actor, int32_t x, int32_t y, int32_t z)
-{
-    int32_t low[3], high[3], centre[3], radius = 0;
-    int32_t sy, cy, sp, cp, horizontal, depth, right, up;
-    unsigned int i, axis, distance = cutscene_screen_distance();
-    /* Rotating bridge parts have a different bound; they are small lists. */
-    if (!actor->animation) return true;
-    for (axis = 0; axis < 3; ++axis) low[axis] = high[axis] = actor->points[0][axis] / 65536;
-    for (i = 1; i < (unsigned int)actor->pdata.nbPoint; ++i)
-        for (axis = 0; axis < 3; ++axis) {
-            int value = actor->points[i][axis] / 65536;
-            if (value < low[axis]) low[axis] = value;
-            if (value > high[axis]) high[axis] = value;
-        }
-    for (axis = 0; axis < 3; ++axis) {
-        centre[axis] = (low[axis] + high[axis]) / 2;
-        radius += (high[axis] - low[axis] + 3) / 2;
-    }
-    x += centre[0] - demo_camera.x;
-    y -= centre[1] + demo_camera.y; /* posed POINT Y is down */
-    z += centre[2] - demo_camera.z;
-    kokiri_camera_sincos(demo_yaw, &sy, &cy);
-    kokiri_camera_sincos(demo_pitch, &sp, &cp);
-    horizontal = (int32_t)(((int64_t)x * sy + (int64_t)z * cy) / 65536);
-    right = (int32_t)((-(int64_t)x * cy + (int64_t)z * sy) / 65536);
-    depth = (int32_t)(((int64_t)horizontal * cp + (int64_t)y * sp) / 65536);
-    up = (int32_t)(((int64_t)y * cp - (int64_t)horizontal * sp) / 65536);
-    if (depth + radius <= 0) return false;
-    if (right < 0) right = -right;
-    if (up < 0) up = -up;
-    /* Radius-200 screen disk encloses the 320x240 frame for every roll. */
-    return (int64_t)right * distance <= (int64_t)depth * 200 + (int64_t)radius * (distance + 200) &&
-           (int64_t)up * distance <= (int64_t)depth * 200 + (int64_t)radius * (distance + 200);
-}
-
-static void pose_actor(cutscene_actor_t *actor)
-{
-    if (actor->animation) {
-        unsigned int tick = cutscene_frame(), i, pose;
-        const unsigned char *p;
-        if (tick >= actor->ticks) tick = actor->ticks - 1;
-        pose = read_be16(actor->animation + 16 + tick * 2);
-        p = actor->animation + 16 + actor->ticks * 2 + pose * actor->pdata.nbPoint * 6;
-        for (i = 0; i < (unsigned int)actor->pdata.nbPoint; ++i, p += 6) {
-            actor->points[i][X] = (int32_t)(int16_t)read_be16(p) * 1024;
-            actor->points[i][Y] = -(int32_t)(int16_t)read_be16(p + 2) * 1024;
-            actor->points[i][Z] = (int32_t)(int16_t)read_be16(p + 4) * 1024;
-        }
-    }
 }
 
 static bool upload_actor(cutscene_actor_t *actor)
@@ -368,7 +325,7 @@ static bool upload_actor(cutscene_actor_t *actor)
 }
 
 /* KTS1: 32 original UV-offset frames, one 16x16 CLUT tile per face. */
-bool actor_mesh_load_scroll(actor_mesh_t *mesh,const char *file)
+bool __attribute__((optimize("Os"))) actor_mesh_load_scroll(actor_mesh_t *mesh,const char *file)
 {
     int bytes;unsigned int faces,i;
     if(!mesh) return false;
@@ -411,7 +368,7 @@ void actor_mesh_scroll(actor_mesh_t *mesh,unsigned int frame)
     mesh->scroll_frame=frame;
 }
 
-actor_mesh_t *actor_mesh_load(const char *file)
+actor_mesh_t * __attribute__((optimize("Os"))) actor_mesh_load(const char *file)
 {
     char name[] = "NPC00.TRK";
     int bytes;
@@ -449,12 +406,13 @@ actor_mesh_t *actor_mesh_load(const char *file)
 ** skeleton fails the CVA1/NTR2 checks and the old clip is kept, rather than
 ** posing the mesh with someone else's motion.
 */
-bool actor_mesh_swap_clip(actor_mesh_t *mesh, const char *stem)
+bool __attribute__((optimize("Os"))) actor_mesh_swap_clip(actor_mesh_t *mesh, const char *stem)
 {
     char name[13];
+    const unsigned char *staged;
     unsigned char *animation = 0, *tracking = 0;
     unsigned int vertices, poses, ticks, flags, n, stem_len = 0;
-    int length = 0;
+    int length = 0, anim_length;
 
     if (!mesh || !mesh->loaded || !mesh->animation) return false;
     vertices = (unsigned int)mesh->pdata.nbPoint;
@@ -462,17 +420,20 @@ bool actor_mesh_swap_clip(actor_mesh_t *mesh, const char *stem)
     name[stem_len] = '.'; name[stem_len+1] = 'A';
     name[stem_len+2] = 'N'; name[stem_len+3] = 'M'; name[stem_len+4] = 0;
     asset_loading(name);
-    animation = (unsigned char *)jo_fs_read_file(name, &length);
-    if (!animation || length < 16 || read_be32(animation) != 0x43564131u ||
-        read_be32(animation + 4) != vertices)
+    /* Stage in the cart scratch: a clip can be 224 KB, and holding it next
+    ** to the old one needed a contiguous block the heap no longer had. */
+    staged = (const unsigned char *)ram_cart_load_scratch(name, &length);
+    if (!staged || length < 16 || read_be32(staged) != 0x43564131u ||
+        read_be32(staged + 4) != vertices)
         goto reject;
-    poses = read_be32(animation + 8);
-    ticks = read_be32(animation + 12);
+    poses = read_be32(staged + 8);
+    ticks = read_be32(staged + 12);
     if (!poses || poses > 1024 || !ticks || ticks > 1024 ||
         (unsigned int)length != 16 + ticks * 2 + poses * vertices * 6)
         goto reject;
     for (n = 0; n < ticks; ++n)
-        if (read_be16(animation + 16 + n * 2) >= poses) goto reject;
+        if (read_be16(staged + 16 + n * 2) >= poses) goto reject;
+    anim_length = length;
 
     name[stem_len+1] = 'T'; name[stem_len+2] = 'R'; name[stem_len+3] = 'K';
     asset_loading(name);
@@ -487,6 +448,19 @@ bool actor_mesh_swap_clip(actor_mesh_t *mesh, const char *stem)
         if (tracking[16 + n] > 3) goto reject;
 
     jo_free(mesh->animation);
+    mesh->animation = 0;
+    animation = (unsigned char *)jo_malloc(anim_length);
+    if (!animation) {
+        /* Old clip is gone: drop the mesh's motion rather than pose garbage. */
+        jo_free(tracking);
+        jo_free(mesh->tracking);
+        mesh->tracking = 0;
+        mesh->loaded = false;
+        asset_loading_done();
+        return false;
+    }
+    for (n = 0; n < (unsigned int)anim_length; n += 4)
+        *(unsigned int *)(animation + n) = *(const unsigned int *)(staged + n);
     jo_free(mesh->tracking);
     mesh->animation = animation;
     mesh->tracking = tracking;
@@ -531,6 +505,56 @@ void actor_mesh_draw_static(actor_mesh_t *mesh, int32_t x, int32_t y, int32_t z,
     slRotY((ANGLE)yaw);
     kokiri_submit_pdata(&mesh->pdata);
     jo_3d_pop_matrix();
+}
+
+void actor_mesh_draw_transform(actor_mesh_t *mesh,int32_t x,int32_t y,int32_t z,
+    uint16_t yaw,uint16_t pitch,uint16_t roll,int32_t scale)
+{
+    if(!mesh || !mesh->loaded)return;
+    jo_3d_push_matrix();jo_3d_translate_matrix(x,-y,z);
+    slRotY((ANGLE)yaw);slRotZ((ANGLE)roll);slRotX((ANGLE)pitch);
+    slScale(scale,scale,scale);kokiri_submit_pdata(&mesh->pdata);jo_3d_pop_matrix();
+}
+
+/* Y is flipped between OoT and SGL space, which mirrors rotations about X
+** and Z (F*Rx(a)*F = Rx(-a)); Y rotations keep their sign, as in
+** actor_mesh_draw_static. */
+void actor_mesh_draw_euler(actor_mesh_t *mesh, int32_t x, int32_t y, int32_t z,
+    int16_t yaw, int16_t pitch, int16_t roll, int32_t sx, int32_t sy, int32_t sz)
+{
+    if (!mesh || !mesh->loaded) return;
+    jo_3d_push_matrix();
+    jo_3d_translate_matrix(x, -y, z);
+    slRotY((ANGLE)yaw);
+    slRotX((ANGLE)(int16_t)-pitch);
+    slRotZ((ANGLE)(int16_t)-roll);
+    slScale(sx, sy, sz);
+    kokiri_submit_pdata(&mesh->pdata);
+    jo_3d_pop_matrix();
+}
+
+bool actor_mesh_draw_skinned(actor_mesh_t *mesh, const unsigned char *skin,
+                             const int32_t *mats, unsigned int count)
+{
+    unsigned int i, n;
+    const unsigned char *slot, *local;
+    if (!mesh || !mesh->loaded || !skin || !mats || read_be32(skin) != 0x534B4E31u) return false;
+    n = read_be32(skin + 4);
+    if (n != (unsigned int)mesh->pdata.nbPoint || read_be32(skin + 8) > count) return false;
+    slot = skin + 12;
+    local = slot + ((n + 1) & ~1u);
+    for (i = 0; i < n; ++i, local += 6) {
+        const int32_t *m = mats + slot[i] * 12;
+        int32_t lx = (int16_t)read_be16(local), ly = (int16_t)read_be16(local + 2),
+                lz = (int16_t)read_be16(local + 4);
+        mesh->points[i][X] = m[0] * lx + m[1] * ly + m[2] * lz + m[9];
+        mesh->points[i][Y] = -(m[3] * lx + m[4] * ly + m[5] * lz + m[10]);
+        mesh->points[i][Z] = m[6] * lx + m[7] * ly + m[8] * lz + m[11];
+    }
+    jo_3d_push_matrix();
+    kokiri_submit_pdata(&mesh->pdata);
+    jo_3d_pop_matrix();
+    return true;
 }
 
 void actor_mesh_free(actor_mesh_t *mesh)
@@ -589,37 +613,24 @@ void actor_mesh_draw(actor_mesh_t *mesh, unsigned int frame,
     jo_3d_pop_matrix();
 }
 
-/* All CD reads happen at scene load. Only visible actors occupy VDP1; a
- * visibility change rebuilds that small bank from the expansion cart before
- * any actor commands are submitted. Conservative bounds retain edge overlap. */
+/* Sprite cels and static bridge props stay resident for this room generation. */
 void cutscene_actors_prepare(void)
 {
-    unsigned int i, visible = 0;
+    unsigned int i, generation = kokiri_actor_bank_generation();
     if (!actors_ready || cutscene_hides_scene()) return;
-    for (i = 0; i < CUTSCENE_ACTOR_COUNT; ++i) {
-        unsigned int channel;
-        int x, y, z;
-        if (i >= CUTSCENE_ACTOR_BRIDGE) {
-            visible |= 1u << i;
-            continue;
-        }
-        channel = (i == CUTSCENE_ACTOR_GANON || i == CUTSCENE_ACTOR_HORSE_GANON) ? 1 : 0;
-        if (!cutscene_actor_channel_visible(channel)) continue;
-        pose_actor(&actors[i]);
-        x = cutscene_actor_channel_x(channel);
-        y = cutscene_actor_channel_y(channel) - (i == CUTSCENE_ACTOR_GANON ? 6 : 0);
-        z = cutscene_actor_channel_z(channel);
-        if (actor_in_view(&actors[i], x, y, z)) visible |= 1u << i;
-    }
-    if (visible == resident_mask) return;
+    if (resident_mask && resident_generation == generation) return;
     kokiri_cutscene_tiles_reset();
     resident_mask = 0;
-    for (i = 0; i < CUTSCENE_ACTOR_COUNT; ++i)
-        if ((visible & (1u << i)) && !upload_actor(&actors[i])) {
+    for (i = 0; i < CUTSCENE_ACTOR_COUNT; ++i) {
+        bool ok = i < CUTSCENE_ACTOR_BRIDGE ?
+            npc_sprite_upload(actor_sprites[i], &actor_sprite_inst[i]) : upload_actor(&actors[i]);
+        if (!ok) {
             jo_core_error("Cutscene texture bank full: %s", ACTOR_FILES[i]);
             return;
         }
-    resident_mask = visible;
+    }
+    resident_generation = generation;
+    resident_mask = (1u << CUTSCENE_ACTOR_COUNT) - 1u;
 }
 
 void cutscene_actor_draw(cutscene_actor_id id, int32_t x, int32_t y, int32_t z,
@@ -629,6 +640,14 @@ void cutscene_actor_draw(cutscene_actor_id id, int32_t x, int32_t y, int32_t z,
 
     if (id >= CUTSCENE_ACTOR_COUNT)
         return;
+    if (!(resident_mask & (1u << id))) return;
+    if (id < CUTSCENE_ACTOR_BRIDGE) {
+        unsigned char *sheet = actor_sprites[id];
+        unsigned int frame = cutscene_frame(), ticks = read_be16(sheet + 12);
+        if (frame >= ticks) frame = ticks - 1;
+        npc_sprite_draw(sheet, &actor_sprite_inst[id], frame, x, y, z, yaw);
+        return;
+    }
     actor = &actors[id];
     if (!actor->loaded)
         return;
@@ -638,7 +657,7 @@ void cutscene_actor_draw(cutscene_actor_id id, int32_t x, int32_t y, int32_t z,
         /* Same convention as Link: the mesh carries its own Y negation, and
         ** the cue's yaw is binang where Jo's helper takes degrees. */
         jo_3d_translate_matrix(x, -y, z);
-        jo_3d_rotate_matrix_y((yaw * 360) >> 16);
+        slRotY((ANGLE)yaw);
         if (id == CUTSCENE_ACTOR_BRIDGE)
             slRotX((ANGLE)(0u - cutscene_bridge_angle()));
         if (id == CUTSCENE_ACTOR_CHAINS) {

@@ -49,6 +49,20 @@ class ActorSys(unittest.TestCase):
     def spawn(self, kind, room=0, x=0, z=0, params=0, attention=0, scene=0):
         return self.lib.as_spawn(kind, scene, room, x, z, params, attention)
 
+    def test_damage_filter_fades_expires_and_does_not_leak_to_reused_actor(self):
+        slot=self.spawn(ENEMY)
+        self.lib.as_filter(slot,0,10)
+        self.assertEqual(self.lib.as_filter_level(slot),16)
+        for _ in range(14): self.lib.actor_sys_update()
+        self.assertTrue(0 < self.lib.as_filter_level(slot) < 16)
+        self.lib.actor_sys_update()
+        self.assertEqual(self.lib.as_filter_level(slot),0)
+        self.lib.as_filter(slot,1,10)
+        self.assertEqual(self.lib.as_filter_level(slot),32)
+        self.lib.as_kill(slot)
+        slot=self.spawn(ENEMY)
+        self.assertEqual(self.lib.as_filter_level(slot),0)
+
     # ---- pool -----------------------------------------------------------
     def test_storage_too_small_is_refused(self):
         self.assertEqual(self.lib.as_init_small(), 0)

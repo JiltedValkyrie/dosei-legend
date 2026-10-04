@@ -98,6 +98,7 @@ struct actor
     uint8_t     attention;                  /* actor_attention_t */
     uint8_t     kill;                       /* marked; freed after update */
     uint8_t     range;                      /* actor_attention_range_t */
+    uint8_t filter_timer, filter_duration, filter_blue, filter_intensity;
     actor_handle_t identity;               /* never reused during this boot */
     int32_t     data[ACTOR_DATA_WORDS];     /* per-type state */
 };
@@ -114,6 +115,9 @@ actor_t        *actor_spawn(const actor_profile_t *profile, unsigned int scene,
                             uint16_t yaw, uint16_t params);
 void            actor_kill(actor_t *actor);  /* deferred to end of update */
 
+/* Source color-filter duration in 20 Hz frames; draw strength quantized for VDP1. */
+void actor_hit_filter(actor_t *actor, bool blue, unsigned intensity, unsigned frames);
+unsigned actor_filter_level(const actor_t *actor); /* 0 none, 1..16 red, 17..32 blue */
 void            actor_sys_update(void);
 void            actor_sys_draw(void);
 void            actor_sys_room_unload(int room);

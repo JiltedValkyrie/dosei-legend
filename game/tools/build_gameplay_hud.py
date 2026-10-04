@@ -5,10 +5,11 @@ from PIL import Image, ImageDraw
 
 # Fixed screen patch, aligned to the VDP2 8x8 grid.
 X, Y, W, H = 152, 0, 152, 64
-CELL_LIMIT = 0x2000
+CELL_LIMIT = 0x4000
+ITEM_PATCH_CELLS = [(y,x) for y in range(2,8) for x in range(9,19)]
 
 
-def make_images(oot, analog=False, mode="saturn"):
+def make_images(oot, analog=False, mode="saturn", citems=None):
     root = Path(oot) / 'extracted/ntsc-1.2/assets/textures'
     def tex(group, name):
         return Image.open(root / group / name).convert('RGBA')
@@ -50,8 +51,8 @@ def make_images(oot, analog=False, mode="saturn"):
             for i, bit in enumerate(bits):
                 if bit == '1': d.point((x-X+i,y-Y+j), fill='white')
     images = []
-    for owned in range(2):
-        for action in ('', 'Talk', 'Open', 'Enter', 'Check', 'Grab', 'Drop', 'Throw'):
+    for owned in (range(2) if citems is None else (0,)):
+        for action in (('', 'Talk', 'Open', 'Enter', 'Check', 'Grab', 'Drop', 'Throw') if citems is None else ('',)):
             for navi in range(2):
                 im = Image.new('RGBA', (W,H))
                 place(im, tint(circle, (0,150,0)).resize((28,28), Image.Resampling.NEAREST), 160,17)
@@ -63,10 +64,17 @@ def make_images(oot, analog=False, mode="saturn"):
                 if action:
                     word = tex('do_action_static', 'g%sDoActionENGTex.ia4.png' % ('Speak' if action == 'Talk' else action))
                     place(im,word.resize((40,13),Image.Resampling.LANCZOS),182,18)
-                for name,x,y in (('Left',227,18),('Down',249,34),('Right',271,18)):
+                for slot,name,x,y in ((1,'Left',227,18),(0,'Down',249,34),(2,'Right',271,18)):
                     place(im,tint(circle,(255,160,0)).resize((26,26),Image.Resampling.NEAREST),x,y)
-                    arrow = tex('parameter_static','gEmptyC%sArrowTex.ia8.png' % name)
-                    place(im,tint(arrow,(255,255,255)).resize((26,26),Image.Resampling.NEAREST),x,y)
+                    item = citems[slot] if citems else 0
+                    if item:
+                        icon = tex('icon_item_static', ('gItemIconDekuStickTex.rgba32.png',
+                                   'gItemIconSlingshotTex.rgba32.png',
+                                   'gItemIconDekuNutTex.rgba32.png')[item-1])
+                        place(im,icon.resize((26,26),Image.Resampling.LANCZOS),x,y)
+                    else:
+                        arrow = tex('parameter_static','gEmptyC%sArrowTex.ia8.png' % name)
+                        place(im,arrow.resize((26,26),Image.Resampling.NEAREST),x,y)
                 header = ('C' if mode=='n64' else 'C-STICK' if mode=='gamecube' else
                           'D-PAD' if analog else 'C+DPAD' if mode=='xbox' else
                           'L1+DPAD' if mode=='playstation' else 'C')
@@ -113,7 +121,9 @@ def build(oot, out_cd, out_gen):
     # Each preset contributes only changed label cells, never duplicate full maps.
     variants = [make_images(oot, analog=a, mode=m) for m in
                 ('saturn','xbox','n64','gamecube','playstation') for a in (False,True)]
-    blob, palette, all_maps = encode([im for group in variants for im in group])
+    item_images = [im for assignment in range(64) for im in make_images(oot,
+                   citems=(assignment & 3, (assignment >> 2) & 3, assignment >> 4))]
+    blob, palette, all_maps = encode([im for group in variants for im in group] + item_images)
     maps = all_maps[:32]
     # Includes C header, sword label (two rows), and action label (two rows).
     patch_cells = [(y,x) for y in range(2) for x in range(11,15)] + [(5,2),(6,2),(5,6),(6,6)]
@@ -126,6 +136,10 @@ def build(oot, out_cd, out_gen):
     out_cd.mkdir(parents=True,exist_ok=True); out_gen.mkdir(parents=True,exist_ok=True)
     (out_cd/'BUTTONS.BIN').write_bytes(blob)
     map_words = [v for mapping in maps for v in mapping] + [v for patch in patches for v in patch]
+    item_offset = len(map_words)
+    map_words += [mapping[y*(W//8)+x] for mapping in all_maps[320:]
+                  for y,x in ITEM_PATCH_CELLS]
+    if len(map_words)*2 > 0x8000: raise ValueError('HUD maps exceed B0 reservation')
     (out_cd/'BUTTONS.MAP').write_bytes(struct.pack('>%dH'%len(map_words),*map_words))
     h = ['/* Generated original OoT graphics with Saturn control labels. */',
          '#ifndef GAMEPLAY_HUD_DATA_H','#define GAMEPLAY_HUD_DATA_H',
@@ -134,6 +148,10 @@ def build(oot, out_cd, out_gen):
          '#define HUD_MAP_W %d' % (W//8),'#define HUD_MAP_H %d' % (H//8),
          'static const unsigned short hud_palette[16] = {%s};' % ','.join(map(str,palette)),
          '#define HUD_VARIANT_COUNT 32',
+         '#define HUD_ITEM_OFFSET %d' % item_offset,
+         '#define HUD_ITEM_COUNT %d' % len(ITEM_PATCH_CELLS),
+         'static const unsigned short hud_item_positions[] = {%s};' %
+             ','.join(str(y*64+x+X//8) for y,x in ITEM_PATCH_CELLS),
          '#define HUD_MAP_BYTES %d' % (len(map_words)*2),
          '#define HUD_PATCH_OFFSET %d' % (32*W*H//64),
          '#define HUD_PATCH_COUNT %d' % len(patch_cells),

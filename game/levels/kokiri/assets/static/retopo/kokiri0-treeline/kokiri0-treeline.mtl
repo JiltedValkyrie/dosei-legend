@@ -1,0 +1,22 @@
+# Blender 5.2.2 LTS MTL File: 'kokiriforest-treeline.blend'
+# www.blender.org
+
+newmtl dosei_000
+Ns 0.000000
+Ka 1.000000 1.000000 1.000000
+Ks 0.000000 0.000000 0.000000
+Ke 0.000000 0.000000 0.000000
+Ni 1.500000
+d 1.000000
+illum 1
+map_Kd kokiri0-treeline_texture_873cd75b4dfaba21.png
+
+newmtl dosei_001
+Ns 0.000000
+Ka 1.000000 1.000000 1.000000
+Ks 0.000000 0.000000 0.000000
+Ke 0.000000 0.000000 0.000000
+Ni 1.500000
+d 1.000000
+illum 1
+map_Kd kokiri0-treeline_texture_d1d18bd5bb0faf28.png

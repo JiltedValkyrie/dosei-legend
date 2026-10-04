@@ -69,7 +69,7 @@ static inline void jo_core_error(const char *s, ...) { (void)s; }
         self.assertEqual((p.live,p.extent,p.peak_extent),(12,12,32))
         self.lib.jo_free(a)
         self.assertEqual((p.live,p.extent,p.peak_live),(0,0,32))
-    def test_hole_reuse_counts_full_block_and_compaction(self):
+    def test_hole_reuse_splits_block_and_compaction(self):
         self.zone(64)
         a=self.alloc(16);b=self.alloc(8)
         self.lib.jo_free(a)
@@ -77,11 +77,28 @@ static inline void jo_core_error(const char *s, ...) { (void)s; }
         self.assertEqual((p.live,p.extent),(16,40))
         c=self.alloc(4,1)
         self.assertEqual(c,a)
-        self.assertEqual(p.live,40)
+        self.assertEqual(p.live,28)
         self.lib.jo_free(c);self.lib.jo_free(b)
         self.assertEqual(p.extent,24)
         self.lib.jo_reduce_memory_fragmentation()
         self.assertEqual((p.live,p.extent,p.peak_extent),(0,0,40))
+
+    def test_small_probe_does_not_pin_animation_sized_hole(self):
+        self.zone(1024)
+        old=self.alloc(800); keep=self.alloc(128)
+        self.lib.jo_free(old)
+        probe=self.alloc(8,1)
+        replacement=self.alloc(760,1)
+        self.assertEqual(probe,old)
+        self.assertTrue(replacement)
+        self.assertEqual(self.profile.failed,0)
+
+    def test_pressure_merges_adjacent_holes_before_failing(self):
+        self.zone(160)
+        a=self.alloc(40);b=self.alloc(40);keep=self.alloc(40)
+        self.lib.jo_free(a);self.lib.jo_free(b)
+        self.assertEqual(self.alloc(80,1),a)
+        self.assertEqual(self.profile.failed,0)
     def test_spill_separates_cart_and_work_zone_and_counts_failure(self):
         self.zone(32);self.zone(64)
         self.alloc(24);self.alloc(40)

@@ -16,6 +16,25 @@ Paths may be absolute or relative to the repository root; do not quote them.
 | Kronos executable | Your local `kronos.exe`. Keep its supplied plugins and libraries together. |
 | Kronos DLLs | Optional additional DLL directory. Our MSYS2 build uses `mingw64/bin` for OpenAL, SDL2 and compiler runtime DLLs. Leave blank for a self-contained Kronos release. Use libraries matching your emulator build. |
 | Saturn BIOS | Your own Saturn BIOS file. This project has been run with the European v1.00 BIOS. |
+
+## Mednafen (optional, most accurate)
+
+Config > **Paths and emulator...** > **Emulator** tab: pick Kronos or Mednafen,
+set `mednafen.exe`, cartridge (keep `extram4`: game needs 4 MB RAM cart),
+fullscreen, extra args. Saved under `[Emulator]` in `config.ini`.
+Mednafen has no menu: double-click `mednafen.exe` alone just quits. Launcher passes the CUE.
+Put your BIOS in `<mednafen>/firmware/`: `sega_101.bin` (JP 1.01) and
+`mpr-17933.bin` (US/EU 1.00). Tab shows OK/MISSING. In Mednafen: Esc quit,
+Alt+Enter fullscreen, Alt+Shift+1 map pad 1.
+
+Adventure saves survive disc rebuilds: the launcher preserves an existing
+hash-named internal backup as `sav/game-clean.bkr` (or the selected variant's
+base name). Mednafen's default `%f.%M%x` lookup uses this unhashed file first.
+The newest backup with an active DOSEI slot wins over newer empty backups.
+Existing stable files and all original hash-named backups are kept unchanged.
+Custom save naming is respected. This does not transfer emulator save states.
+See [Mednafen's filename rules](https://mednafen.github.io/documentation/fname_format.txt).
+
 | zeldaret/oot checkout | The repository root described below, not its `src` or `baseroms` directory. |
 | US 1.2 ROM directory | Folder containing your original US NTSC 1.2 `.z64`. Blank means `<oot checkout>/baseroms/ntsc-1.2`. |
 
@@ -81,7 +100,7 @@ Alternatively use `./build.sh` or `./build.sh --hires` from `game/` in MSYS2;
 that shell needs a working Windows Python on PATH to read the config initially
 (or set `DOSEI_PYTHON` to its full path).
 
-Open `launch-game.bat`, select standard, hi-res or clean player test, then **Run selected**.
+Open `launch-game.bat`, select Play Dosei Legend (Standard), Play Dosei Legend (320x480i), or Debug Mode, then **Run selected**.
 Clean hides the in-game diagnostic overlay. Build it with `game/build.bat -Variant clean`.
 Reopen an already-running launcher after updating its variant list.
 The selector launches existing images; it does not build them. Direct launchers
@@ -107,3 +126,13 @@ Trigger**. Keep bumpers on real buttons (for example Z and C). The
 standard-build debug row `pad ... R### L###` shows 0 at rest and 176 or
 more on a pull. Without the patch, use the pad's digital mode or a
 Standard Pad, where R is shield as usual.
+
+## Missing libopenal-1.dll
+
+Use the project launcher with `kronos_dlls` set to the matching Kronos runtime
+directory (this workstation: `C:/msys64/mingw64/bin`). Opening a bare executable
+does not inherit the launcher's configured DLL path. A locally built Kronos may
+also need its matching runtime DLL dependencies beside the executable and Qt's
+`platforms/qwindows.dll` plugin. Keep these from the same installed toolchain;
+do not fetch individual DLLs from download sites. The local `kronos-draw-fix`
+copy now has these dependencies staged beside it.

@@ -54,6 +54,18 @@ class LocomotionTiming(unittest.TestCase):
     def tearDownClass(cls):
         cls.tmp.cleanup()
 
+    def test_death_clip_finishes_despite_losing_floor_contact(self):
+        import re
+        clips = (ROOT / 'build/generated/link_clips.h').read_text()
+        death = int(re.search(r'#\s*define\s+LINK_CLIP_DEATH\s+(\d+)', clips)[1])
+        self.lib.link_anim_reset_state()
+        self.lib.link_anim_react(death, 65535, True)
+        for step in range(600):
+            self.lib.link_anim_update(0, step % 3 == 0, 0, False)
+        self.assertTrue(self.lib.link_anim_react_done())
+        self.lib.link_anim_update(0, False, 0, False)
+        self.assertTrue(self.lib.link_anim_react_done())
+
     def travel(self, buttons, yaw=0):
         self.lib.kokiri_camera_reset_actor_motion()
         p, angle, pitch = Position(), ctypes.c_uint16(yaw), ctypes.c_int32()

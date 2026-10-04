@@ -1,15 +1,131 @@
 {
   "comment": "Stable OoT song IDs. BANK routes use a built-in bank; CD routes refer to a named entry in cdda_tracks.json, never a physical track number.",
   "songs": [
-    {"song": "NA_BGM_TITLE", "id": 30, "src": "BANK", "bank": "title"},
-    {"song": "NA_BGM_LINK_HOUSE", "id": 31, "src": "BANK", "bank": "house"},
-    {"song": "NA_BGM_GAME_OVER", "id": 32, "src": "CD", "cd": "GAME_OVER"},
-    {"song": "NA_BGM_OPENING_GANON", "id": 35, "src": "BANK", "bank": "nightmare"},
-    {"song": "NA_BGM_OPEN_TRE_BOX", "id": 43, "src": "CD", "cd": "CHEST"},
-    {"song": "NA_BGM_SMALL_ITEM_GET", "id": 57, "src": "CD", "cd": "SMALL_ITEM"},
-    {"song": "NA_BGM_KOKIRI", "id": 60, "src": "BANK", "bank": "kokiri"},
-    {"song": "NA_BGM_NAVI_OPENING", "id": 74, "src": "BANK", "bank": "navi"},
-    {"song": "NA_BGM_DEKU_TREE_CS", "id": 75, "src": "BANK", "bank": "deku_tree"},
-    {"song": "NA_BGM_SHOP", "id": 85, "src": "BANK", "bank": "shop"}
+    {
+      "song": "NA_BGM_HEART_GET",
+      "id": 36,
+      "src": "CD",
+      "cd": "HEART_GET"
+    },
+    {
+      "song": "NA_BGM_BOSS",
+      "id": 27,
+      "src": "BANK",
+      "bank": "boss"
+    },
+    {
+      "song": "NA_BGM_BOSS_CLEAR",
+      "id": 33,
+      "src": "BANK",
+      "bank": "bossclear"
+    },
+    {
+      "song": "NA_BGM_DUNGEON",
+      "id": 24,
+      "src": "BANK",
+      "bank": "dungeon"
+    },
+    {
+      "song": "NA_BGM_TITLE",
+      "id": 30,
+      "src": "BANK",
+      "bank": "title"
+    },
+    {
+      "song": "NA_BGM_LINK_HOUSE",
+      "id": 31,
+      "src": "BANK",
+      "bank": "house"
+    },
+    {
+      "song": "NA_BGM_GAME_OVER",
+      "id": 32,
+      "src": "CD",
+      "cd": "GAME_OVER"
+    },
+    {
+      "song": "NA_BGM_OPENING_GANON",
+      "id": 35,
+      "src": "BANK",
+      "bank": "nightmare"
+    },
+    {
+      "song": "NA_BGM_OPEN_TRE_BOX",
+      "id": 43,
+      "src": "CD",
+      "cd": "CHEST"
+    },
+    {
+      "song": "NA_BGM_SMALL_ITEM_GET",
+      "id": 57,
+      "src": "CD",
+      "cd": "SMALL_ITEM"
+    },
+    {
+      "song": "NA_BGM_GREAT_FAIRY",
+      "id": 40,
+      "src": "BANK",
+      "bank": "fairy"
+    },
+    {
+      "song": "NA_BGM_KOKIRI",
+      "id": 60,
+      "src": "BANK",
+      "bank": "kokiri"
+    },
+    {
+      "song": "NA_BGM_SARIA_THEME",
+      "id": 62,
+      "src": "BANK",
+      "bank": "woods"
+    },
+    {
+      "song": "NA_BGM_NAVI_OPENING",
+      "id": 74,
+      "src": "BANK",
+      "bank": "navi"
+    },
+    {
+      "song": "NA_BGM_DEKU_TREE_CS",
+      "id": 75,
+      "src": "BANK",
+      "bank": "deku_tree"
+    },
+    {
+      "song": "NA_BGM_SHOP",
+      "id": 85,
+      "src": "BANK",
+      "bank": "shop"
+    },
+    {
+      "song": "NA_BGM_ITEM_GET",
+      "id": 34,
+      "src": "CD",
+      "cd": "ITEM_GET"
+    },
+    {
+      "song": "NA_BGM_OWL",
+      "id": 90,
+      "src": "BANK",
+      "bank": "owl"
+    },
+    {
+      "song": "NA_BGM_OCA_FAIRY_GET",
+      "id": 61,
+      "src": "BANK",
+      "bank": "fairyget"
+    },
+    {
+      "song": "NA_BGM_FIELD_LOGIC",
+      "id": 2,
+      "src": "BANK",
+      "bank": "field"
+    },
+    {
+      "song": "NA_BGM_SPIRITUAL_STONE",
+      "id": 50,
+      "src": "BANK",
+      "bank": "stone"
+    }
   ]
 }

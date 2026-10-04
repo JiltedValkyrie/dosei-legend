@@ -87,7 +87,9 @@ JO_MAX_FS_BACKGROUND_JOBS = 2
 # largest camera track ~13 KB, small blocks); 52 KB keeps >1.5x that.
 # Header-complete rebuild + permanent shot skip crossed the normal boundary
 # by 16 bytes. Keep ~2 KB clear; jo_malloc spills into the cart zones.
-JO_GLOBAL_MEMORY_SIZE_FOR_MALLOC ?= 51200
+# 2026-10-03: 47 KB (was 44 KB, peak hit the cap; still 1.47x the known ~32 KB demand) to
+# give the decomp glue static RAM; overflow goes to the cart zones.
+JO_GLOBAL_MEMORY_SIZE_FOR_MALLOC ?= 48128
 
 SRCS = src/main.c src/ram_cart.c src/game_mode.c src/message.c src/cutscene.c src/cutscene_actor.c src/save_state.c src/item_drop.c src/world_props.c src/world_signs.c src/world_props_draw.c src/actor_sys.c src/attention.c src/karebaba.c src/karebaba_draw.c src/game_over.c src/collide.c src/save_file.c src/save_device.c src/ui_preferences.c src/file_select.c src/scene_flow.c src/kokiri_sgl.c ../shared/lib/music/music.c src/music_banks.c src/demo.c src/navi.c src/player_input.c src/gameplay.c src/dialogue_text.c src/text_pool.c src/minimap.c src/health_hud.c src/pause_windows.c src/pause_window_state.c src/cdda.c src/music_songs.c src/action_audio.c src/demo_camera.c src/demo_collision.c src/demo_follow.c src/link_anim.c src/link_anim_state.c src/player_air.c src/player_bg.c src/player_climb.c src/player_crawl.c src/frame_timer.c build/generated/kokiri_scene.c build/generated/kokiri_textures.c build/generated/link_scene.c build/generated/link_textures.c build/generated/link_clips.c build/generated/scene_table.c build/generated/kokiri_actors.c build/generated/kokiri_dialogue.c build/generated/cutscenes.c
 override ASSETS_DIR = ./build/cd
@@ -100,9 +102,14 @@ PYTHON ?= python
 # first on PATH during a build and mangles arguments passed to the cygwin
 # mkisofs (every pathspec arrives empty -> "Missing pathspec"). Drive recipes
 # with MSYS2 bash instead. Override on the command line if bash lives elsewhere.
+ifeq ($(OS),Windows_NT)
 SHELL := C:/msys64/usr/bin/bash.exe
+else
+SHELL := /bin/bash
+endif
 
 include $(COMPILER_DIR)/COMMON/jo_engine_makefile
+LDFILE = sgl.linker
 
 # Link our patched work area instead of the SDK's, so MaxPolygons covers the
 # scene's 2060-polygon list. The shared SDK object is only ever read.
@@ -159,8 +166,126 @@ $(OBJDIR)/kokiri_sgl.o: src/scene_actor_order.h src/actor_order.h src/sgl_order_
 # Instead declare our own link/convert targets against an obj/ object list and
 # cancel the inherited suffix rule so it can never fire on an SDK source.
 SRCS += src/push_block.c src/player_push.c src/player_lift.c src/player_slope.c src/player_water.c src/player_camera.c src/npc_draw.c
-SRCS += src/npc_pose.c src/interior_mask.c
+SRCS += src/npc_pose.c src/interior_mask.c src/music_area.c
+# NPC sprite impostors: Clean only until Debug has static RAM for them (plan).
+ifeq ($(CLEAN_TEST),1)
+SRCS += src/npc_sprite.c
+endif
+SRCS += src/player_items.c src/dungeon_doors.c src/dungeon_webs.c src/dungeon_torches.c src/dungeon_puzzles.c
+SRCS += src/skulltula.c src/wall_skull.c src/dekubaba.c
+SRCS += src/hintnuts.c
+SRCS += src/gohma_larva.c
+SRCS += src/gohma.c
+SRCS += src/level_select.c src/tree_mouth.c src/field_music.c src/story_route.c src/emerald_story.c \
+	src/oot_core_host.c
 MY_OBJS = $(patsubst %.c,$(OBJDIR)/%.o,$(notdir $(SRCS)))
+
+# --- oot-core (fork Phase 0): real decomp code compiled as C++ ---------------
+# OOT_CORE=1 builds the imported decomp math slice and its SH-2 benchmark into
+# OOTCORE.BIN: a self-contained blob linked at a fixed RAM-cart address
+# (oot-core/oot-core.ld), loaded at boot and run from the cart, so decomp code
+# never costs work RAM. The game reaches it only through its entry table
+# (oot-core/include/oot_core_api.h). Run tools/oot_core_import.py first
+# (build.sh does). Flags mirror oot-core/oot-core-flags.sh. See
+# docs/OOT_CORE_PIPELINE_PLAN.md and docs/BUILD.md.
+OOT_CORE ?= 0
+ifeq ($(OOT_CORE),1)
+ifeq ($(OS),Windows_NT)
+# Jo's Windows SDK has no C++ front end; use the sibling sh2eb-elf g++.
+OOT_CORE_CXX ?= ../../sh2eb-elf/bin/sh2eb-elf-g++
+OOT_CORE_READELF ?= ../../sh2eb-elf/bin/sh2eb-elf-readelf
+else
+# The Linux gcc 9.3 (tools/toolchain/build-sh-elf-linux.sh) includes C++.
+OOT_CORE_CXX ?= $(CC)
+OOT_CORE_READELF ?= readelf
+endif
+OOT_CORE_DECOMP ?= $(DOSEI_OOT)
+OOT_CORE_D = build/oot-core/decomp
+OOT_CORE_OBJDIR = $(OBJDIR)/oot-core
+# Cached cart alias of the RAM_CART_OOTCORE carve (src/ram_cart.h; ram_cart.c
+# checks the carve sits here). 0x2xxxxxxx is cache-through: never run code there.
+OOT_CORE_LOAD_ADDR = 0x02770000
+OOT_CORE_MAX_BYTES = 0x90000
+# Scene collision blobs (RAM_CART_SCENECOL carve, cached alias). One per scene in
+# tools/oot_core_import.py SCENE_COLLISION; data only, nothing executes there.
+OOT_SCENECOL_ADDR = 0x02730000
+OOT_SCENECOL_MAX_BYTES = 0x40000
+OOT_CORE_CXXFLAGS = -x c++ -std=gnu++17 -fno-exceptions -fno-rtti -fpermissive -funsigned-char -w \
+	-fno-threadsafe-statics -fno-use-cxa-atexit -Os -m2 -ffunction-sections -fdata-sections \
+	-include oot_prelude.h \
+	-DPLATFORM_N64=1 -DPLATFORM_GC=0 -DPLATFORM_IQUE=0 -DOOT_VERSION=NTSC_1_2 -DOOT_REVISION=2 \
+	-DOOT_REGION=REGION_US -DLIBULTRA_VERSION=LIBULTRA_VERSION_I -DLIBULTRA_PATCH=1 -DDEBUG_FEATURES=0 \
+	-DNDEBUG -DF3DEX_GBI_2 -DNON_MATCHING -DAVOID_UB -D_LANGUAGE_C -D_MIPS_SZLONG=32 -D_MIPS_SZINT=32 \
+	-D_MIPS_SZPTR=32 -nostdinc -Ioot-core/shim -Ioot-core/include -I$(OOT_CORE_D)/include \
+	-I$(OOT_CORE_D)/include/libc -I$(OOT_CORE_D)/src -I$(OOT_CORE_D) \
+	-I$(OOT_CORE_DECOMP)/extracted/ntsc-1.2 -I$(OOT_CORE_DECOMP)
+# Decomp file list: tools/oot_core_import.py SOURCES (writes sources.mk).
+-include build/oot-core/sources.mk
+OOT_CORE_SRCS = $(OOT_CORE_DECOMP_SRCS) \
+	oot-core/src/oot_math.cpp oot-core/src/oot_rand.cpp \
+	oot-core/src/oot_core_bench.cpp oot-core/src/oot_core_link_stubs.cpp \
+	oot-core/src/oot_core_api.cpp oot-core/src/bridge_tables.cpp oot-core/src/bridge_libc.cpp \
+	oot-core/src/bridge_play.cpp oot-core/src/bridge_assets.cpp oot-core/src/bridge_player.cpp \
+	oot-core/src/bridge_message.cpp oot-core/src/oot_core_views.cpp \
+	oot-core/src/oot_core_draw.cpp build/oot-core/keep_ph.cpp oot-core/src/bridge_npc.cpp
+OOT_CORE_OBJS = $(patsubst %.cpp,$(OOT_CORE_OBJDIR)/%.o,$(notdir $(OOT_CORE_SRCS)))
+_CCFLAGS += -DDOSEI_OOT_CORE -DOOT_CORE_LOAD_ADDR=$(OOT_CORE_LOAD_ADDR)u \
+	-DOOT_SCENECOL_ADDR=$(OOT_SCENECOL_ADDR)u -Ioot-core/include
+vpath %.cpp $(sort $(dir $(OOT_CORE_SRCS)))
+$(OOT_CORE_OBJDIR):
+	mkdir -p $@
+# Static ctors are fine: OotCoreEntry.init runs the blob's ctor table.
+$(OOT_CORE_OBJDIR)/%.o: %.cpp oot-core/include/fx.h oot-core/include/oot_prelude.h oot-core/include/oot_core_bench.h oot-core/include/oot_core_api.h oot-core/include/oot_core_host.h | $(OOT_CORE_OBJDIR)
+	$(OOT_CORE_CXX) $(OOT_CORE_CXXFLAGS) -c $< -o $@
+build/oot-core/oot-core.elf: $(OOT_CORE_OBJS) build/oot-core/sources.mk oot-core/oot-core.ld build/oot-core/obj_syms.ld build/oot-core/msg_syms.ld
+	$(OOT_CORE_CXX) -m2 -nostdlib -nostartfiles -T oot-core/oot-core.ld \
+		-Wl,--defsym,OOT_CORE_LOAD_ADDR=$(OOT_CORE_LOAD_ADDR) \
+		-Wl,--defsym,OOT_CORE_MAX_BYTES=$(OOT_CORE_MAX_BYTES) \
+		-Wl,--gc-sections -Wl,-Map,build/oot-core/oot-core.map \
+		$(OOT_CORE_OBJS) build/oot-core/msg_syms.ld build/oot-core/obj_syms.ld -lgcc -o $@
+$(ASSETS_DIR)/OOTCORE.BIN: build/oot-core/oot-core.elf
+	$(CONV) -O binary $< $@
+# One blob per registered scene (oot_core_import.py registered_scenes), named
+# by scene index like the room banks (S1, Z20). A scene whose blob does not fit
+# the carve is left out (recipe removes the target); the runtime skips it.
+# Link addresses live only in this makefile: a carve move must relink every blob
+# (2026-10-03: stale S1.OOC kept the old 0x0275xxxx pointers, Kokiri collision
+# read garbage, every En_Kusa failed its floor snap). Stamp rewritten on change.
+OOT_CORE_ADDR_STAMP = build/oot-core/addr.stamp
+OOT_CORE_ADDR_KEY = $(OOT_CORE_LOAD_ADDR) $(OOT_CORE_MAX_BYTES) $(OOT_SCENECOL_ADDR) $(OOT_SCENECOL_MAX_BYTES)
+$(shell mkdir -p build/oot-core; [ "$$(cat $(OOT_CORE_ADDR_STAMP) 2>/dev/null)" = "$(OOT_CORE_ADDR_KEY)" ] || echo "$(OOT_CORE_ADDR_KEY)" > $(OOT_CORE_ADDR_STAMP))
+build/oot-core/oot-core.elf: $(OOT_CORE_ADDR_STAMP)
+build/oot-core/scenecol/%.elf: build/oot-core/scenecol/%.cpp oot-core/scenecol.ld oot-core/include/oot_scene_blob.h $(OOT_CORE_ADDR_STAMP)
+	$(OOT_CORE_CXX) $(OOT_CORE_CXXFLAGS) -c $< -o build/oot-core/scenecol/$*.o || \
+		{ rm -f build/oot-core/scenecol/$*.o; echo "scene blob $* compile failed"; }
+	$(OOT_CORE_CXX) -m2 -nostdlib -nostartfiles -T oot-core/scenecol.ld \
+		-Wl,--defsym,OOT_SCENECOL_ADDR=$(OOT_SCENECOL_ADDR) \
+		-Wl,--defsym,OOT_SCENECOL_MAX_BYTES=$(OOT_SCENECOL_MAX_BYTES) \
+		build/oot-core/scenecol/$*.o -o $@ || { rm -f $@; echo "scene blob $* left out"; }
+$(ASSETS_DIR)/%.OOC: build/oot-core/scenecol/%.elf
+	[ ! -f $< ] || $(CONV) -O binary $< $@
+# Decomp object data blobs (oot_core_import.py OBJECTS), linked at segment 6.
+# Their symbols reach the oot-core link as absolute 0x06xxxxxx addresses.
+OOT_OBJECT_MAX_BYTES = 0x30000
+OOT_CORE_NM ?= $(patsubst %gcc,%nm,$(patsubst %g++,%nm,$(OOT_CORE_CXX)))
+OOT_OBJECT_ELFS = $(patsubst %,build/oot-core/objects/%.elf,$(OOT_OBJECT_NAMES))
+build/oot-core/objects/%.elf: build/oot-core/objects/%.cpp build/oot-core/objects/%_ph.cpp oot-core/object.ld
+	$(OOT_CORE_CXX) $(OOT_CORE_CXXFLAGS) -c build/oot-core/objects/$*.cpp -o build/oot-core/objects/$*.o
+	$(OOT_CORE_CXX) $(OOT_CORE_CXXFLAGS) -c build/oot-core/objects/$*_ph.cpp -o build/oot-core/objects/$*_ph.o
+	$(OOT_CORE_CXX) -m2 -nostdlib -nostartfiles -T oot-core/object.ld 		-Wl,--defsym,OOT_OBJECT_MAX_BYTES=$(OOT_OBJECT_MAX_BYTES) 		build/oot-core/objects/$*.o build/oot-core/objects/$*_ph.o -o $@
+build/oot-core/obj_syms.ld: $(OOT_OBJECT_ELFS)
+	for f in $^; do $(OOT_CORE_NM) $$f | awk '$$2 ~ /^[DdBbRrGgSs]$$/ && $$3 !~ /^_oot_/ {print $$3 " = 0x" $$1 ";"}'; done > $@
+build/oot-core/generic_sprites.h: build/oot-core/generic_sprites.json build/oot-core/obj_syms.ld tools/build_sprite_keys.py
+	"$(PYTHON)" tools/build_sprite_keys.py $< build/oot-core/obj_syms.ld $@
+$(OBJDIR)/oot_core_host.o: build/oot-core/generic_sprites.h
+$(OOT_CORE_OBJDIR)/oot-core/src/oot_core_draw.o: build/oot-core/generic_skins.h build/oot-core/generic_meshes.h
+# ROM message text for z_message (oot-core/src/bridge_message.cpp).
+$(ASSETS_DIR)/NESMSG.BIN: $(OOT_CORE_DECOMP)/extracted/ntsc-1.2/baserom/nes_message_data_static
+	cp $< $@
+$(ASSETS_DIR)/%.OOB: build/oot-core/objects/%.elf
+	$(CONV) -O binary $< $@
+$(TARGET2): $(ASSETS_DIR)/OOTCORE.BIN $(ASSETS_DIR)/NESMSG.BIN $(patsubst %,$(ASSETS_DIR)/%.OOC,$(OOT_SCENECOL_NAMES)) 	$(patsubst %,$(ASSETS_DIR)/%.OOB,$(OOT_OBJECT_NAMES))
+endif
 # Header layout changes must rebuild every consumer (save v2 otherwise wrote
 # 300 bytes into a stale 220-byte stack buffer). makefile bootstraps .d files
 # for existing objects and also invalidates compiled configuration changes.
@@ -175,8 +300,14 @@ $(foreach s,$(SRCS),$(eval $(s:.c=.o): $(OBJDIR)/$(notdir $(s:.c=.o))))
 
 %.o: %.c
 
-$(OBJDIR)/fs.o: $(JO_ENGINE_SRC_DIR)/fs.c src/fs_capacity.h | $(OBJDIR)
-	$(CC) $< $(DFLAGS) $(CCFLAGS) $(_CCFLAGS) -include src/fs_capacity.h -MMD -MP -MF $(@:.o=.d) -MT $@ -o $@
+$(OBJDIR)/fs.o: src/fs_low.c $(JO_ENGINE_SRC_DIR)/fs.c src/fs_capacity.h src/ram_low.h | $(OBJDIR)
+	$(CC) src/fs_low.c $(DFLAGS) $(CCFLAGS) $(_CCFLAGS) -I$(JO_ENGINE_SRC_DIR) -MMD -MP -MF $(@:.o=.d) -MT $@ -o $@
+
+$(OBJDIR)/backup.o: src/backup_low.c $(JO_ENGINE_SRC_DIR)/backup.c src/ram_low.h | $(OBJDIR)
+	$(CC) src/backup_low.c $(DFLAGS) $(CCFLAGS) $(_CCFLAGS) -I$(JO_ENGINE_SRC_DIR) -MMD -MP -MF $(@:.o=.d) -MT $@ -o $@
+
+$(OBJDIR)/3d.o: src/quads_low.c $(JO_ENGINE_SRC_DIR)/3d.c src/ram_low.h | $(OBJDIR)
+	$(CC) src/quads_low.c $(DFLAGS) $(CCFLAGS) $(_CCFLAGS) -I$(JO_ENGINE_SRC_DIR) -MMD -MP -MF $(@:.o=.d) -MT $@ -o $@
 
 $(OBJDIR)/%.o: src/%.c src/video_mode.h | $(OBJDIR)
 	$(CC) $< $(DFLAGS) $(CCFLAGS) $(_CCFLAGS) -MMD -MP -MF $(@:.o=.d) -MT $@ -o $@
@@ -203,7 +334,12 @@ $(OBJDIR)/minimap.o: build/generated/gameplay_hud_data.h src/gameplay_hud_state.
 $(OBJDIR)/music.o: ../shared/lib/music/music.c ../shared/lib/music/music.h src/video_mode.h | $(OBJDIR)
 	$(CC) $< $(DFLAGS) $(CCFLAGS) $(_CCFLAGS) -MMD -MP -MF $(@:.o=.d) -MT $@ -o $@
 
-$(OBJDIR)/core.o: makefile
+$(OBJDIR)/core.o: src/core_low.c src/ram_low.h $(JO_ENGINE_SRC_DIR)/core.c makefile | $(OBJDIR)
+	$(CC) src/core_low.c $(DFLAGS) $(CCFLAGS) $(_CCFLAGS) -I$(JO_ENGINE_SRC_DIR) -MMD -MP -MF $(@:.o=.d) -MT $@ -o $@
+
+# Keep the shared SDK immutable; relocate only its sprite metadata.
+$(OBJDIR)/sprites.o: src/sprites_low.c src/ram_low.h $(JO_ENGINE_SRC_DIR)/sprites.c | $(OBJDIR)
+	$(CC) src/sprites_low.c $(DFLAGS) $(CCFLAGS) $(_CCFLAGS) -I$(JO_ENGINE_SRC_DIR) -MMD -MP -MF $(@:.o=.d) -MT $@ -o $@
 
 # Observe every SDK allocation from boot, without patching the shared SDK.
 # heap_profile.c includes the selected allocator implementation privately.
@@ -240,6 +376,7 @@ $(ASSETS_DIR)/LINKTEX.BIN: build/generated/link_tex.c build/generated/link_scene
 	$(CONV) -O binary -j .rodata $(OBJDIR)/link_tex_blob.o $@
 
 $(TARGET2): $(TARGET1) $(ASSETS_DIR)/LINKMESH.BIN $(ASSETS_DIR)/LINKTEX.BIN
+	"$(PYTHON)" tools/check_disc_directory.py
 	$(CONV) -O binary $(TARGET) $(ASSETS_DIR)/0.bin
 	$(MKISOFS) -quiet -sysid "SEGA SATURN" -volid "KOKIRIJO" -volset "KOKIRIJO" 		-sectype 2352 -publisher "SEGA ENTERPRISES, LTD." 		-preparer "SEGA ENTERPRISES, LTD." -appid "KOKIRIJO" 		-abstract "$(ASSETS_DIR)/ABS.TXT" -copyright "$(ASSETS_DIR)/CPY.TXT" 		-biblio "$(ASSETS_DIR)/BIB.TXT" -generic-boot $(IPFILE) 		-full-iso9660-filenames -o $(TARGET2) $(ASSETS_DIR)
 

@@ -18,6 +18,7 @@ static int32_t scale(const actor_t *a) { return scales[a->params & 3]; }
 static int32_t half(const actor_t *a) { return (300 * scale(a) + 32768) / 65536; }
 unsigned push_block_bg(const actor_t *a) { return (unsigned)a->data[SLOT]; }
 bool push_block_moving(const actor_t *a) { return a && a->data[DIRECTION] != 0; }
+void push_block_lock(actor_t *a) {if(a && a->profile && a->profile->id==PUSH_ID)a->data[TIMER]=-1;}
 
 static void place(actor_t *a)
 {
@@ -37,8 +38,11 @@ static bool blocked(actor_t *a, uint16_t yaw, int direction)
         int32_t side = (i&1) ? h-1 : 1-h;
         bg_vec_t from = {a->x + side*cs/65536,
             a->y + ((i&2) ? 2*h-1 : 1), a->z-side*sn/65536};
-        bg_vec_t to = {from.x+direction*(h+20)*sn/65536,from.y,
-                      from.z+direction*(h+20)*cs/65536}, result;
+        /* ObjOshihiki_CheckWall maxDist = half + 20 - 0.5: the ray stops
+         * short of the next face plane. Reaching exactly half + 20 ended ON
+         * the back of room 3's ledge wall (x=-395), refusing the last push. */
+        bg_vec_t to = {from.x+direction*(h+19)*sn/65536,from.y,
+                      from.z+direction*(h+19)*cs/65536}, result;
         bg_hit_t wall;
         if (bg_line(&from,&to,&result,BG_CHECK_WALL|BG_CHECK_ONE_FACE,
                      BG_IGNORE_ENTITY,&wall)) { hit=true; break; }

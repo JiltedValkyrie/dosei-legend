@@ -1,0 +1,42 @@
+# Blender 5.2.2 LTS MTL File: 'kokiriforest-quads.blend'
+# www.blender.org
+
+newmtl dosei_000
+Ns 0.000000
+Ka 1.000000 1.000000 1.000000
+Ks 0.000000 0.000000 0.000000
+Ke 0.000000 0.000000 0.000000
+Ni 1.500000
+d 1.000000
+illum 1
+map_Kd D:/Workspace-Claude/saturn-homebrew/dosei-legend/game/levels/kokiri/assets/static/kokiri0-area_texture_f75b4e5f52b29feb.png
+
+newmtl dosei_001
+Ns 0.000000
+Ka 1.000000 1.000000 1.000000
+Ks 0.000000 0.000000 0.000000
+Ke 0.000000 0.000000 0.000000
+Ni 1.500000
+d 1.000000
+illum 1
+map_Kd D:/Workspace-Claude/saturn-homebrew/dosei-legend/game/levels/kokiri/assets/static/kokiri0-area_texture_03f8fdb6fe64ea84.png
+
+newmtl dosei_002
+Ns 0.000000
+Ka 1.000000 1.000000 1.000000
+Ks 0.000000 0.000000 0.000000
+Ke 0.000000 0.000000 0.000000
+Ni 1.500000
+d 1.000000
+illum 1
+map_Kd D:/Workspace-Claude/saturn-homebrew/dosei-legend/game/levels/kokiri/assets/static/kokiri0-area_texture_73d0e6cb490bc1a1.png
+
+newmtl dosei_003
+Ns 0.000000
+Ka 1.000000 1.000000 1.000000
+Ks 0.000000 0.000000 0.000000
+Ke 0.000000 0.000000 0.000000
+Ni 1.500000
+d 1.000000
+illum 1
+map_Kd D:/Workspace-Claude/saturn-homebrew/dosei-legend/game/levels/kokiri/assets/static/kokiri0-area_texture_540e87b7c171f2d0.png

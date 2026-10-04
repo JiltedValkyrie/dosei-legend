@@ -23,6 +23,7 @@ through the path that already exists.
 """
 
 import argparse
+from vdp1_budget import bank_bytes
 import io
 import pathlib
 import struct
@@ -51,7 +52,7 @@ def rgb555(rgb):
     return 0x8000 | (b >> 3) << 10 | (g >> 3) << 5 | (r >> 3)
 
 
-def room_backdrop(room):
+def room_backdrop(room, multi_first=False):
     """The JFIF image and its declared size from a ROOM_SHAPE_TYPE_IMAGE room.
 
     Header walk: room command 0x0A points at a RoomShapeImageSingle --
@@ -68,6 +69,15 @@ def room_backdrop(room):
         kind, amount = room[shape], room[shape + 1]
         if kind != 1:
             raise ValueError('room shape %d is not ROOM_SHAPE_TYPE_IMAGE' % kind)
+        if amount == 2 and multi_first:
+            # RoomShapeImageMulti: numBackgrounds @8, backgrounds* @0xC;
+            # RoomShapeImageMultiBgEntry (0x1C): bgCamIndex @2, source @4,
+            # width/height @0x10. APPROXIMATE: first entry only; the real
+            # room picks the entry whose bgCamIndex is the active bg camera.
+            entries = int.from_bytes(room[shape + 12:shape + 16], 'big') & 0xFFFFFF
+            start = int.from_bytes(room[entries + 4:entries + 8], 'big') & 0xFFFFFF
+            width, height = struct.unpack_from('>2H', room, entries + 0x10)
+            return room[start:], width, height
         if amount != 1:
             raise ValueError('multi-background rooms are not handled yet '
                              '(amountType %d)' % amount)
@@ -94,7 +104,7 @@ def main():
     ap.add_argument('--cd', type=pathlib.Path, default=here / 'build/cd')
     ap.add_argument('--out', type=pathlib.Path, default=here / 'build/generated')
     ap.add_argument('--oot', type=pathlib.Path,
-                    default=pathlib.Path('D:/Workspace-Claude/game-decomps/n64/oot'))
+                    default=pathlib.Path((__import__('os').environ.get('DOSEI_OOT') or 'D:/Workspace-Claude/game-decomps/n64/oot')))
     ap.add_argument('--rom-dir', default=None)
     ap.add_argument('--png', action='store_true',
                     help='also write a PNG of each backdrop, to look at')
@@ -102,7 +112,7 @@ def main():
 
     args.cd.mkdir(parents=True, exist_ok=True)
     args.out.mkdir(parents=True, exist_ok=True)
-    # z_vr_box.c: the five toggle-view houses. Bank 4 is the existing
+    # z_vr_box.c: the five toggle-view houses. The dedicated panorama bank
     # panorama renderer; room identifies the gameplay interior, not collision.
     from build_opening_banks import house_panorama
     from build_room_scene import pack_room
@@ -116,10 +126,10 @@ def main():
         vertices, faces, tiles = house_panorama(args.oot, *spec)
         records = [dict(object=0, indices=list(f['idx'])) for f in faces]
         mesh, pixels, _ = pack_room(vertices, faces, tiles, records, normal)
-        if len(pixels) + len(tiles) * 32 > 140000:
+        if bank_bytes(len(pixels), len(tiles)) > 140000:
             raise ValueError('Interior panorama exceeds reserved texture budget')
         for ext, blob in [('MSH', mesh), ('TEX', pixels)]:
-            (args.cd / asset_names.room_asset(4, index, ext)).write_bytes(blob)
+            (args.cd / asset_names.room_asset(asset_names.STORY_BANK_PANORAMA, index, ext)).write_bytes(blob)
     staged = 0
     for index, entry in enumerate(SCENES):
         if entry['shape'] != 'image':
@@ -128,7 +138,17 @@ def main():
                                   expect=entry['rooms'] + 1)
         for room_id in range(entry['rooms']):
             room = segments['%s_room_%d' % (entry['prefix'], room_id)]
-            data, width, height = room_backdrop(room)
+            try:
+                data, width, height = room_backdrop(room, multi_first=bool(entry.get("generic")))
+            except ValueError as error:
+                if not entry.get('generic'):
+                    raise
+                print('backdrop: %s room %d not staged: %s' % (entry['prefix'], room_id, error))
+                continue
+            if (width, height) != (WIDTH, HEIGHT) and entry.get('generic'):
+                print('backdrop: %s room %d is %dx%d, not staged (runtime stages %dx%d)'
+                      % (entry['prefix'], room_id, width, height, WIDTH, HEIGHT))
+                continue
             if (width, height) != (WIDTH, HEIGHT):
                 raise ValueError('%s room %d backdrop is %dx%d; the runtime '
                                  'stages %dx%d' % (entry['prefix'], room_id,

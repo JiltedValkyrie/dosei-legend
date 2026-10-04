@@ -8,4 +8,6 @@ bool music_play(oot_song_t song);
 bool music_play_fade(oot_song_t song, unsigned int frames);
 /* Startup and timed bank cues use the same dictionary. NULL for CD/unknown songs. */
 const music_bank_t *music_song_bank(oot_song_t song);
+/* songs.json has a route (bank or CD) for this song. */
+bool music_song_routed(oot_song_t song);
 #endif

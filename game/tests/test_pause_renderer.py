@@ -23,7 +23,9 @@ class Renderer(unittest.TestCase):
     ++reads;
     if (fail_reads) return false;
     if (name[5]=='F') memset(data,255,size);
-    else { unsigned i; for(i=0;i<size/2;++i) ((unsigned short *)data)[i]=0x8000+name[5]; }
+    else { unsigned i; for(i=0;i<size/2;++i) ((unsigned short *)data)[i]=0x8000+name[5];
+        if(name[5]=='1' && name[6]!='0') ((unsigned short *)data)[40*320+120]=0x1A;
+    }
     return true;
 }
 '''+code[b:]
@@ -33,12 +35,15 @@ class Renderer(unittest.TestCase):
 #include "pause_window_state.h"
 #include "ram_cart.h"
 #include "pause_cursor_data.h"
+#include "dungeon_map_data.h"
 static unsigned char vram[0x80000], cart[RAM_CART_FIXED_BYTES];
 static unsigned short regs[6];
 static unsigned now,reads,fail_reads;
 static int zx,zy,sx,sy,wl,wt,wr,wb;
 static struct {pause_window_state_t pause_window;unsigned owned,equipped;} gameplay;
-static struct {unsigned stick_owned,slingshot,quest_items; unsigned char c_items[3];} save_state;
+static struct {unsigned stick_owned,slingshot,nut_owned,quest_items,scene_id,deku_dungeon_items,deku_visited_rooms; unsigned char c_items[3];} save_state;
+#define SAVE_SCENE_DEKU_TREE 2
+#define SAVE_SCENE_DEKU_TREE_BOSS 3
 #define QUEST_KOKIRI_EMERALD 0
 #define GP_SWORD 1
 #define GP_SHIELD 2
@@ -77,6 +82,7 @@ void *ram_cart_fixed(unsigned offset,unsigned bytes) {return offset+bytes<=sizeo
 void reset(void) {
     pause_windows_reset(); memset(&gameplay,0,sizeof(gameplay));
     memset(vram,0x5a,sizeof(vram)); memset(cart,0,sizeof(cart));
+    memset(&save_state,0,sizeof(save_state));
     now=reads=fail_reads=0; for(int i=0;i<6;++i) regs[i]=0x1234+i;
 }
 int step(unsigned tick,int page) {now=tick;gameplay.pause_window.page=page;return pause_windows_update();}
@@ -88,6 +94,11 @@ int untouched(void) {
     for(unsigned i=0x6d880;i<0x80000;++i) if(vram[i]!=0x5a) return 0;
     return 1;
 }
+void dungeon(unsigned floor,unsigned visited,unsigned items) {
+    save_state.scene_id=2;save_state.deku_visited_rooms=visited;save_state.deku_dungeon_items=items;
+    gameplay.pause_window.cursor[PAUSE_MAP]=floor;
+}
+int palette(unsigned tag) {return map_colour(tag);}
 void fail(void) {fail_reads=1;}
 void cursor(void) {gameplay.pause_window.cursor[0]=1;}
 int pixel_at(int x,int y) {return cell((y/8)*40+x/8)[(y&7)*8+(x&7)];}
@@ -100,6 +111,25 @@ int pixel_at(int x,int y) {return cell((y/8)*40+x/8)[(y&7)*8+(x&7)];}
     @classmethod
     def tearDownClass(cls):cls.tmp.cleanup()
     def setUp(self):self.lib.reset()
+    def test_dungeon_floor_variant_and_visited_palette(self):
+        self.lib.dungeon(1,1,2)
+        self.assertEqual(self.lib.step(0,1),1)
+        self.assertEqual(self.lib.value(9),10)
+        self.assertEqual(self.lib.palette(10),0xFD40)
+        self.assertEqual(self.lib.pixel_at(120,40),0xFD40)
+        self.assertEqual(self.lib.palette(1),0xBDEF)
+        self.lib.dungeon(1,3,0)
+        self.assertEqual(self.lib.palette(1),0xFD40)
+        self.assertEqual(self.lib.palette(2),0x8C41)
+        self.lib.dungeon(4,1,2)
+        self.lib.step(1,1)
+        self.assertEqual(self.lib.value(9),13)
+        self.assertEqual(self.lib.palette(10),0xBDEF)
+        self.assertEqual(self.lib.pixel_at(120,40),0xBDEF)
+        self.assertEqual(self.lib.value(10),0) # floors do not turn the carousel
+        self.lib.pause_windows_reset()
+        self.assertEqual(self.lib.restored(),1)
+
     def test_vram_and_identity_scale_restored_on_close(self):
         self.assertEqual(self.lib.step(0,0),1)
         self.assertEqual([self.lib.value(i) for i in range(4)],[65536,65536,0,0])
@@ -118,7 +148,7 @@ int pixel_at(int x,int y) {return cell((y/8)*40+x/8)[(y&7)*8+(x&7)];}
             self.assertEqual(self.lib.value(8),3)
             self.lib.step(25,page)
             self.assertEqual([self.lib.value(i) for i in range(4)],[65536,65536,0,0])
-            self.assertEqual(self.lib.value(9),page*4)
+            self.assertEqual(self.lib.value(9),page*8)
     def test_failed_page_read_restores_hud_before_reporting_failure(self):
         self.lib.step(0,0);self.lib.step(1,1);self.lib.fail()
         self.assertEqual(self.lib.step(13,1),0)
@@ -142,7 +172,7 @@ int pixel_at(int x,int y) {return cell((y/8)*40+x/8)[(y&7)*8+(x&7)];}
         self.lib.step(14,2)
         self.assertFalse(self.lib.pause_windows_text_ready())
         self.lib.step(25,2);self.lib.step(26,2);self.lib.step(38,2);self.lib.step(50,2)
-        self.assertEqual(self.lib.value(9),8)
+        self.assertEqual(self.lib.value(9),16)
         self.assertTrue(self.lib.pause_windows_text_ready())
         self.lib.pause_windows_reset()
         self.assertEqual(self.lib.restored(),1)

@@ -35,3 +35,5 @@ Kronos-*.png
 # Blender Files
 *.blend
 *.blend1
+# Private playtest packages (tools/package_playtest.sh)
+/playtest/

@@ -38,7 +38,8 @@ MAX_PAGES = 16
 # Messages that belong to no speaker's text-id ladder: get-item text and the
 # Kokiri Shop's Deku Shield exchange (z_player.c sGetItemTable, z_en_girla.c,
 # z_en_ossan.c). The runtime opens them by id; see dialogue_system[].
-SYSTEM_TEXTS = (0x006F, 0x00CC, 0x00A4, 0x004C, 0x10BA, 0x009F, 0x0089, 0x0084, 0x0085, 0x0086,
+SYSTEM_TEXTS = (0xFF00, 0x2064, 0x2065, 0x2066, 0x2067, 0x0030, 0x0066, 0x0067, 0x006F, 0x00CC, 0x00A4, 0x004C, 0x10BA, 0x009F, 0x0089, 0x0084, 0x0085, 0x0086,
+                0x101A, 0x109B, 0x109C, 0x060A,
                 # Full Kokiri Shop (EnOssan/EnGirlA): hello, facing choice,
                 # continue choice, each shelf item's text and buy prompt, and
                 # the get-item texts a first buy shows.
@@ -48,13 +49,16 @@ SYSTEM_TEXTS = (0x006F, 0x00CC, 0x00A4, 0x004C, 0x10BA, 0x009F, 0x0089, 0x0084, 
                 # Navi's C-Up quest hints (elf_message_field.c): Deku Tree.
                 0x0140, 0x0141,
                 # GI_DEKU_STICKS_1 get-item text; Navi on a Deku Baba (0x600 + 9).
-                0x0037, 0x0609,
+                0x0037, 0x0609, 0x00B4, 0x0604, 0x0605, 0x0607, 0x061F, 0x0620, 0x00C6,
                 # Forest EnKanban authored text IDs (params | 0x300).
                 0x0320, 0x0337, 0x0340, 0x0338, 0x0336, 0x031F, 0x0341, 0x0312, 0x0345)
 # Choice branches (M3a): a choice box continues into the text its cursor
 # picks. En_Ko EnKo_UpdateTalkState TEXT_STATE_CHOICE (z_en_ko.c): the
 # Know-It-All tutorials. Every id here is exported and openable by id.
 CHOICE_BRANCHES = {
+    0x2064: (0x2065, 0x2067),
+    0x2065: (0x2065, 0x2067),
+    0x2066: (0x2065, 0x2067),
     0x1035: (0x1036, 0x1037),               # icons: yes / no
     0x1038: (0x1039, 0x103A, 0x103B),       # map / items / nothing
     0x103E: (0x103F, 0x1040),               # C-Up: yes / no
@@ -468,6 +472,8 @@ def clean_pages(message, text_id=None):
               for page in pages]
     # Source button symbols sometimes mean menu actions, not gameplay actions.
     # Preserve lessons while describing the port's actual page/assign routing.
+    if text_id == 0x2065:
+        result=[[line.replace('[Z]','[MenuPrev]').replace('[R]','[MenuNext]') for line in page] for page in result]
     if text_id == 0x103A:
         result = [[line.replace('[C] Button', 'C-slot').replace('[Z]', '[MenuPrev]').replace('[R]', '[MenuNext]')
                        .replace('[A]', '[Confirm]') for line in page] for page in result]
@@ -516,7 +522,7 @@ def main():
     ap.add_argument('--out', type=pathlib.Path,
                     default=pathlib.Path(__file__).resolve().parents[1] / 'build/generated')
     ap.add_argument('--oot', type=pathlib.Path,
-                    default=pathlib.Path('D:/Workspace-Claude/game-decomps/n64/oot'))
+                    default=pathlib.Path((__import__('os').environ.get('DOSEI_OOT') or 'D:/Workspace-Claude/game-decomps/n64/oot')))
     ap.add_argument('--cd', type=pathlib.Path,
                     default=pathlib.Path(__file__).resolve().parents[1] / 'build/cd')
     ap.add_argument('--verify', action='store_true',
@@ -536,6 +542,8 @@ def main():
                  'parser; do not fall back to a hardcoded text id.' % error)
 
     messages = load_messages(args.oot)
+    # Explicit demo boundary, not an invented OoT dialogue line.
+    messages[0xFF00]=dict(body='"This route is not available yet."')
 
     # Flatten to the runtime tables. Conditions and rules are pooled the same
     # way pages and lines already are.
@@ -567,10 +575,10 @@ def main():
     # System texts: unconditional rules, opened by id rather than by speaker.
     system = []
     for text_id in tuple(dict.fromkeys(SYSTEM_TEXTS + BRANCH_TEXTS)):
-        pages = clean_pages(messages.get(text_id))
+        pages = chain_pages(messages,text_id) if text_id in (0x2064,0x2065) else clean_pages(messages.get(text_id),text_id)
         if not pages:
             sys.exit('build_dialogue: system text 0x%04X missing' % text_id)
-        body = messages[text_id]['body']
+        body = messages[0x2066 if text_id in (0x2064,0x2065) else text_id]['body']
         choices = 3 if 'THREE_CHOICE' in body else 2 if 'TWO_CHOICE' in body else 0
         if text_id in CHOICE_BRANCHES and len(CHOICE_BRANCHES[text_id]) != choices:
             sys.exit('build_dialogue: 0x%04X has %d choices, branch lists %d'

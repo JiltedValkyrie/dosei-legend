@@ -45,11 +45,12 @@ legacy/libyaul/                 Archived reference only; not an active build tar
 
 ## Build and play
 
-Open **[launch-game.bat](launch-game.bat) > Config > Paths...** first. Select
+Open **[launch-game.bat](launch-game.bat) > Config > Paths and emulator...** first. Select
 your tools, validate paths/ROM, and save the local `config.ini`.
 [Developer setup](tools/launcher/SETUP.md) explains the Jo Engine SDK, MSYS2,
 Python/Pillow, Kronos, BIOS and required US 1.2 ROM/decomp inputs.
 Enable a **4 MB RAM expansion cartridge** in Kronos.
+Emulator tab switches Run to Mednafen (see [SETUP.md](tools/launcher/SETUP.md#mednafen-optional-most-accurate)).
 
 | Build option | Purpose | Windows command from repository root | Image |
 | --- | --- | --- | --- |
@@ -87,7 +88,7 @@ configure Kronos or remap gameplay inputs. The table assumes default Y jump.
 | Input | Gameplay action |
 | --- | --- |
 | Digital D-pad | Camera-relative movement; steer in the air |
-| 3D pad stick (analog mode) | Proportional movement; B selects walk/run speed ceiling |
+| 3D pad stick (analog mode) | Proportional movement; Holding B selects walk speed ceiling; B tap cancels / puts away the stick |
 | B | Toggle walk/run; start in run |
 | Y | Manual jump; no double-jump |
 | X | Attack with equipped sword; cuts grass and damages enemies |
@@ -138,8 +139,11 @@ the modifier as C (Saturn), LB (Xbox), or L1 (PlayStation). N64/GameCube
 presets show Sat C: bind that Saturn input in the emulator; those presets
 do not define a native modifier.
 
-**Assignment is implemented; live Deku Stick attacks and slingshot aiming/firing
-remain pending.** An assigned slot does not yet make those weapon actions work.
+**Live items are implemented.** Tap the assigned slingshot slot to enter aim;
+tap again to fire and use cancel to leave. Releasing the slot keeps aim active.
+Hold target (Xbox RB / Saturn Z) and tap the slot to shoot the locked actor
+without first person. RT remains shield. Center marks show aim; actor markers
+show available/locked targets. Human controller testing remains open.
 
 B opens the save prompt from the four adventure pages. In a prompt, D-pad
 changes the choice, A confirms and B cancels. On System, B returns to Equipment.
@@ -170,7 +174,12 @@ missing older fields receive defaults. Save v6 is included in the 2026-09-28 Cle
 Standard-only **L + R + Down** switches debug overlay views;
 **L + R + Up** switches the developer camera comparison. Clean removes both.
 
-The enemy-map cheat is **Up Up Down Down Left Right Left Right A Start**;
+Before pressing Start on the title, enter **Up Up Down Down Left Right Left Right B A Start**
+to open level select. Up/Down chooses an area; Left/Right chooses its room;
+A enters and B returns. Test runs begin with sword, shield, Slingshot, sticks,
+nuts, map and compass, without changing a saved file.
+
+The enemy-map cheat is **Up Up Down Down Left Right Left Right B A Start**;
 repeat to turn it off. It shows active hostile enemies/bosses on the current
 mapped scene. Its status appears on System only while enabled. It survives
 room changes and normal respawn, but clears on new/load game or ending the

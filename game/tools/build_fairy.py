@@ -7,12 +7,8 @@ EnElf_OverrideLimbDraw). gFairyAnim is 10 frames, played at speed 1.0: one
 frame per 30 Hz step. Actor scale 0.008 (ICHAIN_VEC3F_DIV1000 8).
 
 Writes:
-  build/cd/FAIRY.BIN   10 frames x 16 SGL POINTs (x, -y, z FIXED, BE): the
-                       four wing quads in actor space, vertex order already
-                       matched to VDP1's A,B,C,D texture corners.
-  build/cd/FAIRY.RGB   16x16 RGB555 glow: small bright core, dithered
-                       (checkerboard) glow fading to the outer colour, no
-                       solid halo.
+  build/cd/FAIRY*.RGB  32x32 RGB555 wing/glow sprites: three poses, three
+                       colours, transparent background. No runtime model.
   build/generated/fairy-preview.png  close-up + gameplay-size contact sheet.
 """
 import argparse
@@ -182,6 +178,47 @@ def sparkle_texture(keep):
     return pix
 
 
+def fairy_textures(keep, frames, inner=INNER, outer=OUTER):
+    """Three 32x32 billboards: original wing texture and glow baked together.
+
+    One pixel is .75 world units. Pose/UV work happens only on the host; the
+    Saturn selects one cel, with no skeleton, turn calculation or wing mesh.
+    """
+    tex = Image.open(keep / 'gFairyWingTex.i8.png').convert('L')
+    glows = glow_textures(keep, inner, outer)
+    result = []
+    for step, frame in enumerate((0, 1, 3)):
+        pixels = [0] * 1024
+        for quad, name in zip(frames[frame], WING_LIMBS.values()):
+            points = [(15.5 + v[0] / .75, 15.5 - v[1] / .75)
+                      for v in corners(quad, name)]
+            uv = ((0, 0), (1, 0), (1, 1), (0, 1))
+            for ids in ((0, 1, 2), (0, 2, 3)):
+                a, b, c = [points[i] for i in ids]
+                det = (b[1]-c[1])*(a[0]-c[0]) + (c[0]-b[0])*(a[1]-c[1])
+                if abs(det) < .001:
+                    continue
+                for y in range(max(0, math.floor(min(a[1], b[1], c[1]))),
+                               min(32, math.ceil(max(a[1], b[1], c[1])) + 1)):
+                    for x in range(max(0, math.floor(min(a[0], b[0], c[0]))),
+                                   min(32, math.ceil(max(a[0], b[0], c[0])) + 1)):
+                        s = ((b[1]-c[1])*(x-c[0])+(c[0]-b[0])*(y-c[1])) / det
+                        t = ((c[1]-a[1])*(x-c[0])+(a[0]-c[0])*(y-c[1])) / det
+                        weights = (s, t, 1-s-t)
+                        if min(weights) < 0:
+                            continue
+                        u, v = [sum(w * uv[i][k] for w, i in zip(weights, ids)) for k in (0, 1)]
+                        alpha = tex.getpixel((min(tex.width-1, int(u*tex.width)),
+                                              min(tex.height-1, int(v*tex.height))))
+                        if alpha * 16 > (BAYER[y & 3][x & 3] + .5) * 255:
+                            pixels[y*32+x] = rgb555(WING_COLOUR)
+        for i, colour in enumerate(glows[step]):
+            if colour:
+                pixels[(i//16+8)*32+i%16+8] = colour
+        result.append(pixels)
+    return result
+
+
 def preview(frames, glow, path):
     """Contact sheet: each frame front-on at 8 px/unit (close-up) and 1.5
     px/unit (normal gameplay distance)."""
@@ -211,45 +248,40 @@ def preview(frames, glow, path):
     sheet.save(path)
 
 
-def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--oot', type=Path, default=Path('D:/Workspace-Claude/game-decomps/n64/oot'))
-    args = parser.parse_args()
-    keep = args.oot / 'extracted/ntsc-1.2/assets/objects/gameplay_keep'
+def build(oot):
+    keep = Path(oot) / 'extracted/ntsc-1.2/assets/objects/gameplay_keep'
+    (ROOT / 'build/generated').mkdir(parents=True, exist_ok=True)
     frames = pose(keep)
-    blob = bytearray()
-    names = [WING_LIMBS[w] for w in sorted(WING_LIMBS)]
-    for quads in frames:
-        for quad, name in zip(quads, names):
-            for x, y, z in corners(quad, name):
-                blob += struct.pack('>iii', round(x * 65536), round(-y * 65536), round(z * 65536))
     cd = ROOT / 'build/cd'
     cd.mkdir(parents=True, exist_ok=True)
-    (cd / 'FAIRY.BIN').write_bytes(blob)
-    glows = glow_textures(keep)
+    # Retire the staged mesh too, so old full-build outputs cannot ship it.
+    (cd / 'FAIRY.BIN').unlink(missing_ok=True)
+    glows = fairy_textures(keep, frames)
     for name, glow in zip(('FAIRY.RGB', 'FAIRYM.RGB', 'FAIRYS.RGB'), glows):
         (cd / name).write_bytes(b''.join(struct.pack('>H', p) for p in glow))
     glow = glows[0]
     for tag, inner, outer in ATTENTION_SETS:
-        for step, pix in enumerate(glow_textures(keep, inner, outer)):
+        for step, pix in enumerate(fairy_textures(keep, frames, inner, outer)):
             (cd / ('FAIRY%s%d.RGB' % (tag, step))).write_bytes(
                 b''.join(struct.pack('>H', p) for p in pix))
     (cd / 'SPARKLE.RGB').write_bytes(b''.join(struct.pack('>H', p) for p in sparkle_texture(keep)))
     from PIL import Image as _I
-    sheet = _I.new('RGB', (16 * 3 * 10, 160), (40, 70, 40))
+    sheet = _I.new('RGB', (32 * 3 * 5, 160), (40, 70, 40))
     for i, g in enumerate(glows):
-        im = _I.new('RGB', (16, 16), (40, 70, 40))
+        im = _I.new('RGB', (32, 32), (40, 70, 40))
         for k, c in enumerate(g):
             if c:
-                im.putpixel((k % 16, k // 16), ((c & 31) << 3, (c >> 5 & 31) << 3, (c >> 10 & 31) << 3))
+                im.putpixel((k % 32, k // 32), ((c & 31) << 3, (c >> 5 & 31) << 3, (c >> 10 & 31) << 3))
         sheet.paste(im.resize((160, 160), _I.NEAREST), (i * 160, 0))
     sheet.save(ROOT / 'build/generated/glow-x10.png')
     gen = ROOT / 'build/generated'
     gen.mkdir(parents=True, exist_ok=True)
-    preview(frames, glow, gen / 'fairy-preview.png')
+    sheet.save(gen / 'fairy-preview.png')
     span = max(abs(c) for q in frames for quad in q for v in quad for c in v)
-    print('Fairy: %d frames, wing reach %.1f units, %d bytes' % (FRAMES, span, len(blob)))
+    print('Fairy: 3 textured wing/glow sprite poses, wing reach %.1f units; no runtime mesh' % span)
 
 
 if __name__ == '__main__':
-    main()
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--oot', type=Path, default=Path((__import__('os').environ.get('DOSEI_OOT') or 'D:/Workspace-Claude/game-decomps/n64/oot')))
+    build(parser.parse_args().oot)

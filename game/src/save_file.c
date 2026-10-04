@@ -4,6 +4,9 @@
 */
 
 #include "save_file.h"
+#if defined(__sh__)
+typedef char save_summary_low_fits[sizeof(save_state_t) <= RAM_LOW_SAVE_SUMMARY_BYTES ? 1 : -1];
+#endif
 
 /* ---- byte cursor -------------------------------------------------------
 ** A tiny explicit cursor rather than pointer arithmetic sprinkled through
@@ -111,6 +114,27 @@ static void     pack_payload(const save_state_t *state, cursor *c)
     put8(c, state->nut_owned);
     put8(c, state->nut_ammo);
     put8(c, state->nut_upgrade);
+    put8(c, state->deku_dungeon_items);
+    put16(c, state->deku_visited_rooms);
+    for(i=0;i<32;++i)put8(c,state->skull_flags[i]);
+    put8(c,state->tunic);put8(c,state->fairy_ocarina);
+    for(i=0;i<SAVE_SOURCE_SCENE_COUNT;++i) {
+        put32(c,state->generic_scene[i].chest);
+        put32(c,state->generic_scene[i].swch);
+        put32(c,state->generic_scene[i].clear);
+        put32(c,state->generic_scene[i].collect);
+    }
+    for(i=0;i<SAVE_DUNGEON_ITEMS_COUNT;++i)
+        put8(c,i==0?(state->deku_dungeon_items&3)<<1:state->dungeon_items[i]);
+    for(i=0;i<SAVE_DUNGEON_KEYS_COUNT;++i)put8(c,(uint8_t)state->dungeon_keys[i]);
+    put8(c,state->link_age);put16(c,state->day_time);put16(c,state->cutscene_index);
+    for(i=0;i<4;++i)put8(c,state->bottle_items[i]);
+    put8(c,state->source_scene);put16(c,state->source_entrance);
+    for(i=0;i<24;++i)put8(c,state->source_items[i]);
+    for(i=0;i<16;++i)put8(c,state->source_ammo[i]);
+    put16(c,state->source_equipment);put32(c,state->source_upgrades);
+    put8(c,state->source_magic_level);put8(c,state->source_magic);
+    put8(c,state->source_double_defense);put8(c,state->source_tokens);
 }
 
 static void     unpack_payload(save_state_t *state, cursor *c, uint16_t version)
@@ -143,6 +167,11 @@ static void     unpack_payload(save_state_t *state, cursor *c, uint16_t version)
     state->entrance = get8(c);
     for (i = 0; i < 3; ++i) state->c_items[i] = 0;
     state->nut_owned = state->nut_ammo = state->nut_upgrade = 0;
+    state->deku_dungeon_items = 0;
+    state->deku_visited_rooms = 0;
+    for(i=0;i<32;++i)state->skull_flags[i]=0;
+    state->tunic=state->fairy_ocarina=0;
+    save_world_defaults(state);
     if (version < 3) {
         state->stick_owned = state->stick_ammo = state->stick_upgrade = 0;
         state->navi_timer = 0;
@@ -155,20 +184,64 @@ static void     unpack_payload(save_state_t *state, cursor *c, uint16_t version)
     if (version >= 4)
         for (i = 0; i < 3; ++i) {
             unsigned item = get8(c);
-            state->c_items[i] = item <= 2 ? item : 0;
+            state->c_items[i] = item <= 3 ? item : 0;
         }
     if (version >= 5) {
         state->nut_owned = get8(c);
         state->nut_ammo = get8(c);
         state->nut_upgrade = get8(c);
     }
+    if (version >= 7) state->deku_dungeon_items = get8(c) & 3;
+    if (version >= 8) state->deku_visited_rooms = get16(c) & 0x0FFF;
+    if(version>=9)for(i=0;i<32;++i)state->skull_flags[i]=get8(c);
+    if(version>=10){
+        state->tunic=get8(c);state->fairy_ocarina=get8(c)!=0;
+    }
+    if(version>=11) {
+        for(i=0;i<SAVE_SOURCE_SCENE_COUNT;++i) {
+            state->generic_scene[i].chest=get32(c);
+            state->generic_scene[i].swch=get32(c);
+            state->generic_scene[i].clear=get32(c);
+            state->generic_scene[i].collect=get32(c);
+        }
+        for(i=0;i<SAVE_DUNGEON_ITEMS_COUNT;++i)state->dungeon_items[i]=get8(c)&7;
+        for(i=0;i<SAVE_DUNGEON_KEYS_COUNT;++i) {
+            unsigned n=get8(c);
+            state->dungeon_keys[i]=n<=127?(int8_t)n:-1;
+        }
+        state->link_age=get8(c)!=0;
+        state->day_time=get16(c);state->cutscene_index=get16(c);
+        for(i=0;i<4;++i) {
+            unsigned n=get8(c);
+            state->bottle_items[i]=n>=0x14 && n<=0x20?n:0xff;
+        }
+        state->source_scene=get8(c);state->source_entrance=get16(c);
+        if(state->source_scene>=SAVE_SOURCE_SCENE_COUNT)state->source_scene=0xff;
+        for(i=0;i<24;++i)state->source_items[i]=get8(c);
+        for(i=0;i<16;++i)state->source_ammo[i]=get8(c);
+        state->source_equipment=get16(c);state->source_upgrades=get32(c);
+        state->source_magic_level=get8(c);state->source_magic=get8(c);
+        state->source_double_defense=get8(c)!=0;state->source_tokens=get8(c);
+    }
+    {
+        unsigned n=0,j;
+        for(i=0;i<32;++i)for(j=state->skull_flags[i];j;j>>=1)n+=j&1;
+        if(n<state->source_tokens)n=state->source_tokens;
+        if(state->tunic>2 || (state->tunic==1 && n<1) || (state->tunic==2 && n<5))state->tunic=0;
+    }
+    state->dungeon_items[0]=(state->deku_dungeon_items&3)<<1;
 }
 
 static unsigned int payload_bytes(uint16_t version)
 {
     return version == 2 ? SAVE_FILE_V2_PAYLOAD_BYTES :
            version == 3 ? SAVE_FILE_V3_PAYLOAD_BYTES :
-           version == 4 ? SAVE_FILE_V4_PAYLOAD_BYTES : SAVE_FILE_PAYLOAD_BYTES;
+           version == 4 ? SAVE_FILE_V4_PAYLOAD_BYTES :
+           version < 7 ? SAVE_FILE_V6_PAYLOAD_BYTES :
+           version == 7 ? SAVE_FILE_V7_PAYLOAD_BYTES :
+           version == 8 ? SAVE_FILE_V8_PAYLOAD_BYTES :
+           version == 9 ? SAVE_FILE_V9_PAYLOAD_BYTES :
+           version == 10 ? SAVE_FILE_V10_PAYLOAD_BYTES : SAVE_FILE_PAYLOAD_BYTES;
 }
 
 /* ---- public ------------------------------------------------------------ */
@@ -215,7 +288,7 @@ static save_file_status validate(const uint8_t *in, unsigned int bytes)
         return (SAVE_FILE_BAD_MAGIC);
     }
     version = (uint16_t)((in[4] << 8) | in[5]);
-    if (version != SAVE_FILE_VERSION && version != 5 && version != 4 && version != 3 &&
+    if (version != SAVE_FILE_VERSION && version != 10 && version != 9 && version != 8 && version != 7 && version != 6 && version != 5 && version != 4 && version != 3 &&
         version != 2)
         return (SAVE_FILE_BAD_VERSION);
     payload = payload_bytes(version);
@@ -257,7 +330,13 @@ save_file_status    save_file_read_summary(save_file_summary *summary,
                                            unsigned int bytes)
 {
     save_file_status    status;
-    save_state_t        decoded;
+#if defined(__sh__)
+    /* Called synchronously by file-select summaries, never from VBlank. */
+    save_state_t *decoded=(save_state_t *)RAM_LOW(RAM_LOW_SAVE_SUMMARY_OFFSET);
+#else
+    save_state_t decoded_storage;
+    save_state_t *decoded=&decoded_storage;
+#endif
 
     if (!summary)
         return (SAVE_FILE_BAD_SIZE);
@@ -268,19 +347,19 @@ save_file_status    save_file_read_summary(save_file_summary *summary,
     summary->has_emerald = false;
     summary->deku_tree_cleared = false;
     summary->scene_id = 0;
-    status = save_file_unpack(&decoded, in, bytes);
+    status = save_file_unpack(decoded, in, bytes);
     if (status != SAVE_FILE_OK)
         return (status);
     summary->present = true;
-    summary->hearts = (uint8_t)(decoded.health_capacity / SAVE_HEART_UNIT);
-    summary->hearts_full = (uint8_t)(decoded.health / SAVE_HEART_UNIT);
-    summary->rupees = decoded.rupees;
+    summary->hearts = (uint8_t)(decoded->health_capacity / SAVE_HEART_UNIT);
+    summary->hearts_full = (uint8_t)(decoded->health / SAVE_HEART_UNIT);
+    summary->rupees = decoded->rupees;
     summary->has_emerald =
-        (decoded.quest_items & (1u << QUEST_KOKIRI_EMERALD)) != 0;
+        (decoded->quest_items & (1u << QUEST_KOKIRI_EMERALD)) != 0;
     summary->deku_tree_cleared =
-        (decoded.event_chk_inf[EVENTCHKINF_DEKU_TREE_CLEARED >> 4] &
+        (decoded->event_chk_inf[EVENTCHKINF_DEKU_TREE_CLEARED >> 4] &
          (1u << (EVENTCHKINF_DEKU_TREE_CLEARED & 0xF))) != 0;
-    summary->scene_id = decoded.scene_id;
+    summary->scene_id = decoded->scene_id;
     return (SAVE_FILE_OK);
 }
 
@@ -292,6 +371,7 @@ const char         *save_file_status_text(save_file_status status)
         case SAVE_FILE_BAD_MAGIC:       return "NOT A DOSEI SAVE";
         case SAVE_FILE_BAD_VERSION:     return "OLDER SAVE - CANNOT READ";
         case SAVE_FILE_BAD_CHECKSUM:    return "SAVE DAMAGED";
+        case SAVE_FILE_DEVICE_ERROR:    return "BACKUP READ FAILED";
         default:                        return "SAVE UNREADABLE";
     }
 }

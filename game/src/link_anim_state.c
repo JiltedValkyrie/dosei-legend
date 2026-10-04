@@ -230,6 +230,13 @@ static void             enter_roll(int32_t speed)
     roll_speed_q8 = roll_target_q8(speed * 256, true);
 }
 
+/* Player_SetupRoll from Player_ActionHandler_10: Z+A with no melee weapon
+** (or none usable) rolls even from a standstill. */
+void                    link_anim_roll_start(void)
+{
+    enter_roll(0);
+}
+
 /* One step of Math_StepToF toward the target the pad currently asks for, up or
 ** down: letting go slows the roll to the floor, and pressing forward again
 ** brings it back up. */
@@ -441,10 +448,12 @@ void                    link_anim_update(int32_t speed, bool grounded,
         ++landings;
     }
 
+    /* Held death reactions must finish even if collision briefly loses the floor.
+     * Otherwise FALL replaces DEATH and Game Over waits forever for react_done. */
     /* A one-shot owns Link until it finishes, so a landing or roll is not cut
     ** off by the first step of movement. It still yields immediately if he
     ** leaves the ground again, which is what makes rolling off a ledge fall. */
-    if (is_one_shot(state) && grounded)
+    if (is_one_shot(state) && (grounded || (state == LINK_STATE_REACT && react_hold)))
     {
         if (state == LINK_STATE_ROLL)
             advance_roll_speed();

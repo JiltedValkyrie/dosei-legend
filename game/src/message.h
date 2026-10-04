@@ -45,6 +45,7 @@ typedef struct
     /* 0..255 while a FADE page is fading out; 255 is fully faded. The
     ** renderer dims the text with it rather than cutting it off. */
     unsigned char   fade;
+    unsigned char   choice;
 }               message_state_t;
 
 extern message_state_t  message_state;
@@ -105,4 +106,7 @@ unsigned int    message_position(void);
 ** opening's pages are UNSKIPPABLE, so this is the only way past them. */
 bool            message_waits_for_button(void);
 
+unsigned message_choices(void);
+unsigned message_choice(void);
+void message_choose(int direction);
 #endif

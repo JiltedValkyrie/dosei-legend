@@ -26,8 +26,9 @@ class CddaMix(unittest.TestCase):
 #include <string.h>
 #include <SEGA_CDC.H>
 static int cd_status, cd_track, cd_error, play_error, play_calls, muted_on_play;
+static int end_type;
 Sint32 CDC_CdPlay(CdcPly *p) {
- ++play_calls; cd_track=CDC_PLY_STNO(p);
+ ++play_calls; cd_track=CDC_PLY_STNO(p);end_type=CDC_PLY_ETYPE(p);
  muted_on_play=(SLOT(0,12)==255); return play_error;
 }
 Sint32 CDC_GetCurStat(CdcStat *s) {
@@ -56,6 +57,7 @@ int send(void) { return SLOT(16,0x16); }
 int calls(void) { return play_calls; }
 int muted(void) { return cdda_muted; }
 int onset(void) { return muted_on_play; }
+int disc_end(void) { return end_type == CDC_PTYPE_DFL; }
 '''
         # cdda.h includes the generated track table; build it into the
         # temporary directory so the test does not depend on a prior build.
@@ -150,6 +152,17 @@ int onset(void) { return muted_on_play; }
         self.lib.status(1, 4)
         self.lib.tick(30)
         self.assertEqual(self.lib.level(), 40)
+
+    def test_last_track_uses_leadout_and_releases_fanfare_wait(self):
+        self.lib.reset(60)
+        self.lib.cdda_play(2)
+        self.assertEqual(self.lib.disc_end(), 0)
+        self.lib.cdda_play(6)
+        self.assertEqual(self.lib.disc_end(), 1)
+        self.lib.status(3, 6)
+        self.assertTrue(self.lib.cdda_busy())
+        self.lib.status(1, 6)
+        self.assertFalse(self.lib.cdda_busy())
 
 
 if __name__ == '__main__':

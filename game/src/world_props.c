@@ -44,6 +44,10 @@ static bool spawn_drop(int x, int y, int z, unsigned int item, unsigned int coun
     }
     return true;
 }
+bool world_props_enemy_drop(int32_t x,int32_t y,int32_t z,unsigned item,unsigned count)
+{
+    return spawn_drop(x,y,z,item,count,0,false);
+}
 void world_props_reset(void)
 {
     unsigned int i;
@@ -119,10 +123,12 @@ void world_props_step(const gameplay_input_t *in)
                          (a->params==13 && !save_state.stick_owned);
             if (!item_drop_give(a->params)) continue;
             if (a->data[2]) save_set_collectible(a->scene,(unsigned)a->data[2]);
-            gameplay.rupees=(uint8_t)save_state.rupees;
-            gameplay.events |= a->params <= 2 ? GP_EVENT_RUPEE : GP_EVENT_PICKUP;
+            gameplay.rupees=save_state.rupees;
+            if(a->params<=2)gameplay.events|=GP_EVENT_RUPEE;
+            else gameplay.events2|=a->params==3?GP2_EVENT_HP_RECOVER:GP2_EVENT_GET_ITEM;
+            unsigned item=a->params;
             actor_kill(a);
-            if (first) { gameplay_drop_message(a->params); return; }
+            if (first) { gameplay_drop_message(item); return; }
         }
     }
     a=0;

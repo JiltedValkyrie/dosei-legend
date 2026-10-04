@@ -117,18 +117,20 @@ void player_camera_update(player_camera_t *camera, oot_follow_t *follow,
 
 void player_camera_first_person(oot_follow_t *state, const bg_vec_t *focus,
     uint16_t facing, int yaw_input, int pitch_input,
-    camera_position_t *eye, uint16_t *yaw, int32_t *pitch)
+    camera_position_t *eye, uint16_t *yaw, int32_t *pitch, bool aim)
 {
     int32_t sy, cy, sp, cp;
-    int target = pitch_input * 14400 / 280;
+    int target = aim ? state->look_pitch - pitch_input : pitch_input * 14400 / 280;
+    if (target > 14400) target = 14400;
+    if (target < -14400) target = -14400;
     int delta = target - state->look_pitch;
-    int step = delta / 21; /* source SmoothStep /14, adapted 20 -> 30 Hz */
+    int step = aim ? delta : delta / 21; /* source SmoothStep /14, adapted 20 -> 30 Hz */
     if (step > 2666) step = 2666;
     if (step < -2666) step = -2666;
     if (step >= 0 && step < 20) step = delta > 20 ? 20 : delta;
     if (step < 0 && step > -20) step = delta < -20 ? -20 : delta;
     state->look_pitch += step;
-    state->look_yaw = (int16_t)(state->look_yaw + yaw_input * 640 / 420);
+    state->look_yaw = (int16_t)(state->look_yaw + (aim ? yaw_input : yaw_input * 640 / 420));
     *yaw = facing + state->look_yaw;
     *pitch = state->look_pitch;
     kokiri_camera_sincos(*yaw, &sy, &cy);
@@ -136,6 +138,6 @@ void player_camera_first_person(oot_follow_t *state, const bg_vec_t *focus,
     *eye = *focus;
     eye->x -= (sy / 256) * (cp / 256) * 5 / 65536;
     eye->z -= (cy / 256) * (cp / 256) * 5 / 65536;
-    eye->y -= sp * 5 / 65536;
+    eye->y -= sp * 5 / 65536;   /* behind the focus along the view: up looks drop it */
     clip_eye(focus, eye);
 }

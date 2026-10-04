@@ -11,6 +11,7 @@ this counts everything that competes:
   * the 32-byte CLUT every tile carries, whether or not it is unique
   * 8-byte alignment, because SGL addresses sprite character data in 8-byte
     units and a tile that is not aligned wastes the remainder
+  * 32-byte alignment for CLUT addresses (CMDCOLR low two bits must be zero)
   * a reservation for the VDP1 command table below our texture base
   * Link's resident tiles, which are loaded alongside the scene
 
@@ -56,7 +57,7 @@ ALIGN = 8
 # effects too: successful uploads remain resident when the room bank loads.
 # (label, count, width, height, bytes per pixel)
 RUNTIME_SPRITES = (
-    ('fairy glows', 9, 16, 16, 2),  # player, NPC, enemy: three steps each
+    ('fairy wing/glow sprites', 4, 32, 32, 2),  # three shared cels + Navi's recoloured cel
     ('sparkle', 1, 8, 8, 2),
     ('grass', 1, 32, 32, 2),
     ('rupees', 2, 16, 16, 2),
@@ -65,9 +66,11 @@ RUNTIME_SPRITES = (
     ('pause icons', 3, 32, 32, 2),
     ('message panel', 1, 32, 16, 2),
     ('message marks', 2, 16, 16, 2),
+    ('target reticle corners', 16, 16, 16, 2),
     ('minimap markers', 9, 8, 8, 1),
 )
-RUNTIME_SPRITE_BYTES = sum(n * ((w * h * bpp + 7) // 8 * 8)
+HIT_FILTER_BYTES = 32 * 8  # resident Gouraud tables, no sprite slots
+RUNTIME_SPRITE_BYTES = HIT_FILTER_BYTES + sum(n * ((w * h * bpp + 7) // 8 * 8)
                            for _, n, w, h, bpp in RUNTIME_SPRITES)
 RUNTIME_SPRITE_SLOTS = sum(n for _, n, _, _, _ in RUNTIME_SPRITES)
 
@@ -80,13 +83,19 @@ FOREST_VRAM_MARGIN = 32 * 1024
 # staged meshes and all visibility-box intersections against this allowance.
 FOREST_ACTOR_BYTES = 64 * 1024
 FOREST_ACTOR_SLOTS = 576
+# Live gameplay actors share the same upload bank in these mesh scenes.
+ACTOR_SCENES = ('spot04', 'ydan', 'ydan_boss', 'spot10', 'spot05', 'spot20')
 
 
 def tile_bytes(width, height):
     """Bytes one 4bpp tile costs, CLUT and alignment included."""
     pixels = width * height // 2
-    total = pixels + CLUT_BYTES
-    return (total + ALIGN - 1) // ALIGN * ALIGN
+    return bank_bytes(pixels, 1)
+
+
+def bank_bytes(pixels, tiles):
+    """One aligned bank: packed pixels, padding, then contiguous CLUTs."""
+    return (pixels + CLUT_BYTES - 1) // CLUT_BYTES * CLUT_BYTES + tiles * CLUT_BYTES
 
 
 class Budget(object):

@@ -1,0 +1,31 @@
+{
+  "version": 1,
+  "materials": {
+    "dosei_000": {
+      "cms": 0,
+      "cmt": 2,
+      "masks": 6,
+      "maskt": 6,
+      "prim": [
+        193,
+        175,
+        90,
+        255
+      ],
+      "flags": 2
+    },
+    "dosei_001": {
+      "cms": 0,
+      "cmt": 2,
+      "masks": 5,
+      "maskt": 5,
+      "prim": [
+        230,
+        250,
+        156,
+        255
+      ],
+      "flags": 2
+    }
+  }
+}

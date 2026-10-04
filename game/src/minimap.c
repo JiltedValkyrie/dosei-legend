@@ -1,3 +1,4 @@
+#pragma GCC optimize ("Os") /* Cold HUD/text updates; preserve high RAM. */
 #include <jo/jo.h>
 #include "minimap.h"
 #include "minimap_data.h"
@@ -15,25 +16,23 @@
 #include "ui_preferences.h"
 #include "world_props.h"
 #include "world_signs.h"
+#include "dungeon_doors.h"
 
 static const uint8_t   *file;
 static const minimap_row_t *row;        /* this scene's map, or 0 */
 static bool             hidden;
-static cheat_code_t     cheat;
+static cheat_code_t     cheat, refill_cheat;
+static volatile bool    refill_pending;
 static volatile bool    enemy_dots, chime;
 static int              marker_sprite = -1;
 static bool             hud_ready, map_visible;
 static int              hud_variant = -1;
 static gameplay_hud_blink_t hud_blink;
 
-/* Label maps live in unused B0 VRAM rather than ~10 KB of work RAM.
-** Eight actions x sword x Navi is 32 variants per preset, which outgrew the
-** old 8 KB slot at +0x12000 -- that slot butts against the heart atlas at
-** 0x25E50000. This is the verified free region between the button cells
-** (which end at 0x25E46000) and the heart cells, 40 KB with nothing else
-** claiming it; the next allocation above is the bold font at 0x25E60000. */
-#define HUD_NAMES ((volatile unsigned short *)0x25E46000u)
-#define HUD_NAMES_CAPACITY 0xA000u  /* 0x25E46000 .. 0x25E50000 */
+/* Button cells reserve 16 KB at 0x25E44000. Assignment/action maps occupy
+ * the next 32 KB, ending before heart cells at 0x25E50000. Pause backs up B0. */
+#define HUD_NAMES ((volatile unsigned short *)0x25E48000u)
+#define HUD_NAMES_CAPACITY 0x8000u
 static bool hud_file(const char *name, unsigned bytes, volatile unsigned short *dst)
 {
     jo_file stream;
@@ -54,7 +53,7 @@ static bool hud_file(const char *name, unsigned bytes, volatile unsigned short *
 static bool hud_load(void)
 {
     unsigned i;
-    if (HUD_PIXEL_BYTES>0x2000u || HUD_MAP_BYTES>HUD_NAMES_CAPACITY ||
+    if (HUD_PIXEL_BYTES>0x4000u || HUD_MAP_BYTES>HUD_NAMES_CAPACITY ||
         !hud_file("BUTTONS.BIN", HUD_PIXEL_BYTES, (volatile unsigned short *)HUD_VRAM_CELLS) ||
         !hud_file("BUTTONS.MAP", HUD_MAP_BYTES, HUD_NAMES)) return false;
     for (i=0; i<16; ++i) ((volatile unsigned short *)JO_VDP2_CRAM)[HUD_CRAM+i]=hud_palette[i];
@@ -81,7 +80,9 @@ static void hud_visibility(int variant)
     unsigned int x, y;
     bool analog = jo_is_pad1_available() && jo_is_input_analog(0);
     unsigned preset = ui_labels() * 2 + analog;
-    int key = variant < 0 ? -1 : variant + preset * 32;
+    unsigned items = (save_state.c_items[0] & 3u) |
+        ((save_state.c_items[1] & 3u) << 2) | ((save_state.c_items[2] & 3u) << 4);
+    int key = variant < 0 ? -1 : variant + preset * 32 + items * 320;
     volatile uint16_t *map = (volatile uint16_t *)MINIMAP_VRAM_MAP;
     unsigned int base = (HUD_VRAM_CELLS - MINIMAP_VRAM_MAP) / 32u;
     if (key == hud_variant) return;
@@ -95,6 +96,11 @@ static void hud_visibility(int variant)
         unsigned patch = HUD_PATCH_OFFSET + (preset * 2 + !!(variant & 16)) * HUD_PATCH_COUNT;
         for (x=0; x<HUD_PATCH_COUNT; ++x)
             map[hud_patch_positions[x]] = 0x2000u | (base + HUD_NAMES[patch+x]);
+    }
+    if (variant >= 0) {
+        unsigned patch = HUD_ITEM_OFFSET + (items * 2 + (variant & 1)) * HUD_ITEM_COUNT;
+        for (x=0; x<HUD_ITEM_COUNT; ++x)
+            map[hud_item_positions[x]] = 0x2000u | (base + HUD_NAMES[patch+x]);
     }
     hud_variant = key;
 }
@@ -187,12 +193,29 @@ void minimap_toggle(void) { hidden = !hidden; }
 
 bool    minimap_cheat_sample(uint16_t held)
 {
+    if (cheat_refill_sample(&refill_cheat, held)) {
+        refill_pending = true;
+        return true;        /* the final Start must not also pause */
+    }
     if (cheat_code_sample(&cheat, held)) {
         enemy_dots = !enemy_dots;
         chime = true;
         return true;
     }
     return false;
+}
+
+bool    minimap_cheat_refill_take(void)
+{
+    bool pending = refill_pending;
+    refill_pending = false;
+    return pending;
+}
+
+void    minimap_cheat_refill_reset(void)
+{
+    refill_pending = false;
+    refill_cheat = (cheat_code_t){0};
 }
 
 bool    minimap_cheat_chime(void)
@@ -210,6 +233,7 @@ void    minimap_session_reset(void)
 {
     enemy_dots = chime = false;
     cheat = (cheat_code_t){0};
+    minimap_cheat_refill_reset();
 }
 
 /* Minimap_Draw runs in play only; the text box and pause dim it away
@@ -240,10 +264,10 @@ uint32_t minimap_layer_flags(void)
     bool carrying = world_props_carrying();
     unsigned int action = gameplay_hud_action(
         demo_enter_prompt(),
-        !carrying && gameplay.chest_prompt >= 0,
+        !carrying && (gameplay.chest_prompt >= 0 || dungeon_doors_prompt()),
         gameplay.shop_prompt || gameplay.prompt >= 0,
         world_signs_near(),
-        !carrying && world_props_near_liftable(),
+        !carrying && (world_props_near_liftable() || demo_push_prompt()),
         demo_lift_hold_actionable(),
         demo_lift_throw_ready());
 #ifdef DOSEI_HIRES
@@ -272,7 +296,7 @@ static void marker(unsigned int frame, int px, int py)
     attr.texno = (Uint16)(marker_sprite + (int)frame);
     pos[0] = (px - JO_TV_WIDTH_2) * 65536;
     pos[1] = (py - JO_TV_HEIGHT_2) * 65536;
-    pos[2] = 31 * 65536;
+    pos[2] = kokiri_hud_depth(1) * 65536;   /* just past the near rejection */
     pos[3] = pos[4] = 65536;
     slDispSprite(pos, &attr, 0);
 }

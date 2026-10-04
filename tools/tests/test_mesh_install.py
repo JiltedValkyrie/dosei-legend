@@ -51,7 +51,8 @@ class MeshInstallTests(unittest.TestCase):
             from datetime import datetime
             self.assertIsNotNone(datetime.fromisoformat(published['published_at']).tzinfo)
             self.assertIn('mesh.obj', published['files'])
-            with patch.object(room_imports, 'DEFAULT_CONFIG', self.config), patch.dict(os.environ, {}, clear=True):
+            with patch.object(room_imports, 'DEFAULT_CONFIG', self.config), patch.dict(os.environ, {}, clear=True), \
+                 patch('layout_variants.build_document', return_value=None):
                 prefix, _, room = key.rpartition('_room_')
                 entry = room_imports.selected(prefix, int(room))
                 v, f, t, m = room_imports.convert(entry, dict(tiles=[], polygons=0, vertices=0))

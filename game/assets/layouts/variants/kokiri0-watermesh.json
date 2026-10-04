@@ -1,0 +1,46 @@
+{
+  "version": 1,
+  "base": "ntsc-1.2",
+  "rooms": {},
+  "labels": {
+    "spot04/room/0/mesh/5": "kokiri0-water",
+    "spot04/room/0/mesh/6": "kokiri0-ground",
+    "spot04/room/0/mesh/8": "kokiri0-walls",
+    "spot04/room/0/mesh/7": "kokiri0-treeline"
+  },
+  "meshes": {
+    "spot04_room_0/object/5": {
+      "sha256": "7b9dd5957248c6d7a5df4f11294b7f6213b4d36ad9738166c6dc9b6a91c849f3",
+      "bundle": "39e2a79cb9f2e271a963c862dcb7e3ed650998c0322fec36c41d1521f440a8f4",
+      "position": [
+        747.5,
+        131.0,
+        -60.0
+      ],
+      "yaw": 0.0,
+      "scale": 1.0
+    },
+    "spot04_room_0/object/6": {
+      "sha256": "7b9dd5957248c6d7a5df4f11294b7f6213b4d36ad9738166c6dc9b6a91c849f3",
+      "bundle": "ffa8f868c3560f6c0da60767ef5843f436b077ee969b980024aeff361416ab6b",
+      "position": [
+        704.0,
+        306.5,
+        175.0
+      ],
+      "yaw": 0.0,
+      "scale": 1.0
+    },
+    "spot04_room_0/object/7": {
+      "sha256": "7b9dd5957248c6d7a5df4f11294b7f6213b4d36ad9738166c6dc9b6a91c849f3",
+      "bundle": "d45a9bc58866bb3d460ab7f650b67304ea0221680e03ab6b67e403020b3d5915",
+      "position": [
+        615.5,
+        692.5,
+        -631.5
+      ],
+      "yaw": 0.0,
+      "scale": 1.0
+    }
+  }
+}

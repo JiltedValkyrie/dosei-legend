@@ -102,6 +102,13 @@ class DisplayLists:
 
     def read(self, address, size):
         segment, offset = address >> 24, address & 0xFFFFFF
+        if segment not in self.segments and 0x06 <= segment <= 0x0D:
+            # Scene_DrawConfig* (z_scene_table.c) binds 08-0D (06 = object) at draw time to
+            # animated textures or display lists. APPROXIMATE fallback for a
+            # scene with no explicit binding: a display list there ends at
+            # once (G_ENDDL) and a texture reads as black.
+            self.segments[segment] = b'\xDF' + bytes(0x1FFFF)
+            self.fallback_segments = getattr(self, 'fallback_segments', set()) | {segment}
         assert segment in self.segments, f'Unknown segment {segment:02x}'
         data = self.segments[segment]
         assert offset + size <= len(data), (hex(address), size, len(data))
@@ -120,6 +127,12 @@ class DisplayLists:
         address, image_width, image_fmt, image_size = image
         width = (tile['lrs'] - tile['uls']) // 4 + 1
         height = (tile['lrt'] - tile['ult']) // 4 + 1
+        # Some actor lists use a large clamp rectangle over a smaller masked
+        # texture (owl feathers). An explicit source XML binding describes
+        # the resident image; the clamp rectangle is not its byte length.
+        dimensions = getattr(self, 'texture_dimensions', {}).get(address)
+        if dimensions is not None:
+            width, height = dimensions
         fmt, size = tile['fmt'], tile['size']
         count = width * height
         raw = self.read(address, (count * (4 << size) + 7) // 8)
@@ -164,6 +177,11 @@ class DisplayLists:
 
     def matrix(self, word, address):
         # Static rooms have none. Other importers must interpret, never ignore.
+        if getattr(self, 'generic_scene', False):
+            # All-scenes import: APPROXIMATE, room geometry keeps the room's
+            # identity matrix (moving/billboard parts drawn at rest).
+            self.ignored_matrices = getattr(self, 'ignored_matrices', 0) + 1
+            return
         raise ValueError(f'Matrix-aware importer required: {word:08x} {address:08x}')
 
     def triangle(self, word, transparent):
@@ -184,6 +202,7 @@ class DisplayLists:
             self.external_lists.add(hex(address))
             assert address >> 24 >= 8, hex(address)
             return
+        branch_address = None
         for _ in range(100000):
             w0, w1 = struct.unpack('>II', self.read(address, 8))
             address += 8
@@ -195,6 +214,14 @@ class DisplayLists:
                 self.walk(w1, transparent, depth + 1)
                 if (w0 >> 16) & 1:
                     return
+            elif op == 0xE1 and getattr(self, 'include_depth_branches', False):
+                branch_address = w1
+            elif op == 0x04 and getattr(self, 'include_depth_branches', False):
+                # Offline near geometry: Saturn performs its own per-frame cull.
+                # F3DEX2 G_BRANCH_Z jumps, rather than pushing a return address.
+                if branch_address is None: raise ValueError('BranchZ without RDPHALF_1')
+                self.walk(branch_address, transparent, depth + 1)
+                return
             elif op == 0x01:
                 n = (w0 >> 12) & 255
                 first = ((w0 >> 1) & 127) - n
@@ -580,7 +607,7 @@ def write_scene(faces, segments):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--oot-root', type=Path, default=Path('D:/Workspace-Claude/game-decomps/n64/oot'))
+    parser.add_argument('--oot-root', type=Path, default=Path((__import__('os').environ.get('DOSEI_OOT') or 'D:/Workspace-Claude/game-decomps/n64/oot')))
     args = parser.parse_args()
     segments = extract(args.oot_root)
     faces = []

@@ -21,6 +21,21 @@ GCC = Path('C:/msys64/mingw64/bin/gcc.exe')
 
 @unittest.skipUnless((OOT/'extracted/ntsc-1.2').exists(), 'local extracted artwork required')
 class HudAssets(unittest.TestCase):
+    def test_assigned_items_replace_arrows_without_touching_action_or_labels(self):
+        empty = hud.make_images(OOT)
+        for assignment in range(64):
+            items=(assignment & 3,(assignment >> 2)&3,assignment >> 4)
+            images=hud.make_images(OOT,citems=items)
+            for navi,im in enumerate(images):
+                for y in range(hud.H//8):
+                    for x in range(hud.W//8):
+                        if (y,x) not in hud.ITEM_PATCH_CELLS:
+                            box=(x*8,y*8,x*8+8,y*8+8)
+                            self.assertEqual(im.crop(box).tobytes(),empty[navi].crop(box).tobytes())
+                for slot,x,y in ((1,227,18),(0,249,34),(2,271,18)):
+                    box=(x-hud.X+8,y+8,x-hud.X+18,y+18)
+                    self.assertEqual(im.crop(box).tobytes()==empty[navi].crop(box).tobytes(),items[slot]==0)
+
     def test_saved_label_patches_reconstruct_every_mode_and_action(self):
         images = [im for mode in ('saturn','xbox','n64','gamecube','playstation')
                   for analog in (False,True) for im in hud.make_images(OOT,analog=analog,mode=mode)]

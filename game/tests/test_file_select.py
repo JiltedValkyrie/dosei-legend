@@ -56,7 +56,7 @@ class FileSelect(unittest.TestCase):
                        check=True, env=env, cwd=str(ROOT))
         cls.lib = ctypes.CDLL(str(output))
         for name in ('file_select_row_label', 'file_select_row_detail',
-                     'file_select_open_label'):
+                     'file_select_open_label','file_select_row_location'):
             getattr(cls.lib, name).restype = ctypes.c_char_p
         cls.lib.file_select_copy_supported.restype = ctypes.c_bool
         cls.lib.save_check_quest_item.restype = ctypes.c_bool
@@ -91,6 +91,14 @@ class FileSelect(unittest.TestCase):
         self.lib.file_select_refresh()
 
     # ---- opening -------------------------------------------------------
+    def test_location_uses_saved_scene_without_loading_or_changing_live_file(self):
+        self.lib.fs_set_scene(2)
+        self.lib.fake_store_current(0)
+        self.lib.save_new_game()
+        self.lib.file_select_refresh()
+        self.assertEqual(self.lib.file_select_row_location(0),b'DEKU TREE')
+        self.assertEqual(self.lib.file_select_row_location(1),b'')
+        self.assertEqual(self.lib.file_select_row_location(3),b'')
 
     def test_opens_on_the_first_file_with_all_slots_empty(self):
         self.assertEqual(CHOOSING, self.lib.fs_mode())

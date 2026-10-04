@@ -15,6 +15,7 @@ void world_props_lift_sync(unsigned int events, int speed_q8, int vy_q8,
                            uint16_t yaw, const int32_t hand[3]);
 void world_props_drop_carried(void);
 void world_props_grass_drop(unsigned int index, unsigned int random);
+bool world_props_enemy_drop(int32_t x,int32_t y,int32_t z,unsigned item,unsigned count);
 void world_props_register(collider_t *storage, unsigned int capacity, const gameplay_input_t *in);
 void world_props_collect(void);
 bool world_props_present(unsigned int index);

@@ -1,0 +1,4 @@
+# dosei_materials: materials.json
+newmtl dosei_000
+Kd 1 1 1
+map_Kd 03aae2bf974df1c8cb51307913cd29c6822075b48f824830eee4cbb00caa0002.png

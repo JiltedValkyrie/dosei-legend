@@ -1,7 +1,11 @@
+#pragma GCC optimize ("Os") /* Cold 20 Hz script player; preserve high-RAM headroom. */
 #include <jo/jo.h>
 #include "asset_loading.h"
 #include "cutscene.h"
 #include "demo.h"
+#include "tree_mouth.h"
+#include "emerald_story.h"
+#include "story_route.h"
 #include "game_mode.h"
 #include "link_clips.h"
 #include "message.h"
@@ -87,18 +91,18 @@ static int scene_for_cutscene(unsigned int scene)
 /*
 ** The dream rides across Hyrule Field, which is a bank of its own.
 **
-** SPOT00 has no scene_table entry: it is never walked into, only flown over,
-** so the cutscene asks for the bank by number. It is flat shaded -- every
+** This presentation bank is distinct from playable SPOT00 and its stable
+** scene_table entry. It is flat shaded -- every
 ** face carries its own colour and there are no tiles at all -- so it costs
 ** nothing of the VDP1 texture area that the streamed forest fills, which is
 ** what makes a second environment affordable during the opening.
 **
 ** Built by tools/build_flat_scene.py from levels/hyrule/assets/static.
 */
-#define CUTSCENE_FIELD_BANK 3
+#define CUTSCENE_FIELD_BANK STORY_BANK_FIELD
 
 /*
-** Navi's flight uses S2R0..9, built from the ordinary streamed room meshes.
+** Navi's flight uses C0R0..9, built from the ordinary streamed room meshes.
 ** Each bank covers 100 camera frames, keeping the room textures that can
 ** enter fog range and flat fog-coloured geometry beyond it. Source trees
 ** and huts therefore survive shots that look across a gameplay room portal.
@@ -116,6 +120,9 @@ static const music_bank_t *bank_for_cutscene(unsigned int bank)
     switch (bank) {
         case CUTSCENE_BANK_NIGHTMARE: return music_song_bank(NA_BGM_OPENING_GANON);
         case CUTSCENE_BANK_NAVI:      return music_song_bank(NA_BGM_NAVI_OPENING);
+        case CUTSCENE_BANK_STONE: return music_song_bank(NA_BGM_SPIRITUAL_STONE);
+        case CUTSCENE_BANK_FAIRYGET: return music_song_bank(NA_BGM_OCA_FAIRY_GET);
+        case CUTSCENE_BANK_KOKIRI: return music_song_bank(NA_BGM_KOKIRI);
         case CUTSCENE_BANK_DEKU_TREE: return music_song_bank(NA_BGM_DEKU_TREE_CS);
         default:                      return ((const music_bank_t *)0);
     }
@@ -216,6 +223,8 @@ bool cutscene_start(unsigned int id)
         return (false);
     kokiri_opening_cache_free();
     npc_draw_free();
+    story_route_free();
+    emerald_story_free();
     /* The opening starts in silence. link_home's cutscene layer is
     ** SCENE_CMD_SOUND_SETTINGS(..., NA_BGM_GENERAL_SFX) -- ambience only -- so
     ** the title theme stops here rather than playing on under the narration.
@@ -224,7 +233,14 @@ bool cutscene_start(unsigned int id)
         music_silence(CUTSCENE_FADE_FRAMES);
     asset_loading("CUTSCENE SCENE");
     game_mode_set(GAME_MODE_LOADING);
-    if (cs->scene == CUTSCENE_SCENE_SPOT00) {
+    if(id>=CUTSCENE_EMERALD1 && id<=CUTSCENE_EMERALD9) {
+        static const unsigned short banks[]={STORY_BANK_EMERALD1,STORY_BANK_EMPTY,STORY_BANK_EMPTY,
+            STORY_BANK_GERUDO,STORY_BANK_GERUDO,STORY_BANK_MOUNTAIN,STORY_BANK_EMERALD7,
+            STORY_BANK_EMPTY,STORY_BANK_EMERALD9};
+        cutscene_actors_free();
+        state.scene_loaded=kokiri_scene_load_bank(banks[id-CUTSCENE_EMERALD1],0);
+        if(!state.scene_loaded || !emerald_story_load(id-CUTSCENE_EMERALD1+1))return false;
+    } else if (cs->scene == CUTSCENE_SCENE_SPOT00) {
         state.scene_loaded = kokiri_scene_load_bank(CUTSCENE_FIELD_BANK, 0);
         /* The riders load after the bank, into the VDP1 space it leaves empty
         ** and the cart RAM nothing else wants. Failing to load them costs the
@@ -234,13 +250,13 @@ bool cutscene_start(unsigned int id)
     } else if (cs->scene == CUTSCENE_SCENE_SPOT04) {
         cutscene_actors_free();
         if (!kokiri_opening_cache_load()) return false;
-        state.scene_loaded = kokiri_scene_load_bank(2, 0);
+        state.scene_loaded = kokiri_scene_load_bank(STORY_BANK_NAVI, 0);
         if (state.scene_loaded && id == CUTSCENE_NAVI_FLY)
             state.scene_loaded = npc_draw_load_navi();
     } else if (cs->scene == CUTSCENE_SCENE_LINK_HOME) {
         cutscene_actors_free();
         /* Moving house cameras use SKYBOX_HOUSE_LINK, not the fixed JPEG. */
-        state.scene_loaded = kokiri_scene_load_bank(4, 0);
+        state.scene_loaded = kokiri_scene_load_bank(STORY_BANK_PANORAMA, 0);
     } else {
         cutscene_actors_free();
         int scene = scene_for_cutscene(cs->scene);
@@ -385,6 +401,8 @@ static void step_sounds(void)
         return; /* held text is not a new cue */
     }
     state.sound_frame = state.frame;
+    if(state.id==CUTSCENE_EMERALD9 && state.frame==783)
+        action_audio_opening_play(OPENING_TREE_DEATH,2,false);
     if (state.id == CUTSCENE_NIGHTMARE) {
         /* EnViewer_UpdateImpl, scene layer 4: the original shot-cut accents. */
         static const unsigned short cuts[] = {20,59,71,129,140,219,280,320,380,409,438};
@@ -471,10 +489,14 @@ static void step_events(const cutscene_t *cs, bool confirm)
             /* CS_STOP_SEQ. Only silence what is actually playing: the stop
             ** names a sequence, and if a later cue has already replaced it
             ** there is nothing to stop. */
-            if (bank && music_current() == bank)
+            if (bank && (music_current() == bank ||
+                         (state.id==CUTSCENE_EMERALD1 && music->start==0)))
                 music_silence(CUTSCENE_FADE_FRAMES);
         } else if (bank) {
-            music_fade_to(bank, CUTSCENE_FADE_FRAMES);
+            if(music_fade_to(bank, CUTSCENE_FADE_FRAMES)) {
+                if(music->bank==CUTSCENE_BANK_FAIRYGET)music_once(bank,music_song_bank(NA_BGM_KOKIRI));
+                else if(music->bank==CUTSCENE_BANK_STONE)music_once(bank,music_song_bank(NA_BGM_DEKU_TREE_CS));
+            }
         }
         ++state.music_cursor;
     }
@@ -486,6 +508,14 @@ static void update_cues(const cutscene_t *cs);
 static void finish_cutscene(const cutscene_t *cs)
 {
     unsigned int next = (unsigned int)cs->destination;
+    if (state.in_scene && (state.id==CUTSCENE_TREE_MEETING || state.id==CUTSCENE_TREE_CHOICE)) {
+        tree_mouth_prepare_choice();
+        unsigned branch=message_choice() ? CUTSCENE_TREE_AGAIN : CUTSCENE_TREE_OPEN;
+        if(cutscene_start_in_scene(branch)) {
+            if(branch==CUTSCENE_TREE_OPEN)save_set_event_chk_inf(EVENTCHKINF_DEKU_TREE_MOUTH_OPEN);
+            return;
+        }
+    }
     state.active = false;
     state.finished = true;
     message_stop();
@@ -505,6 +535,7 @@ static void finish_cutscene(const cutscene_t *cs)
         game_mode_set(GAME_MODE_PLAY);
     } else {
         cutscene_actors_free();
+        emerald_story_free();
         asset_loading("ACTIONS.PCM");
         if (!action_audio_set_opening(false))
             jo_core_error("Action sound bank reload failed");
@@ -611,7 +642,7 @@ bool cutscene_step(bool confirm)
         /* Wait for the previous VDP1 draw before replacing its textures. */
         if (!vdp1_wait_for_draw_end()) return true;
         state.scenery_bank = (unsigned char)(state.frame / 100);
-        state.scene_loaded = kokiri_scene_load_bank(2, state.scenery_bank);
+        state.scene_loaded = kokiri_scene_load_bank(STORY_BANK_NAVI, state.scenery_bank);
     }
     if (state.frame < cs->frames)
         apply_camera(&state.track[state.frame]);
@@ -818,35 +849,35 @@ bool cutscene_link_visible(void)
 {
     const cutscene_cue_t *cue = current_cue();
 
-    return (cue && cue->clip != CUTSCENE_CLIP_HOLD);
+    return (state.in_scene && state.id>=CUTSCENE_TREE_MEETING) || (cue && (cue->clip != CUTSCENE_CLIP_HOLD || state.id>=CUTSCENE_EMERALD1));
 }
 
-int32_t cutscene_link_x(void)
+static int32_t link_position(unsigned axis)
 {
-    const cutscene_cue_t *cue = current_cue();
-
-    return (cue ? cue->x : 0);
+    const cutscene_cue_t *cue=current_cue();
+    int32_t base=axis==0?demo_link.x:axis==1?demo_link.y-DEMO_LINK_EYE_HEIGHT:demo_link.z;
+    if(cue) {
+        int32_t start=axis==0?cue->x:axis==1?cue->y:cue->z;
+        int32_t end=axis==0?cue->ex:axis==1?cue->ey:cue->ez;
+        if((state.id==CUTSCENE_TREE_MEETING || state.id==CUTSCENE_SARIA_BRIDGE || state.id>=CUTSCENE_EMERALD1) && cue->end>cue->start) {
+            unsigned elapsed=state.applied_frame>cue->start?state.applied_frame-cue->start:0;
+            unsigned span=cue->end-cue->start;
+            if(elapsed>span)elapsed=span;
+            return start+(end-start)*(int32_t)elapsed/(int32_t)span;
+        }
+        return start;
+    }
+    return state.in_scene?base:0;
 }
-
-int32_t cutscene_link_y(void)
-{
-    const cutscene_cue_t *cue = current_cue();
-
-    return (cue ? cue->y : 0);
-}
-
-int32_t cutscene_link_z(void)
-{
-    const cutscene_cue_t *cue = current_cue();
-
-    return (cue ? cue->z : 0);
-}
+int32_t cutscene_link_x(void) {return link_position(0);}
+int32_t cutscene_link_y(void) {return link_position(1);}
+int32_t cutscene_link_z(void) {return link_position(2);}
 
 uint16_t cutscene_link_yaw(void)
 {
     const cutscene_cue_t *cue = current_cue();
 
-    return (cue ? cue->yaw : 0);
+    return (cue ? cue->yaw : demo_link_yaw);
 }
 
 /* LinkAnimation advances 1.5 source frames per 20 Hz tick (R_UPDATE_RATE
@@ -865,7 +896,19 @@ static void link_sample(unsigned int *clip, unsigned int *frame, unsigned int *f
         case CUTSCENE_CLIP_SIT_UP: *clip = LINK_CLIP_SIT_UP; break;
         case CUTSCENE_CLIP_STAND_UP: *clip = LINK_CLIP_STAND_UP; break;
         case CUTSCENE_CLIP_TURN_LOOK: *clip = LINK_CLIP_TURN_LOOK; break;
-        default: loop = true; break;
+        case CUTSCENE_CLIP_OCARINA_START: *clip=LINK_CLIP_OCARINA_START;break;
+        case CUTSCENE_CLIP_OCARINA_GET: *clip=LINK_CLIP_OCARINA_GET;break;
+        case CUTSCENE_CLIP_RETURN_IDLE: *clip=LINK_CLIP_RETURN_IDLE;break;
+        case CUTSCENE_CLIP_STEP_BACK: *clip=LINK_CLIP_STEP_BACK;break;
+        case CUTSCENE_CLIP_STONE_GET2: *clip=LINK_CLIP_STONE_GET2;break;
+        case CUTSCENE_CLIP_STONE_GET3: *clip=LINK_CLIP_STONE_GET3;break;
+        case CUTSCENE_CLIP_STONE_STAND: *clip=LINK_CLIP_STONE_STAND;break;
+        case CUTSCENE_CLIP_STONE_WAIT: *clip=LINK_CLIP_STONE_WAIT;break;
+
+        default:
+            if(cue->clip==CUTSCENE_CLIP_HOLD && (cue->x!=cue->ex || cue->z!=cue->ez) &&
+               (state.id==CUTSCENE_SARIA_BRIDGE || state.id>=CUTSCENE_EMERALD1)) *clip=LINK_CLIP_RUN;
+            loop = true; break;
     }
     elapsed = state.applied_frame > cue->start ? state.applied_frame - cue->start - 1 : 0;
     source = elapsed * 3 / 2;
@@ -877,6 +920,9 @@ static void link_sample(unsigned int *clip, unsigned int *frame, unsigned int *f
         source = (elapsed - end_tick) * 3 / 2;
         limit = link_clip_source_count[*clip];
         loop = true;
+    }
+    if(*clip==LINK_CLIP_OCARINA_START && source>=limit) {
+        source-=limit;*clip=LINK_CLIP_OCARINA_HOLD;limit=link_clip_source_count[*clip];loop=true;
     }
     if (!limit) return;
     source = loop ? source % limit : (source >= limit ? limit - 1 : source);

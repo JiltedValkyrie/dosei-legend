@@ -215,7 +215,7 @@ def walk_body(data, dlist, segment8):
     return lists.faces
 
 
-def walk_normal_limbs(data, limbs, matrices):
+def walk_normal_limbs(data, limbs, matrices, extra_segments=None, overrides=None):
     """The rigid limbs -- legs, mane, tail -- posed by the skeleton."""
     faces = []
     for index, limb in enumerate(limbs):
@@ -224,10 +224,10 @@ def walk_normal_limbs(data, limbs, matrices):
         if index not in matrices:
             continue
         lists = link.LimbLists(b'', b'')
-        lists.segments = {6: data}
+        lists.segments = {6: data, **(extra_segments or {})}
         lists.matrix_limbs = []
         lists.current_limb = index
-        lists.walk(0x06000000 | limb['segment'])
+        lists.walk(0x06000000 | (overrides or {}).get(index, limb['segment']))
         matrix, origin = matrices[index]
         for face in lists.faces:
             face = dict(face)

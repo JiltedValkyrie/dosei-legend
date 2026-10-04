@@ -3,6 +3,7 @@
 ** under test -- inventory, pickups, targeting, the swing window, the shield and
 ** grass cutting -- is the real game code. */
 #include <math.h>
+#include <string.h>
 #include <assert.h>
 #include <stdint.h>
 #include "../../src/gameplay.h"
@@ -276,6 +277,7 @@ void gp_npc_at(int i, int *x, int *y, int *z)
 
 int  gp_health(void) { return save_state.health; }
 int  gp_intangible(void) { return gameplay.intangible; }
+int  gp_invulnerable(void) { return gameplay.invulnerable; }
 void gp_health_set(int h, int cap) { save_state.health = (uint16_t)h; save_state.health_capacity = (uint16_t)cap; }
 int  gp_dead(void) { return gameplay.dead ? 1 : 0; }
 void gp_land(int fell, int rolled) { gameplay_land(fell, rolled != 0); }
@@ -577,3 +579,80 @@ void gp_reset_no_greeting(void)
     gameplay_reset();
     gameplay_saria_greeting_cancel();
 }
+
+#include "player_items.h"
+void dungeon_puzzles_register(void) {}
+void skulltula_register(void) {}
+void skulltula_collect(void) {}
+void skulltula_step(const gameplay_input_t *in) {(void)in;}
+void wall_skull_register(void) {}
+void wall_skull_collect(void) {}
+void wall_skull_step(const gameplay_input_t *in) {(void)in;}
+void dekubaba_register(void) {}
+void dekubaba_collect(void) {}
+void dekubaba_step(const gameplay_input_t *in) {(void)in;}
+void hintnuts_register(void) {}
+void hintnuts_collect(void) {}
+void hintnuts_step(const gameplay_input_t *in) {(void)in;}
+void gohma_larva_register(void) {}
+void gohma_larva_collect(void) {}
+void gohma_larva_step(const gameplay_input_t *in) {(void)in;}
+void gohma_register(void) {}
+void gohma_collect(void) {}
+void gohma_step(const gameplay_input_t *in) {(void)in;}
+bool gohma_cinematic(void) {return false;}
+bool gohma_warp_active(void) {return false;}
+bool gohma_defeated(void) {return save_get_clear(SAVE_SCENE_DEKU_TREE_BOSS,1);}
+static int item_test_floor;
+void gp_item_floor(int active) { item_test_floor = active; }
+bool player_items_wall(const int32_t from[3], int32_t to[3], unsigned item) {
+    (void)item;
+    if (item_test_floor && from[1] >= 0 && to[1] <= 0) { to[1] = 0; return true; }
+    return false;
+}
+void gp_item_inventory(int seeds, int nuts) {
+    save_state.slingshot = seeds >= 0; save_state.ammo_seeds = seeds < 0 ? 0 : seeds;
+    save_state.nut_owned = nuts >= 0; save_state.nut_ammo = nuts < 0 ? 0 : nuts;
+}
+int gp_item_ammo(int item) { return item == 2 ? save_state.ammo_seeds : save_state.nut_ammo; }
+static collider_t item_victim;
+void gp_item_victim(int x, int y, int z, unsigned mask) {
+    memset(&item_victim, 0, sizeof(item_victim));
+    item_victim.shape = COLSHAPE_CYLINDER; item_victim.radius = 12; item_victim.height = 60;
+    item_victim.x = x; item_victim.y = y; item_victim.z = z;
+    item_victim.ac_type = AC_TYPE_PLAYER; item_victim.ac_bumper = mask;
+    item_victim.ac_flags = COL_OUTSIDE_ACTOR;
+}
+unsigned gp_item_contacts(void) {
+    collide_begin(); player_items_register(); collide_set_ac(&item_victim);
+    collide_run(); player_items_collect(); return item_victim.result;
+}
+void gp_item_use_step(int slot, int paused, int talking) {
+    gameplay_input_t in = {0};
+    gameplay.paused = paused; gameplay.talking = talking;
+    in.c_use = slot; in.grounded = true; in.y = 0;
+    gameplay_step(&in);
+}
+
+int gp_dungeon_items(void) { return save_state.deku_dungeon_items; }
+
+int gp_map_step(unsigned scene,unsigned floor,int dx,int dy,int back) {
+    gameplay_input_t in={0};
+    save_state.scene_id=scene; gameplay.paused=true;
+    gameplay.pause_window.page=PAUSE_MAP;
+    gameplay.pause_window.cursor[PAUSE_MAP]=floor;
+    gameplay.pause_window.save_prompt=false;
+    in.menu_dx=dx;in.menu_dy=dy;in.cancel=back;
+    gameplay_step(&in);
+    return gameplay.pause_window.cursor[PAUSE_MAP];
+}
+
+void gp_target_seed_step(int slot) {
+    gameplay_input_t in={0};in.c_use=slot;in.grounded=true;in.target_held=true;
+    in.focus[1]=44;gameplay_step(&in);
+}
+
+void gp_test_seed_slot(void){save_state.c_items[0]=2;}
+
+int gp_flash_timer(void){return gameplay.hurt_flash_timer;}
+int gp_flash_phase(void){return gameplay.hurt_flash_phase;}

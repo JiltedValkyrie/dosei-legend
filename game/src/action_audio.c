@@ -1,9 +1,15 @@
 /* Music owns 0..23, actions 24..30, Navi 31. No CD reads in play. */
+/* Event dispatch / bank setup: size-oriented, outside geometry and mixing loops. */
+#ifdef __GNUC__
+#pragma GCC optimize ("Os")
+#endif
 #include <jo/jo.h>
+#include "ram_cart.h"
 #include "action_audio.h"
 #include "action_audio_data.h"
 #include "opening_audio_data.h"
 #include "gameplay.h"
+#include "player_items.h"
 #include "karebaba.h"
 #include "game_over.h"
 #include "music.h"
@@ -29,24 +35,16 @@ static void navi_vblank(void);
 ** sample limit, never past the end of sound RAM. */
 static bool upload(const char *name, unsigned int base, unsigned int bytes)
 {
-    jo_file file;
-    unsigned short buffer[256];
-    unsigned int offset = 0, i;
+    /* Whole bank in one CD read through the cart scratch, then copy. */
+    const unsigned short *data;
+    int size = 0;
+    unsigned int i;
     volatile unsigned short *ram = (volatile unsigned short *)0x25a00000UL;
-    if (base < MUSIC_SAMPLE_LIMIT || (base & 1) || base + bytes > 0x80000 ||
-        !jo_fs_open(&file, name)) return false;
-    if ((unsigned int)file.size != bytes) { jo_fs_close(&file); return false; }
-    while (offset < bytes) {
-        unsigned int count = bytes - offset;
-        if (count > sizeof(buffer)) count = sizeof(buffer);
-        if (jo_fs_read_next_bytes(&file, (char *)buffer, count) != (int)count) {
-            jo_fs_close(&file); return false;
-        }
-        for (i = 0; i < count/2; ++i)
-            ram[(base + offset)/2+i] = buffer[i];
-        offset += count;
-    }
-    jo_fs_close(&file);
+    if (base < MUSIC_SAMPLE_LIMIT || (base & 1) || base + bytes > 0x80000) return false;
+    data = (const unsigned short *)ram_cart_load_scratch(name, &size);
+    if (!data || (unsigned int)size != bytes) return false;
+    for (i = 0; i < bytes/2; ++i)
+        ram[base/2 + i] = data[i];
     return true;
 }
 
@@ -315,7 +313,11 @@ static void rupee_vblank(void)
 void action_audio_events(uint32_t events)
 {
     uint32_t events2 = gameplay.events2;
+    unsigned items = player_items_events();
     if (opening_bank) return;
+    if (items & PLAYER_ITEM_FIRE) play(ACTION_SEED_FIRE, 28);
+    if (items & PLAYER_ITEM_IMPACT) play(ACTION_SEED_IMPACT, 28);
+    if (items & PLAYER_ITEM_FLASH) play(ACTION_NUT_FLASH, 28);
     /* Attention_Update: NA_SE_SY_LOCK_ON for an attention+hostile lock,
     ** NA_SE_SY_LOCK_ON_HUMAN otherwise. */
     if (events & GP_EVENT_TARGET_ON)
@@ -332,8 +334,7 @@ void action_audio_events(uint32_t events)
     }
     if (events2 & GP2_EVENT_NAVI_TALK) play(ACTION_NAVI_TALK, 31);
     /* M2e: func_80837C0C NA_SE_PL_DAMAGE + NA_SE_VO_LI_DAMAGE_S_KID (rand 3);
-    ** knockdown NA_SE_VO_LI_FALL_L_KID; func_80843E64 landing voice (the
-    ** BODY_HIT channel is not rendered: PL_DAMAGE stands in, logged);
+    ** knockdown NA_SE_VO_LI_FALL_L_KID; func_80843E64 landing voice + original BODY_HIT;
     ** func_80836448 NA_SE_VO_LI_DOWN_KID; Health_IsCritical alarm. */
     if (events & GP_EVENT_HURT) {
         play(ACTION_PL_DAMAGE, 24);
@@ -341,7 +342,7 @@ void action_audio_events(uint32_t events)
     }
     if (events & GP_EVENT_KNOCKDOWN) play(ACTION_FALL_L0, 25);
     if (events2 & GP2_EVENT_LAND_DAMAGE) {
-        play(ACTION_PL_DAMAGE, 24);
+        play(ACTION_BODY_HIT, 24);
         play(ACTION_LAND_HURT0, 25);
     }
     if (events2 & GP2_EVENT_DEATH) play(ACTION_DOWN, 25);
@@ -385,8 +386,39 @@ void action_audio_events(uint32_t events)
     if (events & GP_EVENT_ROLL_VOICE) play(ACTION_VOICE0 + (voice++ & 3), 25);
     if (events & GP_EVENT_ROLL) play(ACTION_ROLL, 28);
     else if (events & GP_EVENT_FOOTSTEP) play(ACTION_FOOTSTEP, 28);
-    if (events & (GP_EVENT_PICKUP | GP_EVENT_EQUIP)) play(ACTION_EQUIP, 27);
+    if (events2 & GP2_EVENT_HP_RECOVER) play(ACTION_HP_RECOVER, 27);
+    else if (events2 & GP2_EVENT_GET_ITEM) play(ACTION_GET_ITEM, 27);
+    else if (events & (GP_EVENT_PICKUP | GP_EVENT_EQUIP)) play(ACTION_EQUIP, 27);
     else if (events & (GP_EVENT_TALK_OPEN | GP_EVENT_TALK_PAGE | GP_EVENT_TALK_CLOSE |
                        GP_EVENT_MENU_OPEN | GP_EVENT_MENU_CLOSE | GP_EVENT_MENU_MOVE))
         play(ACTION_MESSAGE, 27);
+    {
+        static const unsigned char sounds[GP_SFX_COUNT] = {AREA_SFX_SCRUB_UP, AREA_SFX_SCRUB_DOWN, AREA_SFX_SCRUB_THROW, AREA_SFX_SCRUB_WALK, AREA_SFX_SCRUB_HIT, AREA_SFX_SCRUB_FAINT, AREA_SFX_FOOT_SWITCH, AREA_SFX_DEKU_HIT, AREA_SFX_DEKU_DEAD, AREA_SFX_SKULL_HIT, AREA_SFX_SKULL_DEAD, AREA_SFX_LARVA_HIT, AREA_SFX_LARVA_DEAD, AREA_SFX_GOHMA_HIT, AREA_SFX_GOHMA_DEAD, AREA_SFX_CORRECT, AREA_SFX_APPEAR, AREA_SFX_DOOR_OPEN, AREA_SFX_DOOR_CLOSE, AREA_SFX_FREEZE, AREA_SFX_BOX_ITEM};
+        uint32_t pending=gameplay.world_sfx; unsigned i;
+        gameplay.world_sfx=0;
+        /* Scrub motion, switch clicks and combat use separate existing slots.
+         * Later (death) events override hit/movement from the same step. */
+        for(i=0;i<GP_SFX_COUNT;++i) if(pending & (1u<<i))
+            play_area(sounds[i],i==GP_SFX_CORRECT || i==GP_SFX_APPEAR?30:i>=GP_SFX_DOOR_OPEN?26:i<GP_SFX_FOOT_SWITCH?26:i==GP_SFX_FOOT_SWITCH?27:28);
+    }
+}
+
+void action_audio_tree_open(void) {play_area(AREA_SFX_TREE_OPEN,30);}
+
+void action_audio_owl_flap(void){play_area(AREA_SFX_OWL_FLAP,26);}
+
+/* Decomp sfxIds (include/tables/sfx/<bank>_table.h) the oot-core actors play. */
+void action_audio_decomp_sfx(unsigned int sfx_id)
+{
+    switch (sfx_id) {
+    case 0x284E: play_area(AREA_SFX_CUT, 26); break;   /* NA_SE_EV_PLANT_BROKEN */
+    case 0x4803: rupee_start(); break;                 /* NA_SE_SY_GET_RUPY */
+    case 0x4824: play(ACTION_GET_ITEM, 27); break;     /* NA_SE_SY_GET_ITEM */
+    case 0x480B: play(ACTION_HP_RECOVER, 27); break;   /* NA_SE_SY_HP_RECOVER */
+    case 0x4818:                                       /* NA_SE_SY_MESSAGE_PASS */
+    case 0x482E:                                       /* NA_SE_SY_MESSAGE_END */
+    case 0x4808:                                       /* NA_SE_SY_DECIDE */
+    case 0x4809: play(ACTION_MESSAGE, 27); break;      /* NA_SE_SY_CURSOR */
+    default: break;
+    }
 }

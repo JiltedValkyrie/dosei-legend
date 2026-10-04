@@ -1,0 +1,16 @@
+# File produced by Tripo
+
+newmtl kokiri0-area_material
+Kd 0.80000001 0.80000001 0.80000001
+Ka 0.00000000 0.00000000 0.00000000
+Ks 0.80000001 0.80000001 0.80000001
+Ke 0.00000000 0.00000000 0.00000000
+Tf 0.00000000 0.00000000 0.00000000
+d 1.00000000
+Ns 25.00000000
+illum 2
+map_Kn kokiri0-ground-retopo_normal.jpg
+norm kokiri0-ground-retopo_normal.jpg
+map_Bump -bm 1.000000 kokiri0-ground-retopo_normal.jpg
+bump -bm 1.000000 kokiri0-ground-retopo_normal.jpg
+

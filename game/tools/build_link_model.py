@@ -28,8 +28,9 @@ import struct
 import sys
 import xml.etree.ElementTree as ET
 import character_textures
+import actor_meshes
 
-OOT_DEFAULT = pathlib.Path('D:/Workspace-Claude/game-decomps/n64/oot')
+OOT_DEFAULT = pathlib.Path((__import__('os').environ.get('DOSEI_OOT') or 'D:/Workspace-Claude/game-decomps/n64/oot'))
 ROM_MD5 = '57a9719ad547c516342e1a15d5c28c3d'
 OBJECT = 'object_link_child'
 
@@ -292,6 +293,14 @@ GEAR_LISTS = (
     ('right_empty', 18, 'gLinkChildRightHandClosedFarDL'),
     ('right_shield', 18, 'gLinkChildRightFistAndDekuShieldFarDL'),
     ('sheath', 19, 'gLinkChildSheathFarDL'),
+    # Cutscene gear (Player_SetModels, sheathed): sword in sheath, shield on
+    # back with sword, and PLAYER_MODELTYPE_RH_OCARINA for the Fairy Ocarina.
+    ('sheath_sword', 19, 'gLinkChildSwordAndSheathFarDL'),
+    ('sheath_shield', 19, 'gLinkChildDekuShieldSwordAndSheathFarDL'),
+    ('rh_ocarina', 18, 'gLinkChildRightHandHoldingFairyOcarinaFarDL'),
+    # First-person slingshot arm (fp_shoulder/fp_sling, 227 polygons) removed
+    # 2026-10-02: aim draws no Link since 2b055ca (VDP2 crosshair instead).
+    # kokiri_link_draw_first_person is a no-op while LINK_FP_SLING_FIRST is unset.
 )
 
 
@@ -329,8 +338,24 @@ def emit_equipment(out, faces):
                   '#define LINK_%s_COUNT %d' % (group.upper(), len(ids))]
     counts = {g: sum(f['group'] == g for f in faces) for g in groups}
     maximum = counts['body'] + max(counts['left_empty'], counts['left_sword']) + \
-        max(counts['right_empty'], counts['right_shield']) + counts['sheath']
-    lines += ['#define LINK_VISIBLE_POLYGONS %d' % maximum, '#endif']
+        max(counts['right_empty'], counts['right_shield'], counts['rh_ocarina']) +         max(counts['sheath'], counts['sheath_sword'], counts['sheath_shield'])
+    tunic=[i for i,f in enumerate(faces) if tuple(f.get('prim',(0,0,0))[:3])==(80,188,8)]
+    if not tunic:raise ValueError('Link source tunic material missing')
+    mask=bytearray((len(faces)+7)//8)
+    for i in tunic:mask[i//8]|=1<<(i%8)
+    # First-person groups are last, so every vertex they introduce sits at the
+    # tail of the shared POINT table. Third-person draws skin and submit only
+    # LINK_BASE_VERTICES; the aim view adds the tail.
+    first_fp = next((i for i, f in enumerate(faces) if f['group'].startswith('fp_')), len(faces))
+    if any(not f['group'].startswith('fp_') for f in faces[first_fp:]):
+        raise ValueError('first-person gear groups must be last')
+    keys = set()
+    for f in faces[:first_fp]:
+        keys.update((tuple(loc), owner) for loc, owner in
+                    zip(f['local'], f.get('vertex_limbs', [f['limb']] * 3)))
+    lines += ['static const unsigned char link_tunic_faces[]={'+','.join(map(str,mask))+'};',
+              '#define LINK_VISIBLE_POLYGONS %d' % maximum,
+              '#define LINK_BASE_VERTICES %d' % len(keys), '#endif']
     (out / 'link_equipment.h').write_text('\n'.join(lines) + '\n')
 
 
@@ -684,6 +709,20 @@ CLIPS = (
     ('wake_front','gPlayerAnim_link_normal_front_down_wake',    0,    0, 1),
     ('wake_back', 'gPlayerAnim_link_normal_back_down_wake',     0,    0, 1),
     ('death',     'gPlayerAnim_link_derth_rebirth',             0,   85, 1),
+    ('chest_open','gPlayerAnim_clink_demo_Tbox_open',           0,    0, 1),
+    ('ocarina_start','gPlayerAnim_link_normal_okarina_start',   0,    0, 1),
+    ('ocarina_hold','gPlayerAnim_link_normal_okarina_swing',    0,    0, 1),
+    ('ocarina_get','gPlayerAnim_om_get_mae',                    0,    0, 1),
+    ('return_idle','gPlayerAnim_nw_modoru',                    0,    0, 1),
+    ('step_back','gPlayerAnim_clink_demo_koutai',              0,    0, 1),
+    ('stone_get2','gPlayerAnim_clink_demo_get2',0,0,1),
+    ('stone_get3','gPlayerAnim_clink_demo_get3',0,0,1),
+    ('stone_stand','gPlayerAnim_clink_demo_standup',0,0,1),
+    ('stone_wait','gPlayerAnim_clink_demo_standup_wait',0,0,1),
+    # func_80834D2C: the slingshot plays bow_bow_ready once on the upper body
+    # and holds its last frame while aiming (first-person arm pose).
+    ('aim_ready','gPlayerAnim_link_bow_bow_ready',0,0,1),
+
 )
 
 # Child root adjustment: z_player_lib.c Player_OverrideLimbDrawGameplayCommon
@@ -716,7 +755,7 @@ PINNED_ROOT_CLIPS = frozenset((
 # raw -- DISABLE without UPDATE_Y skips the child y scaling.
 PINNED_XZ_CLIPS = frozenset(('tunnel_start', 'tunnel_end'))
 RAW_ROOT_CLIPS = frozenset(('sleeping', 'turn_over', 'sit_up', 'stand_up',
-                            'sleep_wait2', 'sit_wait3')) | PINNED_ROOT_CLIPS | PINNED_XZ_CLIPS
+                            'sleep_wait2', 'sit_wait3', 'chest_open')) | PINNED_ROOT_CLIPS | PINNED_XZ_CLIPS
 # z_player.c sSkeletonBaseTransl: SkelAnime.baseTransl for Player.
 BASE_TRANSL = (-57, 3377, 0)
 
@@ -958,6 +997,10 @@ def main():
     ap.add_argument('--flat', action='store_true',
                     help='collapse every face except the eyes and mouth to a '
                          'single colour, freeing VDP1 VRAM for the scene')
+    ap.add_argument('--export-obj', type=pathlib.Path,
+                    help='write the unedited mesh as a named character OBJ')
+    ap.add_argument('--mesh-obj', type=str,
+                    help='edited character OBJ (default: recipe mesh_override)')
     args = ap.parse_args()
 
     data = read_object(args.oot, OBJECT, args.rom_dir)
@@ -975,6 +1018,8 @@ def main():
                                  HEAD_LIMB, FACE_SEGMENTS)
     flattened = flatten_faces(faces) if args.flat else 0
     tinted = apply_primitive_colour(faces)
+    faces = actor_meshes.exchange('link', faces, {i: (m, o) for i, m, o, _ in placed},
+                                  args.export_obj, args.mesh_obj)
     faces = scale_faces(faces, args.scale)
     if not args.animate:
         faces = drop_degenerate(faces)

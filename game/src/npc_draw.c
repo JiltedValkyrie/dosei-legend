@@ -1,4 +1,4 @@
-/* Original En_Ko/En_Md/En_Sa meshes. Scene owns cart assets; room owns tiles. */
+/* NPCs are baked sprites. Only scenery/shop props use meshes. */
 /* Per-NPC logic, not per-vertex: size over speed (work RAM, BUG-043). */
 #pragma GCC optimize("Os")
 #include <jo/jo.h>
@@ -12,34 +12,25 @@
 #include "asset_loading.h"
 #include "scene_flow.h"
 #include "collide.h"
-#include "npc_pose.h"
+#include "npc_sprite.h"
 #include "interior_mask.h"
 #include "ram_cart.h"
 #include "save_state.h"
 #include "navi_npcs.h"
 #include "kokiri_camera.h"
 #include "cutscene.h"
+#include "oot_core_host.h"
 
 #define NPC_MODEL_COUNT 16
 /* EnOssan OSSAN_TYPE_KOKIRI (build_npc_models SHOPKEEPER): drawn in the
  * shop at its actor-list spot, facing the counter (rot.y 0). Not a
  * kokiri_npcs entry: the counter talk in gameplay.c already owns her. */
 #define NPC_SHOPKEEPER  15
-/*
-** Saria's greeting poses.
-**
-** EnSa_HandleCutscene indexes sAnimationInfo1 with the actor cue id: 1
-** look-up/arm-extended, 2 wave, 3 run. Cue 4 is ENSA_ANIM1_MOVE_ARMS_TO_SIDE,
-** whose clip is model 1's own, so it maps back to NPC01.
-**
-** These are clips, not models. They share Saria's skeleton, vertices and all
-** 78 of her texture tiles, so they are swapped onto the loaded model 1 rather
-** than loaded as meshes of their own: three more uploads of identical tiles
-** filled the VDP1 bank and starved the world props.
-*/
-static const char *const saria_cue_clip[3] = { "NPC16", "NPC17", "NPC18" };
-static unsigned char saria_clip_loaded;     /* cue id currently swapped in */
-static actor_mesh_t *models[NPC_MODEL_COUNT];
+#define NPC_SPRITE_RANGE 1500
+static unsigned char *spr[NPC_MODEL_COUNT];
+static npc_sprite_inst_t spr_inst[KOKIRI_NPC_COUNT + 1];
+static bool navi_cast;
+#define SPR(m) (spr[m])
 /* En_Tana params 0 at its shop actor-list spot (0,0,-20), rot 0. */
 static actor_mesh_t *shelves, *counter;
 #define SHOP_SHELVES_X 0
@@ -75,100 +66,11 @@ static uint16_t shop_cursor_slot[SHOP_CURSOR_PULSES];
 static bool shop_cursor_loaded, shop_cursor_ready;
 static int shop_cursor_tween, shop_cursor_rising = 1;   /* Q8 */
 static unsigned int uploaded, bank_generation;
-static npc_track_t track[KOKIRI_NPC_COUNT];
 static unsigned int previous_step;
-typedef char navi_track_capacity[NAVI_NPC_COUNT <= KOKIRI_NPC_COUNT && NAVI_NPC_COUNT <= 32 ? 1 : -1];
-typedef char npc_turn_mask_fits[KOKIRI_NPC_COUNT <= 32 ? 1 : -1];
+typedef char navi_sprite_capacity[NAVI_NPC_COUNT <= KOKIRI_NPC_COUNT && NAVI_NPC_COUNT <= 32 ? 1 : -1];
+typedef char npc_visible_mask_fits[KOKIRI_NPC_COUNT <= 32 ? 1 : -1];
 
-/* EnKo child tracking functions (z_en_ko.c), by ENKO_TYPE. */
-enum { KO_D68, KO_E18, KO_034, KO_F70, KO_EB0, KO_FULL };
-static const uint8_t ko_start[13] = {   /* EnKo_ChildStart */
-    KO_D68, KO_E18, KO_034, KO_E18, KO_F70, KO_EB0, KO_FULL,
-    KO_EB0, KO_EB0, KO_EB0, KO_E18, KO_EB0, KO_E18 };
-static const uint8_t ko_stone[13] = {   /* EnKo_ChildStone */
-    KO_FULL, KO_FULL, KO_034, KO_EB0, KO_F70, KO_EB0, KO_FULL,
-    KO_EB0, KO_EB0, KO_EB0, KO_E18, KO_EB0, KO_E18 };
-/* func_80A97BC0 yOffset, CHILD_START / CHILD_STONE columns. */
-static const int8_t ko_offset[2][13] = {
-    { 0, 0, 0, -10, 0, 0, 0, 10, -10, -10, 0, -10, 0 },
-    { 0, 0, 0, 10, 0, 0, 0, 10, -10, -10, 0, -10, 0 } };
-
-/* Tracking mode, preset and yOffset for one NPC this step. */
-static unsigned int track_mode(unsigned int i, int angle, int32_t distance,
-                               unsigned int *preset, int32_t *offset)
-{
-    const kokiri_npc_t *npc = &kokiri_npcs[i];
-    bool talking = gameplay.talking && gameplay.speaker == (int)i;
-    bool facing = angle > -0x3FFC && angle < 0x3FFC;  /* EnKo_IsWithinTalkAngle */
-    unsigned int type = npc->param & 255, stone;
-    *preset = 2;
-    if (npc->kind == KOKIRI_NPC_MIDO) {                 /* EnMd_UpdateTalking */
-        bool gate = npc->scene == SAVE_SCENE_KOKIRI_FOREST;
-        *offset = 0;
-        if (gate && gameplay.mido_state == 1) return NPC_TRACKING_NONE;  /* EnMd_Walk */
-        if (talking || (gate && gameplay.mido_state == 2)) return NPC_TRACKING_FULL_BODY;
-        return distance < 170 && angle >= -0x3FFC && angle <= 0x3FFC ?
-               NPC_TRACKING_HEAD_AND_TORSO : NPC_TRACKING_NONE;
-    }
-    if (npc->kind == KOKIRI_NPC_SARIA) {                /* EnSa_UpdateTrackingMode */
-        *offset = 4;
-        /* In Kokiri Forest the source returns NPC_TRACKING_NONE while
-         * actionFunc is EnSa_HandleCutscene: the cue rotations own her facing
-         * during the greeting, so she must not turn to look at Link. */
-        return gameplay_saria_cutscene() ? NPC_TRACKING_NONE : NPC_TRACKING_FULL_BODY;
-    }
-    if (type > 12) type = 12;
-    stone = save_check_quest_item(QUEST_KOKIRI_EMERALD);
-    *offset = ko_offset[stone][type];
-    switch ((stone ? ko_stone : ko_start)[type]) {
-    case KO_D68:
-        return talking ? NPC_TRACKING_HEAD_AND_TORSO : NPC_TRACKING_NONE;
-    case KO_E18:
-        if (talking) return NPC_TRACKING_FULL_BODY;
-        /* lookDist: sInteractInfo + collider radius 20. */
-        if (distance > (type == 5 ? 240 : 180) + 20) return NPC_TRACKING_NONE;
-        return facing ? NPC_TRACKING_HEAD_AND_TORSO : NPC_TRACKING_NONE;
-    case KO_034:
-        *preset = 5;
-        return talking && facing ? NPC_TRACKING_HEAD_AND_TORSO : NPC_TRACKING_NONE;
-    case KO_F70:
-        *preset = 5;
-        return talking ? NPC_TRACKING_HEAD_AND_TORSO : NPC_TRACKING_NONE;
-    case KO_EB0:
-        return facing ? NPC_TRACKING_HEAD_AND_TORSO : NPC_TRACKING_NONE;
-    default:
-        return NPC_TRACKING_FULL_BODY;
-    }
-}
-
-/* One 20 Hz source update: Npc_TrackPoint toward Link's feet. */
-static void track_step(unsigned int i)
-{
-    int32_t dx = demo_link.x - gameplay_npc_x(i);
-    int32_t dz = demo_link.z - gameplay_npc_z(i);
-    int32_t distance = (int32_t)collide_isqrt((uint32_t)(dx*dx + dz*dz)), offset;
-    uint16_t shape = gameplay_npc_yaw(i);
-    int16_t yaw_to = (int16_t)gameplay_facing(dx, dz);
-    unsigned int preset, mode = track_mode(i, (int16_t)(yaw_to - (int16_t)shape),
-                                           distance, &preset, &offset);
-    int16_t pitch_to = (int16_t)gameplay_facing(gameplay_npc_y(i) + offset -
-                                                (demo_link.y - DEMO_LINK_EYE_HEIGHT),
-                                                distance);
-    npc_track_point(&track[i], &shape, yaw_to, pitch_to, preset, mode);
-    if (mode == NPC_TRACKING_FULL_BODY) gameplay_npc_turn(i, shape);
-}
-
-static int32_t q14_sin(int16_t a) { return slSin((ANGLE)a) / 4; }
-static int32_t q14_cos(int16_t a) { return slCos((ANGLE)a) / 4; }
-
-/*
-** The model a placement owns for as long as the scene is loaded.
-**
-** This is what npc_draw_load reads to decide which NPC<nn>.BIN the scene
-** needs, so it must never name one of Saria's greeting clips: those are
-** loaded and freed by the greeting itself, and asking the scene loader for
-** one fails to open a file that is not part of the scene at all.
-*/
+/* Sheet identity per placement; Saria's cue movement reuses her idle sheet. */
 static unsigned int model_for(unsigned int i)
 {
     return kokiri_npcs[i].kind == KOKIRI_NPC_MIDO ? 0 :
@@ -176,67 +78,45 @@ static unsigned int model_for(unsigned int i)
            2 + (kokiri_npcs[i].param & 255);
 }
 
-/*
-** Follow the cue's clip on Saria's one model.
-**
-** Called once per drawn frame while the greeting owns her. A failed swap keeps
-** whatever clip is already on the mesh: a wrong-looking pose is better than a
-** hard stop in the middle of her cutscene.
-*/
-static void saria_follow_cue(void)
-{
-    unsigned int cue = cutscene_actor_channel_cue(GAMEPLAY_SARIA_CUE_CHANNEL);
-    unsigned int want = cue >= 1 && cue <= 3 ? cue : 0;
-
-    if (!models[1] || want == saria_clip_loaded) return;
-    if (want == 0) {
-        if (actor_mesh_swap_clip(models[1], "NPC01")) saria_clip_loaded = 0;
-        return;
-    }
-    if (actor_mesh_swap_clip(models[1], saria_cue_clip[want - 1]))
-        saria_clip_loaded = (unsigned char)want;
-}
-
 void npc_draw_free(void)
 {
     unsigned int i;
-    for (i = 0; i < NPC_MODEL_COUNT; ++i) {
-        actor_mesh_free(models[i]); models[i] = 0;
-    }
+    for (i = 0; i < NPC_MODEL_COUNT; ++i)
+        if (spr[i]) { jo_free(spr[i]); spr[i] = 0; }
+    navi_cast = false;
     interior_mask_free();
     world_props_draw_free();
     actor_mesh_free(shelves); shelves = 0;
     actor_mesh_free(counter); counter = 0;
     for (i = 0; i < SHOP_ITEM_MESHES; ++i) { actor_mesh_free(shop_items[i]); shop_items[i] = 0; }
     shop_cursor_loaded = shop_cursor_ready = false;
-    /* The models are gone, so whatever clip was swapped onto Saria went with
-    ** them: a fresh NPC01 carries her idle clip again. */
-    saria_clip_loaded = 0;
     uploaded = 0;
-    for (i = 0; i < KOKIRI_NPC_COUNT; ++i) track[i] = (npc_track_t){{0, 0}, {0, 0}};
     gameplay_npc_turns_reset();
     previous_step = demo_world_clock() / 3;
 }
 
-bool npc_draw_load(unsigned int scene)
+static bool load_sprite(unsigned int model)
+{
+    char file[] = "NPC00.SPR";
+    int length = 0;
+    if (model >= NPC_MODEL_COUNT) return false;
+    if (spr[model]) return true;
+    file[3] = '0' + model / 10; file[4] = '0' + model % 10;
+    asset_loading(file);
+    spr[model] = (unsigned char *)jo_fs_read_file(file, &length);
+    return spr[model] != 0;
+}
+
+bool __attribute__((optimize("Os"))) npc_draw_load(unsigned int scene)
 {
     unsigned int i;
     npc_draw_free();
-    for (i = 0; i < KOKIRI_NPC_COUNT; ++i) {
-        unsigned int model = model_for(i);
-        char file[] = "NPC00.BIN";
-        if (kokiri_npcs[i].scene != scene) continue;
-        if (model >= NPC_MODEL_COUNT) { npc_draw_free(); return false; }
-        if (models[model]) continue;
-        file[3] = '0' + model / 10; file[4] = '0' + model % 10;
-        asset_loading(file);
-        models[model] = actor_mesh_load(file);
-        if (!models[model]) { npc_draw_free(); return false; }
-    }
+    for (i = 0; i < KOKIRI_NPC_COUNT; ++i)
+        if (kokiri_npcs[i].scene == scene && !load_sprite(model_for(i))) {
+            npc_draw_free(); return false;
+        }
     if (scene == SAVE_SCENE_KOKIRI_SHOP) {
-        asset_loading("NPC15.BIN");
-        models[NPC_SHOPKEEPER] = actor_mesh_load("NPC15.BIN");
-        if (!models[NPC_SHOPKEEPER]) { npc_draw_free(); return false; }
+        if (!load_sprite(NPC_SHOPKEEPER)) { npc_draw_free(); return false; }
         if (!interior_mask_load(SCENE_KOKIRI_SHOP)) { npc_draw_free(); return false; }
         asset_loading("SHELVES.BIN");
         shelves = actor_mesh_load_static("SHELVES.BIN");
@@ -266,47 +146,33 @@ bool npc_draw_load(unsigned int scene)
     return true;
 }
 
-static void draw_pose(unsigned int model, unsigned int tick,
-              int x, int y, int z, uint16_t yaw,
-              const npc_track_t *t, int32_t focus[3])
-{
-    int16_t head[9], torso[9];
-
-    bool turn_head = t->head[0] || t->head[1];
-    bool turn_torso = t->torso[0] || t->torso[1];
-    /* Override limb draws: head Rx(y) Rz(x) about its pivot; torso
-     * EnKo Rx(-y) Rz(x), EnMd Rx(x) Ry(y), EnSa Ry(y) Rx(x). */
-    if (turn_head)
-        npc_rot_matrix(head, 0, q14_sin(t->head[1]), q14_cos(t->head[1]),
-                       2, q14_sin(t->head[0]), q14_cos(t->head[0]));
-    if (turn_torso) {
-        int16_t tx = t->torso[0], ty = t->torso[1];
-        if (model == 0)
-            npc_rot_matrix(torso, 0, q14_sin(tx), q14_cos(tx), 1, q14_sin(ty), q14_cos(ty));
-        else if (model == 1)
-            npc_rot_matrix(torso, 1, q14_sin(ty), q14_cos(ty), 0, q14_sin(tx), q14_cos(tx));
-        else
-            npc_rot_matrix(torso, 0, q14_sin((int16_t)-ty), q14_cos((int16_t)-ty),
-                           2, q14_sin(tx), q14_cos(tx));
-    }
-    actor_mesh_draw(models[model], tick / 3,
-                    x, y, z, yaw,
-                    turn_head ? head : 0, turn_torso ? torso : 0, focus);
-}
+void npc_draw_reupload(void) { uploaded = 0xFFFFFFFFu; }
 
 static bool upload_visible(unsigned int visible, unsigned int generation)
 {
     unsigned int i;
-    if (visible != uploaded || generation != bank_generation) {
+    /* Slots belong to placements for the entire room generation. Turning or
+     * crossing an NPC's range must not upload all scenery/actor textures. */
+    (void)visible;
+    if (uploaded == 0xFFFFFFFFu || generation != bank_generation) {
         kokiri_actor_tiles_reset();
         /* Commit this cache key only after props and masks also fit. A
          * dismissed Jo error must not make a partial bank look complete. */
         uploaded = 0xFFFFFFFFu;
         bank_generation = generation;
-        for (i = 0; i < NPC_MODEL_COUNT; ++i) {
-            if (!(visible & (1u << i))) continue;
-            if (!actor_mesh_upload(models[i])) {
-                jo_core_error("NPC texture bank full: %u", i);
+        for (i = 0; i <= KOKIRI_NPC_COUNT; ++i) {
+            unsigned int m;
+            spr_inst[i].slot = NPC_SPRITE_SLOT_NONE;
+            if (navi_cast) {
+                if (i >= NAVI_NPC_COUNT) continue;
+                m = navi_npcs[i].model;
+            } else {
+                if (i < KOKIRI_NPC_COUNT && kokiri_npcs[i].scene != save_state.scene_id) continue;
+                m = i < KOKIRI_NPC_COUNT ? model_for(i) : NPC_SHOPKEEPER;
+            }
+            if (m < NPC_MODEL_COUNT && spr[m] &&
+                !npc_sprite_upload(spr[m], &spr_inst[i])) {
+                jo_core_error("NPC texture bank full: sprite %u", i);
                 return false;
             }
         }
@@ -342,7 +208,10 @@ static bool upload_visible(unsigned int visible, unsigned int generation)
             jo_core_error("NPC texture bank full: masks");
             return false;
         }
-        uploaded = visible;
+#ifdef DOSEI_OOT_CORE
+        oot_core_meshes_upload();   /* last: never starves the C uploads */
+#endif
+        uploaded = 0;
     }
     return true;
 }
@@ -353,12 +222,16 @@ static bool shop_project(int32_t x, int32_t y, int32_t z, int *sx, int *sy)
 {
     int32_t s, c, dx = x - demo_camera.x, dy = demo_camera.y - y, dz = z - demo_camera.z;
     int32_t vx, vz, vy, depth;
+    if (dx < -32767 || dx > 32767 || dy < -32767 || dy > 32767 ||
+        dz < -32767 || dz > 32767) return false;
     kokiri_camera_sincos((uint16_t)(0u - (uint16_t)demo_yaw), &s, &c);
-    vx = (int32_t)(((int64_t)c * dx + (int64_t)s * dz) >> 16);
-    vz = (int32_t)(((int64_t)c * dz - (int64_t)s * dx) >> 16);
+    s /= 256; c /= 256;
+    vx = (c * dx + s * dz) / 256;
+    vz = (c * dz - s * dx) / 256;
     kokiri_camera_sincos((uint16_t)(0u - (uint16_t)demo_pitch), &s, &c);
-    vy = (int32_t)(((int64_t)c * dy - (int64_t)s * vz) >> 16);
-    depth = (int32_t)(((int64_t)s * dy + (int64_t)c * vz) >> 16);
+    s /= 256; c /= 256;
+    vy = (c * dy - s * vz) / 256;
+    depth = (s * dy + c * vz) / 256;
     if (depth <= 8) return false;
     *sx = -vx * demo_screen_distance() / depth;
     *sy = vy * demo_screen_distance() / depth;
@@ -377,7 +250,7 @@ static void shop_cursor_draw(int32_t x, int32_t y, int32_t z)
     attr.texno = shop_cursor_slot[pulse];
     attr.atrb |= CL32KRGB | (shop_cursor_tween >= 128 ? CL_Trans : 0);
     pos[0] = sx * 65536;
-    pos[2] = 31 * 65536;                            /* HUD depth: over the world */
+    pos[2] = kokiri_hud_depth(1) * 65536;           /* HUD depth: over the world */
     pos[3] = pos[4] = 98304;                        /* x1.5 */
 #ifdef DOSEI_HIRES
     pos[1] = sy * 2 * 65536;
@@ -441,12 +314,11 @@ static void shop_items_draw(unsigned int steps)
 
 void npc_draw(unsigned int tick)
 {
-    unsigned int i, n, visible = 0, people = 0;
+    unsigned int i, visible = 0, people = 0;
     unsigned int steps = tick / 3 - previous_step;
     unsigned int generation = kokiri_actor_bank_generation();
     previous_step = tick / 3;
     if (steps > 4) steps = 4;
-    if (gameplay_saria_cutscene()) saria_follow_cue();
     for (i = 0; i < KOKIRI_NPC_COUNT; ++i) {
         int32_t dx, dz, distance;
         if (!gameplay_npc_present(i)) continue;
@@ -457,6 +329,9 @@ void npc_draw(unsigned int tick)
          * separate from this visibility bound. */
         distance = kokiri_npcs[i].kind == KOKIRI_NPC_CHILD ?
                    ((kokiri_npcs[i].param & 255) == 5 ? 240 : 180) : 400;
+        /* Saturn: a sprite costs one cel, so it shows far past the 3D fade
+         * range (human 2026-10-03). Logic/talk ranges are unchanged. */
+        if (SPR(model_for(i))) distance = NPC_SPRITE_RANGE;
         /* EnSa_Update pins alpha to 255 while EnSa_HandleCutscene runs, so the
          * distance fade does not apply: her first cue stands her 900 units out
          * and she has to be on screen from the first frame of the shot. */
@@ -467,7 +342,7 @@ void npc_draw(unsigned int tick)
         visible |= 1u << model_for(i);
         people |= 1u << i;
     }
-    if (models[NPC_SHOPKEEPER] && save_state.scene_id == SAVE_SCENE_KOKIRI_SHOP)
+    if (spr[NPC_SHOPKEEPER] && save_state.scene_id == SAVE_SCENE_KOKIRI_SHOP)
         visible |= 1u << NPC_SHOPKEEPER;
     if (!upload_visible(visible, generation)) return;
     interior_mask_draw();
@@ -477,126 +352,70 @@ void npc_draw(unsigned int tick)
     if (shelves) {
         shop_items_draw(steps);
     }
-    if (visible & (1u << NPC_SHOPKEEPER)) {
-        static const npc_track_t still = {{0, 0}, {0, 0}};
-        int32_t focus[3];
-        draw_pose(NPC_SHOPKEEPER, tick, KOKIRI_SHOPKEEPER_X, KOKIRI_SHOPKEEPER_Y,
-                  KOKIRI_SHOPKEEPER_Z, 0, &still, focus);
-    }
-    for (n = 0; n < steps; ++n)
-        for (i = 0; i < KOKIRI_NPC_COUNT; ++i)
-            if (gameplay_npc_present(i)) track_step(i);
+    if (visible & (1u << NPC_SHOPKEEPER))
+        npc_sprite_draw(spr[NPC_SHOPKEEPER], &spr_inst[KOKIRI_NPC_COUNT], tick / 3,
+                        KOKIRI_SHOPKEEPER_X, KOKIRI_SHOPKEEPER_Y, KOKIRI_SHOPKEEPER_Z, 0);
     for (i = 0; i < KOKIRI_NPC_COUNT; ++i)
         if (people & (1u << i)) {
-            const npc_track_t *t = &track[i];
             unsigned int model = model_for(i);
-            uint16_t yaw = gameplay_npc_yaw(i);
-            int32_t focus[3], rotated[3];
-            draw_pose(model, tick, gameplay_npc_x(i), gameplay_npc_y(i),
-                      gameplay_npc_z(i), yaw, t, focus);
-            {
-                int32_t sine = slSin((ANGLE)yaw) / 4;
-                int32_t cosine = slCos((ANGLE)yaw) / 4;
-                rotated[0] = (focus[0]*cosine + focus[2]*sine) / (16384*64);
-                rotated[1] = focus[1] / 64;
-                rotated[2] = (focus[2]*cosine - focus[0]*sine) / (16384*64);
-            }
-            gameplay_npc_focus(i, rotated);
+            int32_t focus[3] = {0, npc_sprite_focus_y(spr[model]), 0};
+            npc_sprite_draw(spr[model], &spr_inst[i], tick / 3, gameplay_npc_x(i),
+                            gameplay_npc_y(i), gameplay_npc_z(i), gameplay_npc_yaw(i));
+            gameplay_npc_focus(i, focus);
         }
 }
 
-/* Flythrough uses its authored layer, independent of save scene and Link's
- * position in his house. No gameplay actor registry or talk/target changes. */
-/*
-** Saria's three greeting clips, loaded beside the forest cast for the one
-** cutscene that uses them and freed the moment it ends. Failing to load them
-** must not start the greeting at all: she would otherwise stand in her idle
-** pose through a shot built around her running up and waving.
-*/
-/*
-** The greeting needs no assets of its own: its poses are clips on Saria's
-** model, swapped in as her cue changes. This only checks she is actually
-** loaded, so the greeting does not start in a scene without her.
-*/
-bool npc_draw_load_saria_cutscene(void)
-{
-    return models[1] != 0;
-}
+/* Greeting uses the resident sprite; cue movement and dialogue stay live. */
+bool npc_draw_load_saria_cutscene(void) { return spr[1] != 0; }
+void npc_draw_free_saria_cutscene(void) {}
 
-/* EnSa_BecomeIdle: back to gSariaWaitArmsToSideAnim. */
-void npc_draw_free_saria_cutscene(void)
-{
-    if (models[1] && saria_clip_loaded)
-        if (actor_mesh_swap_clip(models[1], "NPC01")) saria_clip_loaded = 0;
-}
-
+/* Authored flyby cast is independent of Link's current save scene. */
 bool npc_draw_load_navi(void)
 {
     unsigned int i;
     npc_draw_free();
-    previous_step = 0;
-    for (i = 0; i < NAVI_NPC_COUNT; ++i) {
-        unsigned int model = navi_npcs[i].model;
-        char file[] = "NPC00.BIN";
-        if (model >= NPC_MODEL_COUNT) return false;
-        if (models[model]) continue;
-        file[3] = '0' + model / 10; file[4] = '0' + model % 10;
-        asset_loading(file);
-        models[model] = actor_mesh_load(file);
-        if (!models[model]) { npc_draw_free(); return false; }
-    }
+    navi_cast = true;
+    for (i = 0; i < NAVI_NPC_COUNT; ++i)
+        if (!load_sprite(navi_npcs[i].model)) { npc_draw_free(); return false; }
+    uploaded = 0xFFFFFFFFu;
     return true;
 }
 
-/* Conservative model sphere: child poses fit within 100 world units of
- * (origin+40Y). Cull whole offscreen actors before SGL consumes vertex slots. */
+/* Q8 view rotation: callers bound deltas to 1600 before multiplication. */
 static bool navi_in_view(const navi_npc_t *p)
 {
     int32_t sy,cy,sp,cp;
     int x=p->x-demo_camera.x, y=p->y+40-demo_camera.y, z=p->z-demo_camera.z;
     int horizontal,depth,right,up;
-    unsigned int distance=cutscene_screen_distance();
+    int distance=(int)cutscene_screen_distance();
     kokiri_camera_sincos(demo_yaw,&sy,&cy);
     kokiri_camera_sincos(demo_pitch,&sp,&cp);
-    horizontal=(int)(((int64_t)x*sy+(int64_t)z*cy)/65536);
-    right=(int)((-(int64_t)x*cy+(int64_t)z*sy)/65536);
-    depth=(int)(((int64_t)horizontal*cp+(int64_t)y*sp)/65536);
-    up=(int)(((int64_t)y*cp-(int64_t)horizontal*sp)/65536);
+    sy /= 256; cy /= 256; sp /= 256; cp /= 256;
+    horizontal=(x*sy+z*cy)/256;
+    right=(-x*cy+z*sy)/256;
+    depth=(horizontal*cp+y*sp)/256;
+    up=(y*cp-horizontal*sp)/256;
     if (depth+100<=0) return false;
     if (right<0) right=-right;
     if (up<0) up=-up;
-    return (int64_t)right*distance <= (int64_t)depth*200+100*(distance+200) &&
-           (int64_t)up*distance <= (int64_t)depth*200+100*(distance+200);
+    return right*distance <= depth*200+100*(distance+200) &&
+           up*distance <= depth*200+100*(distance+200);
 }
 
 void npc_draw_navi(unsigned int frame)
 {
-    unsigned int i, n, people = 0, visible = 0;
-    unsigned int steps = frame >= previous_step ? frame - previous_step : 0;
-    previous_step = frame;
-    if (steps > 4) steps = 4;
+    unsigned int i, people = 0, visible = 0;
     for (i = 0; i < NAVI_NPC_COUNT; ++i) {
         const navi_npc_t *p = &navi_npcs[i];
         int dx = demo_camera.x-p->x, dy = demo_camera.y-p->y, dz = demo_camera.z-p->z;
         int radius = p->model == 0 ? 1600 : p->model == 7 ? 960 : 720;
-        uint16_t yaw = p->yaw;
-        if ((int64_t)dx*dx+(int64_t)dy*dy+(int64_t)dz*dz > radius*radius) continue;
+        if (dx < -radius || dx > radius || dy < -radius || dy > radius ||
+            dz < -radius || dz > radius || dx*dx+dy*dy+dz*dz > radius*radius) continue;
         if (navi_in_view(p)) { people |= 1u << i; visible |= 1u << p->model; }
-        /* EnKo func_80A9877C/EnMd_UpdateTalking: camera eye, +40 offset,
-         * preset 2 head+torso; type 0 keeps its rock-lifting gaze. */
-        if (p->model != 2) {
-            int distance = collide_isqrt((uint32_t)(dx*dx+dz*dz));
-            int16_t target_yaw = (int16_t)gameplay_facing(dx,dz);
-            int16_t target_pitch = (int16_t)gameplay_facing(p->y+40-demo_camera.y,distance);
-            for (n = 0; n < steps; ++n)
-                npc_track_point(&track[i], &yaw, target_yaw, target_pitch,
-                                2, NPC_TRACKING_HEAD_AND_TORSO);
-        }
     }
     if (!upload_visible(visible,kokiri_actor_bank_generation())) return;
     for (i = 0; i < NAVI_NPC_COUNT; ++i) if (people & (1u << i)) {
         const navi_npc_t *p = &navi_npcs[i];
-        int32_t focus[3];
-        draw_pose(p->model,frame*3,p->x,p->y,p->z,p->yaw,&track[i],focus);
+        npc_sprite_draw(spr[p->model], &spr_inst[i], frame, p->x,p->y,p->z,p->yaw);
     }
 }

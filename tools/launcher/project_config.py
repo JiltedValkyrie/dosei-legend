@@ -10,6 +10,14 @@ import subprocess
 ROOT = Path(__file__).resolve().parents[2]
 
 
+def host_path(value):
+    """config.ini is shared with the Windows launcher: on Linux/WSL map a
+    Windows drive path (D:\\x or D:/x) to /mnt/d/x so the same file works."""
+    if os.name != 'nt' and len(value) > 2 and value[1] == ':' and value[0].isalpha():
+        return '/mnt/' + value[0].lower() + value[2:].replace('\\', '/')
+    return value
+
+
 def read_paths(root=ROOT):
     parser = configparser.ConfigParser(interpolation=None)
     parser.read(root/'config.example.ini', encoding='utf-8-sig')
@@ -24,7 +32,7 @@ def read_paths(root=ROOT):
         if key == 'python' and not any(c in value for c in '/\\:'):
             values[key] = shutil.which(value) or value
         else:
-            path = Path(value)
+            path = Path(host_path(value))
             values[key] = str(path if path.is_absolute() else (root/path).resolve())
     values['oot_roms'] = values.get('oot_roms') or str(Path(values['oot_decomp'])/'baseroms/ntsc-1.2')
     return values
@@ -55,7 +63,8 @@ def dependency_alias(path, kind):
 
 def prepare(paths):
     sdk = dependency_alias(paths['jo_engine'], 'sdk')
-    msys = dependency_alias(paths['msys2'], 'msys')
+    # Linux builds use the host shell and make; MSYS2 is Windows-only.
+    msys = dependency_alias(paths['msys2'], 'msys') if os.name == 'nt' else ''
     stamp = ROOT/'game/build/generated/toolchain.stamp'
     stamp.parent.mkdir(parents=True, exist_ok=True)
     signature = sdk+'\n'+msys+'\n'+paths['python']+'\n'

@@ -11,11 +11,17 @@
 #define SCALE_STEP      10      /* 0.0005 */
 #define ANIM_FRAMES     24      /* gDekuBabaFastChompAnim */
 #define NAVI_TEXT       0x0609  /* NAVI_ENEMY_WITHERED_DEKU_BABA + 0x600 */
-#define KAREBABA_ID     0x00C7
+#define KAREBABA_ID     KAREBABA_ACTOR_ID
 
 static karebaba_t  *babas;             /* KAREBABA_MAX, cart */
 static unsigned int count;
 static uint32_t     events;
+static unsigned live_scene=255,live_room=255;
+/* US 1.2 ydan child-day En_Karebaba params 1, same source drop/regrowth. */
+static const kokiri_prop_t dungeon_babas[]={
+    {-546,-820,392,3},{-2038,-760,1252,6},{-1674,-760,1248,6},
+    {-2174,-760,295,7},{-1472,840,-157,10}
+};
 
 /* DamageTable_Get(1) is not consulted: any accepted AC hit kills (health 1,
 ** the action checks AC_HIT). DMG_SWORD = SLASH (8-10) | SPIN (22-24) |
@@ -310,10 +316,9 @@ static void     sync_actor(karebaba_t *b, actor_t *a)
     b->head.z = b->body.z = b->home[2] - a->z;
 }
 
-static void     spawn(karebaba_t *b, unsigned int i)
+static void     spawn(karebaba_t *b, unsigned int i, const kokiri_prop_t *p, unsigned scene)
 {
-    const kokiri_prop_t *p = &kokiri_babas[i];
-    actor_t *a = actor_spawn(&profile, SAVE_SCENE_KOKIRI_FOREST, ACTOR_ROOM_NONE,
+    actor_t *a = actor_spawn(&profile, scene, ACTOR_ROOM_NONE,
                              p->x, p->y, p->z, 0, 1);
     unsigned int k;
     if (!a) { b->handle = 0; return; }  /* retried by karebaba_sync */
@@ -340,7 +345,7 @@ static void     spawn(karebaba_t *b, unsigned int i)
     b->head.mass = MASS_HEAVY;
     b->head.radius = 4;
     reset_collider(b);
-    if (KOKIRI_BABA_GROW & (1u << i)) {
+    if (scene==SAVE_SCENE_KOKIRI_FOREST && (KOKIRI_BABA_GROW & (1u << i))) {
         b->scale = 0;
         b->rot_x = 0xC000;
         b->pos_q8[1] = (p->y + 14) * 256;
@@ -371,9 +376,17 @@ void            karebaba_reset(void)
 
 void            karebaba_sync(bool in_scene, unsigned int room)
 {
+    karebaba_sync_scene(in_scene?SAVE_SCENE_KOKIRI_FOREST:255,room);
+}
+void            karebaba_sync_scene(unsigned int scene, unsigned int room)
+{
     unsigned int i;
-    /* Room 1's actor list: live only while that room is the current one. */
-    bool live = babas && in_scene && room == kokiri_babas[0].room;
+    const kokiri_prop_t *placements=scene==SAVE_SCENE_DEKU_TREE?dungeon_babas:kokiri_babas;
+    unsigned total=scene==SAVE_SCENE_DEKU_TREE?sizeof(dungeon_babas)/sizeof(dungeon_babas[0]):KOKIRI_BABA_COUNT;
+    bool live = babas && (scene==SAVE_SCENE_DEKU_TREE || scene==SAVE_SCENE_KOKIRI_FOREST);
+    if(live_scene!=scene || live_room!=room) {
+        karebaba_reset();live_scene=scene;live_room=room;
+    }
     if (!live) {
         if (count) karebaba_reset();
         return;
@@ -386,13 +399,14 @@ void            karebaba_sync(bool in_scene, unsigned int room)
     }
     /* Required placements: a spawn refused by a full pool (counted by
     ** actor_sys) is retried every sync until it lands, never dropped. */
-    for (i = 0; i < KOKIRI_BABA_COUNT && count < KAREBABA_MAX; ++i) {
+    for (i = 0; i < total && count < KAREBABA_MAX; ++i) {
         unsigned int k;
+        if(placements[i].room!=room)continue;
         for (k = 0; k < count; ++k)
             if (babas[k].spawn == i) break;
         if (k < count)
             continue;
-        spawn(&babas[count], i);
+        spawn(&babas[count], i,&placements[i],scene);
         if (babas[count].handle) ++count;
     }
 }

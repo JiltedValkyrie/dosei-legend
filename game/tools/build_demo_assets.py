@@ -12,30 +12,6 @@ def rgb555(rgb):
     return 0 if not (r or g or b) else 0x8000 | (b >> 3) << 10 | (g >> 3) << 5 | (r >> 3)
 
 
-def build_fairy_sprite(wing):
-    wing = wing.convert('L').resize((5, 10), Image.Resampling.LANCZOS)
-    out = Image.new('RGB', (16, 16))
-    pixels = out.load()
-    wings = wing.load()
-    for y in range(16):
-        for x in range(16):
-            dx, dy = x - 7.5, y - 7.5
-            distance = (dx * dx + dy * dy) ** 0.5
-            glow = max(0, int(255 - distance * 42))
-            value = glow
-            # Mirror the authentic OoT wing on either side of the glow.
-            if 1 <= x < 6 and 3 <= y < 13:
-                value = max(value, wings[x - 1, y - 3])
-            if 10 <= x < 15 and 3 <= y < 13:
-                value = max(value, wings[14 - x, y - 3])
-            if value < 22:
-                pixels[x, y] = (0, 0, 0)
-            else:
-                pixels[x, y] = (min(255, 80 + value),
-                                min(255, 120 + value), 255)
-    return out
-
-
 def build_item_icon(source):
     """One 16x16 RGB555 pickup icon from an original 32x32 item icon.
 
@@ -130,6 +106,49 @@ def build_message_prompt(source, size=MESSAGE_PROMPT_SIZE):
     return out
 
 
+def build_lock_reticle_corner(corner, colour, size=16, outline=None):
+    """Rasterize one rotation of gLockOnReticleTriangleDL.
+
+    The source display list is a single untextured right triangle at
+    (-31,-31), (32,-31), (-31,32), rendered four times around focus.  Saturn
+    uses compact RGB555 sprites, so preserve that geometry and the source
+    attention colour while making black texels transparent for VDP1.
+    """
+    if corner not in range(4):
+        raise ValueError('reticle corner must be 0..3')
+    vertices = ((2, 2), (12, 2), (2, 12))
+    if corner == 1:
+        vertices = tuple((size - 1 - x, y) for x, y in vertices)
+    elif corner == 2:
+        vertices = tuple((size - 1 - x, size - 1 - y) for x, y in vertices)
+    elif corner == 3:
+        vertices = tuple((x, size - 1 - y) for x, y in vertices)
+    out = Image.new('RGB', (size, size))
+    pixels = out.load()
+    (ax, ay), (bx, by), (cx, cy) = vertices
+    area = (bx - ax) * (cy - ay) - (by - ay) * (cx - ax)
+    for y in range(size):
+        for x in range(size):
+            ab = (bx - ax) * (y - ay) - (by - ay) * (x - ax)
+            bc = (cx - bx) * (y - by) - (cy - by) * (x - bx)
+            ca = (ax - cx) * (y - cy) - (ay - cy) * (x - cx)
+            if (area > 0 and ab >= 0 and bc >= 0 and ca >= 0) or \
+               (area < 0 and ab <= 0 and bc <= 0 and ca <= 0):
+                pixels[x, y] = colour
+    if outline is not None:
+        # A one-texel dark rim keeps a light marker readable on bright scenery.
+        # Near-black, not (0,0,0): RGB555 zero is VDP1's transparent code.
+        inside = {(x, y) for y in range(size) for x in range(size)
+                  if pixels[x, y] == colour}
+        for y in range(size):
+            for x in range(size):
+                if (x, y) not in inside and any(
+                        (x + dx, y + dy) in inside
+                        for dx in (-1, 0, 1) for dy in (-1, 0, 1)):
+                    pixels[x, y] = outline
+    return out
+
+
 def build_equip_outline(source, size=32):
     """The real EQUIPPED marker, gEquippedItemOutlineTex.
 
@@ -184,16 +203,10 @@ def main(oot=None):
         (ROOT / 'build/cd/TITLE.RGB').write_bytes(b''.join(struct.pack('>H', rgb555(p)) for p in pixels))
     (ROOT / 'build/cd/START.RGB').write_bytes((baseline / 'assets/static/ui/PRESS_START.RAW').read_bytes())
     if oot is None:
-        oot = Path('D:/Workspace-Claude/game-decomps/n64/oot')
-    candidates = sorted(Path(oot).glob(
-        'extracted/*/assets/objects/gameplay_keep/gFairyWingTex.i8.png'))
-    if not candidates:
-        raise FileNotFoundError('extracted OoT fairy wing texture not found')
-    with Image.open(candidates[-1]) as wing:
-        fairy = build_fairy_sprite(wing)
-    fairy.save(ROOT / 'build/generated/fairy-preview.png')
-    (ROOT / 'build/cd/FAIRY.RGB').write_bytes(b''.join(
-        struct.pack('>H', rgb555(pixel)) for pixel in fairy.getdata()))
+        oot = Path((__import__('os').environ.get('DOSEI_OOT') or 'D:/Workspace-Claude/game-decomps/n64/oot'))
+    # One fairy pipeline; never overwrite the wing/glow cels with legacy art.
+    from build_fairy import build as build_fairy
+    build_fairy(oot)
 
     # En_Kusa type 0 draws gFieldBushDL with this original cutout texture.
     grass_path = Path(oot) / 'extracted/ntsc-1.2/assets/objects/gameplay_field_keep/gFieldBushTex.rgba16.png'
@@ -284,6 +297,21 @@ def main(oot=None):
             mark = build_message_prompt(source)
         (ROOT / ('build/cd/%s.RGB' % name)).write_bytes(b''.join(
             struct.pack('>H', rgb555(pixel)) for pixel in mark.getdata()))
+
+    # z_actor.c draws gLockOnReticleTriangleDL four times around focus. Its
+    # vertices are source geometry, and its palette is sAttentionColors:
+    # hostile yellow, NPC blue, other/POI green. White is the first-person
+    # shot ray marker, intentionally separate from dialogue's message glyphs.
+    reticles = (('RTEN', (255, 255, 0)), ('RTNP', (150, 150, 255)),
+                ('RTPO', (0, 255, 0)), ('RTAI', (255, 255, 255)))
+    for prefix, colour in reticles:
+        for corner in range(4):
+            # The first-person aim marker is white with a dark rim so it
+            # reads on both bright and dark scenery.
+            reticle = build_lock_reticle_corner(
+                corner, colour, outline=(16, 16, 16) if prefix == 'RTAI' else None)
+            (ROOT / ('build/cd/%s%02d.RGB' % (prefix, corner))).write_bytes(
+                b''.join(struct.pack('>H', rgb555(pixel)) for pixel in reticle.getdata()))
 
     outline = (Path(oot) / 'extracted/ntsc-1.2/assets/textures/parameter_static'
                / 'gEquippedItemOutlineTex.ia8.png')

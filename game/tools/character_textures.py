@@ -7,7 +7,7 @@ Flat colours are already cheaper and remain flat.
 import re
 import xml.etree.ElementTree as ET
 
-FACE_NAME = re.compile(r'Eye|Mouth|Nose|Nostril|Ear|Forehead|Jaw|Cheek|Teeth|UpperLip|HeadGradient')
+FACE_NAME = re.compile(r'Eye|Iris|Mouth|Nose|Nostril|Ear|Forehead|Jaw|Cheek|Teeth|UpperLip|HeadGradient')
 NON_FACE_NAME = re.compile(r'Hair|Mane|Sideburn|Cap|Hood|Hat|Veil|Fabric|Neck|Saddle')
 HAIR_NAME = re.compile(r'Hair|Mane|Sideburn')
 
@@ -21,7 +21,7 @@ def mark_faces(faces, xml_path, head_limb=None, expression_segments=()):
     global limb number (horses and humans have different skeletons).
     """
     names = {int(n.attrib['Offset'], 16): n.attrib.get('Name', '')
-             for n in ET.parse(xml_path).iter('Texture')}
+             for n in ET.parse(xml_path).iter('Texture') if not n.attrib.get('Offset', '.').startswith('.')}
     for face in faces:
         texture = face.get('texture') or {}
         address = texture.get('address', 0)

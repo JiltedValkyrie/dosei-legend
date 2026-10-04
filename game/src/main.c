@@ -18,12 +18,22 @@
 #include "cdda.h"
 #include "music_songs.h"
 #include "music_banks.h"
+#include "field_music.h"
+#include "story_route.h"
+#include "emerald_story.h"
 #include "action_audio.h"
 #include "demo.h"
 #include "karebaba.h"
+#include "skulltula.h"
+#include "wall_skull.h"
+#include "dekubaba.h"
+#include "hintnuts.h"
+#include "gohma_larva.h"
+#include "gohma.h"
 #include "game_over.h"
 #include "navi.h"
 #include "gameplay.h"
+#include "player_items.h"
 #include "dialogue_text.h"
 #include "minimap.h"
 #include "pause_windows.h"
@@ -35,11 +45,14 @@
 #include "frame_timer.h"
 #include "oot_follow.h"
 #include "ram_cart.h"
+#include "ram_low.h"
 #include "heap_profile.h"
+#include "sgl_registers.h"
 #include "actor_sys.h"
 #include "npc_draw.h"
 #include "save_device.h"
 #include "file_select.h"
+#include "level_select.h"
 #include "scene_flow.h"
 #include "message.h"
 #include "cutscene.h"
@@ -60,26 +73,27 @@
 ** downward: the fixed view must be (x-CAM_X, CAM_Y-y, z-CAM_Z).
 */
 #define SCREEN_DISTANCE     (240)
+static bool aim_dot_shown;  /* VDP2 slingshot crosshair on screen */
 static bool         scene_ready;
 static bool         music_ready;
 static bool         debug_visible;
 static unsigned int rejected_total;
-static void         viewer_hud(void);
-static void         dialogue_box(void);
-static void         inventory_menu(void);
-static void         game_over_screen(void);
-static void         file_select_screen(void);
-static void         cutscene_text(void);
+static void __attribute__((optimize("Os"))) viewer_hud(void);
+static void __attribute__((optimize("Os"))) dialogue_box(void);
+static void __attribute__((optimize("Os"))) inventory_menu(void);
+static void __attribute__((optimize("Os"))) game_over_screen(void);
+static void __attribute__((optimize("Os"))) file_select_screen(void);
+static void __attribute__((optimize("Os"))) cutscene_text(void);
 static void         cutscene_fade(void);
 
 /* Read DIALOG.TXT into its cart carve and bind it. jo_fs_read_file holds a
 ** transient work-RAM copy; only the cart copy stays. */
 typedef char dialogue_text_fits[DIALOGUE_TEXT_BYTES <= RAM_CART_DIALOGUE_BYTES ? 1 : -1];
 typedef char cutscene_text_fits[CUTSCENE_TEXT_BYTES <= RAM_CART_CUTTEXT_BYTES ? 1 : -1];
-static bool     text_file_load(const char *name, unsigned int offset, unsigned int bytes,
+static bool     table_file_load(const char *name, void *destination, unsigned int bytes,
                                bool (*bind)(const uint8_t *, uint32_t))
 {
-    uint8_t    *carve = (uint8_t *)ram_cart_fixed(offset, bytes);
+    uint8_t    *carve = (uint8_t *)destination;
     void       *data;
     int         length = 0;
     bool        ok;
@@ -104,6 +118,11 @@ static bool     text_file_load(const char *name, unsigned int offset, unsigned i
 }
 
 typedef char actor_pool_fits[ACTOR_POOL_MAX * sizeof(actor_t) <= RAM_CART_ACTOR_POOL_BYTES ? 1 : -1];
+static bool text_file_load(const char *name, unsigned int offset, unsigned int bytes,
+                           bool (*bind)(const uint8_t *, uint32_t))
+{
+    return table_file_load(name, ram_cart_fixed(offset, bytes), bytes, bind);
+}
 typedef char minimap_file_fits[MINIMAP_FILE_BYTES <= RAM_CART_MINIMAP_BYTES ? 1 : -1];
 static bool     dialogue_text_load(void)
 {
@@ -113,11 +132,17 @@ static bool     dialogue_text_load(void)
                            RAM_CART_CUTTEXT_BYTES, cutscene_text_bind) &&
             text_file_load("MINIMAP.BIN", RAM_CART_MINIMAP_OFFSET,
                            RAM_CART_MINIMAP_BYTES, minimap_bind) &&
-            text_file_load("MUSICTRG.BIN", RAM_CART_MUSICTRG_OFFSET,
-                           RAM_CART_MUSICTRG_BYTES, music_banks_bind) &&
+            table_file_load("MUSICTRG.BIN", RAM_LOW(RAM_LOW_MUSICTRG_OFFSET),
+                           RAM_LOW_MUSICTRG_BYTES, music_banks_bind) &&
+            table_file_load("GOHMAPOS.BIN", RAM_LOW(RAM_LOW_GOHMA_POSES_OFFSET),
+                           RAM_LOW_GOHMA_POSES_BYTES, gohma_bind) &&
             text_file_load("TITLEPTH.BIN", RAM_CART_TITLEPTH_OFFSET,
                            RAM_CART_TITLEPTH_BYTES, demo_title_paths_bind));
 }
+
+/* oot-core: decomp code in OOTCORE.BIN (oot_core_host.c); the header gives
+** inline no-op stubs when DOSEI_OOT_CORE is off. */
+#include "oot_core_host.h"
 
 #ifdef DOSEI_TEXTURE_PROBE
 #include "texture_probe.h"
@@ -153,6 +178,7 @@ static void texture_probe(void)
 ** renderer and attention's on-screen test. */
 int32_t             demo_screen_distance(void)
 {
+    if(story_owl_talking())return story_owl_screen_distance();
     if (cutscene_screen_distance() > 0)
         return (int32_t)cutscene_screen_distance();
     if (kokiri_scene_backdrop_active() && scene_flow_entry()->cam_dist > 0)
@@ -160,6 +186,64 @@ int32_t             demo_screen_distance(void)
     if (demo_view_first_person()) return 290; /* Subj3: 45 degree FOV. */
     if (scene_flow_pivot()) return 208; /* Camera_Unique7: 60 degree FOV. */
     return demo_title_is_visible() ? 180 : SCREEN_DISTANCE;
+}
+
+/* Text diagnostics are cold glue, not geometry. Keep their code compact. */
+static void __attribute__((optimize("Os"))) diagnostic_overlay(void)
+{
+    {
+        /* Callback share of frame time: an estimate of master-CPU work,
+         * not total utilization across both SH-2s. Sync includes GPU/VBlank
+         * waiting. Existing smoothed timings keep the display readable. */
+        unsigned int work = frame_timer_frame();
+        unsigned int total = work + frame_timer_cost(FRAME_PHASE_SYNC);
+        unsigned int cpu = total ? work * 100u / total : 0;
+        jo_printf(1, JO_TV_HEIGHT / 8 - 1, "VRAM %3u%%   CPU~ %3u%%   ",
+                  kokiri_scene_vram_percent(), cpu);
+    }
+    /* Last text writer: available on Clean, title, menus and cutscenes too.
+     * demo_clock is normalized to 60 Hz, independent of rendering rate/PAL.
+     * Require release after firing so a long hold cannot toggle repeatedly. */
+    {
+        static unsigned int hold_start;
+        static bool holding, latched, visible;
+        unsigned int now = demo_clock();
+        bool chord = jo_is_pad1_available() &&
+            jo_is_pad1_key_pressed(JO_KEY_L) && jo_is_pad1_key_pressed(JO_KEY_R);
+        if (!chord) holding = latched = false;
+        else if (!holding) { holding = true; hold_start = now; }
+        else if (!latched && now - hold_start >= 60u) {
+            latched = true;
+            visible = !visible;
+            if (!visible) {
+                jo_printf(0, 2, "                                        ");
+                jo_printf(0, 3, "                                        ");
+                jo_printf(0, 4, "                                        ");
+            }
+        }
+        if (visible) {
+            /* SPCTL/PRISA are write-only. Read this SDK's SGL shadow instead:
+             * slInitScroll copies its register table to GBR+192;
+             * slSpriteColMode accesses SPCTL at GBR+416. These are intended
+             * settings, not proof of the hardware's latched register state. */
+            jo_printf(0, 2, "SGL SP %04X PR %04X END %X ",
+                      *sgl_vdp2_shadow(0xe0),
+                      *sgl_vdp2_shadow(0xf0), JO_VDP1_EDSR);
+            jo_printf(0, 3, "MS %u M%u G%u L%u OC%u         ",
+                      (frame_timer_frame() + frame_timer_cost(FRAME_PHASE_SYNC)) / 1000,
+                      frame_timer_cost(FRAME_PHASE_MOVEMENT) / 1000,
+                      frame_timer_cost(FRAME_PHASE_SCENE) / 1000,
+                      frame_timer_cost(FRAME_PHASE_LINK) / 1000,
+                      oot_core_update_us() / 1000);
+#ifdef DOSEI_OOT_CORE
+            {
+                const oot_core_sprite_stats_t *s = oot_core_sprite_stats();
+                jo_printf(0, 4, "NPC %u MISS %u POSE %u SLOT %u       ",
+                          s->actors, s->missing, s->fallback, s->slots);
+            }
+#endif
+        }
+    }
 }
 
 static void         viewer_draw(void)
@@ -187,7 +271,7 @@ static void         viewer_draw(void)
     frame_timer_frame_begin();
     frame_timer_begin(FRAME_PHASE_MOVEMENT);
     demo_update();
-    if (!kokiri_scene_update()) {
+    if (!demo_code_fanfare_active() && !kokiri_scene_update()) {
         scene_ready = false;
         jo_printf(2, 2, "room load FAILED");
         return;
@@ -252,6 +336,8 @@ static void         viewer_draw(void)
      * because the SH-2 has no tangent. Holding the gameplay 240 for every shot
      * framed the whole dream far too wide. */
     slSetScreenDist((FIXED)(demo_screen_distance() << 16));
+    /* Near rejection at screen distance >> level; see KOKIRI_ZDSP_LEVEL. */
+    slZdspLevel(KOKIRI_ZDSP_LEVEL);
     music_menu_duck(gameplay_is_paused());
     cdda_service();
     music_service();
@@ -350,6 +436,7 @@ static void         viewer_draw(void)
         }
     }
 
+    if (!demo_slingshot_aiming()) link_anim_first_person(false);
     if (cutscene_is_playing()) {
         /* A cutscene places and poses Link itself, from its own player cues:
          * asleep in bed for the narration, sitting up when Navi wakes him.
@@ -361,12 +448,17 @@ static void         viewer_draw(void)
                              cutscene_link_z(), cutscene_link_yaw());
             frame_timer_end(FRAME_PHASE_LINK);
         }
+    } else if (demo_link_active && !demo_title_is_visible() && demo_slingshot_aiming()) {
+        /* Slingshot aim draws no Link: the first-person arm never showed and
+         * was removed (human, 2026-10-01). A VDP2 crosshair marks the aim. */
     } else if (demo_link_active && !demo_title_is_visible() && !demo_first_person() &&
                !demo_shop_browsing()) {
         frame_timer_begin(FRAME_PHASE_LINK);
         /* shape.yOffset: a ledge step-up draws him from where he stood
          * while the actor is already on the ledge. */
-        if (gameplay.get_item) {
+        if(demo_chest_opening()) {
+            link_anim_pose(LINK_CLIP_CHEST_OPEN,demo_chest_frame(),0);
+        } else if (gameplay.get_item) {
             unsigned int frame = gameplay.get_item_age * 2u / 3u;
             if (frame >= LINK_FRAMES_GET_ITEM) frame = LINK_FRAMES_GET_ITEM - 1;
             link_anim_pose(LINK_CLIP_GET_ITEM, frame, 0);
@@ -390,16 +482,18 @@ static void         viewer_draw(void)
      * that room must keep being drawn or the shot cuts to an empty forest. */
     if (!kokiri_scene_backdrop_active() && !cutscene_hides_scene() &&
         (!cutscene_is_playing() || cutscene_is_in_scene()) &&
-        save_state.scene_id == SAVE_SCENE_KOKIRI_FOREST) {
+        (save_state.scene_id == SAVE_SCENE_KOKIRI_FOREST || oot_core_owns_kokiri_props())) {
+        /* With the decomp playing, these draw its En_Kusa/En_Item00 in any scene. */
         kokiri_grass_draw();
         kokiri_rupees_draw(demo_world_clock());
-        kokiri_boulder_draw();
-        kokiri_nut_draw();
-        kokiri_babas_draw();
+        if (save_state.scene_id == SAVE_SCENE_KOKIRI_FOREST) kokiri_boulder_draw();
     }
     if (demo_link_active && !demo_title_is_visible() &&
-        (!cutscene_is_playing() || cutscene_is_in_scene())) {
+          (!cutscene_is_playing() || cutscene_is_in_scene())) {
+        kokiri_nut_draw();
+        kokiri_babas_draw();
         npc_draw(demo_world_clock());
+        story_route_draw(demo_world_clock());
         kokiri_items_draw(demo_world_clock());
         kokiri_fairies_draw(demo_world_clock());
     }
@@ -408,9 +502,17 @@ static void         viewer_draw(void)
         action_audio_navi_flight(0, false);
     if (cutscene_is_playing() && !cutscene_hides_scene())
         kokiri_cutscene_effects_draw();
+    if(!cutscene_hides_scene())emerald_story_draw();
     rejected_total += kokiri_scene_rejected();
     cutscene_fade();
+    dialogue_box(); /* Clear outgoing dialogue before cutscene writes its rows. */
     cutscene_text();
+    { static bool field_card;
+      bool show=cutscene_is_playing() && cutscene_id()==CUTSCENE_FIELD_INTRO && cutscene_frame()>=40 && cutscene_frame()<160;
+      if(show)jo_printf(13,19,"HYRULE FIELD");
+      else if(field_card)jo_printf(13,19,"            ");
+      field_card=show;
+    }
     /* Persistent development readout, independent of auto-start probes. */
     {
         static bool debug_visible;
@@ -434,10 +536,10 @@ static void         viewer_draw(void)
         } else if (debug_visible) {
             jo_printf(0, 0, "                                        ");
             jo_printf(0, 1, "                                        ");
+            jo_printf(0, 2, "                                        ");
             debug_visible = false;
         }
     }
-    dialogue_box();
     inventory_menu();
     game_over_screen();
     file_select_screen();
@@ -454,19 +556,24 @@ static void         viewer_draw(void)
     if (!demo_title_is_visible() && !demo_file_select_is_visible() &&
         !cutscene_is_playing())
     {
+        if (!gameplay_blocks_world() && !gameplay.dead) {
+            int32_t x,y; bool locked; unsigned kind;
+            if (demo_slingshot_aiming()) {
+                /* VDP2 text-layer crosshair: cell (20,15) covers pixels
+                 * 160-167 x 120-127, glyph centre ~3 px off screen centre. */
+                jo_printf(20, 15, "+");
+                aim_dot_shown = true;
+            } else if (demo_target_marker(&x,&y,&locked,&kind))
+                kokiri_lock_reticle_draw(x,y,kind);
+        }
+        if (aim_dot_shown && !demo_slingshot_aiming()) {
+            jo_printf(20, 15, " ");
+            aim_dot_shown = false;
+        }
         kokiri_rupee_hud_draw();
         minimap_draw(demo_link.x, demo_link.z, demo_link_yaw);
     }
-    {
-        /* Callback share of frame time: an estimate of master-CPU work,
-         * not total utilization across both SH-2s. Sync includes GPU/VBlank
-         * waiting. Existing smoothed timings keep the display readable. */
-        unsigned int work = frame_timer_frame();
-        unsigned int total = work + frame_timer_cost(FRAME_PHASE_SYNC);
-        unsigned int cpu = total ? work * 100u / total : 0;
-        jo_printf(1, JO_TV_HEIGHT / 8 - 1, "VRAM %3u%%   CPU~ %3u%%   ",
-                  kokiri_scene_vram_percent(), cpu);
-    }
+    diagnostic_overlay();
     frame_timer_frame_end();
     frame_timer_begin(FRAME_PHASE_SYNC);
 }
@@ -476,8 +583,9 @@ static void         viewer_draw(void)
 **
 ** OoT fills the screen with a coloured quad and ramps its alpha
 ** (z_demo.c:1550-1574). VDP2 offers the same effect far more cheaply: a
-** negative colour offset darkens every layer it is applied to, so a black fill
-** is a ramp from 0 to -255 and needs no polygon at all.
+** black line-colour screen supplies the second colour for VDP2 alpha blending.
+** Subtracting alpha as a colour offset clips dark pixels to black instead of
+** fading them (60% of the house panorama was clipped at alpha 100).
 **
 ** Applied to the scene layers and the sprites, never to NBG0: the text layer
 ** has to stay legible over a darkened scene, and the narration is drawn while
@@ -486,21 +594,34 @@ static void         viewer_draw(void)
 ** A fully opaque fill is handled earlier by skipping the scene entirely, so
 ** this only has to cover the partial values.
 */
-static void         cutscene_fade(void)
+static void __attribute__((optimize("Os"))) cutscene_fade(void)
 {
-    static int last_level = -999;
-    static bool last_hidden;
+    static int last_key = -1;
     bool hidden = cutscene_hides_scene();
     unsigned int alpha = cutscene_fade_alpha();
     int flash = cutscene_lightning();
-    Sint16 level = (Sint16)(flash - (int)alpha);
-
-    if (alpha && cutscene_fade_colour() != CUTSCENE_FADE_BLACK)
-        level = (Sint16)(flash + (int)alpha);
+    if (!cutscene_is_playing() && player_items_flash()) flash = (int)player_items_flash() * 255 / 6;
+    bool black = cutscene_fade_colour() == CUTSCENE_FADE_BLACK;
+    int key = (int)alpha | (flash << 8) | (black << 16) | (hidden << 17);
+    Sint16 level = (Sint16)(flash + (black ? 0 : (int)alpha));
     if (level > 255) level = 255;
-    if (level == last_level && hidden == last_hidden) return;
-    last_level = level;
-    last_hidden = hidden;
+    if (key == last_key) return;
+    last_key = key;
+    if (black && alpha && !hidden) {
+        unsigned rate = alpha >> 3; /* VDP2's 32-step second-image weight. */
+        /* Reserved word beyond the 512-entry back-colour table; CRAM 2047
+         * is outside the font/HUD/marker palettes. slLine1ColSet takes a
+         * VRAM-relative byte offset, unlike slLineColTable. */
+        ((volatile unsigned short *)JO_VDP2_CRAM)[2047] = 0;
+        slLine1ColSet((void *)0x7f400u, 2047);
+        slLineColDisp(NBG1ON | RBG0ON | SPRON);
+        slColRateNbg1(rate); slColRateRbg0(rate); slColRateSpr0(rate);
+        slSpriteCCalcCond(CC_pr_CN); slSpriteCCalcNum(7);
+        slColorCalc(CC_RATE | CC_TOP | NBG1ON | RBG0ON | SPRON);
+    } else {
+        slLineColDisp(0);
+        slColorCalc(0);
+    }
     if (!level) {
         slColOffsetOff(NBG1ON | RBG0ON | SPRON | BACKON);
         return;
@@ -581,10 +702,11 @@ static void         cutscene_box_clear(int top, int rows)
         jo_printf(0, top + row, "%-40s", "");
 }
 
-static void         cutscene_text(void)
+static void __attribute__((optimize("Os"))) cutscene_text(void)
 {
     static bool     was_active;
     static int      last_top, last_rows;
+    static uint32_t last_text_hash;
     unsigned int    line, run, lines;
     int             top, rows, text_row, prompt_row;
 
@@ -593,6 +715,7 @@ static void         cutscene_text(void)
             cutscene_box_clear(last_top, last_rows);
             jo_set_printf_palette_color(JO_COLOR_INDEX_Blue, JO_COLOR_Blue);
             was_active = false;
+            last_text_hash = 0;
         }
         return;
     }
@@ -620,7 +743,18 @@ static void         cutscene_text(void)
         (top * 8 + (top + rows) * 8) / 2,
         CUTSCENE_BOX_WIDTH * 8, rows * 8);
 
-    for (line = 0; line < lines; ++line) {
+    /* Retained VDP2 rows: avoid blanking/repainting every active scanout.
+     * The panel still submits each frame, but unchanged text stays in place. */
+    uint32_t hash = 2166136261u;
+    hash = (hash ^ message_state.message) * 16777619u;
+    hash = (hash ^ message_state.page) * 16777619u;
+    hash = (hash ^ message_state.revealed) * 16777619u;
+    hash = (hash ^ message_choice()) * 16777619u;
+    hash = (hash ^ ui_text_revision()) * 16777619u;
+    bool repaint = hash != last_text_hash;
+    last_text_hash = hash;
+
+    for (line = 0; repaint && line < lines; ++line) {
         /* The original's SHIFT, which is what centres the narration, measured
         ** from inside the box rather than from the screen edge. */
         int column = CUTSCENE_BOX_LEFT + 1 + (int)message_line_indent(line);
@@ -631,8 +765,8 @@ static void         cutscene_text(void)
         jo_printf(0, text_row + (int)line, "%-40s", "");
 
         for (run = 0; run < message_line_runs(line); ++run) {
-            const char  *text = message_run_text(line, run);
             unsigned int shown = message_run_visible(line, run);
+            const char  *text = message_run_text(line, run);
             unsigned int length = 0;
 
             while (text[length])
@@ -657,6 +791,8 @@ static void         cutscene_text(void)
     /* OoT's own prompt, on the box's bottom edge: the continue triangle, or
     ** the end square on the last page. Drawn only when the page is genuinely
     ** waiting -- never while it is still typing itself out. */
+    if (message_choices())
+        jo_printf(1,text_row+(int)lines-(int)message_choices()+(int)message_choice(),">");
     if (message_waits_for_button())
         kokiri_message_mark_draw(160, prompt_row * 8 + 4,
                                  message_is_last_page());
@@ -728,7 +864,7 @@ static volatile uint8_t *probe_cell(unsigned int x, unsigned int y, unsigned int
     return text_cell(x, y);
 }
 
-static void         print_bold(unsigned int x, unsigned int y, const char *name)
+static void __attribute__((optimize("Os"))) print_bold(unsigned int x, unsigned int y, const char *name)
 {
     char out[40], lower[40];
     unsigned int i;
@@ -790,7 +926,7 @@ static uint32_t dialogue_row_hash(const char *text, unsigned marker)
     return hash;
 }
 
-static void         dialogue_box(void)
+static void __attribute__((optimize("Os"))) dialogue_box(void)
 {
     static bool was_talking;
     static uint32_t row_hash[DIALOGUE_MAX_LINES + 1];
@@ -801,12 +937,16 @@ static void         dialogue_box(void)
      * VDP2 text too, so returning here cannot leave an old prompt or page on
      * screen -- and so a stale prompt cannot print over the file list. */
     if (gameplay_is_paused() || demo_title_is_visible() || demo_file_select_is_visible() ||
-        cutscene_is_playing()) {
+        cutscene_is_playing() || demo_chest_opening()) {
         if (was_talking) {
             for (i = 0; i < DIALOGUE_ROWS; ++i)
                 jo_printf(0, DIALOGUE_ROW + i, "%-40s", "");
         }
         was_talking = false;
+        return;
+    }
+    if (oot_core_message_box()) {
+        was_talking = false;   /* the decomp box owns the rows now */
         return;
     }
     if (!gameplay_is_talking()) {
@@ -873,7 +1013,7 @@ static void         dialogue_box(void)
 
 /* Kaleido's Game Over prompts, as VDP2 text (menus are VDP2, never VDP1
 ** sprites). The source's rotating prompt windows and fades are not drawn. */
-static void         game_over_screen(void)
+static void __attribute__((optimize("Os"))) game_over_screen(void)
 {
     static game_over_state_t shown = GAME_OVER_OFF;
     game_over_state_t st = game_over_state();
@@ -908,7 +1048,7 @@ static void         game_over_screen(void)
     }
 }
 
-static void         inventory_menu(void)
+static void __attribute__((optimize("Os"))) inventory_menu(void)
 {
     static bool was_paused;
     static int last_window = -1;
@@ -975,35 +1115,47 @@ static void         inventory_menu(void)
                 if (cursor == 1 && (gameplay.owned & GP_SWORD)) name = "Kokiri Sword";
                 if (cursor == 5 && (gameplay.owned & GP_SHIELD)) name = "Deku Shield";
                 if (cursor == 9) name = "Kokiri Tunic";
+                if (cursor == 10) name = save_tunic_unlocked(2) ? "Red Tunic" : "Need 5 Gold Tokens";
+                if (cursor == 11) name = save_tunic_unlocked(1) ? "Blue Tunic" : "Need 1 Gold Token";
                 if (cursor == 13) name = "Kokiri Boots";
             } else if (p->page == PAUSE_ITEMS) {
                 if (cursor == 0 && save_state.stick_owned) name = "Deku Stick";
+                if (cursor == 1 && save_state.nut_owned) name = "Deku Nut";
                 if (cursor == 6 && save_state.slingshot) name = "Fairy Slingshot";
-            } else if (p->page == PAUSE_MAP) name = "Kokiri Forest";
+                if (cursor == 7 && save_state.fairy_ocarina) name = "Fairy Ocarina";
+            } else if (p->page == PAUSE_MAP) name =
+                (save_state.scene_id == SAVE_SCENE_DEKU_TREE || save_state.scene_id == SAVE_SCENE_DEKU_TREE_BOSS)
+                ? "Deku Tree" : "Kokiri Forest";
             else if (save_check_quest_item(QUEST_KOKIRI_EMERALD)) name = "Kokiri Emerald";
         }
         pause_windows_printf(11, 25, "%-18s", name);
+        if (p->page == PAUSE_MAP && !p->save_prompt &&
+            (save_state.scene_id == SAVE_SCENE_DEKU_TREE || save_state.scene_id == SAVE_SCENE_DEKU_TREE_BOSS)) {
+            pause_windows_printf(4,27,"[%s]: Floor  Blue: visited",ui_button_label(UI_KEY_DPAD,false));
+        }
         if (p->page == PAUSE_ITEMS && !p->save_prompt) {
             if (save_state.stick_owned) pause_windows_printf(9, 10, "%2u", (unsigned)save_state.stick_ammo);
+            if (save_state.nut_owned) pause_windows_printf(13, 10, "%2u", (unsigned)save_state.nut_ammo);
             if (save_state.slingshot) pause_windows_printf(9, 14, "%2u", (unsigned)save_state.ammo_seeds);
             pause_windows_printf(5, 27, "Hold [%s]+[%s]: Assign", ui_assign_modifier_label(),
                                  ui_button_label(UI_KEY_DPAD, false));
             pause_windows_printf(6, 23, "D:%-5s L:%-5s R:%-5s",
-                save_state.c_items[0] == 1 ? "Stick" : save_state.c_items[0] == 2 ? "Seeds" : "--",
-                save_state.c_items[1] == 1 ? "Stick" : save_state.c_items[1] == 2 ? "Seeds" : "--",
-                save_state.c_items[2] == 1 ? "Stick" : save_state.c_items[2] == 2 ? "Seeds" : "--");
+                save_state.c_items[0] == 1 ? "Stick" : save_state.c_items[0] == 2 ? "Seeds" : save_state.c_items[0] == 3 ? "Nuts" : "--",
+                save_state.c_items[1] == 1 ? "Stick" : save_state.c_items[1] == 2 ? "Seeds" : save_state.c_items[1] == 3 ? "Nuts" : "--",
+                save_state.c_items[2] == 1 ? "Stick" : save_state.c_items[2] == 2 ? "Seeds" : save_state.c_items[2] == 3 ? "Nuts" : "--");
         }
     }
     /* Backup writes remain the real demo/save-device path. */
     if (gameplay.pause_window.save_prompt) {
+        pause_windows_printf(6,20,"%-28s",save_scene_name(save_state.scene_id));
         int report = demo_save_report();
-        pause_windows_printf(10, 22, "%-24s", !save_device_ready() ? "NO BACKUP RAM" :
-            report < 0 ? "" : report ? "SAVED" : "SAVE FAILED");
+        pause_windows_printf(6, 22, "%-28s", !save_device_ready() ? save_device_error() :
+            report < 0 ? "" : report ? "SAVED" : save_device_error());
     }
 
 }
 
-static void         viewer_hud(void)
+static void __attribute__((optimize("Os"))) viewer_hud(void)
 {
 #ifdef DOSEI_CLEAN_TEST
     /* Player-test disc: no debug text, even if L+R is pressed.
@@ -1088,9 +1240,12 @@ static void         viewer_hud(void)
             /* The 2026-09-18 inputs whose gameplay systems do not exist yet.
             ** This is the only evidence that A, X and the routed C buttons
             ** actually arrive, since none of them can do anything yet. */
-            jo_printf(0, 4, "pend a%d x%d c%d    ",
+            /* ev: last Z+A refusal bits (1 A claimed, 2 A cleared later,
+             * 4 climb/ledge/bonk, 8 air, 16 world blocked, 32 swing,
+             * 64 guard, 128 indoors, 256 floor, 512 pose) and pose id. */
+            jo_printf(0, 4, "pend a%d x%d c%d ev%03x/%u   ",
                       (int)demo_interact_requests, (int)demo_attack_requests,
-                      (int)demo_last_c_button);
+                      (int)demo_last_c_button, demo_evade_gates, demo_evade_pose);
             /* Gear/target/sword readout. sw and sh are owned+equipped, tgt is
              * the locked kokiri_npcs index, sg the swing steps left with a '*'
              * while the blade is live, cut the tufts cleared so far. */
@@ -1136,6 +1291,24 @@ static void         viewer_hud(void)
         jo_printf(0, 7, "prep%u us %s      ",
                   frame_timer_cost(FRAME_PHASE_PREP),
                   kokiri_scene_reused() ? "CACHED" : "rebuilt");
+#ifdef DOSEI_OOT_CORE
+        /* ns per call: ma=Fx mul-add dv=divide ss=SmoothStepToF
+        ** ds=3D distance sn=SinS+sinf at=Atan2S. */
+        /* Row 15: play state on (p1), actor counts player/prop/misc. */
+        if (!oot_core_is_loaded()) jo_printf(0, 13, "oc OOTCORE.BIN not loaded ");
+        else {
+            const OotCoreBench *b = oot_core_bench_result();
+            jo_printf(0, 13, "oc ma%u dv%u ss%u   ", b->ns[OOT_BENCH_MULADD],
+                      b->ns[OOT_BENCH_DIV], b->ns[OOT_BENCH_SMOOTHSTEP]);
+            jo_printf(0, 14, "oc ds%u sn%u at%u   ", b->ns[OOT_BENCH_DIST],
+                      b->ns[OOT_BENCH_SIN], b->ns[OOT_BENCH_ATAN2]);
+            jo_printf(0, 15, "oc p%d pl%d pr%d mi%d   ", (int)oot_core_is_playing(),
+                      oot_core_actors(2), oot_core_actors(6), oot_core_actors(8));
+            /* Row 16: decomp update cost per 20 Hz step (budget check). */
+            jo_printf(0, 16, "ou %uus %-28s", oot_core_update_us(), oot_core_debug_text());
+            jo_printf(0, 17, "op %-36s", oot_core_debug_text2());
+        }
+#endif
         /* Marked when stale: on a cache hit these hold the last rebuild's
         ** figures, not this frame's work. */
         jo_printf(0, 8, "%sdp%u po%u fg%u    ",
@@ -1228,7 +1401,7 @@ static void         viewer_hud(void)
 #define FS_ROW      6
 #define FS_ROWS     (FILE_SELECT_ROWS * 2 + 6)
 
-static void         file_select_screen(void)
+static void __attribute__((optimize("Os"))) file_select_screen(void)
 {
     static bool   was_visible;
     /* True while the "Open this file?" panel is up, so the list behind it is
@@ -1246,6 +1419,19 @@ static void         file_select_screen(void)
         return;
     }
     was_visible = true;
+    if(level_select.visible) {
+        for(row=0;row<FS_ROWS;++row)jo_printf(0,FS_ROW+row,"                                      ");
+        jo_printf(8,FS_ROW,"LEVEL SELECT");
+        jo_printf(4,FS_ROW+2,"AREA: %-24s",scene_name(level_select.scene));
+        jo_printf(4,FS_ROW+4,"ROOM: %u / %u",level_select.room,scene_entries[level_select.scene].rooms-1);
+        jo_printf(4,FS_ROW+6,"UP/DOWN: AREA  LEFT/RIGHT: ROOM");
+        jo_printf(4,FS_ROW+8,"ALL ITEMS + MAX STATS: %-3s",level_select.max_gear?"YES":"NO");
+        jo_printf(4,FS_ROW+9,"L/R: TOGGLE  A: ENTER  B: TITLE");
+        jo_printf(4,FS_ROW+10,"SWORD, SHIELD, C ITEMS READY");
+        jo_printf(4,FS_ROW+11,"TEST RUN - NO SAVE SLOT");
+        if(level_select.failed)jo_printf(4,FS_ROW+12,"ROOM ENTRY UNAVAILABLE");
+        was_open=true;return;
+    }
 
     /* "Open this file?" takes over the whole panel, as it does on N64: the
     ** list is not left visible behind it, so the file being opened is the only
@@ -1265,6 +1451,7 @@ static void         file_select_screen(void)
         jo_printf(4, FS_ROW, "OPEN THIS FILE?");
         jo_printf(4, FS_ROW + 2, "%-12s", file_select_row_label(slot));
         jo_printf(4, FS_ROW + 3, "%-32s", file_select_row_detail(slot));
+        jo_printf(4, FS_ROW + 4, "%-32s", file_select_row_location(slot));
         for (line = 0; line < FILE_SELECT_OPEN_ROWS; ++line)
             jo_printf(4, (int)(FS_ROW + 5 + line), "%s %-6s",
                       file_select.open_row == line ? ">" : " ",
@@ -1291,8 +1478,8 @@ static void         file_select_screen(void)
         if (file_select.mode == FILE_SELECT_ERASE_PICK &&
             row == FILE_SELECT_ROW_ERASE)
             here = false;
-        jo_printf(2, line, "%s %-12s", here ? ">" : " ",
-                  file_select_row_label(row));
+        jo_printf(2, line, "%s %-7s %-24s", here ? ">" : " ",
+                  file_select_row_label(row),file_select_row_location(row));
         jo_printf(2, line + 1, "     %-32s", file_select_row_detail(row));
     }
 
@@ -1321,11 +1508,20 @@ static void         file_select_screen(void)
               file_select.device_failed ? "CANNOT USE THAT FILE          "
                                         : "                              ");
     if (!save_device_ready())
-        jo_printf(2, (int)row + 3, "NO BACKUP MEMORY: CANNOT SAVE");
+        jo_printf(2, (int)row + 3, "%-32s", save_device_error());
 }
 
-void                jo_main(void)
+/* Boot setup is cold; retain the full heap and SGL pools. */
+void __attribute__((optimize("Os"))) jo_main(void)
 {
+    extern void sprites_low_init(void);
+    extern void fs_low_init(void);
+    extern void core_low_init(void);
+    core_low_init();
+    fs_low_init();
+    sprites_low_init();
+    /* Low RAM is not boot-cleared. Initialize before any scene/actor reads. */
+    save_new_game();
     jo_core_init(JO_COLOR_Black);
     frame_timer_init();
 #ifdef DOSEI_HIRES
@@ -1352,6 +1548,9 @@ void                jo_main(void)
         jo_core_run();
         return;
     }
+#ifdef DOSEI_OOT_CORE
+    oot_core_boot();
+#endif
 
     /* Actor pool lives in the cart's fixed carve, never in work RAM. */
     if (actor_sys_bytes() > RAM_CART_ACTOR_POOL_BYTES ||
@@ -1361,6 +1560,18 @@ void                jo_main(void)
         jo_core_error("Actor pool does not fit its cart carve");
         return;
     }
+    if(!skulltula_init(ram_cart_fixed(RAM_CART_SKULL_OFFSET,RAM_CART_SKULL_BYTES),RAM_CART_SKULL_BYTES))
+        jo_core_error("Skulltula state exceeds cart carve");
+    if(!wall_skull_init(ram_cart_fixed(RAM_CART_WALL_SKULL_OFFSET,RAM_CART_WALL_SKULL_BYTES),RAM_CART_WALL_SKULL_BYTES))
+        jo_core_error("Wall Skulltula state exceeds cart carve");
+    if(!dekubaba_init(ram_cart_fixed(RAM_CART_DEKU_BABA_OFFSET,RAM_CART_DEKU_BABA_BYTES),RAM_CART_DEKU_BABA_BYTES))
+        jo_core_error("Deku Baba state exceeds cart carve");
+    if(!hintnuts_init(ram_cart_fixed(RAM_CART_HINTNUTS_OFFSET,RAM_CART_HINTNUTS_BYTES),RAM_CART_HINTNUTS_BYTES))
+        jo_core_error("Hint Scrub state exceeds cart carve");
+    if(!gohma_larva_init(RAM_LOW(RAM_LOW_GOMA_OFFSET),RAM_LOW_GOMA_BYTES))
+        jo_core_error("Gohma larva state exceeds low RAM carve");
+    if(!gohma_init(RAM_LOW(RAM_LOW_GOHMA_OFFSET),RAM_LOW_GOHMA_BYTES))
+        jo_core_error("Gohma state exceeds low RAM carve");
     if (!karebaba_init(ram_cart_fixed(RAM_CART_KAREBABA_OFFSET, RAM_CART_KAREBABA_BYTES),
                        RAM_CART_KAREBABA_BYTES)) {
         jo_core_error("Karebaba state does not fit its cart carve");
@@ -1379,6 +1590,11 @@ void                jo_main(void)
     if (!dialogue_text_load()) {
         return;
     }
+    /* Scene spawns and doors (all scenes) from disc into the jo heap. */
+    if (!scene_table_load()) {
+        jo_core_error("SCENETAB.BIN failed to load");
+        return;
+    }
 
     /* Link's clip frames live in the cart; posing without them is impossible. */
     if (!link_anim_load()) {
@@ -1394,7 +1610,10 @@ void                jo_main(void)
 
     scene_ready = kokiri_scene_load();
     scene_ready = scene_ready && demo_init();
-    music_ready = scene_ready && music_init(music_song_bank(NA_BGM_TITLE));
+    field_music_init();
+    music_ready = scene_ready && music_init_with_scratch(music_song_bank(NA_BGM_TITLE),
+        ram_cart_fixed(RAM_CART_LOAD_SCRATCH_OFFSET, RAM_CART_LOAD_SCRATCH_BYTES),
+        RAM_CART_LOAD_SCRATCH_BYTES);
     if (scene_ready && !music_ready)
         jo_printf(2, 3, "music load FAILED");
     if (music_ready && !action_audio_init()) {

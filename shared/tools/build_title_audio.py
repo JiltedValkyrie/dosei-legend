@@ -29,7 +29,12 @@ MUSIC_SAMPLE_BUDGET = 159600   # +33% over the 120000-sample music budget
 # first in the opening cutscene sequences.
 OMITTED = {'mutebhv', 'mutescale', 'initchan', 'freechan', 'notepri',
            'reverb', 'vibdepth', 'ldfilter', 'filter', 'freefilter', 'noshort',
-           'panweight'}
+           'panweight',
+           # All-scenes area themes: SCSP has no comb filter or reverb index;
+           # 'env' (channel envelope override) falls back to the instrument's.
+           'combfilter', 'reverbidx', 'env',
+           # Channel release-rate override: the instrument's own release used.
+           'releaserate'}
 
 
 def pitch(name):
@@ -80,7 +85,7 @@ class Script:
     value: int = 0
 
 
-def interpret(path, loop_label='SEQ_0027', stop_at_loop=False):
+def interpret(path, loop_label='SEQ_0027', stop_at_loop=False, pitch_automation=False):
     """Play one sequence out and collect its notes.
 
     Normally playback ends when the sequence reaches its `end` opcode. Some
@@ -119,6 +124,9 @@ def interpret(path, loop_label='SEQ_0027', stop_at_loop=False):
             if op in ('delay', 'cdelay', 'ldelay'):
                 script.wake = tick + a[0]
                 return
+            if op == 'delay1':
+                script.wake = tick + 1
+                return
             if op == 'call':
                 script.stack.append(script.pc)
                 script.pc = labels[a[0]]
@@ -134,7 +142,7 @@ def interpret(path, loop_label='SEQ_0027', stop_at_loop=False):
                     if kind == 'sequence':
                         finished = True
                     return
-            elif op == 'jump':
+            elif op in ('jump','rjump'):
                 if kind == 'sequence' and a[0] == loop_label:
                     finished = True
                     return
@@ -142,13 +150,14 @@ def interpret(path, loop_label='SEQ_0027', stop_at_loop=False):
             elif op == 'ldi':
                 script.value = (a[0] + 128) % 256 - 128
             elif op == 'ldio':
-                assert kind == 'sequence'
-                script.value = io[a[0]]
+                # Channels have their own soundScriptIO ports (seqplayer.c);
+                # nothing writes them from outside here, so unset reads -1.
+                ports = io if kind == 'sequence' else channel.setdefault('io', {})
+                script.value = ports[a[0]] if kind == 'sequence' else ports.get(a[0], -1)
                 if a[0] < 2:
-                    io[a[0]] = -1
+                    ports[a[0]] = -1
             elif op == 'stio':
-                assert kind == 'sequence'
-                io[a[0]] = script.value
+                (io if kind == 'sequence' else channel.setdefault('io', {}))[a[0]] = script.value
             elif op == 'sub':
                 script.value = (script.value - a[0] + 128) % 256 - 128
             elif op in ('beqz', 'rbeqz', 'rbltz'):
@@ -160,24 +169,35 @@ def interpret(path, loop_label='SEQ_0027', stop_at_loop=False):
             elif op == 'tempo':
                 assert kind == 'sequence'
                 tempo.append((tick, a[0]))
-            elif op == 'ldchan':
+            elif op in ('ldchan','rldchan'):
                 slot, label = a
-                c = channels.setdefault(slot, {'program': None, 'pan': 64, 'vol': 127})
+                c = channels.setdefault(slot, {'program': None, 'pan': 64, 'vol': 127, 'volexp': 128})
                 c.update(script=Script(labels[label], tick), layers={})
-                volumes.setdefault(slot, [(0, c['vol'])])
-            elif op == 'ldlayer':
+                volumes.setdefault(slot, [(0, c['vol'] * c['volexp'] / 128)])
+            elif op in ('ldlayer','rldlayer'):
                 channel['layers'][a[0]] = Script(labels[a[1]], tick)
             elif op == 'instr':
                 assert kind == 'channel'
                 channel['program'] = a[0]
             elif op == 'pan':
                 channel['pan'] = a[0]
+            elif op == 'bend':
+                # En_Owl's cue explicitly restores neutral channel pitch.
+                # A nonzero bend needs a time-varying pitch lane; never drop it.
+                if kind != 'channel' or (a[0] != 0 and not pitch_automation):
+                    raise ValueError('Non-neutral channel bend requires pitch automation')
+                channel.setdefault('bend_lane',[(0,0)]).append((tick,max(-127,(a[0]+128)%256-128)))
+            elif op == 'volexp':
+                assert kind == 'channel'
+                # seqplayer.c/effects.c: channel volumeScale, before squaring.
+                channel['volexp'] = a[0]
+                volumes[channel_id].append((tick, channel['vol'] * a[0] / 128))
             elif op == 'vol':
                 if kind == 'sequence':
                     seq_volume = a[0]
                 else:
                     channel['vol'] = a[0]
-                    volumes[channel_id].append((tick, a[0]))
+                    volumes[channel_id].append((tick, a[0] * channel['volexp'] / 128))
             elif op in ('notedvg', 'notedv', 'notevg'):
                 assert kind == 'layer'
                 if op == 'notevg':
@@ -187,11 +207,19 @@ def interpret(path, loop_label='SEQ_0027', stop_at_loop=False):
                     key, delay, velocity = a[:3]
                     gate = a[3] if op == 'notedvg' else 0
                     script.last_delay = delay
-                assert delay > 0 and channel['program'] is not None
+                if delay <= 0 or channel['program'] is None:
+                    # No instrument yet (or zero length): the N64 plays
+                    # nothing audible here either. Skip, keep the timing.
+                    ignored.add('note_without_instrument')
+                    script.wake = tick + max(delay, 1) if delay > 0 else tick
+                    if delay > 0:
+                        return
+                    continue
                 notes.append(dict(tick=tick, end_tick=tick + delay - ((delay * gate) >> 8),
                                   program=channel['program'],
                                   key=key + script.transpose, velocity=velocity,
-                                  pan=channel['pan'], channel=channel_id))
+                                  pan=channel['pan'], channel=channel_id,
+                                  bend_lane=channel.setdefault('bend_lane',[(0,0)])))
                 script.wake = tick + delay
                 return
             elif op in OMITTED:
@@ -297,7 +325,10 @@ def load_font(source, font_id=6):
     ratio = min(1.0, MUSIC_SAMPLE_BUDGET / sum(len(pcm) for pcm, *_ in original))
     samples, blob = [], bytearray()
     for name, (pcm, rate, unity, loop) in zip(names, original):
-        out_rate = int(rate * ratio)
+        # SCSP loop registers address at most 65535 samples per instrument,
+        # independently of the whole bank budget (Deku Tree's long drone).
+        # Resample that instrument further, preserving pitch via its rate.
+        out_rate = max(1, int(rate * min(ratio, 65530 / len(pcm))))
         actual_ratio = out_rate / rate
         data = resample(pcm, actual_ratio, loop)
         start = int(loop * actual_ratio)
@@ -311,7 +342,7 @@ def load_font(source, font_id=6):
         # beyond, so interpolation cannot read the next instrument's data.
         data.extend(data[start:start + 4])
         samples.append(dict(name=name, offset=len(blob), loop_start=start,
-                            loop_end=end, rate=out_rate, unity=unity, pcm=data))
+                            loop_end=end, rate=out_rate, source_rate=rate, unity=unity, pcm=data))
         blob.extend(struct.pack('>%dh' % len(data), *data))
     assert SAMPLE_BASE + len(blob) < 0x80000
     return envelopes, instruments, samples, blob, hashes
@@ -350,7 +381,9 @@ def release_seconds(index):
         return 4 * (143 - index) / 60
     if index:
         return 60 * (23 - index) / 60
-    raise ValueError('Infinite release unsupported')
+    # Rate zero does not decay. Nonlooping samples still stop at their end;
+    # looping samples retain their level until the score/voice allocator ends.
+    return math.inf
 
 
 def volume_at(changes, tick):
@@ -376,14 +409,20 @@ def bake(notes, times, changes, seq_volume, envelopes, instruments, samples, end
                    'Hi' if n['key'] > pitch(instrument.get('RangeHi', 'B9')) else '')
         sample = next(s for s in samples if s['name'] == instrument['Sample' + variant])
         # Soundfont 15 overrides the high split's base note for program 14.
-        assert not any('Rate' in k for k in instrument), instrument
         unity = pitch(instrument['BaseNote' + variant]) if 'BaseNote' + variant in instrument else sample['unity']
         rate = sample['rate'] * 2 ** ((n['key'] - unity) / 12)
+        if 'SampleRate' + variant in instrument:
+            rate *= int(instrument['SampleRate' + variant]) / sample['source_rate']
+        unbent_rate=rate
+        # seqplayer.c: gBendPitchOneOctaveFrequencies[(u8)(bend+128)].
+        # Table is 2**(signed/127), clamped at -127 (duplicated first entry).
+        bend=next((b for t,b in reversed(n.get('bend_lane',())) if t<=n['tick']),0)
+        rate *= 2**(bend/127)
         start = times[n['tick']]
         gate = times[min(n['end_tick'], end_tick)]
         gate_level = envelope_level(env, gate - start)
         release = release_seconds(env['release'])
-        stop = min(times[end_tick], gate + gate_level * release)
+        stop = times[end_tick] if math.isinf(release) else min(times[end_tick], gate + gate_level * release)
         if limit_one_shots and sample["loop_end"] - sample["loop_start"] <= 1:
             stop = min(stop, start + sample["loop_end"] / rate)
         first, last = round(start * FPS), min(frames, math.ceil(stop * FPS))
@@ -430,7 +469,17 @@ def bake(notes, times, changes, seq_volume, envelopes, instruments, samples, end
         pan = amount | (0x10 if left > right else 0)
         triggers.append((first, slot, samples.index(sample), scsp_pitch(rate), pan))
         cooked.append(dict(n, frame=first, end_frame=last, slot=slot, rate=rate,
-                           sample=samples.index(sample), gains=gains))
+                           sample=samples.index(sample), gains=gains,unbent_rate=unbent_rate))
+    # Pitch-only commands never key-on a voice. Add after voice stealing so an
+    # old note cannot bend its replacement; attacks at the same frame win.
+    pitch_events={}
+    for n in cooked:
+        for tick,bend in n.get('bend_lane',()):
+            f=round(times[min(tick,end_tick)]*FPS)
+            if n['frame']<f<n['end_frame']:
+                pitch_events[(f,n['slot'])]=(f,n['slot'],255,scsp_pitch(n['unbent_rate']*2**(bend/127)),0)
+    triggers.extend(pitch_events.values())
+    triggers.sort(key=lambda t:(t[0],0 if t[2]==255 else 1,t[1]))
     return frames, levels, triggers, cooked
 
 

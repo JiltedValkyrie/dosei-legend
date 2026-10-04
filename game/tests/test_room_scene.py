@@ -9,6 +9,7 @@ sys.path.insert(0,str(ROOT/'tools'))
 import build_hybrid_scene as hybrid
 import build_room_scene as rooms
 import build_sgl_scene as scene
+import asset_names
 
 
 class RoomFormatTests(unittest.TestCase):
@@ -69,17 +70,25 @@ class GeneratedRoomsTests(unittest.TestCase):
         meta = json.loads((gen/'rooms_manifest.json').read_text())
         coverage = []
         for room in meta['rooms']:
+            if room.get('streamed'):
+                self.assertTrue((gen/asset_names.room_asset(room['scene'],room['id'],'STM')).is_file())
+                self.assertTrue((gen/'field_stream_report.json').is_file())
+                continue  # Field pieces/capacity have their own stream regression.
             stem = 'S%dR%d' % (room['scene'], room['id'])
-            detail = json.loads((gen/(stem.lower()+'/texture_manifest.json')).read_text())
-            coverage.append({s for f in detail['faces'] for s in f['source']})
-            blob = (gen/(stem+'.MSH')).read_bytes()
+            detail_path = gen/(stem.lower()+'/texture_manifest.json')
+            if not room['budget']:  # generic banks are copied from the all-scenes bake
+                detail_path = ROOT/'build/all-scenes'/('%s_room_%d'%(room['prefix'],room['id']))/'texture_manifest.json'
+            detail = json.loads(detail_path.read_text())
+            if room['prefix'] == 'spot04':
+                coverage.append({s for f in detail['faces'] for s in f['source']})
+            blob = (gen/asset_names.room_asset(room['scene'],room['id'],'MSH')).read_bytes()
             magic,nv,np,nt,nb,no,_,_ = struct.unpack_from('>8I',blob)
             self.assertEqual(magic,0x4b524d31)
             self.assertEqual(len(blob),32+nv*12+np*32+nt*44+((np+3)&~3)+no*24)
-            self.assertEqual(nb,(gen/(stem+'.TEX')).stat().st_size)
+            self.assertEqual(nb,(gen/asset_names.room_asset(room['scene'],room['id'],'TEX')).stat().st_size)
             self.assertLessEqual(np+517,2600)
             self.assertLessEqual(nv+309,2500)
-            self.assertLessEqual(sum(p['bytes'] for p in room['budget'])+512,detail['vram_limit'])
+            self.assertLessEqual(sum(p['bytes'] for p in detail['budget'])+512,detail['vram_limit'])
             for i in range(np):
                 indices = struct.unpack_from('>4H',blob,32+nv*12+i*20+12)
                 self.assertLess(max(indices),nv)
@@ -91,5 +100,5 @@ class GeneratedRoomsTests(unittest.TestCase):
                 expected = 0x66 if scene.floor_uses_far_sort(baked,range(4),normal) else 0x67
                 self.assertEqual(attr[1],expected)
                 self.assertEqual(bool(attr[3]&0x100),detail['faces'][i]['mesh'])
-        self.assertEqual(set.union(*coverage),set(range(2060)))
-        self.assertEqual(sum(map(len,coverage)),2060)
+        self.assertEqual(set.union(*coverage),set(range(2128)))
+        self.assertEqual(sum(map(len,coverage)),2128)

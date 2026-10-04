@@ -32,7 +32,7 @@ def source_colours(source):
     return channels
 
 
-def page_image(oot, page, gear=0, stick=False, emerald=False, slingshot=False):
+def page_image(oot, page, gear=0, stick=False, emerald=False, slingshot=False, nut=False, ocarina=False):
     textures=oot/'extracted/ntsc-1.2/assets/textures'
     source=(oot/'src/overlays/misc/ovl_kaleido_scope/z_kaleido_scope.c').read_text(encoding='utf-8')
     colours=source_colours(source)
@@ -63,12 +63,18 @@ def page_image(oot, page, gear=0, stick=False, emerald=False, slingshot=False):
         image.alpha_composite(load_texture(textures,name).resize((size,size),Image.Resampling.LANCZOS),(x,y))
     if page==0 and stick:
         icon('gItemIconDekuStickTex',66,64)
+    if page==0 and nut:
+        icon('gItemIconDekuNutTex',98,64)
     if page==0 and slingshot:
         icon('gItemIconSlingshotTex',66,96)
+    if page==0 and ocarina:
+        icon('gItemIconOcarinaFairyTex',98,96)
     if page==3:
         if gear&1: icon('gItemIconSwordKokiriTex',174,64)
         if gear&2: icon('gItemIconShieldDekuTex',174,96)
         icon('gItemIconTunicKokiriTex',174,128)
+        if gear&4: icon('gItemIconTunicZoraTex',238,128)
+        if gear&8: icon('gItemIconTunicGoronTex',206,128)
         icon('gItemIconBootsKokiriTex',174,160)
     if page==2 and emerald:
         icon('gQuestIconKokiriEmeraldTex',182,168,20)
@@ -138,6 +144,50 @@ def page_image(oot, page, gear=0, stick=False, emerald=False, slingshot=False):
     return image
 
 
+DUNGEON_FLOORS = ('Floor3', 'Floor2', 'Floor1', 'Basement1', 'Basement2')
+
+def dungeon_data(oot):
+    """Read Deku palette ownership from the original map table, not room geometry."""
+    source=(oot/'src/code/z_map_data.c').read_text(encoding='utf-8')
+    def first(name):
+        body=source.split(name,1)[1].split('=',1)[1].split('{',1)[1]
+        depth=1; end=0
+        for end,c in enumerate(body):
+            depth += (c=='{')-(c=='}')
+            if depth==0: break
+        return body[:end]
+    palette=[int(v) for v in re.findall(r'\d+',first('sRoomPalette').split('}',1)[0])]
+    rows=re.findall(r'\{([^{}]+)\}', first('sPaletteRoom'))[:8]
+    floors=[[int(v) for v in re.findall(r'\d+',r)] for r in rows][3:8]
+    masks=[]
+    for rooms in floors:
+        row=[0]*16
+        for room in rooms:
+            if room!=255: row[palette[room]] |= 1<<room
+        masks.append(row)
+    return masks
+
+def dungeon_page(oot, floor):
+    # Keep a bounded RGB page cache. Palette tags replace map pixels in that
+    # same cache; runtime recolours them from visited bits with no extra VRAM.
+    image=page_image(oot,1)
+    ImageDraw.Draw(image).rectangle((16,32,303,202),fill=(12,16,23,255))
+    blob=bytearray(pack(image))
+    root=oot/'extracted/ntsc-1.2/assets/textures/map_48x85_static'
+    for half,side in enumerate(('Left','Right')):
+        tex=Image.open(root/('gDekuTreePauseScreenMap'+DUNGEON_FLOORS[floor]+side+'Tex.i4.png')).convert('L')
+        if tex.size!=(48,85): raise ValueError('Dungeon map dimensions changed')
+        for y in range(85):
+            for x in range(48):
+                value=tex.getpixel((x,y))
+                if value%17: raise ValueError('Dungeon map is not indexed I4')
+                for dy in range(2):
+                    for dx in range(2):
+                        at=2*((32+y*2+dy)*320+112+half*96+x*2+dx)
+                        struct.pack_into('>H',blob,at,0x10+value//17)
+    return bytes(blob)
+
+
 def pack(image):
     """Direct RGB555, no palette quantization. Zero is transparent."""
     return b''.join(struct.pack('>H',0 if a<128 else
@@ -161,17 +211,24 @@ def menu_font(sdk):
 def build(oot,cd,out,sdk=ROOT.parent.parent/'joengine'):
     cd.mkdir(parents=True,exist_ok=True);out.mkdir(parents=True,exist_ok=True)
     for page in range(6):
-        variants=range(4) if page in (0,3) else range(2) if page==2 else range(1)
+        variants=range(16) if page==0 else range(16) if page==3 else range(2) if page==2 else range(1)
         for variant in variants:
-            image=page_image(oot,page,variant,page==0 and bool(variant&1),page==2 and variant==1,page==0 and bool(variant&2))
+            image=page_image(oot,page,variant,page==0 and bool(variant&1),page==2 and variant==1,page==0 and bool(variant&2),page==0 and bool(variant&4),page==0 and bool(variant&8))
             blob=pack(image)
-            (cd/('PAUSE%d%d.BIN'%(page,variant))).write_bytes(blob)
+            (cd/('PAUSE%d%X.BIN'%(page,variant))).write_bytes(blob)
             image.save(out/('pause-%d-%d.png'%(page,variant)))
             preview=Image.new('RGBA',(WIDTH,HEIGHT))
             preview.putdata([((word&31)*255//31,((word>>5)&31)*255//31,
                              ((word>>10)&31)*255//31,255 if word else 0)
                              for (word,) in struct.iter_unpack('>H',blob)])
             preview.save(out/('pause-%d-%d-packed.png'%(page,variant)))
+    for floor in range(5):
+        (cd/('PAUSE1%d.BIN'%(floor+1))).write_bytes(dungeon_page(oot,floor))
+    rows=dungeon_data(oot)
+    (out/'dungeon_map_data.h').write_text(
+        '/* Generated from OoT z_map_data.c: Deku floors 3F through B2. */\n'
+        'static const unsigned short deku_map_rooms[5][16] = {\n'+
+        ',\n'.join('{'+','.join(map(str,row))+'}' for row in rows)+'\n};\n')
     masks=[]
     textures=oot/'extracted/ntsc-1.2/assets/textures'
     for corner in ('TopLeft','TopRight','BottomLeft','BottomRight'):
@@ -185,7 +242,7 @@ def build(oot,cd,out,sdk=ROOT.parent.parent/'joengine'):
 
 if __name__=='__main__':
     p=argparse.ArgumentParser(description=__doc__)
-    p.add_argument('--oot',type=Path,default=Path('D:/Workspace-Claude/game-decomps/n64/oot'))
+    p.add_argument('--oot',type=Path,default=Path((__import__('os').environ.get('DOSEI_OOT') or 'D:/Workspace-Claude/game-decomps/n64/oot')))
     p.add_argument('--cd',type=Path,default=ROOT/'build/cd')
     p.add_argument('--out',type=Path,default=ROOT/'build/generated')
     p.add_argument('--sdk',type=Path,default=ROOT.parent.parent/'joengine')

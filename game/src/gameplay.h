@@ -25,6 +25,8 @@
 #define GP_GET_NUT         4u
 #define GP_GET_STICK       8u
 #define GP_GET_HEART       16u
+#define GP_GET_CONTAINER   32u
+#define GP_GET_CHEST_ITEM  64u
 
 /* Feedback raised during one step. demo.c turns these into sound; nothing in
 ** here plays audio, so a test can assert the event without a sound driver. */
@@ -69,6 +71,8 @@
 #define GP_EVENT_WALL_HIT   (1u << 28)   /* blade struck a wall (NA_SE_IT_WALL_HIT_*) */
 #define GP_EVENT_REBOUND    (1u << 29)   /* blade bounced off a hard collider */
 #define GP_EVENT_NUT_BREAK  (1u << 30)
+/* Pending world audio: survives the next gameplay step until the audio consumer. */
+enum { GP_SFX_SCRUB_UP, GP_SFX_SCRUB_DOWN, GP_SFX_SCRUB_THROW, GP_SFX_SCRUB_WALK, GP_SFX_SCRUB_HIT, GP_SFX_SCRUB_FAINT, GP_SFX_FOOT_SWITCH, GP_SFX_DEKU_HIT, GP_SFX_DEKU_DEAD, GP_SFX_SKULL_HIT, GP_SFX_SKULL_DEAD, GP_SFX_LARVA_HIT, GP_SFX_LARVA_DEAD, GP_SFX_GOHMA_HIT, GP_SFX_GOHMA_DEAD, GP_SFX_CORRECT, GP_SFX_APPEAR, GP_SFX_DOOR_OPEN, GP_SFX_DOOR_CLOSE, GP_SFX_FREEZE, GP_SFX_BOX_ITEM, GP_SFX_COUNT };
 /* gameplay.events2 */
 #define GP2_EVENT_NAVI_HELLO    (1u << 0)   /* Interface_SetNaviCall 0x1D: NA_SE_VO_NA_HELLO_2 */
 #define GP2_EVENT_NAVI_CALL     (1u << 1)   /* 0x1E: NA_SE_VO_NAVY_CALL */
@@ -86,15 +90,19 @@
 #define GP2_EVENT_LABELS        (1u << 15)
 #define GP2_EVENT_JUMP_BINDING  (1u << 16)
 #define GP2_EVENT_RESET_PREFS   (1u << 17)
+#define GP2_EVENT_HP_RECOVER    (1u << 18)  /* NA_SE_SY_HP_RECOVER */
+#define GP2_EVENT_GET_ITEM      (1u << 19)  /* ordinary non-rupee collectible */
 #define GP2_EVENT_LOAD_MENU     (1u << 13)
 #define GP2_EVENT_RETURN_TITLE  (1u << 14)
 #define GP2_EVENT_ABYSS         (1u << 12)  /* void out began (NA_SE_OC_ABYSS) */
+#define GP2_EVENT_CHEST_OPEN (1u << 20)
+#define GP2_EVENT_ITEM_FANFARE (1u << 21)
+#define GP2_EVENT_SMALL_FANFARE (1u << 22)
 /* En_Elf / QuestHint timing, source 20 Hz updates. */
 #define GP_NAVI_HINT_FROM   600
 #define GP_NAVI_HINT_TO     3000
 #define GP_NAVI_READ        3001
 #define GP_NAVI_TIMER_MAX   25800   /* nutsball broke (NA_SE_EN_OCTAROCK_ROCK) */
-#define GP_WALLET_CAPACITY  99
 #define GP_DROP_DELAY      15
 
 /* Inventory slots, in menu order. These index the slot table, not the GP_*
@@ -229,6 +237,12 @@ typedef enum {
 #define GP_LINK_BODY_HEIGHT     50      /* feet to head + 10: child stand-in */
 #define GP_KNOCKBACK_SPEED_Q16  87381   /* 2.0 a frame */
 #define GP_INTANGIBLE_STEPS     30
+/* Player_Action_Roll: Player_SetInvulnerability(-10) on anim frame 8. */
+#define GP_ROLL_INVULN_FRAME    8
+#define GP_ROLL_INVULN_STEPS    15      /* 10 source frames at 20 Hz */
+/* Human playtest rule (not OoT): the jump attack is untouchable while airborne
+** and for one second after it ends. */
+#define GP_JUMP_ATTACK_GUARD_STEPS 30
 /* Player damage response NONE (func_80837C0C from the AC_HIT branch):
 ** pushed 4.0 a frame away from the attacker. */
 #define GP_HIT_SPEED_Q16        174763
@@ -261,15 +275,22 @@ typedef struct
     int8_t      stick_dir;
     bool        moving;
     bool        grounded;
+    bool        climbing;
     uint8_t     room;
     int32_t     focus[3];       /* Link focus.pos (head point), world */
     uint8_t     c_assign;       /* 1=down, 2=left, 3=right; pause only */
     bool        c_up;           /* C-Up pressed this step (talk to Navi) */
+    uint8_t     c_use;          /* 1 down, 2 left, 3 right; world input only */
+    int16_t     item_pitch;
+    /* First-person aim: the seed leaves from the camera eye along the view
+     * ray, so the centre cursor is where it goes. Off for quick shots. */
+    bool        item_from_eye;
+    int32_t     item_eye[3];
 }               gameplay_input_t;
 
 typedef struct
 {
-    uint8_t     rupees;
+    uint16_t    rupees;
     uint16_t    rupee_taken;
     uint8_t     grass_rupee[16], grass_age[16];
     uint32_t    drop_rng;
@@ -280,6 +301,7 @@ typedef struct
     uint32_t    arrow;          /* arrow-hover actor handle (Navi), 0 none */
     /* Second event word (the first is full): GP2_EVENT_*. */
     uint32_t    events2;
+    uint32_t    world_sfx;
     uint32_t    baba_events; /* Events from this gameplay step only. */
     uint16_t    navi_text;      /* player->naviTextId: pending quest hint */
     bool        navi_calling;   /* interfaceCtx->naviCalling latch */
@@ -321,6 +343,7 @@ typedef struct
     uint8_t     wonder_drop[16], wonder_age[16];   /* mode 3 ground rupee */
     uint8_t     room;           /* last room stepped, for room reloads */
     int16_t     chest_prompt;   /* kokiri_chests index A would open, -1 */
+    uint8_t     opened_chest; /* index + 1 for this acquisition */
     uint16_t    get_item_age;
     uint8_t     get_item;       /* GP_* held up while its text shows, 0 none */
     /* Mido (EnMd). state: 0 blocking, 1 walking path 1, 2 moved. */
@@ -336,7 +359,12 @@ typedef struct
     int32_t     boulder_x, boulder_y, boulder_z, boulder_speed, boulder_vy;
     /* Link hurt: steps of intangibility left; knockback heading/speed Q16
     ** for demo.c to apply (speed decays there). */
+    uint16_t    hurt_flash_phase;
+    uint8_t     hurt_flash_timer;
     uint8_t     intangible;
+    /* Player_SetInvulnerability: steps a hit still knocks Link back but
+    ** deals no damage (the roll's dodge frames). */
+    uint8_t     invulnerable;
     uint16_t    knock_yaw;
     int32_t     knock_speed;
     bool        knock_down;
@@ -376,6 +404,9 @@ typedef struct
 
 extern gameplay_t   gameplay;
 void gameplay_drop_message(unsigned int item);
+bool gameplay_token_message(void);
+bool gameplay_boss_heart(void);
+bool gameplay_actor_message(uint16_t text_id);
 
 /* Heading of a delta in the movement basis, atan2(dx, dz). Supplied by the
 ** platform: the Saturn build routes it to SGL's slAtan, the host tests to
@@ -419,9 +450,10 @@ void                gameplay_death_anim_done(void);
 /* kokiri_npcs index of the locked actor, -1 when none or not an NPC. */
 int                 gameplay_target_npc(void);
 bool                gameplay_grass_cut(unsigned int index);
-/* Platform hooks for the sword (demo.c on Saturn; stubs in host tests).
-** Blade base/tip in world units, y = Link's feet frame, from the last posed
-** left hand (link_anim_blade). False: no pose; the sector stand-in is used.
+/* Platform hooks for the held weapon (demo.c on Saturn; stubs in host tests).
+** Base/tip in world units, y = Link's feet frame, from the last posed left
+** hand.  A Deku Stick uses its own source attachment, not the sword line.
+** False: no pose; the sector stand-in is used.
 ** Wall: nearest wall crossing on the line from `from` to `to` (BgCheck_
 ** EntityLineTest1 walls, entity-ignored polys skipped, floor type 6 not
 ** counted), *material = SurfaceType material. */
@@ -480,6 +512,8 @@ bool                gameplay_attack_time(unsigned int *clip, unsigned int *third
 ** JUMPSLASH_FINISH with unk_845 = 3). Start is false without a sword. */
 bool                gameplay_jump_attack_start(void);
 void                gameplay_jump_attack_land(void);
+/* Damage-only dodge frames (keeps the longer of the current and `steps`). */
+void                gameplay_set_invulnerable(unsigned steps);
 /* End any attack at once (scene change, water entry). */
 void                gameplay_attack_cancel(void);
 

@@ -153,6 +153,18 @@ int32_t link_points[LINK_SKIN_VERTICES][3];
                         self.assertAlmostEqual(blade[end][axis] / 65536,
                             expected[axis] * scale + shift[axis], delta=.2,
                             msg=f'blade clip {clip_id} frame {frame} end {end}')
+                # Player_PostLimbDrawGameplay attaches the child Deku Stick
+                # to the same left hand.  Source RotateZYX(-0x8000,0,0x4000)
+                # turns its long local +Y mesh axis into hand +X; melee line base
+                # (0,400,0), tip (5000,400,0) per z_player_lib.c.
+                stick = ((ctypes.c_int32 * 3) * 2)()
+                self.lib.link_anim_stick(stick)
+                for end, local in enumerate(((0,400,0), (5000,400,0))):
+                    expected = model.transform(matrix, origin, local)
+                    for axis in range(3):
+                        self.assertAlmostEqual(stick[end][axis] / 65536,
+                            expected[axis] * scale + shift[axis], delta=.2,
+                            msg=f'stick clip {clip_id} frame {frame} end {end}')
                 self.assertTrue(any(p[0] % 65536 for p in points), 'world fractions lost')
                 for i, loc in enumerate(locals_):
                     matrix, origin = placed[owners[i]]
@@ -271,3 +283,55 @@ int32_t link_points[LINK_SKIN_VERTICES][3];
         for _, run_head in run:
             self.assertLess(abs(air[0][1]-run_head), 20,
                             'run-to-jump must not teleport body downward')
+
+
+@unittest.skipUnless(GCC.is_file(), 'host compiler required')
+class FirstPersonSkinGate(unittest.TestCase):
+    """Third person skins only LINK_BASE_VERTICES; the first-person arm tail is
+    skinned only while aiming, and toggling forces a fresh pose."""
+    def test_tail_vertices_skin_only_in_first_person(self):
+        source = re.sub(r'^#include .*$', '', (ROOT/'src/link_anim.c').read_text(), flags=re.M)
+        source = source.replace('#ifndef LINK_BASE_VERTICES', '#if 0')
+        adapter = '''
+#include <stdint.h>
+#include <stdbool.h>
+#include <math.h>
+#include "link_clips.h"
+typedef int32_t FIXED;
+typedef uint16_t ANGLE;
+#define X 0
+#define Y 1
+#define Z 2
+#define LINK_BASE_VERTICES 10
+#define toFIXED(x) ((FIXED)((x)*65536))
+static FIXED slSin(ANGLE a) { return (FIXED)lround(sin(a*6.283185307179586/65536)*65536); }
+static FIXED slCos(ANGLE a) { return (FIXED)lround(cos(a*6.283185307179586/65536)*65536); }
+static FIXED slMulFX(FIXED a, FIXED b) { return (FIXED)(((int64_t)a*b)>>16); }
+int32_t link_points[LINK_SKIN_VERTICES][3];
+'''
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+            out = pathlib.Path(tmp)/'gate.dll'
+            env = dict(os.environ); env['PATH'] = str(GCC.parent)+os.pathsep+env.get('PATH','')
+            subprocess.run([str(GCC), '-shared', '-O2', '-I'+str(GEN), '-x', 'c', '-',
+                            str(GEN/'link_clips.c'), '-lm', '-o', str(out)],
+                           input=adapter+source, text=True, env=env, check=True)
+            lib = ctypes.CDLL(str(out))
+            count = int(re.search(r'LINK_SKIN_VERTICES\s+(\d+)', (GEN/'link_clips.h').read_text())[1])
+            points = ((ctypes.c_int32*3)*count).in_dll(lib, 'link_points')
+            lib.link_anim_reset()
+            lib.link_anim_first_person(False)
+            lib.link_anim_pose(0, 0, 0)
+            self.assertTrue(any(points[0]))
+            self.assertTrue(all(points[i][a] == 0 for i in range(10, count) for a in range(3)))
+            lib.link_anim_first_person(True)
+            lib.link_anim_pose(0, 0, 0)            # same frame: the toggle forces it
+            self.assertTrue(any(points[i][a] for i in range(10, count) for a in range(3)))
+
+    def test_generator_puts_first_person_groups_last_and_emits_base_count(self):
+        tool = (ROOT/'tools/build_link_model.py').read_text()
+        # First-person arm groups removed 2026-10-02 (aim draws no Link).
+        self.assertNotIn("('fp_sling',", tool)
+        self.assertIn("'#define LINK_BASE_VERTICES %d'", tool)
+        self.assertIn("('aim_ready','gPlayerAnim_link_bow_bow_ready',0,0,1)", tool)
+        draw = (ROOT/'src/kokiri_sgl.c').read_text()
+        self.assertIn('equipped.nbPoint = LINK_BASE_VERTICES;', draw)

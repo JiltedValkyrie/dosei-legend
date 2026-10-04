@@ -13,7 +13,12 @@
 #include "ram_cart.h"
 #include "actor_sys.h"
 #include "npc_draw.h"
+#include "tree_mouth.h"
+#include "story_route.h"
+#include "dungeon_doors.h"
 #include "vdp1_draw_wait.h"
+#include "oot_core_host.h"
+#include "save_state.h"
 
 static unsigned int current_scene;
 static bool         loaded;
@@ -56,6 +61,9 @@ unsigned int    scene_flow_index_for_save(unsigned int save_scene)
 {
     unsigned int i;
 
+    if(save_scene>=SAVE_SCENE_COUNT && save_state.source_scene<124)
+        for(i=0;i<SCENE_COUNT;++i)
+            if(scene_entries[i].oot_scene==save_state.source_scene)return i;
     for (i = 0; i < SCENE_COUNT; ++i)
         if (scene_entries[i].save_scene == save_scene)
             return (i);
@@ -87,14 +95,15 @@ bool scene_flow_pivot(void)
 bool scene_flow_toggle_view(void)
 {
     bool pivot = scene_flow_pivot(), ok;
-    if (!scene_flow_is_interior() || current_scene == SCENE_KOKIRI_SHOP)
+    if (!scene_flow_is_interior() || current_scene == SCENE_KOKIRI_SHOP ||
+        current_scene >= SCENE_GENERIC_FIRST) /* no panorama baked */
         return false;
     if (!vdp1_wait_for_draw_end()) return false;
     ok = pivot ? kokiri_scene_load_backdrop(current_scene, 0) :
-                 kokiri_scene_load_bank(4, current_scene);
+                 kokiri_scene_load_bank(STORY_BANK_PANORAMA, current_scene);
     if (!ok) {
         /* A partial read can replace pixels. Restore the whole old view. */
-        ok = pivot ? kokiri_scene_load_bank(4, current_scene) :
+        ok = pivot ? kokiri_scene_load_bank(STORY_BANK_PANORAMA, current_scene) :
                      kokiri_scene_load_backdrop(current_scene, 0);
         if (!ok) jo_core_error("Interior view reload failed");
         return false;
@@ -111,11 +120,11 @@ bool scene_flow_shop_browse(bool on)
         on == scene_flow_pivot())
         return false;
     if (!vdp1_wait_for_draw_end()) return false;
-    ok = on ? kokiri_scene_load_bank(4, current_scene) :
+    ok = on ? kokiri_scene_load_bank(STORY_BANK_PANORAMA, current_scene) :
               kokiri_scene_load_backdrop(current_scene, 0);
     if (!ok) {
         ok = on ? kokiri_scene_load_backdrop(current_scene, 0) :
-                  kokiri_scene_load_bank(4, current_scene);
+                  kokiri_scene_load_bank(STORY_BANK_PANORAMA, current_scene);
         if (!ok) jo_core_error("Shop view reload failed");
         return false;
     }
@@ -137,14 +146,13 @@ const scene_spawn_t *scene_flow_spawn(unsigned int scene, unsigned int spawn)
 /* Read one scene's collision file into the shared buffer. */
 static bool     collision_load(unsigned int scene)
 {
-    char        name[] = "S0.COL";
+    char        name[12];
     void       *data;
     int         length = 0;
     uint32_t    need;
 
-    if (scene >= ASSET_ID_LIMIT)
+    if (!asset_scene_name(name, scene, -1, "COL"))
         return (false);
-    name[1] = asset_name_digit(scene);
     data = jo_fs_read_file(name, &length);
     if (!data || length <= 0) {
         if (data) jo_free(data);
@@ -176,6 +184,7 @@ static bool     collision_load(unsigned int scene)
                      RAM_CART_DYNA_BYTES);
         dyna_ready = true;
     }
+    tree_mouth_reset();dungeon_doors_reset();
     actor_sys_scene_unload();
     bg_dyna_clear();
     if (!collision_index)
@@ -195,13 +204,17 @@ bool            scene_flow_load(unsigned int scene, unsigned int spawn)
         return (false);
     entry = &scene_entries[scene];
     if (scene_flow_spawn(scene, spawn)->room >= entry->rooms) return false;
+    story_route_free();
     npc_draw_free();
     if (!collision_load(scene))
         return (false);
     if (entry->image) {
         /* A prerendered interior: one backdrop on VDP2, no geometry at all. */
-        if (!(scene == SCENE_KOKIRI_SHOP ? kokiri_scene_load_backdrop(scene, 0) :
-              kokiri_scene_load_bank(4, scene)))
+        /* The shop and every all-scenes interior show their own backdrop;
+        ** the five Kokiri houses start on their separate panorama bank. */
+        unsigned int room = scene_flow_spawn(scene, spawn)->room;
+        if (!(scene == SCENE_KOKIRI_SHOP || scene >= SCENE_GENERIC_FIRST ?
+              kokiri_scene_load_backdrop(scene, room) : kokiri_scene_load_bank(STORY_BANK_PANORAMA, scene)))
             return (false);
     } else {
         if (!kokiri_scene_load_bank(scene, scene_flow_spawn(scene, spawn)->room))
@@ -214,7 +227,7 @@ bool            scene_flow_load(unsigned int scene, unsigned int spawn)
     current_scene = scene;
     loaded = true;
     door_armed = false;
-    if (!npc_draw_load(entry->save_scene)) {
+    if (!story_route_load(entry->save_scene) || !npc_draw_load(entry->save_scene)) {
         jo_core_error("NPC model load failed: scene %u", entry->save_scene);
         return false;
     }
@@ -255,14 +268,15 @@ int             scene_flow_door_at(int32_t x, int32_t y, int32_t z)
         const scene_door_t *door = &scene_doors[i];
         int32_t             drop;
 
-        if (door->scene != current_scene)
+        if (door->scene != current_scene || oot_core_scene_layer()>=32 ||
+            !(door->layers&(1u<<oot_core_scene_layer())))
             continue;
         drop = y - door->y;
         if (drop < 0) drop = -drop;
         if (drop > SCENE_DOOR_HEIGHT)
             continue;
         if (inside_triangle(door, x, z))
-            return (door_armed ? (int)i : -1);
+            return (door_armed && dungeon_doors_exit_allowed(x,y,z) ? (int)i : -1);
     }
     /* Clear of every doorway: the next one Link steps onto may fire. */
     door_armed = true;

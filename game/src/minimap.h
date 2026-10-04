@@ -51,6 +51,10 @@ void    minimap_session_reset(void);
 /* True once after the code is entered: the caller plays the get-item sound
 ** (main loop, not VBlank, so it never races action_audio's slot writes). */
 bool    minimap_cheat_chime(void);
+/* Playtest refill code (Up x4 Down x4 B A Start): true once per completion.
+ * Reset discards partial progress and any pending trigger. */
+bool    minimap_cheat_refill_take(void);
+void    minimap_cheat_refill_reset(void);
 /* Link's arrow (world x/z, facing binang) plus enemy dots when cheated. */
 void    minimap_draw(int32_t x, int32_t z, uint16_t yaw);
 
