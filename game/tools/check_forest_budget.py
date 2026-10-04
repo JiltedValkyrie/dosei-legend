@@ -20,37 +20,31 @@ def mesh_cost(path):
                 for _, _, size in tiles), len(tiles))
 
 
+def character_cost(cd, name):
+    sheet = cd / (name + '.SPR')
+    if sheet.exists():
+        w, h = struct.unpack_from('>HH', sheet.read_bytes(), 4)
+        return budget.tile_bytes(w, h), 1
+    return mesh_cost(cd / (name + '.BIN'))
+
+
 def actor_peak(cd, placements):
+    # Every placement retains its own cel for the room generation. Visibility
+    # changes no longer reset the texture bank; count all resident instances.
     rows = placements.split('const kokiri_npc_t kokiri_npcs')[1].split('};')[0]
-    children = []
+    models = []
     for row in re.findall(r'\{([^{}]+)\}', rows):
         values = [v.strip() for v in row.split(',')]
-        x, _, z, _, param = (int(v, 0) for v in values[:5])
         kind, _, scene = values[5:]
-        if int(scene) != 0 or kind != 'KOKIRI_NPC_CHILD':
+        if int(scene) != 0:
             continue
-        model = 2 + (param & 255)
-        radius = 240 if (param & 255) == 5 else 180
-        children.append((x, z, radius, model))
-    # Mido can move; Saria is forced visible in her greeting. Count both at
-    # every location, regardless of room/presence flags, for a safe upper bound.
-    props = ['ROCK', 'POT', 'CHEST', 'BUSH', 'GOSSIP']
-    props += ['SIGN%d' % i for i in range(11)]
-    fixed = [mesh_cost(cd / (name + '.BIN')) for name in props + ['NPC00', 'NPC01']]
-    costs = {m: mesh_cost(cd / ('NPC%02d.BIN' % m)) for _, _, _, m in children}
-    # A visibility circle lies inside its box. Every maximal overlapping box
-    # set includes a pair of box boundaries; no sampling gaps between points.
-    xs = {x + side * r for x, _, r, _ in children for side in (-1, 1)}
-    zs = {z + side * r for _, z, r, _ in children for side in (-1, 1)}
-    peaks = [sum(c[k] for c in fixed) for k in (0, 1)]
-    for x in xs:
-        for z in zs:
-            visible = {m for nx, nz, r, m in children
-                       if abs(nx - x) <= r and abs(nz - z) <= r}
-            for k in (0, 1):
-                peaks[k] = max(peaks[k], sum(c[k] for c in fixed) +
-                               sum(costs[m][k] for m in visible))
-    return tuple(peaks)
+        param = int(values[4], 0)
+        model = 2 + (param & 255) if kind == 'KOKIRI_NPC_CHILD' else (0 if 'MIDO' in kind else 1)
+        models.append('NPC%02d' % model)
+    props = ['ROCK', 'POT', 'CHEST', 'BUSH', 'GOSSIP'] + ['SIGN%d' % i for i in range(11)]
+    costs = [mesh_cost(cd / (n + '.BIN')) for n in props]
+    costs += [character_cost(cd, n) for n in models]
+    return tuple(sum(c[k] for c in costs) for k in (0, 1))
 
 
 def check(root=ROOT):
@@ -165,10 +159,10 @@ def check(root=ROOT):
             vertices,polygons,tiles=h[8],h[9],h[6]
         else:
             _,vertices,polygons,tiles,pixels,_,_,_=struct.unpack_from('>8I',path.read_bytes())
-        costs=[mesh_cost(cd/(n+'.BIN')) for n in loaded]
+        costs=[character_cost(cd,n) for n in loaded]
         used=resident+budget.bank_bytes(pixels,tiles)+sum(c[0] for c in costs)
         slots=1+link_slots+budget.RUNTIME_SPRITE_SLOTS+tiles+sum(c[1] for c in costs)
-        geometry=[struct.unpack_from('>8I',(cd/(n+'.BIN')).read_bytes())[2:4] for n in drawn]
+        geometry=[(4,1) if (cd/(n+'.SPR')).exists() else struct.unpack_from('>8I',(cd/(n+'.BIN')).read_bytes())[2:4] for n in drawn]
         vertices+=value('LINK_VERTEX_COUNT')+sum(g[0] for g in geometry)
         polygons+=value('LINK_POLYGON_COUNT')+sum(g[1] for g in geometry)
         if used>budget.VDP1_USER_AREA or slots>budget.MAX_SPRITE_SLOTS or vertices>3200 or polygons>3750:

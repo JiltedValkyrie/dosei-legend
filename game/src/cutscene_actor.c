@@ -13,6 +13,7 @@
 #include "demo.h"
 #include "actor_mesh.h"
 #include "npc_pose.h"
+#include "npc_sprite.h"
 #include "vdp1_draw_wait.h"
 
 /* KFR1 v2, as tools/build_link_model.py writes it:
@@ -36,7 +37,7 @@
 #define KFR1_RECORD_BYTES   20
 
 static const char *const ACTOR_FILES[CUTSCENE_ACTOR_COUNT] = {
-    "GANON.BIN", "ZELDA.BIN", "IMPA.BIN", "HZELDA.BIN", "HGANON.BIN", "BRIDGE.BIN", "CHAINS.BIN", "GATEFIRE.BIN"
+    "GANON.SPR", "ZELDA.SPR", "IMPA.SPR", "HZELDA.SPR", "HGANON.SPR", "BRIDGE.BIN", "CHAINS.BIN", "GATEFIRE.BIN"
 };
 
 typedef struct actor_mesh
@@ -58,7 +59,9 @@ typedef struct actor_mesh
 
 static cutscene_actor_t actors[CUTSCENE_ACTOR_COUNT];
 static bool             actors_ready;
-static unsigned int     resident_mask;
+static unsigned int     resident_mask, resident_generation;
+static unsigned char *actor_sprites[CUTSCENE_ACTOR_BRIDGE];
+static npc_sprite_inst_t actor_sprite_inst[CUTSCENE_ACTOR_BRIDGE];
 
 static uint32_t read_be32(const unsigned char *p)
 {
@@ -244,7 +247,11 @@ bool cutscene_actors_load(void)
         return (true);
     for (i = 0; i < CUTSCENE_ACTOR_COUNT; ++i) {
         asset_loading(ACTOR_FILES[i]);
-        if (!load_actor(&actors[i], ACTOR_FILES[i], i < CUTSCENE_ACTOR_BRIDGE)) {
+        if (i < CUTSCENE_ACTOR_BRIDGE) {
+            actor_sprites[i] = npc_sprite_load(ACTOR_FILES[i]);
+            if (actor_sprites[i]) continue;
+        } else if (load_actor(&actors[i], ACTOR_FILES[i], false)) continue;
+        {
             /* All or none: a shot missing one rider but not the others would
             ** be harder to read than one missing all three. */
             cutscene_actors_free();
@@ -264,8 +271,12 @@ void cutscene_actors_free(void)
 {
     unsigned int i;
 
-    for (i = 0; i < CUTSCENE_ACTOR_COUNT; ++i)
-        free_actor(&actors[i]);
+    for (i = 0; i < CUTSCENE_ACTOR_COUNT; ++i) {
+        if (i < CUTSCENE_ACTOR_BRIDGE) {
+            if (actor_sprites[i]) jo_free(actor_sprites[i]);
+            actor_sprites[i] = 0;
+        } else free_actor(&actors[i]);
+    }
     actors_ready = false;
     resident_mask = 0;
 }
@@ -273,61 +284,6 @@ void cutscene_actors_free(void)
 bool cutscene_actors_ready(void)
 {
     return (actors_ready);
-}
-
-/* SGL's vertex pool is shared by the whole frame. A cue remains latched
- * after a rider leaves the shot; submitting that invisible horse can exhaust
- * the pool before the visible rider. Bound the actual posed mesh, and use
- * enclosing spheres/cones so this rejects no partially visible geometry. */
-static bool actor_in_view(const cutscene_actor_t *actor, int32_t x, int32_t y, int32_t z)
-{
-    int32_t low[3], high[3], centre[3], radius = 0;
-    int32_t sy, cy, sp, cp, horizontal, depth, right, up;
-    unsigned int i, axis, distance = cutscene_screen_distance();
-    /* Rotating bridge parts have a different bound; they are small lists. */
-    if (!actor->animation) return true;
-    for (axis = 0; axis < 3; ++axis) low[axis] = high[axis] = actor->points[0][axis] / 65536;
-    for (i = 1; i < (unsigned int)actor->pdata.nbPoint; ++i)
-        for (axis = 0; axis < 3; ++axis) {
-            int value = actor->points[i][axis] / 65536;
-            if (value < low[axis]) low[axis] = value;
-            if (value > high[axis]) high[axis] = value;
-        }
-    for (axis = 0; axis < 3; ++axis) {
-        centre[axis] = (low[axis] + high[axis]) / 2;
-        radius += (high[axis] - low[axis] + 3) / 2;
-    }
-    x += centre[0] - demo_camera.x;
-    y -= centre[1] + demo_camera.y; /* posed POINT Y is down */
-    z += centre[2] - demo_camera.z;
-    kokiri_camera_sincos(demo_yaw, &sy, &cy);
-    kokiri_camera_sincos(demo_pitch, &sp, &cp);
-    horizontal = (int32_t)(((int64_t)x * sy + (int64_t)z * cy) / 65536);
-    right = (int32_t)((-(int64_t)x * cy + (int64_t)z * sy) / 65536);
-    depth = (int32_t)(((int64_t)horizontal * cp + (int64_t)y * sp) / 65536);
-    up = (int32_t)(((int64_t)y * cp - (int64_t)horizontal * sp) / 65536);
-    if (depth + radius <= 0) return false;
-    if (right < 0) right = -right;
-    if (up < 0) up = -up;
-    /* Radius-200 screen disk encloses the 320x240 frame for every roll. */
-    return (int64_t)right * distance <= (int64_t)depth * 200 + (int64_t)radius * (distance + 200) &&
-           (int64_t)up * distance <= (int64_t)depth * 200 + (int64_t)radius * (distance + 200);
-}
-
-static void pose_actor(cutscene_actor_t *actor)
-{
-    if (actor->animation) {
-        unsigned int tick = cutscene_frame(), i, pose;
-        const unsigned char *p;
-        if (tick >= actor->ticks) tick = actor->ticks - 1;
-        pose = read_be16(actor->animation + 16 + tick * 2);
-        p = actor->animation + 16 + actor->ticks * 2 + pose * actor->pdata.nbPoint * 6;
-        for (i = 0; i < (unsigned int)actor->pdata.nbPoint; ++i, p += 6) {
-            actor->points[i][X] = (int32_t)(int16_t)read_be16(p) * 1024;
-            actor->points[i][Y] = -(int32_t)(int16_t)read_be16(p + 2) * 1024;
-            actor->points[i][Z] = (int32_t)(int16_t)read_be16(p + 4) * 1024;
-        }
-    }
 }
 
 static bool upload_actor(cutscene_actor_t *actor)
@@ -369,7 +325,7 @@ static bool upload_actor(cutscene_actor_t *actor)
 }
 
 /* KTS1: 32 original UV-offset frames, one 16x16 CLUT tile per face. */
-bool actor_mesh_load_scroll(actor_mesh_t *mesh,const char *file)
+bool __attribute__((optimize("Os"))) actor_mesh_load_scroll(actor_mesh_t *mesh,const char *file)
 {
     int bytes;unsigned int faces,i;
     if(!mesh) return false;
@@ -450,7 +406,7 @@ actor_mesh_t * __attribute__((optimize("Os"))) actor_mesh_load(const char *file)
 ** skeleton fails the CVA1/NTR2 checks and the old clip is kept, rather than
 ** posing the mesh with someone else's motion.
 */
-bool actor_mesh_swap_clip(actor_mesh_t *mesh, const char *stem)
+bool __attribute__((optimize("Os"))) actor_mesh_swap_clip(actor_mesh_t *mesh, const char *stem)
 {
     char name[13];
     const unsigned char *staged;
@@ -657,37 +613,24 @@ void actor_mesh_draw(actor_mesh_t *mesh, unsigned int frame,
     jo_3d_pop_matrix();
 }
 
-/* All CD reads happen at scene load. Only visible actors occupy VDP1; a
- * visibility change rebuilds that small bank from the expansion cart before
- * any actor commands are submitted. Conservative bounds retain edge overlap. */
+/* Sprite cels and static bridge props stay resident for this room generation. */
 void cutscene_actors_prepare(void)
 {
-    unsigned int i, visible = 0;
+    unsigned int i, generation = kokiri_actor_bank_generation();
     if (!actors_ready || cutscene_hides_scene()) return;
-    for (i = 0; i < CUTSCENE_ACTOR_COUNT; ++i) {
-        unsigned int channel;
-        int x, y, z;
-        if (i >= CUTSCENE_ACTOR_BRIDGE) {
-            visible |= 1u << i;
-            continue;
-        }
-        channel = (i == CUTSCENE_ACTOR_GANON || i == CUTSCENE_ACTOR_HORSE_GANON) ? 1 : 0;
-        if (!cutscene_actor_channel_visible(channel)) continue;
-        pose_actor(&actors[i]);
-        x = cutscene_actor_channel_x(channel);
-        y = cutscene_actor_channel_y(channel) - (i == CUTSCENE_ACTOR_GANON ? 6 : 0);
-        z = cutscene_actor_channel_z(channel);
-        if (actor_in_view(&actors[i], x, y, z)) visible |= 1u << i;
-    }
-    if (visible == resident_mask) return;
+    if (resident_mask && resident_generation == generation) return;
     kokiri_cutscene_tiles_reset();
     resident_mask = 0;
-    for (i = 0; i < CUTSCENE_ACTOR_COUNT; ++i)
-        if ((visible & (1u << i)) && !upload_actor(&actors[i])) {
+    for (i = 0; i < CUTSCENE_ACTOR_COUNT; ++i) {
+        bool ok = i < CUTSCENE_ACTOR_BRIDGE ?
+            npc_sprite_upload(actor_sprites[i], &actor_sprite_inst[i]) : upload_actor(&actors[i]);
+        if (!ok) {
             jo_core_error("Cutscene texture bank full: %s", ACTOR_FILES[i]);
             return;
         }
-    resident_mask = visible;
+    }
+    resident_generation = generation;
+    resident_mask = (1u << CUTSCENE_ACTOR_COUNT) - 1u;
 }
 
 void cutscene_actor_draw(cutscene_actor_id id, int32_t x, int32_t y, int32_t z,
@@ -697,6 +640,14 @@ void cutscene_actor_draw(cutscene_actor_id id, int32_t x, int32_t y, int32_t z,
 
     if (id >= CUTSCENE_ACTOR_COUNT)
         return;
+    if (!(resident_mask & (1u << id))) return;
+    if (id < CUTSCENE_ACTOR_BRIDGE) {
+        unsigned char *sheet = actor_sprites[id];
+        unsigned int frame = cutscene_frame(), ticks = read_be16(sheet + 12);
+        if (frame >= ticks) frame = ticks - 1;
+        npc_sprite_draw(sheet, &actor_sprite_inst[id], frame, x, y, z, yaw);
+        return;
+    }
     actor = &actors[id];
     if (!actor->loaded)
         return;

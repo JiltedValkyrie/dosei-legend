@@ -3,22 +3,26 @@
 #include <jo/jo.h>
 #include "emerald_story.h"
 #include "actor_mesh.h"
+#include "npc_sprite.h"
 #include "cutscene.h"
 #include "kokiri_sgl.h"
 #include "demo.h"
-static actor_mesh_t *body,*aura,*triforce,*jewel,*ganon,*horse;
+static actor_mesh_t *body,*aura,*triforce,*jewel;
+static unsigned char *ganon,*horse;
+static npc_sprite_inst_t ganon_inst,horse_inst;
 static unsigned part,uploaded,generation;
 void emerald_story_free(void)
 {
     actor_mesh_free(body);actor_mesh_free(aura);actor_mesh_free(triforce);actor_mesh_free(jewel);
-    actor_mesh_free(ganon);actor_mesh_free(horse);
-    body=aura=triforce=jewel=ganon=horse=0;uploaded=0;
+    if(ganon)jo_free(ganon);
+    if(horse)jo_free(horse);
+    body=aura=triforce=jewel=0;ganon=horse=0;uploaded=0;
 }
 bool emerald_story_load(unsigned p)
 {
     emerald_story_free();part=p;
     if(p==2) {
-        ganon=actor_mesh_load_animated("GANON.BIN");horse=actor_mesh_load_animated("HGANON.BIN");
+        ganon=npc_sprite_load("GANON.SPR");horse=npc_sprite_load("HGANON.SPR");
         return ganon && horse;
     }
     if(p>=3 && p<=8){body=actor_mesh_load_static("GODBODY.BIN");aura=actor_mesh_load_static("GODAURA.BIN");if(!body || !aura)return false;}
@@ -36,14 +40,15 @@ static bool upload(actor_mesh_t *mesh,unsigned bit)
 void emerald_story_draw(void)
 {
     unsigned ch,f=cutscene_frame(),g=kokiri_actor_bank_generation();
-    int32_t focus[3];
     if(!cutscene_is_playing() || cutscene_id()<CUTSCENE_EMERALD1)return;
     if(g!=generation){generation=g;uploaded=0;}
     if(part==2 && cutscene_actor_channel_visible(1)) {
         int x=cutscene_actor_channel_x(1),y=cutscene_actor_channel_y(1),z=cutscene_actor_channel_z(1);
         unsigned yaw=cutscene_actor_channel_yaw(1);
-        if(upload(ganon,1))actor_mesh_draw(ganon,f,x,y-6,z,yaw,0,0,focus);
-        if(upload(horse,2))actor_mesh_draw(horse,f,x,y,z,yaw,0,0,focus);
+        if (!(uploaded&1) && ganon && npc_sprite_upload(ganon,&ganon_inst)) uploaded|=1;
+        if (!(uploaded&2) && horse && npc_sprite_upload(horse,&horse_inst)) uploaded|=2;
+        if(uploaded&1)npc_sprite_draw(ganon,&ganon_inst,f,x,y-6,z,yaw);
+        if(uploaded&2)npc_sprite_draw(horse,&horse_inst,f,x,y,z,yaw);
     }
     for(ch=0;ch<3 && body;++ch) {
         unsigned cue=cutscene_actor_channel_cue(ch);

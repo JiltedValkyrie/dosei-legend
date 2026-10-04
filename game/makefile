@@ -275,6 +275,10 @@ build/oot-core/objects/%.elf: build/oot-core/objects/%.cpp build/oot-core/object
 	$(OOT_CORE_CXX) -m2 -nostdlib -nostartfiles -T oot-core/object.ld 		-Wl,--defsym,OOT_OBJECT_MAX_BYTES=$(OOT_OBJECT_MAX_BYTES) 		build/oot-core/objects/$*.o build/oot-core/objects/$*_ph.o -o $@
 build/oot-core/obj_syms.ld: $(OOT_OBJECT_ELFS)
 	for f in $^; do $(OOT_CORE_NM) $$f | awk '$$2 ~ /^[DdBbRrGgSs]$$/ && $$3 !~ /^_oot_/ {print $$3 " = 0x" $$1 ";"}'; done > $@
+build/oot-core/generic_sprites.h: build/oot-core/generic_sprites.json build/oot-core/obj_syms.ld tools/build_sprite_keys.py
+	"$(PYTHON)" tools/build_sprite_keys.py $< build/oot-core/obj_syms.ld $@
+$(OBJDIR)/oot_core_host.o: build/oot-core/generic_sprites.h
+$(OOT_CORE_OBJDIR)/oot-core/src/oot_core_draw.o: build/oot-core/generic_skins.h build/oot-core/generic_meshes.h
 # ROM message text for z_message (oot-core/src/bridge_message.cpp).
 $(ASSETS_DIR)/NESMSG.BIN: $(OOT_CORE_DECOMP)/extracted/ntsc-1.2/baserom/nes_message_data_static
 	cp $< $@
@@ -298,6 +302,9 @@ $(foreach s,$(SRCS),$(eval $(s:.c=.o): $(OBJDIR)/$(notdir $(s:.c=.o))))
 
 $(OBJDIR)/fs.o: src/fs_low.c $(JO_ENGINE_SRC_DIR)/fs.c src/fs_capacity.h src/ram_low.h | $(OBJDIR)
 	$(CC) src/fs_low.c $(DFLAGS) $(CCFLAGS) $(_CCFLAGS) -I$(JO_ENGINE_SRC_DIR) -MMD -MP -MF $(@:.o=.d) -MT $@ -o $@
+
+$(OBJDIR)/backup.o: src/backup_low.c $(JO_ENGINE_SRC_DIR)/backup.c src/ram_low.h | $(OBJDIR)
+	$(CC) src/backup_low.c $(DFLAGS) $(CCFLAGS) $(_CCFLAGS) -I$(JO_ENGINE_SRC_DIR) -MMD -MP -MF $(@:.o=.d) -MT $@ -o $@
 
 $(OBJDIR)/3d.o: src/quads_low.c $(JO_ENGINE_SRC_DIR)/3d.c src/ram_low.h | $(OBJDIR)
 	$(CC) src/quads_low.c $(DFLAGS) $(CCFLAGS) $(_CCFLAGS) -I$(JO_ENGINE_SRC_DIR) -MMD -MP -MF $(@:.o=.d) -MT $@ -o $@

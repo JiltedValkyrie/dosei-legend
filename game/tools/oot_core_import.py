@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """Mirror zeldaret/oot decomp sources into game/build/oot-core/ for the SH-2 C++ build.
 
-Only MECHANICAL C-vs-C++ fixups are allowed here, never logic edits:
+Mechanical C-vs-C++ fixups and explicit Saturn backend substitutions:
+  * Sprite NPCs (human directive 2026-10-03): clock-only animation; no poses,
+    skeleton allocation, head tracking or joint-driven fidget/stagger.
   * MtxF anonymous-struct fields (.xx etc.) -> .mf[col][row]; GCC forbids
     members with constructors (Fx) in anonymous aggregates.
   * xstdio.h `long double` printf slot -> long long (no long double type).
@@ -328,6 +330,21 @@ def object_ids(oot):
     return {enum: int(i, 16) for i, _sym, enum in names}, {sym: int(i, 16) for i, sym, _e in names}
 
 
+SPRITE_OBJECTS = {'object_in', 'object_ma1', 'object_ma2', 'object_ta', 'object_niw', 'object_cow'}
+
+
+def sprite_animation_header(sym, definition, asset_root):
+    """Keep only the action clock length; no frame/joint/pose data on disc."""
+    for include in re.findall(r'#include "([^"]+)"', definition):
+        definition = definition.replace('#include "' + include + '"',
+                                        (asset_root / include).read_text(encoding='utf-8'))
+    definition = re.sub(r'//[^\n]*|/\*.*?\*/', '', definition, flags=re.S)
+    match = re.search(r'=\s*\{\s*\{\s*(\d+)\s*,?', definition)
+    if not match:
+        raise ValueError('missing animation frameCount: ' + sym)
+    return 'AnimationHeader %s = { { %s }, NULL, NULL, 0 };' % (sym, match[1])
+
+
 def object_blob_sources(name, asset_root):
     """(data .cpp, placeholder .cpp) for one object. Data keeps the object's
     own header (limb enums) and the kept definitions verbatim; placeholders
@@ -352,7 +369,9 @@ def object_blob_sources(name, asset_root):
     for p, text, inc in parts:
         for m in OBJECT_DEF.finditer(text):
             typ, sym = m.group(1).replace('const ', ''), m.group(2)
-            if typ in OBJECT_KEEP_TYPES:
+            if name in SPRITE_OBJECTS and typ == 'AnimationHeader':
+                keep.append(sprite_animation_header(sym, m.group(0), asset_root))
+            elif name not in SPRITE_OBJECTS and typ in OBJECT_KEEP_TYPES:
                 keep.append(m.group(0))
             else:
                 drop.append(sym)
@@ -589,6 +608,56 @@ def fix_macros(rel, text, stats):
     return text
 
 
+def fix_sprite_actors(rel, text, stats):
+    """Keep NPC action/talk/collision logic; remove invisible pose work."""
+    generic = rel in {path for _, path in GENERIC_NPC_SOURCES}
+    if not generic and rel != 'src/code/z_skelanime.c':
+        return text
+
+    def replace(old, new):
+        nonlocal text
+        if text.count(old) != 1:
+            stats['problems'].append(f'{rel}: sprite hook not unique: {old}')
+        else:
+            text = text.replace(old, new)
+            stats['macros'] += 1
+
+    text = '#include "sprite_actor.h"\n' + text
+    if generic:
+        text = text.replace('SkelAnime_InitFlex(', 'OotCore_SpriteInitFlex(')
+        for name in ('EnIn_UpdateTracking', 'EnIn_Fidget', 'EnMa1_UpdateTracking', 'EnMa2_UpdateTracking'):
+            pattern = r'(void ' + name + r'\([^;{}]*\) \{)'
+            text = re.sub(pattern, r'\1\n    return; /* baked sprite has no head or torso */', text)
+        if rel.endswith('z_en_in.c'):
+            replace('void EnIn_Stagger(SkelAnime* skelAnime, EnIn* this, PlayState* play) {',
+                    'void EnIn_Stagger(SkelAnime* skelAnime, EnIn* this, PlayState* play) {\n'
+                    '    return; /* sprite has no root joint or skeletal motion */')
+        if rel.endswith('z_en_cow.c'):
+            replace('    if ((thisx->xzDistToPlayer < 150.0f) &&',
+                    '    return; /* action/collision ran; no sprite head tracking */\n'
+                    '    if ((thisx->xzDistToPlayer < 150.0f) &&')
+        if rel.endswith('z_en_ta.c'):
+            replace('    if (this->stateFlags & TALON_STATE_FLAG_TRACKING_PLAYER) {',
+                    '    if (!OotCore_IsSprite(&this->skelAnime)) {\n'
+                    '    if (this->stateFlags & TALON_STATE_FLAG_TRACKING_PLAYER) {')
+            replace('    this->stateFlags &= ~(TALON_STATE_FLAG_TRACKING_PLAYER | TALON_STATE_FLAG_SUPPRESS_BLINK);',
+                    '    } /* no head/torso tracking for sprites */\n'
+                    '    this->stateFlags &= ~(TALON_STATE_FLAG_TRACKING_PLAYER | TALON_STATE_FLAG_SUPPRESS_BLINK);')
+    else:
+        replace('s32 SkelAnime_Update(SkelAnime* skelAnime) {',
+                's32 SkelAnime_Update(SkelAnime* skelAnime) {\n'
+                '    if (OotCore_IsSprite(skelAnime)) return OotCore_SpriteUpdate(skelAnime);')
+        replace('                          u8 mode, f32 morphFrames, s8 taper) {',
+                '                          u8 mode, f32 morphFrames, s8 taper) {\n'
+                '    if (OotCore_IsSprite(skelAnime)) {\n'
+                '        OotCore_SpriteChange(skelAnime, animation, playSpeed, startFrame, endFrame, mode);\n'
+                '        return;\n    }')
+        replace('void SkelAnime_Free(SkelAnime* skelAnime, PlayState* play) {',
+                'void SkelAnime_Free(SkelAnime* skelAnime, PlayState* play) {\n'
+                '    if (OotCore_IsSprite(skelAnime)) return;')
+    return text
+
+
 def fix_mtxf(text, stats):
     def sub(m):
         col, row = MTXF_INDEX[m.group(2)]
@@ -608,6 +677,7 @@ def fixup(rel, text, stats):
             stats['problems'].append(f'{rel}: long double slot not found')
     text = fix_anon_aggregates(rel, text, stats)
     text = fix_macros(rel, text, stats)
+    text = fix_sprite_actors(rel, text, stats)
     text = fix_float_literals(text, stats)
     return fix_mtxf(text, stats)
 

@@ -12,30 +12,6 @@ def rgb555(rgb):
     return 0 if not (r or g or b) else 0x8000 | (b >> 3) << 10 | (g >> 3) << 5 | (r >> 3)
 
 
-def build_fairy_sprite(wing):
-    wing = wing.convert('L').resize((5, 10), Image.Resampling.LANCZOS)
-    out = Image.new('RGB', (16, 16))
-    pixels = out.load()
-    wings = wing.load()
-    for y in range(16):
-        for x in range(16):
-            dx, dy = x - 7.5, y - 7.5
-            distance = (dx * dx + dy * dy) ** 0.5
-            glow = max(0, int(255 - distance * 42))
-            value = glow
-            # Mirror the authentic OoT wing on either side of the glow.
-            if 1 <= x < 6 and 3 <= y < 13:
-                value = max(value, wings[x - 1, y - 3])
-            if 10 <= x < 15 and 3 <= y < 13:
-                value = max(value, wings[14 - x, y - 3])
-            if value < 22:
-                pixels[x, y] = (0, 0, 0)
-            else:
-                pixels[x, y] = (min(255, 80 + value),
-                                min(255, 120 + value), 255)
-    return out
-
-
 def build_item_icon(source):
     """One 16x16 RGB555 pickup icon from an original 32x32 item icon.
 
@@ -228,15 +204,9 @@ def main(oot=None):
     (ROOT / 'build/cd/START.RGB').write_bytes((baseline / 'assets/static/ui/PRESS_START.RAW').read_bytes())
     if oot is None:
         oot = Path((__import__('os').environ.get('DOSEI_OOT') or 'D:/Workspace-Claude/game-decomps/n64/oot'))
-    candidates = sorted(Path(oot).glob(
-        'extracted/*/assets/objects/gameplay_keep/gFairyWingTex.i8.png'))
-    if not candidates:
-        raise FileNotFoundError('extracted OoT fairy wing texture not found')
-    with Image.open(candidates[-1]) as wing:
-        fairy = build_fairy_sprite(wing)
-    fairy.save(ROOT / 'build/generated/fairy-preview.png')
-    (ROOT / 'build/cd/FAIRY.RGB').write_bytes(b''.join(
-        struct.pack('>H', rgb555(pixel)) for pixel in fairy.getdata()))
+    # One fairy pipeline; never overwrite the wing/glow cels with legacy art.
+    from build_fairy import build as build_fairy
+    build_fairy(oot)
 
     # En_Kusa type 0 draws gFieldBushDL with this original cutout texture.
     grass_path = Path(oot) / 'extracted/ntsc-1.2/assets/objects/gameplay_field_keep/gFieldBushTex.rgba16.png'

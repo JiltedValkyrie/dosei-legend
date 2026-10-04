@@ -5,6 +5,7 @@
 #define DOSEI_NPC_SPRITE_H
 
 #include <stdint.h>
+#define NPC_SPRITE_SLOT_NONE UINT16_MAX
 
 typedef struct npc_sprite_inst {
     const unsigned char *sheet;     /* sheet the slot's size/CLUT are set for */
@@ -20,5 +21,8 @@ void npc_sprite_draw(const unsigned char *spr, npc_sprite_inst_t *inst, unsigned
                      int x, int y, int z, uint16_t yaw);
 /* Target/talk focus height above the actor origin, world units. */
 int  npc_sprite_focus_y(const unsigned char *spr);
+/* Conservative sphere/frustum rejection before cel uploads or facing math. */
+int npc_sprite_in_view(int x, int y, int z, unsigned int radius);
+unsigned char *npc_sprite_load(const char *name);
 
 #endif

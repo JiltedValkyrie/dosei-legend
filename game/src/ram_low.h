@@ -5,7 +5,7 @@
 **
 ** Nothing else in this build touches it: jo_malloc zones are the work-RAM
 ** arena and the expansion cart (core.c), SGL's work area is high work RAM,
-** GFS/backup take jo_malloc or static buffers. It is SH-2 bus DRAM: slower
+** GFS and backup use the reserved ranges below. It is SH-2 bus DRAM: slower
 ** than high work RAM, much faster than the A-bus cart, and it is NOT
 ** zero-filled at boot like .bss, so users initialise what they read.
 ** Moved here to free high work RAM below the SGL area (BUG-043).
@@ -60,10 +60,19 @@
 ** OotCoreEntry.play_bytes() must fit (checked at boot). Faster than the cart. */
 #define RAM_LOW_OOTPLAY_OFFSET      0x71500u
 #define RAM_LOW_OOTPLAY_BYTES       0x80000u   /* play_bytes() 0x7F440 measured on target 2026-10-03 */
-#define RAM_LOW_USED_BYTES          0xF1500u
+#define RAM_LOW_GAME_END            0xF1500u
 #else
-#define RAM_LOW_USED_BYTES          0x71500u
+#define RAM_LOW_GAME_END            0x71500u
 #endif
+
+/* BIOS backup executable and STN-52 workspace: never placed in expansion RAM. */
+#define RAM_LOW_BACKUP_LIB_OFFSET   0xF1600u
+#define RAM_LOW_BACKUP_LIB_BYTES    0x4000u
+#define RAM_LOW_BACKUP_WORK_OFFSET  0xF5600u
+#define RAM_LOW_BACKUP_WORK_BYTES   8312u
+#define RAM_LOW_USED_BYTES          (RAM_LOW_BACKUP_WORK_OFFSET + RAM_LOW_BACKUP_WORK_BYTES)
+typedef char ram_low_backup_fits[RAM_LOW_GAME_END <= RAM_LOW_BACKUP_LIB_OFFSET &&
+    RAM_LOW_BACKUP_LIB_OFFSET + RAM_LOW_BACKUP_LIB_BYTES <= RAM_LOW_BACKUP_WORK_OFFSET ? 1 : -1];
 
 #define RAM_LOW(offset)             ((void *)(RAM_LOW_ADDRESS + (offset)))
 

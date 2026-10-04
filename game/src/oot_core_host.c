@@ -17,7 +17,6 @@
 #include "actor_mesh.h"
 #include "npc_draw.h"
 #include <string.h>
-#ifdef DOSEI_CLEAN_TEST
 /* Generic decomp NPCs as baked sprites (tools/build_npc_sprites.py --generic,
 ** blob OOT_CORE_FLAG_NPC_SPRITES): no Actor_Draw, no limb matrices. */
 #define CORE_SPRITES 1
@@ -31,7 +30,6 @@ core_sprite_rows[] = {
 #define CORE_SPRITE_HEAP_PERCENT 85   /* leave heap for the rest of the scene */
 static unsigned char *core_sprite[CORE_SPRITE_ROWS];   /* G<oid><nn>.SPR, cart heap */
 static npc_sprite_inst_t core_sprite_inst[CORE_SPRITE_SLOTS];
-#endif
 
 
 #define ENTRY ((const OotCoreEntry *)OOT_CORE_LOAD_ADDR)
@@ -92,6 +90,7 @@ static bool playing;
 ** a failed scene is not retried every frame. */
 static unsigned int play_scene = 0xFFFFu;
 static unsigned int step_phase;
+static int meshes_room = -1; /* assets follow Actor_UpdateAll's deferred room spawn */
 
 /* Read a disc file into a cache-through cart carve: zero the carve first
 ** (.bss is not in the file), refuse a file larger than the carve. Returns
@@ -235,41 +234,6 @@ static OotCoreMeshKey core_mesh_key[CORE_MESHES_MAX];
 static unsigned char core_mesh_ready[CORE_MESHES_MAX];
 static unsigned int core_mesh_count;
 
-/* Generic skinned NPC models (N<obj><n>.BIN + .SKN). */
-#define CORE_SKINS_MAX 8
-static actor_mesh_t *core_skin[CORE_SKINS_MAX];
-static unsigned char *core_skin_table[CORE_SKINS_MAX];
-static unsigned short core_skin_key[CORE_SKINS_MAX];
-static unsigned char core_skin_ready[CORE_SKINS_MAX];
-static unsigned int core_skin_count;
-
-static void load_skins(void)
-{
-    static const char hex[] = "0123456789ABCDEF";
-    const unsigned short *keys;
-    int n = ENTRY->skin_list(&keys), i;
-    for (i = 0; i < (int)core_skin_count; ++i) {
-        actor_mesh_free(core_skin[i]); core_skin[i] = 0;
-        if (core_skin_table[i]) { jo_free(core_skin_table[i]); core_skin_table[i] = 0; }
-    }
-    core_skin_count = 0;
-    for (i = 0; i < n && core_skin_count < CORE_SKINS_MAX; ++i) {
-        char file[] = "N0000.BIN";
-        int length = 0;
-        file[1] = hex[(keys[i] >> 12) & 15]; file[2] = hex[(keys[i] >> 8) & 15];
-        file[3] = hex[(keys[i] >> 4) & 15]; file[4] = hex[keys[i] & 15];
-        if (GFS_NameToId((Sint8 *)file) < 0) continue;
-        core_skin[core_skin_count] = actor_mesh_load_static(file);
-        if (!core_skin[core_skin_count]) continue;
-        file[6] = 'S'; file[7] = 'K'; file[8] = 'N';
-        core_skin_table[core_skin_count] = GFS_NameToId((Sint8 *)file) >= 0 ?
-            (unsigned char *)jo_fs_read_file(file, &length) : 0;
-        core_skin_key[core_skin_count] = keys[i];
-        core_skin_ready[core_skin_count] = 0;
-        core_skin_count++;
-    }
-}
-
 static void load_meshes(void)
 {
     static const char hex[] = "0123456789ABCDEF";
@@ -303,13 +267,22 @@ static void load_meshes(void)
         static const char hex[] = "0123456789ABCDEF";
         const OotCoreNpcView *v;
         int n = ENTRY->npc_view(&v), k;
-        unsigned int r;
+        unsigned int r, pass;
+        for (r = 0; r < CORE_SPRITE_ROWS; ++r) {
+            if (core_sprite[r]) jo_free(core_sprite[r]);
+            core_sprite[r] = 0;
+        }
+        /* Keep one usable sheet for each current actor before optional clips
+         * spend the cart heap. A later unavailable pose uses that sheet. */
+        for (pass = 0; pass < 2; ++pass)
         for (r = 0; r < CORE_SPRITE_ROWS; ++r) {
             char file[] = "G00000.SPR";
             int length = 0;
             jo_file probe;
-            if (core_sprite[r]) { jo_free(core_sprite[r]); core_sprite[r] = 0; }
-            for (k = 0; k < n && v[k].object != core_sprite_rows[r].object; ++k) {}
+            if (core_sprite[r]) continue;
+            for (k = 0; k < n; ++k)
+                if (v[k].object == core_sprite_rows[r].object &&
+                    (pass || core_sprite_rows[r].anim == (v[k].anim & 0xFFFFFFu))) break;
             if (k == n) continue;
             file[1] = hex[(core_sprite_rows[r].object >> 8) & 15];
             file[2] = hex[(core_sprite_rows[r].object >> 4) & 15];
@@ -318,7 +291,10 @@ static void load_meshes(void)
             if (GFS_NameToId((Sint8 *)file) < 0 || !jo_fs_open(&probe, file)) continue;
             length = probe.size;
             jo_fs_close(&probe);
-            core_sprite[r] = (unsigned char *)jo_malloc((unsigned int)length);
+            if (length < 0x34) continue;
+            /* Jo appends a NUL. SPR1 files are four-byte aligned, so allocating
+             * only length would overwrite the next heap block's header. */
+            core_sprite[r] = (unsigned char *)jo_malloc((unsigned int)length + 1u);
             if (core_sprite[r] && jo_memory_usage_percent() > CORE_SPRITE_HEAP_PERCENT) {
                 jo_free(core_sprite[r]); core_sprite[r] = 0;
             }
@@ -327,8 +303,6 @@ static void load_meshes(void)
             }
         }
     }   /* no skinned models: the sprites replace them */
-#else
-    load_skins();
 #endif
     npc_draw_reupload();
 }
@@ -340,20 +314,25 @@ void oot_core_meshes_upload(void)
     unsigned int i;
     for (i = 0; i < core_mesh_count; ++i)
         core_mesh_ready[i] = playing && actor_mesh_upload(core_mesh[i]);
-    for (i = 0; i < core_skin_count; ++i)
-        core_skin_ready[i] = playing && actor_mesh_upload(core_skin[i]);
 #ifdef CORE_SPRITES
     {   /* slots sized for the scene's biggest cel; draw rebinds per sheet */
         const unsigned char *big = 0;
-        unsigned int r, best = 0;
+        const OotCoreNpcView *v;
+        int n = playing ? ENTRY->npc_view(&v) : 0, k;
+        unsigned int r, best = 0, count = 0;
         for (r = 0; r < CORE_SPRITE_ROWS; ++r) {
             const unsigned char *s = core_sprite[r];
             unsigned int bytes = s ? (unsigned int)(s[4] << 8 | s[5]) * (unsigned int)(s[6] << 8 | s[7]) : 0;
             if (bytes > best) { best = bytes; big = s; }
         }
+        for (k = 0; k < n; ++k)
+            for (r = 0; r < CORE_SPRITE_ROWS; ++r)
+                if (core_sprite[r] && core_sprite_rows[r].object == v[k].object) {
+                    ++count; break;
+                }
         for (i = 0; i < CORE_SPRITE_SLOTS; ++i)
-            if (!playing || !big || !npc_sprite_upload(big, &core_sprite_inst[i]))
-                core_sprite_inst[i].slot = KOKIRI_TILE_NONE;   /* bank full: not drawn */
+            if (i >= count || !big || !npc_sprite_upload(big, &core_sprite_inst[i]))
+                core_sprite_inst[i].slot = NPC_SPRITE_SLOT_NONE;   /* bank full: not drawn */
     }
 #endif
 }
@@ -365,46 +344,29 @@ static void sprites_draw(void)
     int n = oot_core_npcs(&v), k;
     unsigned int r, used = 0;
     for (k = 0; k < n && used < CORE_SPRITE_SLOTS; ++k) {
+        unsigned int chosen = CORE_SPRITE_ROWS;
         int dx = v[k].x - demo_camera.x, dz = v[k].z - demo_camera.z;
         if (!v[k].anim || !(v[k].flags & OOT_CORE_VIEW_DRAWN) ||
             dx < -2000 || dx > 2000 || dz < -2000 || dz > 2000) continue;
         for (r = 0; r < CORE_SPRITE_ROWS; ++r)
             if (core_sprite[r] && core_sprite_rows[r].object == v[k].object &&
-                core_sprite_rows[r].limbs == v[k].limbs &&
-                core_sprite_rows[r].anim == (v[k].anim & 0xFFFFFFu)) {
-                npc_sprite_draw(core_sprite[r], &core_sprite_inst[used++], v[k].frame,
-                                v[k].x, v[k].y, v[k].z, v[k].yaw);
-                break;
+                /* SkelAnime includes the root translation joint; the baked
+                 * SkeletonHeader counts only actual limbs. */
+                (!v[k].limbs || core_sprite_rows[r].limbs + 1u == v[k].limbs)) {
+                if (chosen == CORE_SPRITE_ROWS) chosen = r;
+                if (core_sprite_rows[r].anim == (v[k].anim & 0xFFFFFFu)) { chosen = r; break; }
             }
+        if (chosen < CORE_SPRITE_ROWS)
+            npc_sprite_draw(core_sprite[chosen], &core_sprite_inst[used++], v[k].frame,
+                            v[k].x, v[k].y, v[k].z, v[k].yaw);
     }
 }
 #endif
-
-/* Generic skinned NPCs: the decomp's limb matrices on the prebuilt model. */
-static void skins_draw(void)
-{
-    const OotCoreNpcView *v;
-    int n = oot_core_npcs(&v), k;
-    unsigned int m;
-    for (k = 0; k < n; ++k) {
-        if (!v[k].skin) continue;
-        for (m = 0; m < core_skin_count; ++m)
-            if (core_skin_ready[m] && core_skin_key[m] == v[k].skin) {
-                actor_mesh_draw_skinned(core_skin[m], core_skin_table[m],
-                                        (const int32_t *)v[k].mats, v[k].mat_count);
-                break;
-            }
-    }
-}
 
 /* From world_props_draw: one prebuilt mesh per decomp draw item. */
 void oot_core_meshes_draw(void)
 {
-#ifdef CORE_SPRITES
     sprites_draw();
-#else
-    skins_draw();
-#endif
     const OotCoreDrawItem *items;
     int n = playing ? ENTRY->draw_items(&items) : 0, i;
     unsigned int m;
@@ -438,6 +400,7 @@ void oot_core_frame(const gameplay_input_t *in)
     if (scene != play_scene) {
         playing = false;
         play_scene = scene;
+        meshes_room = -1;
         if (!load_scene_blob(scene)) return;
         mirror_save(); /* age/time/flags before play_init picks the layer */
         playing = ENTRY->play_init(RAM_LOW(RAM_LOW_OOTPLAY_OFFSET), RAM_LOW_OOTPLAY_BYTES,
@@ -450,7 +413,8 @@ void oot_core_frame(const gameplay_input_t *in)
 #ifdef CORE_SPRITES
             ENTRY->set_flags(OOT_CORE_FLAG_NPC_SPRITES);
 #endif
-            load_meshes();
+            /* Room actors do not exist yet. Actor_UpdateAll spawns/initializes
+             * them on the first 20 Hz step; only then can npc_view name sheets. */
         }
         step_phase = 0;
     }
@@ -473,6 +437,10 @@ void oot_core_frame(const gameplay_input_t *in)
         unsigned int t0 = frame_timer_ticks();
         ENTRY->update();
         update_us = frame_timer_ticks_to_us(frame_timer_ticks() - t0);
+        if (meshes_room != (int)kokiri_bank_room()) {
+            meshes_room = (int)kokiri_bank_room();
+            load_meshes();
+        }
         {
             int dx, dz;   /* decomp actors pushing the player (En_Ko blockers) */
             ENTRY->player_push(&dx, &dz);

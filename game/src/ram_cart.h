@@ -84,7 +84,7 @@
 #define RAM_CART_MINIMAP_OFFSET     0xD000u
 #define RAM_CART_MINIMAP_BYTES      0x1000u
 
-/* Fixed carve for FAIRY.BIN (kokiri_sgl.c): posed En_Elf wing quads. */
+/* Retired fairy mesh carve; reserved gap, no runtime model loaded. */
 #define RAM_CART_FAIRY_OFFSET       0xE000u
 #define RAM_CART_FAIRY_BYTES        0x1000u
 
@@ -93,16 +93,16 @@
 ** equipment change (BUG-039). Moved to the tail 2026-10-01: the arm grew the
 ** file to 25,312 B and the old 0x4800 carve at 0xF000 let it overwrite Navi's
 ** glow, the mesh LOD rows and DEKUBABA (Link's ATTR table corrupted).
-** 0xF000-0x13800 is now unused.
+** 0xF000-0x13820 now holds Navi's sprite cels.
 ** 2026-10-02: first-person arm dropped -> Link 704 polygons (22,528 B). */
 #define RAM_CART_LINKMESH_OFFSET    0x7C000u
 #define RAM_CART_LINKMESH_BYTES     0x6400u
 
-/* Fixed carve for Navi's glow pixels: 3 colours x 3 breath steps x 512 B
+/* Fixed carve for Navi's wing/glow pixels: 3 colours x 3 poses x 2048 B
 ** (FAIRY*.RGB). One VRAM slot is refilled from here (kokiri_sgl.c): room
 ** banks leave no VRAM for nine resident glows. */
-#define RAM_CART_NAVIGLOW_OFFSET    0x13800u
-#define RAM_CART_NAVIGLOW_BYTES     0x1200u
+#define RAM_CART_NAVIGLOW_OFFSET    0xF000u
+#define RAM_CART_NAVIGLOW_BYTES     0x4820u /* 9 x 32x32 RGB555 + Jo read terminator */
 
 /* Per-mesh LOD rows from the room bank (KRM1 header[6]): 16 B each, max 96.
 ** Uses the free gap between Navi's glow (ends 0x14A00) and DEKUBABA. */

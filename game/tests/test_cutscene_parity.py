@@ -121,7 +121,7 @@ class LinkPlayback(unittest.TestCase):
         harness = """#include <stdbool.h>
 #include "cutscenes.h"
 #include "link_clips.h"
-static struct { unsigned int applied_frame; } state;
+static struct { unsigned int applied_frame, id; } state;
 static cutscene_cue_t cue;
 static const cutscene_cue_t *current_cue(void) { return &cue; }
 """ + source[start:end] + """
@@ -180,23 +180,32 @@ class ActorTracks(unittest.TestCase):
                 self.assertEqual(len(raw), 16 + ticks * 2 + vertices * poses * 6)
                 self.assertLess(max(struct.unpack_from('>%dH' % ticks, raw, 16)), poses)
 
-    def test_nightmare_bank_fits_with_resident_ui_and_all_models(self):
+    def test_nightmare_bank_fits_with_resident_ui_and_sprite_cast(self):
         import re
-        names = ('GANON', 'ZELDA', 'IMPA', 'HZELDA', 'HGANON', 'BRIDGE', 'CHAINS')
-        if not (GEN / 'GANON.BIN').exists():
-            self.skipTest('baked actors required')
+        import sys
+        sys.path.insert(0, str(ROOT / 'tools'))
+        import vdp1_budget as budget
+        from check_forest_budget import mesh_cost, character_cost
+        cd = ROOT / 'build/cd'
+        if not (cd / 'GANON.SPR').exists():
+            self.skipTest('baked sprite cast required')
         texture_bytes = 0
         polygons = 555 + 20  # field and maximum rain count
-        for name in names:
+        for name in ('GANON', 'ZELDA', 'IMPA', 'HZELDA', 'HGANON'):
+            texture_bytes += character_cost(cd, name)[0]
+            polygons += 1
+            self.assertFalse((cd / (name + '.BIN')).exists())
+            self.assertFalse((cd / (name + '.ANM')).exists())
+        for name in ('BRIDGE', 'CHAINS', 'GATEFIRE'):
             raw = (GEN / (name + '.BIN')).read_bytes()
-            texture_bytes += struct.unpack_from('>I', raw, 28)[0]
+            texture_bytes += mesh_cost(GEN / (name + '.BIN'))[0]
             polygons += struct.unpack_from('>I', raw, 12)[0] * (2 if name == 'CHAINS' else 1)
         header = (GEN / 'link_scene.h').read_text()
         value = lambda name: int(re.search(r'# define ' + name + r'\s+(\d+)', header).group(1))
         texture_bytes += value('LINK_PIXEL_BYTES') + value('LINK_TILE_COUNT') * 32
         # Exact resident uploads: fairy, grass, rupees, digits, two pickups,
         # three menu sprites, message panel, and both message marks.
-        texture_bytes += 512 + 2048 + 1024 + 2560 + 1024 + 6144 + 1024 + 1024
+        texture_bytes += budget.RUNTIME_SPRITE_BYTES
         polygons += value('LINK_POLYGON_COUNT')
         capacity = 0x7fef8 - ((3750 * 32 + 8192 + 255) & ~255)
         self.assertLessEqual(texture_bytes, capacity)

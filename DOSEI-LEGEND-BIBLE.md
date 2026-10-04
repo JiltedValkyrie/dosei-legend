@@ -1,5 +1,24 @@
 # Dosei Legend engineering rules
 
+## Permanent NPC/enemy sprite rule (2026-10-03)
+
+All NPCs, animals, fairies and non-boss enemies render as offline-baked sprites
+unless the human explicitly names an exception. Applies to gameplay and
+cutscenes, child/adult eras, day/night, alternate setups and dynamic spawns.
+Bosses are explicitly exempt for now (human, 2026-10-03). Keep their models,
+pose-driven complex hitboxes, damage/weak-point rules and puzzle interactions;
+do not simplify or convert them under the sprite mandate.
+Do not load their N64 geometry, materials, skeletons or per-vertex animation
+tracks at runtime. No joint/morph work, head/torso tracking or model fallback.
+Original assets remain offline source for small Saturn sprite sheets. Keep
+source gameplay, collision, combat, story, rewards and drop conditions; cheap
+32-bit approximations take priority over visual/numerical parity. Link's current
+renderer and room/static prop geometry remain separate. Existing non-boss enemy meshes
+are unfinished migration work, not permission to introduce another exception.
+Budget the complete reachable scene/trigger actor set with the room and effects;
+reduce texture density or sprite detail before capacity is exhausted. Follow
+[ACTOR_SPRITE_ROLLOUT_PLAN.md](game/docs/ACTOR_SPRITE_ROLLOUT_PLAN.md).
+
 ## Desktop viewport workflow (2026-09-29)
 
 The human-facing room/layout editor is **Map Workshop**, not merely Mesh
@@ -225,6 +244,11 @@ without the option before shipping. Other model formats need their own adapter,
 not a claim that Link's segment-D scheme fits every model.
 
 ## Character textures: face only
+
+Scope after the 2026-10-03 sprite directive: this rule applies to remaining
+runtime 3D characters (Link and exempt bosses). Sprite baking may use full
+source artwork; only the small finished cels reach Saturn. Do not strip useful
+sprite detail merely because its offline source model contains a body material.
 
 Permanent user rule, updated 2026-09-25 (demo plan): hair is flat too. The
 2026-09-22 hair-and-face rule and the earlier quarter-resolution rule are

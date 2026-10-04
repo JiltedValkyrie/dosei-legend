@@ -13,6 +13,75 @@
 #include "save.h"
 #include "seqcmd.h"
 #include "oot_core_host.h"
+#include "sprite_actor.h"
+#include "segmented_address.h"
+
+/* Q8 frame clocks use 32-bit arithmetic. Fx is only the existing ABI storage.
+ * No skeleton reads, limb allocation, frame decoding or morph interpolation. */
+static s32 sprite_q8(f32 value) {
+#if OOT_CORE_HWFLOAT
+    return (s32)(value * 256.0f);
+#else
+    static_assert(FX_FRAC == 16, "sprite clock ABI expects Q16 Fx storage");
+    return (s32)value.v / 256;
+#endif
+}
+static f32 sprite_frame(s32 value) {
+#if OOT_CORE_HWFLOAT
+    return value / 256.0f;
+#else
+    return Fx::raw(value * 256);
+#endif
+}
+
+void OotCore_SpriteChange(SkelAnime* s, AnimationHeader* animation,
+                         f32 speed, f32 start, f32 end, u8 mode) {
+    AnimationHeader* header = (AnimationHeader*)SEGMENTED_TO_VIRTUAL(animation);
+    s32 length = header->common.frameCount;
+    if (length < 1) length = 1;
+    s->animation = animation;
+    s->mode = mode;
+    s->startFrame = start;
+    s->animLength = sprite_frame(length * 256);
+    s->endFrame = mode <= ANIMMODE_LOOP_INTERP ? sprite_frame((length - 1) * 256) : end;
+    s->curFrame = mode >= ANIMMODE_LOOP_PARTIAL ? sprite_frame(0) : start;
+    s->playSpeed = speed;
+    s->morphWeight = s->morphRate = sprite_frame(0);
+}
+
+void OotCore_SpriteInitFlex(PlayState*, SkelAnime* s, FlexSkeletonHeader*,
+                           AnimationHeader* animation, Vec3s*, Vec3s*, s32 limbCount) {
+    s->initFlags = 0x53;
+    s->limbCount = limbCount; /* sheet key only; zero means object/clip lookup */
+    s->dListCount = 0;
+    s->skeleton = NULL;
+    s->jointTable = s->morphTable = NULL;
+    s->update.normal = NULL;
+    if (animation != NULL)
+        OotCore_SpriteChange(s, animation, sprite_frame(256), sprite_frame(0), sprite_frame(0), ANIMMODE_LOOP);
+}
+
+s32 OotCore_SpriteUpdate(SkelAnime* s) {
+    s32 frame = sprite_q8(s->curFrame), end = sprite_q8(s->endFrame);
+    s32 speed = sprite_q8(s->playSpeed), length = sprite_q8(s->animLength);
+    bool once = s->mode == ANIMMODE_ONCE || s->mode == ANIMMODE_ONCE_INTERP;
+    if (once && frame == end) return true;
+    frame += speed;
+    if (once && ((speed > 0 && frame > end) || (speed < 0 && frame < end))) frame = end;
+    else if (s->mode >= ANIMMODE_LOOP_PARTIAL) {
+        s32 start = sprite_q8(s->startFrame), span = end - start;
+        if (span > 0 && (frame < start || frame >= end)) {
+            frame = (frame - start) % span;
+            if (frame < 0) frame += span;
+            frame += start;
+        }
+    } else if (length > 0 && (frame < 0 || frame >= length)) {
+        frame %= length;
+        if (frame < 0) frame += length;
+    }
+    s->curFrame = sprite_frame(frame);
+    return false;
+}
 
 extern const OotCoreHost* gOotCoreHost;
 

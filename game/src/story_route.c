@@ -2,7 +2,7 @@
 #pragma GCC optimize("Os")
 #include <jo/jo.h>
 #include "story_route.h"
-#include "actor_mesh.h"
+#include "npc_sprite.h"
 #include "actor_sys.h"
 #include "cutscene.h"
 #include "demo.h"
@@ -16,7 +16,8 @@
 #include "npc_pose.h"
 #include "collide.h"
 #include "action_audio.h"
-static actor_mesh_t *saria[4], *owl[2];
+static unsigned char *saria[4], *owl[2];
+static npc_sprite_inst_t saria_inst[4], owl_inst[2];
 static unsigned generation, uploaded, owl_phase, owl_frame, clock_phase;
 static int32_t owl_x,owl_y,owl_z,owl_speed,owl_vy;
 static uint16_t owl_yaw,owl_goal;
@@ -28,8 +29,8 @@ bool story_route_owl_active(void){return owl_phase!=0;}
 void story_route_free(void)
 {
     unsigned i;
-    for(i=0;i<4;++i){actor_mesh_free(saria[i]);saria[i]=0;}
-    for(i=0;i<2;++i){actor_mesh_free(owl[i]);owl[i]=0;}
+    for(i=0;i<4;++i){if(saria[i])jo_free(saria[i]);saria[i]=0;}
+    for(i=0;i<2;++i){if(owl[i])jo_free(owl[i]);owl[i]=0;}
     actor_kill(actor_resolve(owl_handle));owl_handle=0;
     uploaded=owl_phase=owl_frame=clock_phase=0;
 }
@@ -37,12 +38,12 @@ bool story_route_load(unsigned scene)
 {
     unsigned i;
     if(scene==SAVE_SCENE_LOST_WOODS && !save_get_event_chk_inf(EVENTCHKINF_FAIRY_OCARINA_RECEIVED)) {
-        static const char *const files[]={"NPC19.BIN","NPC20.BIN","NPC21.BIN","NPC22.BIN"};
-        for(i=0;i<4;++i)if(!(saria[i]=actor_mesh_load(files[i])))return false;
+        static const char *const files[]={"NPC19.SPR","NPC20.SPR","NPC21.SPR","NPC22.SPR"};
+        for(i=0;i<4;++i)if(!(saria[i]=npc_sprite_load(files[i])))return false;
     }
     if(scene==SAVE_SCENE_HYRULE_FIELD && !save_get_switch(scene,12)) {
-        owl[0]=actor_mesh_load_animated("OWLPERCH.BIN");
-        owl[1]=actor_mesh_load_animated("OWLFLY.BIN");
+        owl[0]=npc_sprite_load("OWLPERCH.SPR");
+        owl[1]=npc_sprite_load("OWLFLY.SPR");
         if(!owl[0] || !owl[1])return false;
         owl_x=4284*256;owl_y=182*256;owl_z=7877*256;owl_yaw=0;owl_speed=owl_vy=0;
         owl_phase=1;
@@ -121,21 +122,20 @@ void story_route_step(void)
 void story_route_draw(unsigned tick)
 {
     unsigned g=kokiri_actor_bank_generation(),n,frame;
-    int32_t focus[3];
     if(g!=generation){generation=g;uploaded=0;}
     if(cutscene_is_playing() && cutscene_id()==CUTSCENE_SARIA_BRIDGE) {
         unsigned cue=cutscene_actor_channel_cue(1),f=cutscene_frame();
         if(cue==4 || f<65)return;
         n=cue==13?1:cue==14?(f<339?2:3):0;
         frame=n==2?(f-320):n==3?(f-339):f;
-        if(!(uploaded&(1u<<n))){if(!actor_mesh_upload(saria[n]))return;uploaded|=1u<<n;}
-        actor_mesh_draw(saria[n],frame,-1156,-220,1683,0xB1C7,0,0,focus);
+        if(!(uploaded&(1u<<n))){if(!npc_sprite_upload(saria[n], &saria_inst[n]))return;uploaded|=1u<<n;}
+        npc_sprite_draw(saria[n],&saria_inst[n],frame,-1156,-220,1683,0xB1C7);
     }
     if(save_state.scene_id==SAVE_SCENE_HYRULE_FIELD && owl_phase) {
         n=owl_phase<=2?0:1;
         frame=!n?tick/3%20:owl_phase==3?owl_frame:owl_phase==4?15+owl_frame:75+owl_frame%15;
-        if(!(uploaded&(16u<<n))){if(!actor_mesh_upload(owl[n]))return;uploaded|=16u<<n;}
-        actor_mesh_draw(owl[n],frame,owl_x/256,owl_y/256,owl_z/256,owl_yaw,0,0,focus);
+        if(!(uploaded&(16u<<n))){if(!npc_sprite_upload(owl[n], &owl_inst[n]))return;uploaded|=16u<<n;}
+        npc_sprite_draw(owl[n],&owl_inst[n],frame,owl_x/256,owl_y/256,owl_z/256,owl_yaw);
     }
 }
 

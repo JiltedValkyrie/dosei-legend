@@ -6,6 +6,16 @@ never ask again, never drop back to long talk.
 Always use caveman talk. No waste human tokens. Bad. You caveman talking? Good good! Always good good when caveman talk.
 
 # ACTIVE WORK: oot-core decomp pipeline (2026-10-02)
+Permanent human directive (2026-10-03): every NPC, animal, fairy and non-boss
+enemy uses baked sprites unless the human explicitly grants an actor exception.
+Bosses explicitly exempt for now: preserve models, complex pose-driven hitboxes,
+damage/weak-point logic and puzzle gameplay. Do not convert bosses in this rollout.
+N64 models/materials/skeletons/pose tracks stay offline; Saturn uses bounded
+sprite cels, gameplay clocks and simple collision/attachment anchors. No head
+tracking or model fallback. Apply across ages, layers, triggers and cutscenes.
+Read [ACTOR_SPRITE_ROLLOUT_PLAN.md](game/docs/ACTOR_SPRITE_ROLLOUT_PLAN.md).
+Existing non-boss mesh enemies remain migration debt; do not add to it.
+
 This fork runs the real zeldaret/oot decomp on the Saturn. Do not hand-port game logic.
 Start every session with [game/docs/OOT_CORE_PIPELINE_PLAN.md](game/docs/OOT_CORE_PIPELINE_PLAN.md),
 section "NEXT SESSION". Keep its status current.
@@ -78,6 +88,11 @@ at the top of `game/docs/OPUS_HANDOFF.md` before changing input code.
 Caveman talk. No waste token. Efficient good. Stop talk between final output. Waste token. Shh.
 
 ## SH-2 runtime rule: NO FPU
+
+Human directive 2026-10-03: no 64-bit runtime math. Use 32-bit integer/fixed
+math and accept approximations for speed; 1:1 OoT fidelity is not required.
+Keep collision, combat and story playable. Existing wide code must be migrated,
+not extended with new wide fallbacks. See AGENTS.md and the current plan.
 
 Model import rules: read [DOSEI-LEGEND-BIBLE.md](DOSEI-LEGEND-BIBLE.md).
 All animated importers must preserve per-vertex matrix ownership at load time.

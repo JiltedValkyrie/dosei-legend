@@ -16,6 +16,7 @@ class StoryRoute(unittest.TestCase):
 #include "actor_sys.h"
 #include "cutscenes.h"
 #include "song_ids.h"
+#include "npc_sprite.h"
 typedef struct {int x,y,z;} camera_position_t;
 typedef struct {int dummy;} actor_mesh_t;
 static actor_mesh_t mesh;
@@ -28,6 +29,9 @@ static struct {bool talking;} gameplay;
 static actor_mesh_t *actor_mesh_load(const char *s){(void)s;return fail_load?0:&mesh;}
 static actor_mesh_t *actor_mesh_load_animated(const char *s){return actor_mesh_load(s);}
 static void actor_mesh_free(actor_mesh_t *m){(void)m;}
+unsigned char *npc_sprite_load(const char *s){return fail_load?0:(unsigned char *)&mesh;}
+static unsigned null_frees;
+static void jo_free(void *m){if(!m)++null_frees;}
 actor_t *actor_resolve(actor_handle_t h){return h && actor.profile?&actor:0;}
 void actor_kill(actor_t *a){if(a)a->profile=0;}
 actor_handle_t actor_handle(const actor_t *a){return a?1:0;}
@@ -53,6 +57,7 @@ void arrive(int spawn,int fail){fail_start=fail;story_route_arrive(spawn);}
 void finish(void){playing=0;story_route_finish();}
 void close_text(void){gameplay.talking=false;}
 void tick(void){clock_tick+=2;story_route_step();}
+unsigned cleanup_errors(void){return null_frees;}
 int value(int n){switch(n){case 0:return cs;case 1:return starts;case 2:return errors;case 3:return gameplay.talking;case 4:return owl_phase;case 5:return song;case 6:return save_state.fairy_ocarina;case 7:return flaps;default:return 0;}}
 '''
   cls.tmp=tempfile.TemporaryDirectory(ignore_cleanup_errors=True);dll=Path(cls.tmp.name)/'story.dll'
@@ -61,6 +66,10 @@ int value(int n){switch(n){case 0:return cs;case 1:return starts;case 2:return e
   cls.lib=ctypes.CDLL(str(dll))
   for name in ('save_get_event_chk_inf','save_get_switch'):getattr(cls.lib,name).restype=ctypes.c_bool
  def setUp(self):self.lib.reset()
+ def tearDown(self):
+  self.lib.story_route_free()
+  self.lib.story_route_free()
+  self.assertEqual(self.lib.cleanup_errors(),0)
  def test_bridge_requires_boss_reward_and_correct_entrance(self):
   g=self.lib;g.load(1,0);g.arrive(9,0);self.assertEqual(g.value(1),0)
   g.save_give_quest_item(18);g.arrive(8,0);self.assertEqual(g.value(1),0)

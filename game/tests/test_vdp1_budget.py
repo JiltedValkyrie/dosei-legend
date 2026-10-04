@@ -20,7 +20,7 @@ class ResidentBudgetTests(unittest.TestCase):
         b.reserve_forest_actors()
         self.assertTrue(any('VDP1 textures' in f for f in b.failures()))
 
-    @unittest.skipUnless((ROOT / 'build/cd/NPC01.BIN').exists(), 'actors not built')
+    @unittest.skipUnless((ROOT / 'build/cd/NPC01.SPR').exists(), 'sprite actors not built')
     def test_staged_forest_includes_props_and_nearby_npcs(self):
         check_forest_budget.check(ROOT)
 

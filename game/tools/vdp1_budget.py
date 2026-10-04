@@ -57,7 +57,7 @@ ALIGN = 8
 # effects too: successful uploads remain resident when the room bank loads.
 # (label, count, width, height, bytes per pixel)
 RUNTIME_SPRITES = (
-    ('fairy glows', 9, 16, 16, 2),  # player, NPC, enemy: three steps each
+    ('fairy wing/glow sprites', 4, 32, 32, 2),  # three shared cels + Navi's recoloured cel
     ('sparkle', 1, 8, 8, 2),
     ('grass', 1, 32, 32, 2),
     ('rupees', 2, 16, 16, 2),
@@ -84,7 +84,7 @@ FOREST_VRAM_MARGIN = 32 * 1024
 FOREST_ACTOR_BYTES = 64 * 1024
 FOREST_ACTOR_SLOTS = 576
 # Live gameplay actors share the same upload bank in these mesh scenes.
-ACTOR_SCENES = ('spot04', 'ydan', 'ydan_boss', 'spot10', 'spot05')
+ACTOR_SCENES = ('spot04', 'ydan', 'ydan_boss', 'spot10', 'spot05', 'spot20')
 
 
 def tile_bytes(width, height):

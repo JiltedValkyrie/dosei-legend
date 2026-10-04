@@ -119,6 +119,9 @@ fi
 if [ -n "${AUTHORED_OBJ:-}" ]; then
     quad_args+=(--skip-scene)
 fi
+# Ranch must reserve the live actor bank before room registration/staging.
+# The generic-scene cache predates NPC support; do not reuse that oversized bake.
+"$python" "$here/tools/build_all_scenes.py" --oot "$oot" --rom-dir "$roms" --only spot20
 "$python" "$here/tools/build_sgl_scene.py" --texture-path "${TEXTURE_PATH:-hybrid}" --oot "$oot" --rom-dir "$roms" "${quad_args[@]}"
 # Overwrite the generated forest with the authored import. Link's tables and
 # vdp1_layout.h come from the run above and are left alone.
@@ -163,6 +166,7 @@ fi
 "$python" "$here/tools/build_actor_model.py" --oot "$oot" --rom-dir "$roms"
 "$python" "$here/tools/build_horse_model.py" --oot "$oot" --rom-dir "$roms" --horse zelda
 "$python" "$here/tools/build_horse_model.py" --oot "$oot" --rom-dir "$roms" --horse ganon
+"$python" "$here/tools/build_npc_sprites.py" --story-only --out "$here/build/cd"
 "$python" "$here/tools/build_cutscene_props.py" --oot "$oot" --rom-dir "$roms"
 cp "$here/build/generated/BRIDGE.BIN" "$here/build/cd/BRIDGE.BIN"
 cp "$here/build/generated/CHAINS.BIN" "$here/build/cd/CHAINS.BIN"
@@ -193,10 +197,10 @@ else
 fi
 cp "$here/build/generated/link_pixels.bin" "$here/build/cd/LINK.TEX"
 cp "$here/build/generated/LINKANIM.BIN" "$here/build/cd/LINKANIM.BIN"
-for rider in GANON ZELDA IMPA HZELDA HGANON; do
-    cp "$here/build/generated/$rider.ANM" "$here/build/cd/$rider.ANM"
-    [ -f "$here/build/generated/$rider.BIN" ] &&         cp "$here/build/generated/$rider.BIN" "$here/build/cd/$rider.BIN"
+for rider in GANON ZELDA IMPA HZELDA HGANON OWLPERCH OWLFLY; do
+    rm -f "$here/build/cd/$rider.ANM" "$here/build/cd/$rider.BIN"
 done
+rm -f "$here"/build/cd/NPC*.BIN "$here"/build/cd/NPC*.ANM "$here"/build/cd/NPC*.TRK "$here"/build/cd/NPC*.SKN
 cp "$here/build/generated/ACTIONS.PCM" "$here/build/cd/ACTIONS.PCM"
 cp "$here/build/generated/OPENING.PCM" "$here/build/cd/OPENING.PCM"
 cp "$here"/build/generated/SFX*.PCM "$here/build/cd/"
@@ -228,9 +232,10 @@ if [ "$oot_core" = 1 ]; then
     "$python" "$here/tools/oot_core_import.py" --oot "$oot"
     # Phase 2 draw shim meshes (K/Q*.MSH) + build/oot-core/generic_meshes.h.
     "$python" "$here/tools/build_core_meshes.py" --oot "$oot" --rom-dir "$roms"
-    # Generic skinned NPC models (N*.BIN/.SKN) + build/oot-core/generic_skins.h.
-    "$python" "$here/tools/build_core_skins.py" --oot "$oot" --rom-dir "$roms"
-    # Decomp NPC sprite sheets (G*.SPR) + build/oot-core/generic_sprites.h.
+    # Sprite NPCs have no runtime skin models or limb draw registry.
+    printf '/* Sprite-only NPCs: no skinned draw entries. */\n { 0xFFFF, 0, 0, 0 },\n' > "$here/build/oot-core/generic_skins.h"
+    rm -f "$here"/build/cd/N????.BIN "$here"/build/cd/N????.SKN
+    # Sprite sheets + symbol manifest; make resolves keys after object linking.
     rm -f "$here"/build/cd/G?????.SPR
     "$python" "$here/tools/build_npc_sprites.py" --oot "$oot" --rom-dir "$roms" --generic-only --out "$here/build/cd"
 else

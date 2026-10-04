@@ -313,6 +313,7 @@ const char         *save_file_status_text(save_file_status status)
         case SAVE_FILE_BAD_MAGIC:       return "NOT A DOSEI SAVE";
         case SAVE_FILE_BAD_VERSION:     return "OLDER SAVE - CANNOT READ";
         case SAVE_FILE_BAD_CHECKSUM:    return "SAVE DAMAGED";
+        case SAVE_FILE_DEVICE_ERROR:    return "BACKUP READ FAILED";
         default:                        return "SAVE UNREADABLE";
     }
 }

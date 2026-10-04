@@ -107,6 +107,8 @@ def main():
     for r in results:
         counts[r['status']] = counts.get(r['status'], 0) + 1
     print('rooms:', counts)
+    if args.only and any(r['prefix'] in args.only and r['status'] == 'blocked' for r in results):
+        raise SystemExit('requested scene bake failed; do not stage stale banks')
 
 
 if __name__ == '__main__':

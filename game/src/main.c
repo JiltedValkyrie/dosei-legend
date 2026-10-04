@@ -188,6 +188,56 @@ int32_t             demo_screen_distance(void)
     return demo_title_is_visible() ? 180 : SCREEN_DISTANCE;
 }
 
+/* Text diagnostics are cold glue, not geometry. Keep their code compact. */
+static void __attribute__((optimize("Os"))) diagnostic_overlay(void)
+{
+    {
+        /* Callback share of frame time: an estimate of master-CPU work,
+         * not total utilization across both SH-2s. Sync includes GPU/VBlank
+         * waiting. Existing smoothed timings keep the display readable. */
+        unsigned int work = frame_timer_frame();
+        unsigned int total = work + frame_timer_cost(FRAME_PHASE_SYNC);
+        unsigned int cpu = total ? work * 100u / total : 0;
+        jo_printf(1, JO_TV_HEIGHT / 8 - 1, "VRAM %3u%%   CPU~ %3u%%   ",
+                  kokiri_scene_vram_percent(), cpu);
+    }
+    /* Last text writer: available on Clean, title, menus and cutscenes too.
+     * demo_clock is normalized to 60 Hz, independent of rendering rate/PAL.
+     * Require release after firing so a long hold cannot toggle repeatedly. */
+    {
+        static unsigned int hold_start;
+        static bool holding, latched, visible;
+        unsigned int now = demo_clock();
+        bool chord = jo_is_pad1_available() &&
+            jo_is_pad1_key_pressed(JO_KEY_L) && jo_is_pad1_key_pressed(JO_KEY_R);
+        if (!chord) holding = latched = false;
+        else if (!holding) { holding = true; hold_start = now; }
+        else if (!latched && now - hold_start >= 60u) {
+            latched = true;
+            visible = !visible;
+            if (!visible) {
+                jo_printf(0, 2, "                                        ");
+                jo_printf(0, 3, "                                        ");
+            }
+        }
+        if (visible) {
+            /* SPCTL/PRISA are write-only. Read this SDK's SGL shadow instead:
+             * slInitScroll copies its register table to GBR+192;
+             * slSpriteColMode accesses SPCTL at GBR+416. These are intended
+             * settings, not proof of the hardware's latched register state. */
+            jo_printf(0, 2, "SGL SP %04X PR %04X END %X ",
+                      *sgl_vdp2_shadow(0xe0),
+                      *sgl_vdp2_shadow(0xf0), JO_VDP1_EDSR);
+            jo_printf(0, 3, "MS %u M%u G%u L%u OC%u         ",
+                      (frame_timer_frame() + frame_timer_cost(FRAME_PHASE_SYNC)) / 1000,
+                      frame_timer_cost(FRAME_PHASE_MOVEMENT) / 1000,
+                      frame_timer_cost(FRAME_PHASE_SCENE) / 1000,
+                      frame_timer_cost(FRAME_PHASE_LINK) / 1000,
+                      oot_core_update_us() / 1000);
+        }
+    }
+}
+
 static void         viewer_draw(void)
 {
     if (!scene_ready)
@@ -515,42 +565,7 @@ static void         viewer_draw(void)
         kokiri_rupee_hud_draw();
         minimap_draw(demo_link.x, demo_link.z, demo_link_yaw);
     }
-    {
-        /* Callback share of frame time: an estimate of master-CPU work,
-         * not total utilization across both SH-2s. Sync includes GPU/VBlank
-         * waiting. Existing smoothed timings keep the display readable. */
-        unsigned int work = frame_timer_frame();
-        unsigned int total = work + frame_timer_cost(FRAME_PHASE_SYNC);
-        unsigned int cpu = total ? work * 100u / total : 0;
-        jo_printf(1, JO_TV_HEIGHT / 8 - 1, "VRAM %3u%%   CPU~ %3u%%   ",
-                  kokiri_scene_vram_percent(), cpu);
-    }
-    /* Last text writer: available on Clean, title, menus and cutscenes too.
-     * demo_clock is normalized to 60 Hz, independent of rendering rate/PAL.
-     * Require release after firing so a long hold cannot toggle repeatedly. */
-    {
-        static unsigned int hold_start;
-        static bool holding, latched, visible;
-        unsigned int now = demo_clock();
-        bool chord = jo_is_pad1_available() &&
-            jo_is_pad1_key_pressed(JO_KEY_L) && jo_is_pad1_key_pressed(JO_KEY_R);
-        if (!chord) holding = latched = false;
-        else if (!holding) { holding = true; hold_start = now; }
-        else if (!latched && now - hold_start >= 60u) {
-            latched = true;
-            visible = !visible;
-            if (!visible) jo_printf(0, 2, "                                        ");
-        }
-        if (visible) {
-            /* SPCTL/PRISA are write-only. Read this SDK's SGL shadow instead:
-             * slInitScroll copies its register table to GBR+192;
-             * slSpriteColMode accesses SPCTL at GBR+416. These are intended
-             * settings, not proof of the hardware's latched register state. */
-            jo_printf(0, 2, "SGL SP %04X PR %04X END %X ",
-                      *sgl_vdp2_shadow(0xe0),
-                      *sgl_vdp2_shadow(0xf0), JO_VDP1_EDSR);
-        }
-    }
+    diagnostic_overlay();
     frame_timer_frame_end();
     frame_timer_begin(FRAME_PHASE_SYNC);
 }
@@ -1126,8 +1141,8 @@ static void __attribute__((optimize("Os"))) inventory_menu(void)
     if (gameplay.pause_window.save_prompt) {
         pause_windows_printf(6,20,"%-28s",save_scene_name(save_state.scene_id));
         int report = demo_save_report();
-        pause_windows_printf(10, 22, "%-24s", !save_device_ready() ? "NO BACKUP RAM" :
-            report < 0 ? "" : report ? "SAVED" : "SAVE FAILED");
+        pause_windows_printf(6, 22, "%-28s", !save_device_ready() ? save_device_error() :
+            report < 0 ? "" : report ? "SAVED" : save_device_error());
     }
 
 }
@@ -1484,7 +1499,7 @@ static void __attribute__((optimize("Os"))) file_select_screen(void)
               file_select.device_failed ? "CANNOT USE THAT FILE          "
                                         : "                              ");
     if (!save_device_ready())
-        jo_printf(2, (int)row + 3, "NO BACKUP MEMORY: CANNOT SAVE");
+        jo_printf(2, (int)row + 3, "%-32s", save_device_error());
 }
 
 /* Boot setup is cold; retain the full heap and SGL pools. */

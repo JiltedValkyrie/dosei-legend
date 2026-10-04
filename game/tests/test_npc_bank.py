@@ -25,8 +25,26 @@ class NpcBank(unittest.TestCase):
 #define RAM_CART_CURSOR_OFFSET 0
 #define RAM_CART_CURSOR_BYTES 0
 #define KOKIRI_TILE_NONE (~0u)
+#define NPC_SPRITE_SLOT_NONE UINT16_MAX
+#define KOKIRI_NPC_COUNT 2
+#define NAVI_NPC_COUNT 2
+#define NPC_SHOPKEEPER 15
 static unsigned uploaded=~0u, bank_generation, resets, failed=1;
-static void *models[19], *counter, *shelves, *shop_items[7];
+static void *counter, *shelves, *shop_items[7];
+static bool navi_cast=true;
+static const struct { unsigned model; } navi_npcs[2]={{2},{1}};
+static const struct { unsigned scene; } kokiri_npcs[2]={{99},{99}};
+static struct { unsigned scene_id; } save_state={7};
+static unsigned char sheets[2], *spr[19]={[1]=sheets,[2]=sheets+1};
+static struct { uint16_t slot; } spr_inst[3];
+static unsigned sprite_uploads, sprite_fail;
+static unsigned model_for(unsigned i) { return i; }
+static int npc_sprite_upload(unsigned char *s, void *instance) {
+ unsigned i=(unsigned)(((char*)instance-(char*)spr_inst)/sizeof(spr_inst[0]));
+ if (s!=spr[navi_npcs[i].model]) return false;
+ ++sprite_uploads; spr_inst[i].slot=i;
+ return !sprite_fail;
+}
 static bool shop_cursor_ready, shop_cursor_loaded;
 static uint16_t shop_cursor_slot[4];
 void kokiri_actor_tiles_reset(void) { ++resets; }
@@ -40,11 +58,18 @@ bool world_props_draw_upload(void) { return !failed; }
 bool interior_mask_upload(void) { return true; }
 ''' + function + r'''
 int run(void) {
- if(upload_visible(2,1) || resets!=1) return 1;
+ if(upload_visible(6,1) || resets!=1 || sprite_uploads!=2) return 1;
  failed=0;
- if(!upload_visible(2,1) || resets!=2) return 2;
- if(!upload_visible(2,1) || resets!=2) return 3;
- if(!upload_visible(2,2) || resets!=3) return 4;
+ if(!upload_visible(6,1) || resets!=2 || sprite_uploads!=4) return 2;
+ if(!upload_visible(6,1) || resets!=2 || sprite_uploads!=4) return 3;
+ for(unsigned mask=0;mask<100;++mask)
+   if(!upload_visible(mask,1) || resets!=2 || sprite_uploads!=4) return 8;
+ if(!upload_visible(6,2) || resets!=3) return 4;
+ if(spr_inst[2].slot!=NPC_SPRITE_SLOT_NONE) return 5;
+ sprite_fail=1;
+ if(upload_visible(6,3)) return 6;
+ sprite_fail=0;
+ if(!upload_visible(6,3) || resets!=5) return 7;
  return 0;
 }
 '''

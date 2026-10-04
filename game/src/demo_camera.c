@@ -14,7 +14,14 @@ void kokiri_camera_sincos(uint16_t yaw, int32_t *sine, int32_t *cosine)
  * forward is (sin,cos), so the heading is atan2(dx, dz). */
 uint16_t kokiri_camera_facing(int32_t dx, int32_t dz)
 {
-    return (uint16_t)slAtan(toFIXED(dz), toFIXED(dx));
+    /* toFIXED(variable) uses software double on SH-2. Scale large deltas
+     * together before the integer Q16 conversion so neither component wraps
+     * or changes quadrant. Keep the original conversion exact in its range. */
+    while (dx < -32768 || dx > 32767 || dz < -32768 || dz > 32767) {
+        dx /= 2;
+        dz /= 2;
+    }
+    return (uint16_t)slAtan(dz * 65536, dx * 65536);
 }
 
 /* gameplay.c is platform free, so the Saturn build supplies its heading helper

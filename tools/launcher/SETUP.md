@@ -26,6 +26,15 @@ Mednafen has no menu: double-click `mednafen.exe` alone just quits. Launcher pas
 Put your BIOS in `<mednafen>/firmware/`: `sega_101.bin` (JP 1.01) and
 `mpr-17933.bin` (US/EU 1.00). Tab shows OK/MISSING. In Mednafen: Esc quit,
 Alt+Enter fullscreen, Alt+Shift+1 map pad 1.
+
+Adventure saves survive disc rebuilds: the launcher preserves an existing
+hash-named internal backup as `sav/game-clean.bkr` (or the selected variant's
+base name). Mednafen's default `%f.%M%x` lookup uses this unhashed file first.
+The newest backup with an active DOSEI slot wins over newer empty backups.
+Existing stable files and all original hash-named backups are kept unchanged.
+Custom save naming is respected. This does not transfer emulator save states.
+See [Mednafen's filename rules](https://mednafen.github.io/documentation/fname_format.txt).
+
 | zeldaret/oot checkout | The repository root described below, not its `src` or `baseroms` directory. |
 | US 1.2 ROM directory | Folder containing your original US NTSC 1.2 `.z64`. Blank means `<oot checkout>/baseroms/ntsc-1.2`. |
 

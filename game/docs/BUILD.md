@@ -203,7 +203,22 @@ sudo apt-get install -y python3-pil genisoimage   # Pillow + mkisofs
 43. **SGL `sprHflip` is broken** (SL_DEF.H: `UseTexture << PDATA16`, undeclared). Use
     `(1 << 4) | sprNoflip` for a horizontally flipped sprite.
 
+44. **Inspect the matching variant's binary.** After `--clean`, disassemble
+    `build/game-clean.elf`, not `build/game.elf` (the latter can be a stale
+    developer build). Despite the suffix, the main image is COFF SH:
+    Windows sh2eb-elf tools need nm `--target=coff-sh`, objdump `-b coff-sh`;
+    COFF C symbols have a leading underscore. OOTCORE is real ELF. Check the
+    current build log's .bss boundary against the binary's `__bend` before
+    attributing symbol/helper changes to a fix.
+
 ## Playtest package
+
+Mednafen development saves: disc rebuilds can change its save hash. The launcher
+now preserves the newest active DOSEI backup under the variant's unhashed `.bkr`
+name before launching, using the default `%M` lookup fallback. Never delete old
+hashed backups to "fix" an empty file select. See `tools/launcher/mednafen-saves.ps1`.
+The project-local `backup.o` now uses `src/backup_low.c`: low-RAM code/work areas
+are reserved in `ram_low.h`; Sega STN-52 requires 8,312 work bytes, not 8,192.
 
 Build Clean, then run `tools/package_playtest.sh` in WSL with `OOT_SAT_REV` set.
 Output goes to `playtest/` (gitignored). The package holds the disc (cue, iso and CD
@@ -213,6 +228,23 @@ BIOS. Agents build; the human launches
     Kronos/Saroo.
 
 ## oot-core specifics
+
+- Sprite keys must come from the freshly linked object symbols, not N64 ROM
+  offsets. `build_npc_sprites.py` emits `generic_sprites.json`; the make rule
+  resolves `generic_sprites.h` after `obj_syms.ld` and rebuilds the host consumer.
+  Object compaction otherwise makes loaded NPCs invisible (Malon: ROM 0x820,
+  previously linked 0xBD8). Current compact sprite objects keep frame counts only.
+- Full builds rebake `spot20` before registering/staging rooms. Old all-scenes
+  caches reserved no Ranch actor bank and spent that space on terrain. Count
+  64 KiB actor reserve and 32 KiB spare in both density passes and final checks.
+- `build_fairy.py` owns all 32x32 wing/glow cels. `build_demo_assets.py` delegates
+  to it; do not overwrite FAIRY.RGB with the old 16x16 helper. Runtime no longer
+  consumes FAIRY.BIN. Character offline models remain in generated/cache folders;
+  converted NPC/rider/owl BIN/ANM/TRK/SKN files must not be staged on the disc.
+- Do not edit a shell build script while its process is running: Bash can read
+  subsequent blocks at obsolete file offsets and report misleading syntax errors.
+  Finish script edits before starting the build; restart from the saved script
+  if this occurs. `bash -n build.sh` validates the file itself.
 
 - `tools/oot_core_import.py` regenerates `build/oot-core/decomp/` (run by `build.sh` when
   `OOT_CORE=1`). Report: `build/oot-core/import_report.txt`.

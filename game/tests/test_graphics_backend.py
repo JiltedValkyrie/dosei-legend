@@ -129,6 +129,8 @@ int main(void) {
 #define VRAM_UNITS(x) ((x)>>3)
 #define TEXTURE_CAPACITY 32768
 #define GAME_TEXTURE_BYTES TEXTURE_CAPACITY
+#define ECdis 0x80u
+#define SPdis 0x40u
 static unsigned char raw_vram[65536];
 #define JO_VDP1_VRAM ((uintptr_t)raw_vram)
 typedef struct { unsigned short width,height; unsigned offset,length; } kokiri_tile;
@@ -177,6 +179,7 @@ int main(void) {
             assert(__jo_sprite_def[i+1].adr*8==texture_base+start+tiles[i].offset);
         }
         assert(attrs[2].colno==0xabcd);
+        assert(attrs[2].atrb==(ECdis|SPdis));
         assert(!(vram_used&31) && !errors);
         assert(forest_palette==raw_vram+(attrs[0].colno<<3));
     }

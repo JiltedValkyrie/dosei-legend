@@ -7,6 +7,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'project-config.ps1')
+. (Join-Path $PSScriptRoot 'mednafen-saves.ps1')
 $project = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../..'))
 $variants = @(
     [pscustomobject]@{ Id='clean'; Name='Play Dosei Legend (Standard)'; Image='game/build/game-clean.cue'; Batch='game/run-kronos-clean.bat'; Note='Play at 320x240 without the in-game debug overlay.' },
@@ -70,6 +71,7 @@ function Start-Variant($entry) {
         if (Get-Process -Name mednafen -ErrorAction SilentlyContinue) {
             throw 'Mednafen is already running. Close it before starting another variant.'
         }
+        Initialize-MednafenSaves -Executable $paths.mednafen -Image (Get-ImagePath $entry)
         # Mednafen has no GUI: the CUE is the last argument. Command-line
         # settings override mednafen.cfg for this run only.
         $medArgs = @('-ss.cart', $emu.cart, '-video.fs', $emu.fullscreen)

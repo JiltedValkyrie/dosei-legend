@@ -57,7 +57,8 @@ typedef enum
     SAVE_FILE_BAD_MAGIC,        /* not one of ours */
     SAVE_FILE_BAD_VERSION,      /* ours, but a layout we no longer read */
     SAVE_FILE_BAD_CHECKSUM,     /* ours and current, but corrupt */
-    SAVE_FILE_BAD_SIZE
+    SAVE_FILE_BAD_SIZE,
+    SAVE_FILE_DEVICE_ERROR      /* read failed; never offer to overwrite as NEW FILE */
 }               save_file_status;
 
 /* What the file select needs to draw one slot without loading it. */

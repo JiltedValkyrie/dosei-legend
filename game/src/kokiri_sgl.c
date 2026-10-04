@@ -29,6 +29,7 @@
 #include "link_scene.h"
 #include "link_clips.h"
 #include "kokiri_sgl.h"
+#include "npc_sprite.h"
 #include "minimap.h"
 #include "vdp1_layout.h"
 static unsigned int texture_base = GAME_TEXTURE_BASE;
@@ -208,16 +209,10 @@ static unsigned char forest_face_flags(unsigned int i)
 #define RETICLE_SIZE         16
 #define RETICLE_PIXEL_BYTES  (RETICLE_SIZE * RETICLE_SIZE * 2)
 #define MENU_PIXEL_BYTES    (MENU_TEX_SIZE * MENU_TEX_SIZE * 2)
-#define FAIRY_WIDTH         16
-#define FAIRY_HEIGHT        16
+#define FAIRY_WIDTH         32
+#define FAIRY_HEIGHT        32
 #define FAIRY_PIXEL_BYTES   (FAIRY_WIDTH * FAIRY_HEIGHT * 2)
 #define FAIRY_COLMODE_RGB   5
-/* En_Elf wings (tools/build_fairy.py): gFairyAnim's 10 frames of the four
-** gFairyWing quads, posed offline, 16 POINTs a frame, in the cart. Flat
-** 210,210,255 with MESHon: the dither hid the N64 wing texture anyway. */
-#define FAIRY_FRAMES        10
-#define FAIRY_MESH_FILE     "FAIRY.BIN"
-#define FAIRY_MESH_BYTES    (FAIRY_FRAMES * 16 * 12)
 /* gGlowCircleSmallDL: +-500 x 0.012 = 12 world units over the 16 texels.
 ** Three steps of its L -> SL cross-fade (FAIRY, FAIRYM, FAIRYS). */
 #define FAIRY_GLOW_SCALE    49152
@@ -231,23 +226,13 @@ static unsigned int  kokiri_rejected;
 static unsigned int  kokiri_accepted_mask;
 static unsigned int  submitted;
 static unsigned int  fairy_sprite, fairy_glow[FAIRY_GLOW_STEPS], sparkle_sprite;
-/* Navi's own glow slot (512 B VRAM), refilled from the cart copy of all
+/* Navi's own wing/glow slot (2048 B VRAM), refilled from the cart copy of all
 ** nine glows (player / NPC / enemy x 3 breath steps) when her colour or
 ** breath step changes. Not fatal: without it she shares fairy_glow. */
 static unsigned int  navi_glow_slot;
 static unsigned char *navi_glow_pixels;     /* cart, [3][3][512] */
 static unsigned int  navi_glow_shown = ~0u; /* set * 3 + step in the slot */
 static bool          sparkle_ready;
-static bool          fairy_wings_ready;
-static POLYGON       fairy_faces[4] = {
-    {{0, 0, 65536}, {0, 1, 2, 3}}, {{0, 0, 65536}, {4, 5, 6, 7}},
-    {{0, 0, 65536}, {8, 9, 10, 11}}, {{0, 0, 65536}, {12, 13, 14, 15}},
-};
-#define FAIRY_WING_ATTR ATTRIBUTE(Dual_Plane, SORT_CEN | UseNearClip, 0, C_RGB(26, 26, 31), \
-                                  No_Gouraud, CL32KRGB | MESHon | ECdis, sprPolygon, No_Option)
-static ATTR          fairy_attrs[4] = {FAIRY_WING_ATTR, FAIRY_WING_ATTR,
-                                       FAIRY_WING_ATTR, FAIRY_WING_ATTR};
-static PDATA         fairy_meshes[FAIRY_FRAMES];
 static unsigned int  grass_sprite;
 static unsigned int  rupee_sprite[3], digit_sprite[10];
 static unsigned int  drop_sprite[4];
@@ -382,7 +367,12 @@ static bool __attribute__((optimize("Os"))) mesh_load(const char *file, unsigned
     for (i = 0; i < polygons; ++i)
     {
         ATTR            *attr = &pdata->attbl[i];
-        if ((attr->dir & 7) == 4) continue; /* Flat face has no tile or CLUT. */
+        if ((attr->dir & 7) >= 4) {
+            /* Normalize once at load, not by scanning every room/Link face
+             * again on each draw. Flat faces have no tile or CLUT. */
+            attr->atrb = (attr->atrb & ~0x38u) | ECdis | SPdis;
+            continue;
+        }
         unsigned int     tile = attr->texno;
         unsigned int     clut = (unsigned int)(clut_vram + tile * 32);
 
@@ -463,15 +453,15 @@ static bool sprite_load(const char *file, unsigned int *slot,
 
 static bool         billboard_load(const char *file, unsigned int *slot)
 {
-    return sprite_load(file, slot, FAIRY_WIDTH, FAIRY_PIXEL_BYTES);
+    return sprite_load(file, slot, 16, 512);
 }
 
 static bool __attribute__((optimize("Os"))) fairy_load(void)
 {
     unsigned int i;
-    if (!billboard_load(FAIRY_PIXEL_FILE, &fairy_sprite) ||
-        !billboard_load("FAIRYM.RGB", &fairy_glow[1]) ||
-        !billboard_load("FAIRYS.RGB", &fairy_glow[2]))
+    if (!sprite_load(FAIRY_PIXEL_FILE, &fairy_sprite, FAIRY_WIDTH, FAIRY_PIXEL_BYTES) ||
+        !sprite_load("FAIRYM.RGB", &fairy_glow[1], FAIRY_WIDTH, FAIRY_PIXEL_BYTES) ||
+        !sprite_load("FAIRYS.RGB", &fairy_glow[2], FAIRY_WIDTH, FAIRY_PIXEL_BYTES))
         return false;
     fairy_glow[0] = fairy_sprite;
     {
@@ -481,7 +471,7 @@ static bool __attribute__((optimize("Os"))) fairy_load(void)
             "FAIRYE0.RGB", "FAIRYE1.RGB", "FAIRYE2.RGB" };
         unsigned char *cart = (unsigned char *)ram_cart_fixed(RAM_CART_NAVIGLOW_OFFSET,
                                                               9u * FAIRY_PIXEL_BYTES);
-        bool ok = cart && billboard_load(FAIRY_PIXEL_FILE, &navi_glow_slot);
+        bool ok = cart && sprite_load(FAIRY_PIXEL_FILE, &navi_glow_slot, FAIRY_WIDTH, FAIRY_PIXEL_BYTES);
         for (i = 0; ok && i < 9; ++i) {
             int length = 0;
             ok = jo_fs_read_file_ptr(names[i], cart + i * FAIRY_PIXEL_BYTES, &length) &&
@@ -492,24 +482,6 @@ static bool __attribute__((optimize("Os"))) fairy_load(void)
     }
     /* Not fatal either: no sparkles is only a missing effect. */
     sparkle_ready = sprite_load_rect("SPARKLE.RGB", &sparkle_sprite, 8, 8, 8 * 8 * 2);
-    /* The wings are not fatal: without them the glow still draws. */
-    {
-        unsigned char *mesh = (unsigned char *)ram_cart_fixed(RAM_CART_FAIRY_OFFSET,
-                                                              RAM_CART_FAIRY_BYTES);
-        int length = 0;
-        fairy_wings_ready = mesh &&
-            jo_fs_read_file_ptr(FAIRY_MESH_FILE, mesh, &length) &&
-            length == FAIRY_MESH_BYTES;
-        if (fairy_wings_ready) {
-            for (i = 0; i < FAIRY_FRAMES; ++i) {
-                fairy_meshes[i].pntbl = (POINT *)(mesh + i * 16 * 12);
-                fairy_meshes[i].nbPoint = 16;
-                fairy_meshes[i].pltbl = fairy_faces;
-                fairy_meshes[i].nbPolygon = 4;
-                fairy_meshes[i].attbl = fairy_attrs;
-            }
-        }
-    }
     if (!sprite_load("GRASS.RGB", &grass_sprite, 32, 32 * 32 * 2))
         return false;
     if (!billboard_load("RUPEEG.RGB", &rupee_sprite[0]) ||
@@ -1373,6 +1345,9 @@ static void         submit(PDATA *pdata, unsigned int bit)
     /* CMDPMOD colour mode describes texture fetches. Sega requires mode 0
      * for polygons/lines, even when CMDCOLR holds RGB555. Old backend assets
      * incorrectly used texture mode 5 for their untextured RGB faces. */
+    /* Resident Link and scene banks were normalized during mesh_load. Other
+     * callers can supply transient/native attributes, so retain their guard. */
+    if (bit != 1u && bit != 2u)
     for (i=0;i<(unsigned)pdata->nbPolygon;++i)
         if ((pdata->attbl[i].dir & 7) >= 4)
             pdata->attbl[i].atrb = (pdata->attbl[i].atrb & ~0x38u) | ECdis | SPdis;
@@ -1410,8 +1385,8 @@ static void invalidate_equipped(void) { equipped_mask = 255; }
 static void link_part(unsigned int first, unsigned int count)
 {
     static const ATTR tunics[2]={
-        ATTRIBUTE(Dual_Plane,SORT_CEN|UseNearClip,0,C_RGB(0,0,31),No_Gouraud,CL32KRGB|ECdis,sprPolygon,No_Option),
-        ATTRIBUTE(Dual_Plane,SORT_CEN|UseNearClip,0,C_RGB(25,0,0),No_Gouraud,CL32KRGB|ECdis,sprPolygon,No_Option)};
+        ATTRIBUTE(Dual_Plane,SORT_CEN|UseNearClip,0,C_RGB(0,0,31),No_Gouraud,ECdis,sprPolygon,No_Option),
+        ATTRIBUTE(Dual_Plane,SORT_CEN|UseNearClip,0,C_RGB(25,0,0),No_Gouraud,ECdis,sprPolygon,No_Option)};
     unsigned int i;
     for (i = 0; i < count; ++i) {
         equipped_polygons[equipped_count] = link_pdata.pltbl[first+i];
@@ -1628,11 +1603,11 @@ void                kokiri_scene_draw(void)
                 if ((int64_t)dx * dx + (int64_t)dz * dz > 1310 * 1310 ||
                     nearest >= FOREST_FOG_END) {
                     attr->dir = (attr->dir & ~7u) | 4;
-                    attr->atrb = (attr->atrb & ~0x38u) | CL32KRGB;
+                    attr->atrb = (attr->atrb & ~0x38u) | ECdis | SPdis;
                     attr->colno = C_RGB(27, 27, 19);
                 } else {
                     attr->dir = (attr->dir & ~7u) | 2;
-                    attr->atrb = (attr->atrb & ~0x38u) | (1 << 3);
+                    attr->atrb = (attr->atrb & ~0x78u) | CL16Look;
                     attr->colno = (unsigned short)VRAM_UNITS(
                         (unsigned int)(forest_palette + tile * 32) - JO_VDP1_VRAM);
                 }
@@ -1883,44 +1858,31 @@ void                kokiri_link_draw_first_person(int x, int y, int z, int yaw, 
  * still mark each home until the NPC models land. */
 static int          fairy_wave(unsigned int angle, int amplitude)
 {
-    return (int)(((int64_t)slSin((ANGLE)angle) * amplitude) >> 16);
+    return (slSin((ANGLE)angle) * amplitude) / 65536;
 }
 
-static void         fairy_draw(int x, int y, int z, uint16_t yaw, unsigned int tick,
+static void         fairy_draw(int x, int y, int z, unsigned int tick,
                                unsigned int phase, const unsigned int *glow,
                                unsigned int colour);
-static uint16_t     fairy_turn(uint16_t yaw, int32_t *last_x, int32_t *last_z,
-                               int32_t x, int32_t z);
-static uint16_t     fairy_yaw[KOKIRI_NPC_COUNT];
-static int32_t      fairy_last[KOKIRI_NPC_COUNT][2];
-
 void                kokiri_fairies_draw(unsigned int tick)
 {
     unsigned int i;
-    if (!gameplay_npcs_present())
-        return;
     for (i = 0; i < KOKIRI_NPC_COUNT; ++i) {
         unsigned int angle = tick * (97 + i * 3) + i * 6011;
-        if (!gameplay_npc_present(i))
-            continue;
-        int x = (int)gameplay_npc_x(i) + fairy_wave(angle, 18);
-        int y = kokiri_npcs[i].y + 58 + fairy_wave(angle * 2 + 9000, 9);
-        int z = (int)gameplay_npc_z(i) + fairy_wave(angle + 16384, 14);
-        int32_t sine, cosine;
-        kokiri_camera_sincos(demo_yaw, &sine, &cosine);
-        if ((((int64_t)(x - demo_camera.x) * sine +
-              (int64_t)(z - demo_camera.z) * cosine) >> 16) > FOREST_FAR)
-            continue;
-
-        fairy_yaw[i] = fairy_turn(fairy_yaw[i], &fairy_last[i][0], &fairy_last[i][1], x, z);
-        fairy_draw(x, y, z, fairy_yaw[i], tick, i * 3u, fairy_glow, 0);
+        int x, y, z;
+        if (!gameplay_npc_present(i)) continue;
+        x = gameplay_npc_x(i); y = gameplay_npc_y(i) + 58; z = gameplay_npc_z(i);
+        /* Reject before orbit trig, sprite setup or cart reads. */
+        if (!npc_sprite_in_view(x, y, z, 32)) continue;
+        x += fairy_wave(angle, 18);
+        y += fairy_wave(angle * 2 + 9000, 9);
+        z += fairy_wave(angle + 16384, 14);
+        fairy_draw(x, y, z, tick, i * 3u, fairy_glow, 0);
     }
 }
 
-/* One En_Elf: the posed wings in 3D (gFairyAnim frame, one a 30 Hz step)
-** turned to its heading, then the glow billboard, pulsed as
-** EnElf_OverrideLimbDraw: scale (sin(timer * 0x1000) * 0.1 + 1). */
-static void         fairy_draw(int x, int y, int z, uint16_t yaw, unsigned int tick,
+/* One En_Elf is one textured wing/glow sprite. No wing mesh or travel yaw. */
+static void         fairy_draw(int x, int y, int z, unsigned int tick,
                                unsigned int phase, const unsigned int *glow,
                                unsigned int colour)
 {
@@ -1928,13 +1890,6 @@ static void         fairy_draw(int x, int y, int z, uint16_t yaw, unsigned int t
     SPR_ATTR attr = SPR_ATTRIBUTE(0, No_Palet, No_Gouraud, ECdis,
                                   sprNoflip | FUNC_Sprite);
     unsigned int step = tick / 2u + phase;
-    if (fairy_wings_ready) {
-        jo_3d_push_matrix();
-        jo_3d_translate_matrix(x, -y, z);
-        slRotY((ANGLE)yaw);
-        kokiri_submit_pdata(&fairy_meshes[step % FAIRY_FRAMES]);
-        jo_3d_pop_matrix();
-    }
     pos[0] = x * 65536;
     pos[1] = -y * 65536;
     pos[2] = z * 65536;
@@ -1965,36 +1920,14 @@ static void         fairy_draw(int x, int y, int z, uint16_t yaw, unsigned int t
     if (slPutSprite(pos, &attr, 0) == FALSE) ++kokiri_rejected;
 }
 
-/* EnElf shape.rot.y: Math_SmoothStepToS toward the travel heading (scale 5,
-** max 0x1000 a frame; 0x400 floor). Heading from the position change. */
-static uint16_t     fairy_turn(uint16_t yaw, int32_t *last_x, int32_t *last_z,
-                               int32_t x, int32_t z)
-{
-    int32_t dx = x - *last_x, dz = z - *last_z, turn, step;
-    *last_x = x;
-    *last_z = z;
-    if (dx * dx + dz * dz < 1)
-        return yaw;
-    turn = (int32_t)(int16_t)(uint16_t)(kokiri_camera_facing(dx, dz) - yaw);
-    step = turn / 5;
-    if (step > 0x1000) step = 0x1000;
-    if (step < -0x1000) step = -0x1000;
-    if (step > -0x400 && step < 0x400)
-        step = turn > 0x400 ? 0x400 : turn < -0x400 ? -0x400 : turn;
-    return (uint16_t)(yaw + step);
-}
-
 /* Navi in gameplay. Her position is En_Elf's, stepped in src/navi.c. */
 void                kokiri_navi_draw(int x, int y, int z)
 {
-    static int32_t last_x, last_z;
-    static uint16_t yaw;
     unsigned int i;
     unsigned int colour = navi_colour();     /* attention_colour_t */
-    yaw = fairy_turn(yaw, &last_x, &last_z, x, z);
     /* NPC 1, ENEMY 2; PLAYER and OTHER (green, no set yet) draw white/blue. */
     if (colour > 2u) colour = 0;
-    fairy_draw(x, y, z, yaw, demo_world_clock(), 0,
+    fairy_draw(x, y, z, demo_world_clock(), 0,
                navi_glow_pixels ? (const unsigned int *)0 : fairy_glow, colour);
     /* EffectSsKiraKira: a 28-unit quad x scale 1000 / 10000 = 2.8 units
     ** over 8 texels, billboarded and turned by its yaw. */
@@ -2055,7 +1988,7 @@ void kokiri_drop_draw(unsigned int item, int x, int y, int z, unsigned int tick)
 {
     unsigned int sprite;
     if (item == 254) {
-        fairy_draw(x, y + 15, z, 0, tick, 0, fairy_glow, 0);
+        fairy_draw(x, y + 15, z, tick, 0, fairy_glow, 0);
         return;
     }
     if (item <= 2) sprite = rupee_sprite[item];
@@ -2683,16 +2616,11 @@ void kokiri_cutscene_effects_draw(void)
     unsigned int i, count = cutscene_rain_count();
     if (cutscene_hides_scene()) return;
     if (cutscene_actor_channel_visible(8)) {
-        /* Keep the scripted position, but use the same wings, world scale
-         * and breathing glow as gameplay Navi instead of the old bare orb.
-         * Opening cues always use her neutral colour, not a stale lock tint. */
-        static uint16_t yaw;
-        static int32_t last_x, last_z;
+        /* Scripted flight uses the same sprite as gameplay Navi. */
         int x = cutscene_actor_channel_x(8);
         int y = cutscene_actor_channel_y(8);
         int z = cutscene_actor_channel_z(8);
-        yaw = fairy_turn(yaw, &last_x, &last_z, x, z);
-        fairy_draw(x, y, z, yaw, demo_clock(), 0, fairy_glow, 0);
+            fairy_draw(x, y, z, demo_clock(), 0, fairy_glow, 0);
     }
     if (count) {
         /* Original raindrop triangle (gameplay_keep/gRaindropVtx), scaled

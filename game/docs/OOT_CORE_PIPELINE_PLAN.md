@@ -1,13 +1,342 @@
 # Plan: bulk decomp pipeline ("oot-core" on Saturn)
 
-## Current Mednafen repair handoff (Astra, 2026-10-03)
+## Current handoff (2026-10-03)
 
-Latest human: palette repair checks out in Mednafen; graphics accepted. Next work
-is missing Lon Lon Ranch NPC sprites and high CPU/slow gameplay versus Kronos.
-Human requests commit and push of this repair checkpoint before sprite/CPU changes.
+**Latest runtime report:** repeated `dosei_allocator_free(): Null pointer` at
+startup/zone changes, about six dismissals; one Ranch NPC visible; generic doors
+still unwired. Confirmed source regression: story_route_free directly frees six
+optional sprite pointers without guards. SDK rejects NULL; host stubs incorrectly
+accepted it. Now repaired in story_route_free, emerald_story_free and
+cutscene_actors_free: guard optional pointers, then clear ownership. Eleven
+focused host checks pass, including 256 allocation combinations and repeated
+cleanup. WSL Clean rebuild passes (`build/null-free-fix-build.log`); usual image,
+.bss end 0x06081DE0 / 8,736 B spare. Runtime confirmation pending.
+`build_room_scene.transitions` explicitly skips unsupported
+generic doors. Follow [NEXT_CHAT_WORLD_COMPLETION.md](NEXT_CHAT_WORLD_COMPLETION.md):
+P0 cleanup repaired (runtime pending), P1 full door/entrance connectivity, P2 all NPCs/animals and actual
+source-driven dialogue across maps/eras/layers/triggers. Prior build success
+does not supersede these human failures.
+
+Current permanent rule: all NPCs, animals, fairies and non-boss enemies use baked
+sprites. Bosses explicitly exempt for now: preserve their models and complex
+damage/puzzle hitboxes. Link remains separate. See
+[ACTOR_SPRITE_ROLLOUT_PLAN.md](ACTOR_SPRITE_ROLLOUT_PLAN.md) for all scenes,
+child/adult eras, layers, triggers, spawn chains and verification gates.
+
+Latest uncommitted batch is implemented and Clean target-built:
+
+- Ranch sprite lookup used ROM offsets against relinked compact objects. New
+  `generic_sprites.json` names clips; make resolves `generic_sprites.h` from the
+  freshly linked `obj_syms.ld`. Missing names fail the build. Current clips load
+  first; absent optional clips retain a compatible sprite. No 3D fallback.
+- Sprite object data keeps AnimationHeader lengths only; pose/joint/skeleton
+  arrays become unused identity placeholders. Ingo blob 1,720 B; child Malon
+  680 B. No runtime skin registry or staged N????.BIN/.SKN for this cast.
+- Ranch bake now reserves 64 KiB actors and 32 KiB spare. Pixels 341,568 ->
+  272,448 B, saving 67.5 KiB; textures + palettes 295,776 B. Full builds rebake
+  Ranch before scene registration, so old generic room caches cannot bypass it.
+- Fairies use textured wing/glow cels, one sprite per fairy; FAIRY.BIN and wing
+  geometry/travel-yaw work removed. Four resident 32x32 RGB slots, nine source
+  cels in the former unused cart gap; no image generation or drawn replacement
+  wing art. Shared 32-bit view test rejects hidden sprites before uploads.
+- NPC visibility no longer resets all actor/prop textures. Slots survive until
+  room generation/reload; current forest all-placement bound 55,424 B/253 slots.
+- Nightmare riders/horses, Saria bridge, owl and story Ganon/horse use SPR;
+  staged character BIN/ANM/TRK/SKN removed. Bridge/static props stay geometry.
+  Original models still exist only as offline bake sources for these characters.
+- 36 focused host checks pass. WSL Clean passes (`build/ranch-sprite-build.log`);
+  usual image rebuilt, .bss end 0x06081DC0 / 8,768 B margin. New cull target
+  disassembly uses 32-bit instructions/helpers. No emulator launched; appearance,
+  save/reload, conversations and measured FPS remain human-unaccepted.
+
+Next: keep the ready-scene gates, build the full coverage ledger, import Ranch
+gameplay horses (still absent), implement deferred dynamic same-room sprite
+discovery, and convert remaining non-boss actors. Existing core wide math,
+scene vertex work and prop matrix reconstruction remain CPU migration work.
+The old N64-address bug and missing actor reservation are proven code defects;
+the user-reported full performance problem is not claimed resolved.
+
+## Prior Mednafen repair checkpoint (Astra, 2026-10-03)
+
+Latest human: sprite NPCs must do no skeleton/head work, fairy flyby still used
+models, and saving fails in Mednafen. Palette repair is human-accepted; overall
+CPU/VDP1 performance and the new sprite/save fixes still need runtime acceptance.
+Human requested commit/push before sprite/CPU changes: completed as **11312ec**
+on origin/oot-core. The subsequent Ranch/CPU changes below remain uncommitted.
 Keep batched work and no intermediate human-test asks. Decomp retains the Saturn backend.
 
-Latest palette repair built in usual game-clean.cue/.iso; log
+### Sprite-only NPC and Mednafen save batch (2026-10-03)
+
+Implemented, uncommitted:
+
+- `npc_draw.c`: removed C NPC models/skins, joint matrices, head/torso tracking,
+  Saria greeting model exception, and missing-sheet 3D fallback. Fairy flyby
+  loads SPR sheets and uploads the authored Navi cast independently of Link's
+  save scene. Shopkeeper also loads only a sprite. Saria cue motion/talk keeps
+  running with the idle sheet (wave/run poses intentionally approximate).
+- Importer + `sprite_actor.h`/`bridge_npc.cpp`: current generic NPCs initialize
+  only clip metadata; no skeleton header read, joint/morph allocation or frame
+  pose decoding. A 32-bit Q8 clock preserves clip completion/action transitions,
+  reverse playback and loop modes through the existing Fx ABI fields. Generic
+  NPC Actor_Draw remains bypassed. Tracking/fidget/stagger work is removed for
+  Ingo, Malon, Talon and cow; action functions, movement, collision and talk stay.
+  Morph delays and joint-driven root stagger are intentionally omitted under
+  the human's approximation rule. Malon can use object/clip sheet lookup without
+  reading a skeleton to obtain a limb count. Sprite mode also applies to Debug
+  source; only Clean has been target-built. The later current batch converts nightmare riders/owl; Ranch gameplay horses
+  remain unimported.
+- Corrected sprite slot failure sentinel: the VDP1 allocator returns 32-bit
+  UINT_MAX, but sprite instances store 16-bit slots. Compare the narrowed field
+  against UINT16_MAX; otherwise a full bank falsely succeeds and can index slot
+  65535. Flyby mask/bank generation retries keep each placement's own cel slot.
+- Mednafen save evidence: configured default `%f.%M%x`, nine hash-named `.bkr`
+  files for successive Clean discs; two oldest contain active DOSEI0, newer
+  ones are empty. This explains save loss across rebuilds. Restored latest
+  active candidate `game-clean.7f402babb95acd27ace60606f8dddfd6.bkr` to the
+  unhashed `sav/game-clean.bkr`, plus matching `.smpc`; no originals overwritten.
+  SHA256 of source and copy:
+  `536A8E12E74D5F68BE0EC0BCDC49E72C644196428059657F5E7F97C779E481F3`.
+  `tools/launcher/mednafen-saves.ps1` preserves this default-lookup behavior for
+  future launches without changing global config. Existing stable backups win;
+  deleted slot headers and custom filename formats are respected.
+- BIOS backup robustness: project-local SDK wrapper reserves 16 KB executable
+  area at low-RAM offset 0xF1600 and 8,312 work bytes at 0xF5600; no heap/cart
+  placement or mount-time format attempt. Reads on a mounted failing device
+  return DEVICE_ERROR, not EMPTY. File select/save panel show concrete format,
+  full, protection, verify or damage errors. Unmounted devices still permit
+  explicitly unsaved play. These defects were found during review; they are
+  not established causes of the user's report.
+
+Verified: 85 host tests covering real clock functions, poisoned skeleton/table
+pointers, sprite matching/failed upload sentinel, Navi bank ownership/retry,
+save-device failures, save serialization/file select/cutscene skip, and launcher
+save migration. WSL Clean build passes (`build/sprite-save-build.log`), main
+.bss end 0x06082220 / 7,648 B margin. Usual `game-clean.cue/.iso` rebuilt.
+Sprite clock target disassembly (`build/sprite-clock-disassembly.txt`) uses
+32-bit shift/divide helpers only; no new wide arithmetic. Existing Fx storage
+and other wide code remain migration debt. No emulator run, FPS measurement or
+human acceptance of this batch. Next: human save/reload and NPC dialogue/visual
+check, continue 32-bit core conversion/direct prop matrices/compact scene culling.
+
+Sources: [Mednafen filename lookup](https://mednafen.github.io/documentation/fname_format.txt),
+[Sega STN-52 workspace correction](https://docs.exodusemulator.com/Archives/SSDDV25/segahtml/info/hon/stn52.htm).
+Older checkpoint sections below describe their then-current builds; this batch
+supersedes their Saria 3D, Debug 3D and sprite pose-work exceptions.
+
+### Current performance review (2026-10-03)
+
+**New human directive:** no 64-bit runtime math or wide fallbacks. Approximation
+is allowed; performance takes priority over 1:1 OoT fidelity. Preserve playable
+collision, combat and story. This supersedes the review's proposed wide DIVU
+fast path and earlier preferences for exact Fx arithmetic. Existing wide core
+and backend math remains migration debt; it has NOT all been converted.
+
+**First implementation batch:** `src/demo_camera.c` now converts headings with
+32-bit integer multiplication. Large component pairs scale down together before
+Q16 conversion; in-range inputs are unchanged. No float or wide arithmetic in
+the new runtime path. The proposed wide-divide patch was removed before build;
+`fx.h` retains its pre-task implementation pending a genuine 32-bit replacement.
+New actual-function host regression passes 362,433 input pairs: all signed-16
+values against axes/edges, extreme signed-32 pairs and 100,000 random vectors.
+It checks old valid conversion exactly and large-vector direction within one
+binang. All 11 existing player-camera tests also pass. WSL Clean build passes:
+`build/cpu-heading-build.log`; usual `game-clean.cue/.iso` rebuilt. Main .bss ends
+at 0x060838b0, leaving 1,872 B before SGL (previous Ranch build: 96 B).
+The matching `build/game-clean.elf` heading routine at 0x0601dd2c uses 32-bit
+range checks/shifts and one slAtan call. Its old six software-double calls are
+gone; __floatsidf/__muldf3/__fixdfsi are absent from this entire Clean image.
+Other legacy wide arithmetic remains, including main __divdi3 and core Fx.
+No emulator run or measured FPS gain. Changes remain uncommitted.
+
+Requested scope: review oot-core and its Saturn CPU/VDP1 backends, then propose
+refactors. The review below records the pre-implementation evidence; current
+implementation status is above. Other proposals remain unimplemented. Existing
+Ranch/CPU changes remain intact. No emulator was launched.
+
+**Current architecture:** `Fx` still stores 64 bits, but `fx.h:35` defaults to
+16 fractional bits; the Q39.24 header and early checkpoints describe the older
+format. Narrow multiplication already uses `dmuls.l`. The core ELF has no
+software-float, `__divdi3` or `__muldi3` symbols. The C backend DOES execute
+software-double helpers in the reviewed baseline (finding 1, now changed).
+Link is still the C player plus the small
+`bridge_player.cpp` proxy, not a running imported z_player. Kokiri NPC ownership
+is disabled; Clean generic NPCs skip their 3D draw. The historical 12.8 ms Ingo
+draw and old Q24 benchmarks must not be presented as current Clean timings.
+
+#### Recommended refactors, in implementation order
+
+1. **Remove software-double conversions from common heading math (CPU).**
+   `src/demo_camera.c:17` calls `slAtan(toFIXED(dz), toFIXED(dx))`; this SDK's
+   macro multiplies by `65536.0`. Pre-fix `collide_heading` disassembly showed
+   two each of `__floatsidf`, `__muldf3`, `__fixdfsi`: six helper calls
+   per heading. Digital movement inlines them into `player_input_motion`; analog
+   movement, collision/gameplay headings and NPC sprite facing share this path
+   (`src/player_input.c:422`, `src/npc_sprite.c:31`). These files were already
+   unchanged before this review; this is not caused by the Ranch repair.
+   Use integer conversion for proven [-32768,32767] components; normalize both
+   components together for larger deltas. Preserve existing /256 truncation,
+   zero handling and angle quadrants. Do not shift negative signed integers or
+   independently clamp components. Check target disassembly and heading tests.
+
+2. **Replace wide core arithmetic with bounded 32-bit math (CPU; next).**
+   The original direct 64/32 DIVU proposal is superseded by the human's rule.
+   Existing `fx.h` normalization uses CLZ and variable 64-bit shifts even for
+   small values. Replace storage and operations with 32-bit units/scales;
+   approximate distance/normalization where necessary, without wide fallback.
+   Audit squared-distance comparisons, collision plane products, reciprocal
+   grid indexing, angle wrapping, sqrt and trig together: simply narrowing the
+   existing raw type would corrupt ranges and structure layouts. Rebuild every
+   scene/object blob when Fx layout changes. Gameplay viability, bounded error
+   and target instruction cost matter; exact float-reference parity is not a
+   requirement. Keep tests for floor presence, sword reach, signs and zero.
+
+3. **Pass prop matrices directly to SGL (CPU, generic scenes).**
+   `oot-core/src/oot_core_draw.cpp:208-223` decomposes each ordinary nonzero-scale
+   generic draw matrix using four square roots, seven fixed divides and three
+   atan2 calls on the non-gimbal path. `src/cutscene_actor.c:564-575` then builds
+   the transform again with translate/rotate/scale. Extend the draw-item ABI
+   with a packed Q16 affine matrix and adapt coordinates once at the backend.
+   Preserve the established mesh Y flip, multiplication order, sorting and
+   mirrored/nonuniform transforms. Compare vertices against the original matrix
+   and the current path's valid positive-scale cases; test every rotation axis,
+   translation, negative scales and parent/view composition in the same view.
+   NPC sprites already bypass this path; count generic draw items
+   before estimating its importance in any particular scene.
+
+4. **Separate sprite animation state from unconsumed pose work (CPU; implemented).**
+   The new sprite-only batch above removes skeleton initialization, frame pose
+   decode, tracking and fidget work for the current generic cast. Clocks and
+   action/talk/collision remain. The later human instruction explicitly permits
+   omitting morph delays, body auto-turn and joint-driven root stagger; these
+   are no longer parity requirements. Runtime dialogue/visual acceptance remains
+   pending. Future imported sprite NPCs must use the same importer/backend path.
+
+5. **Cull compact scene chunks before vertex processing (CPU and VDP1).**
+   `src/kokiri_sgl.c:1508-1529` uses radial XZ object bounds and still calculates
+   depth for the entire room point table. The polygon pass begins at :1546;
+   submission at :1784 reduces `nbPolygon` but keeps the full `nbPoint`. Rejected
+   polygons therefore do not remove all vertex work. Bake spatial chunks with
+   compact/remapped point tables and conservative 3D bounds; reject whole chunks
+   against the actual pitched camera frustum before depth/transform/submission.
+   Keep enough chunk size to avoid excessive submission overhead. CPU vertex
+   work can shrink directly; measure VDP1 command/pixel savings separately since
+   SGL already rejects some faces. Gains depend on the visible scene.
+   Actual staged Kokiri room 0 has 1,756 vertices and 1,475 polygons; room 1 has
+   1,558 and 1,464. These are asset counts, not measured visible submissions.
+   Keep current near-plane handling, winding, room/portal behavior, fog and floor
+   coverage. The failed warp/subdivision experiment is not revived by this plan.
+
+6. **Batch dirty VRAM writes safely and keep sprite slots stable (both).**
+   `src/npc_sprite.c:40-55` changes CLUTs on sheet switches and copies a full cel
+   on pose/direction changes. Generic slots are assigned by visible traversal
+   `used++` (`src/oot_core_host.c:388`), so one disappearing actor can rebind later
+   actors' slots and trigger avoidable copies. Map slots to stable actor identity
+   with lifecycle/generation invalidation. Cull definitely invisible sprites
+   before facing/cel upload, using conservative billboard bounds. Gather dirty
+   cel and fog-palette writes (`src/kokiri_sgl.c:1747-1772`) and perform a bounded
+   batch at a verified previous-draw completion point, or use separately owned
+   buffers if their full VRAM budget fits. Do not add a wait per sprite or remove
+   existing draw-end guards. Callback uploads can overlap a previous draw; this
+   is a contention/ownership concern, not a newly demonstrated corruption bug.
+   Sega documents CPU/VDP1 VRAM contention and recommends short burst transfers
+   outside drawing: [VDP1 manual, VRAM access](https://www.infochunk.com/saturn/segahtml_en/hard/vdp1/hon/p02_10.htm).
+   Track changed bytes/CLUTs as well as command count; fewer commands alone do
+   not prove that large overlapping sprites finish sooner.
+
+7. **Crop individual sprite cels offline (transfer size and possible VDP1 gain).**
+   `tools/build_npc_sprites.py:153-163` gives every pose/view a common rectangle.
+   Current Ingo `G0C004.SPR` has 30 cels of 48x56; only 10.1% of their pixels are
+   opaque on average. Offline per-cel bounds, with widths rounded to eight, retain
+   27.2% of the original average rectangle area. A cropped-cel format could save
+   about 72.8% of this sheet's raw cel bytes before metadata/alignment, while
+   retaining its artwork. Store crop dimensions and placement/flip anchors;
+   update the baker, loader, VRAM budget and projection together. This is not a
+   measured fill-rate/FPS gain and is not representative of every sheet.
+
+#### Other confirmed repeated work and constraints
+
+- `oot_core_api.cpp:470-476` calculates actor culling distance; generated
+  `z_actor.cpp:2493-2500` then computes XZ sqrt, XYZ distance and yaw BEFORE its
+  update-culling gate. The per-actor profiler starts later and misses that
+  framework work. Share/cache spatial results when all inputs are unchanged;
+  do not simply suppress fields used by attention or other actors. Background
+  collision already has spatial lists; profile stationary floor rays before
+  adding another broadphase. Dynamic floors/water invalidate naive caches.
+- Catch-up runs up to four C steps (`src/demo.c:1680`) and up to three decomp
+  updates (`src/oot_core_host.c:485`) per displayed frame. Each update calls
+  OotCore_DrawActors and Message_Draw (`oot_core_api.cpp:531-532`). Only the last
+  prop draw list is displayed. Eventually separate pure render extraction from
+  simulation, keeping message reveal and actor Draw side effects at their proper
+  cadence; dropping arbitrary Draw calls would break decomp behavior. Preserve
+  the existing sword sweep/input latch/player-push frame-skip contract.
+- Profiling is always active: `oot_core_views.cpp:355-377` surrounds each actor
+  with two timer calls, conversion and an ID scan even in Clean. Keep coarse
+  phase counters; make detailed profiling switchable, aggregate ticks before
+  converting. `OotCore_MessageView` also rebuilds/hashes active text whenever
+  talk/UI callers query it (:178); cache per message-state revision and make
+  activity queries cheap. These are secondary savings, not measured bottlenecks.
+- Link's faces deliberately use Dual_Plane (`tools/build_sgl_scene.py:241-245`):
+  vertices animate but normals remain in bind pose. Posed normals could restore
+  the original single-sided materials and remove hidden-face VDP1 work, at extra
+  CPU cost. Benchmark that tradeoff; changing the flag alone opens body holes.
+  Current model has 385 vertices, 704 all-gear polygons and at most 520 selected
+  polygons; the generated 591-polygon visible buffer is capacity, not live count.
+- Existing core .text = 342,252 B, .data = 48,712 B, .bss = 69,312 B. Its linked
+  Fx helpers have 109 local bodies totaling 18,590 B; consider shared cold
+  fallbacks while keeping common fast operations inline. These are static size
+  facts, not dynamic call counts or proof of cache misses. Broad -O2 or moving
+  the whole blob to work RAM is not justified: the reviewed Ranch Clean build
+  had only 96 B below SGL (heading batch now 1,872 B). Historical cart-vs-low-WRAM microbench results did
+  not show a placement win; remeasure before changing memory architecture.
+
+#### Measurement and acceptance needed for implementation
+
+Use the same Clean build, scene, camera position/angle and actor state for each
+comparison; include Kokiri and Ranch plus movement/turning, 15/30 FPS catch-up
+and a prop-heavy room. No intermediate human run is requested by this review.
+Existing `OC` is the LAST decomp step, not the frame's aggregate; add a step count
+and sum per displayed frame, plus collision/framework/update/draw extraction
+totals. Keep master CPU work, engine/sync time, uploaded bytes and submitted
+vertices/commands distinct. `CPU~` measures callback share, not PC utilization.
+SYNC includes VBlank/engine work; COPR sampled after sync is not a VDP1 busy
+measurement (`src/frame_timer.h`). Measure draw completion for the matching
+command list during the wait before calling the frame VDP1-bound. FRT samples
+must stay less than its ~293 ms wrap interval apart; loading stalls need a
+different measure. No FPS improvement or CPU/VDP1 dominance is established yet.
+
+### Ranch visibility and CPU follow-up (after 11312ec)
+
+- Two confirmed visibility blockers in oot_core_host.c: load_meshes ran before
+  Actor_UpdateAll spawned the room list, and sprite matching compared the baked
+  skeleton count directly to SkelAnime's count including root translation.
+  Assets now load after the first actual decomp update and after room changes;
+  Ingo's 19 baked limbs correctly match 20 SkelAnime joints.
+- Sheet allocation now includes Jo's NUL byte (SPR1 lengths are four-byte aligned,
+  so the old length-only allocation could overwrite the next heap header).
+  Generic VRAM reserves only spawned instances, up to eight, instead of eight
+  largest cels even for one Ingo. No forced spawns/story-flag bypasses; horses
+  still require the unimplemented actor import and Skin baker.
+- CPU: skipped unused C head/torso tracking for sprite NPCs; retained Saria's
+  3D greeting. Moved room/Link PMOD normalization into mesh_load, removing the
+  every-draw scan over those attribute tables. Native/transient callers keep
+  their guard; fog mode switches preserve flat/texture transparency rules.
+- L+R one-second overlay now includes MS (frame incl sync), M (movement), G
+  (scene draw), L (Link draw), OC (last decomp step), all integer milliseconds.
+  CPU~ is callback share, not PC utilization. Overall Mednafen performance has
+  not been measured/declared fixed; absolute timings can separate CPU work from
+  frame waiting in the next human batch. No intermediate test request.
+- Two host lifecycle/render regressions plus four graphics tests pass. Deferred
+  spawn, skipped steps, room/scene changes, root-joint match, rejection of wrong
+  clips/skeletons, NUL capacity and instance slot count exercised. WSL Clean
+  build passes: log build/mednafen-ranch-cpu-build.log, .bss 0x06083fa0 (96 B margin).
+  First attempt exceeded the boundary by 256 B; Os on cold clip/scroll loading
+  recovered space without reducing heap or SGL budgets. Usual image rebuilt.
+  New Ranch/CPU runtime acceptance pending. Later same-room spawns of previously
+  absent objects still need dynamic sheet discovery.
+
+### Accepted palette/CD checkpoint
+
+Palette repair built in usual game-clean.cue/.iso; historical log
 `build/mednafen-clut-build.log`, 96 bytes high-WRAM margin. Graphics human-accepted.
 Confirmed backend defect: CLUT addresses require **32-byte boundaries**, not
 eight-byte boundaries despite CMDCOLR's address/8 encoding. Sega VDP1 manual 6.4:
@@ -49,11 +378,12 @@ Earlier graphics batch (mednafen-graphics-build.log, then 160 bytes margin):
   reserved command 3, but SGL _sbMakeSprite masks/replaces the low nibble with 1.
   Do not change sprite direction flags based on that source expression alone.
 
-Full decomp remains the goal. Current priority overrides historical next-session
-queues below: VDP1 corruption, startup load delay, missing nightmare actors,
-Navi OOM/skipped shots and house-exit crash. Latest human test confirms all opening
-shots complete; graphics still corrupt before the palette repair, Navi room loads
-pause, music starts late. SGL SP 0723 / PR 0604, END 1 (house) / 3 (nightmare/forest)
+Full decomp remains the goal. The current review and repair status above override
+historical next-session queues below. Earlier reports covered VDP1 corruption,
+startup delay, missing nightmare actors, Navi OOM/skipped shots and house exit.
+Opening shots now complete and the palette repair has human graphics acceptance;
+Navi room-load pauses, late music and house-exit verification remain open.
+Historical SGL SP 0723 / PR 0604, END 1 (house) / 3 (nightmare/forest)
 are plausible; they did not diagnose this palette-address bug. Fade now brighter.
 Human explicitly confirms menu before music no longer crashes (earlier PAUSEFNT.BIN).
 Earlier house exit reported CS4.BIN then S1.OOC CD failures; no explicit acceptance
@@ -65,15 +395,15 @@ Sega manual: https://www.infochunk.com/saturn/segahtml_en/prgg/prg1/file/hon/p08
 NwCdRead remains active until consumption or NwStop; another request cannot
 assume the drive is idle simply because music_service returned.
 Baseline advanced externally to 8874db2 during investigation; its sprite work
-is preserved. This checkpoint contains Astra's Mednafen repair batch; Ranch/CPU
-investigation has started read-only, with no subsequent implementation yet.
+is preserved. 11312ec contains Astra's accepted Mednafen repair batch; subsequent
+Ranch/CPU implementation is described separately above.
 
 - `heap_profile.c`: reproduced wasted free-block capacity; SDK reuse kept a whole
   large hole for a tiny allocation. Split unused tails, merge adjacent free holes
   before retrying a failed allocation. SDK reduction alone only retracts tails.
   Seven host allocator tests pass, including the two new pressure cases.
 - `npc_draw.c`: Clean loads sprite first and skips BIN/ANM/TRK/SKN for those NPCs;
-  Saria still retains her greeting mesh, missing sprites retain the 3D fallback.
+  That checkpoint retained Saria/3D fallbacks; the current sprite-only batch removes both.
 - `kokiri_sgl.c`: Navi pool/maps stay resident, but ten room meshes no longer do
   (737,384 bytes saved in current assets). Bulk scratch load at shot boundary.
   This trades bounded room-change CD reads for lower peak heap use.
@@ -243,18 +573,18 @@ UNCOMMITTED (sprite NPCs, human loves them, Kronos PASS Kokiri; Lon Lon OOM fix 
 - tools/build_npc_sprites.py (new): bakes NPC00-15.SPR (C NPCs) and --generic-only G*.SPR +
   build/oot-core/generic_sprites.h (decomp NPCs). tools/build_npc_models.py build(full=True).
 - src/npc_sprite.c/.h (new, Clean only via makefile CLEAN_TEST): shared sprite draw.
-- src/npc_draw.c: all C NPCs as sprites (Clean), draw range 1500, Saria 3D in greeting.
+- src/npc_draw.c: C NPC sprites, draw range 1500. Current batch also converts Saria greeting and fairy flyby.
 - src/oot_core_host.c: decomp NPC sprites (Clean): sheets for spawned NPC objects only,
   85% heap guard, 8 slots; set_flags(OOT_CORE_FLAG_NPC_SPRITES).
 - Blob API v16 (oot_core_api.h/.cpp, oot_core_views.cpp, oot_core_draw.cpp): set_flags,
   NPC view object/limbs/anim; generic NPC Actor_Draw skipped when the flag is on.
 - build.sh: sprite bake steps (C NPCs after build_npc_models; generic after build_core_skins).
 - BUILD.md gotchas 42 (CRLF from Windows python into build.sh) and 43 (SGL sprHflip typo).
-Debug image keeps 3D NPCs (576 B static RAM; sprite code needs ~1 KB). Open: horses (import
+At this checkpoint Debug kept 3D NPCs; current source removes that fallback (Debug build unverified). Open: horses (import
 En_Horse_Link_Child/En_Horse_Normal + Skin-limb baker), pitch row for above/below views,
 Debug RAM (step E), roadmap step B now mostly replaced by sprites. Details: NPC SPRITES below.
 
-## NEXT CHAT START HERE (written 2026-10-03, state = commit 736982c + docs)
+## Historical checkpoint (2026-10-03, commit 736982c + docs; current handoff above)
 Human goal: ALL NPCs in EVERY zone, ALL dialogue, spawn/talk/events checked against
 save flags and triggers exactly like OoT. Must work in BULK for all actors (importer
 and library level, no per-actor hand work) and stay fast, or the game is unplayable.
@@ -272,7 +602,8 @@ else may be cut or simplified for speed and memory:
 Rule: never hand a system to the decomp if it is slower or works worse than the C
 version it replaces. Measure on the debug rows first.
 
-Current runtime facts (human Kronos, Debug, 2026-10-03):
+Historical runtime snapshot (human Kronos, Debug, 2026-10-03; before the grass,
+sprite and palette repairs below, not the current blocker list):
 - Kokiri: C NPCs/Mido/signs/wonder spots again (oot_core_owns_kokiri_npcs() false),
   decomp = grass + drops only. C talk works. REGRESSION: decomp grass no longer exists
   after the FX_FRAC 24->16 change (suspect EnKusa_SnapToFloor -> BgCheck raycast fails
@@ -306,7 +637,7 @@ NPC SPRITES (human 2026-10-03: "all NPC except Hero, incl. Lon Lon, horses as sp
 Mido test PASSED. Rollout PASSED in Kronos ("better than 3D by far"); above/below view
 looks a little odd (option: bake a 2nd pitch row). Sprite draw range 1500 (was 180-400
 3D fade), built, waiting test. Rollout details (CLEAN IMAGE ONLY: Debug has
-576 B static RAM; Debug keeps 3D NPCs and the old decomp skin path).
+576 B static RAM at that checkpoint; current source uses sprites in Debug too, target verification pending).
 - tools/build_npc_sprites.py: C NPCs NPC00-15.SPR (Mido, Saria idle, 13 Kokiri types,
   shopkeeper), <=8 poses/clip, cels <=64 px tall, full textures, 5 dirs + runtime mirror.
   --generic(-only): decomp NPC objects (GENERIC_NPC_SOURCES) -> G<oid3><nn>.SPR, one sheet
@@ -315,15 +646,17 @@ looks a little odd (option: bake a 2nd pitch row). Sprite draw range 1500 (was 1
   1.57 MB total; host loads only the current scene's objects into the cart heap.
 - src/npc_sprite.c: shared draw. One VDP1 slot per drawn instance; rewritten only on
   pose/direction change; a slot rebinds size+CLUT when its sheet changes.
-- npc_draw.c: every placement + shopkeeper as sprite; Saria back to 3D while a greeting
-  clip plays (clips not baked). Focus = fixed height. No head/torso turns (cut).
+- npc_draw.c: every placement + shopkeeper as sprite; current batch removes the
+  former Saria greeting 3D exception. Focus = fixed height. No head/torso turns.
 - Blob API v16: OOT_CORE_FLAG_NPC_SPRITES (set_flags): generic NPC Actor_Draw skipped
   (the 12.8 ms Lon Lon draw), NPC view carries object/limbs/anim/frame. Host: 8 slots
-  sized for the scene's biggest cel, nearest-first view order, 2000-unit box.
+  sized for the scene's biggest cel, actor-list view order, 2000-unit box.
+  Follow-up now allocates only spawned instance count, capped at eight.
 - Lon Lon fix (human: out of memory G0C006.SPR): host loaded every object of every layer
   (1.5 MB). Now loads sheets only for objects of spawned generic NPCs, jo_malloc + 85% heap
-  guard (skip, never error). Gap: NPC spawned later in another room with a new object has
-  no sheet until the next scene load. Limit is cart sheet memory, not sprite count (VDP1
+  guard (skip, never error). Follow-up above fixes deferred-spawn loading and refreshes
+  room changes; later same-room spawns of new objects remain a gap. Limit is cart sheet
+  memory, not sprite count (VDP1
   draws hundreds: Dragon Force); slots (8) can grow.
 - Horses NOT done: En_Horse_Link_Child (child Epona) and En_Horse_Normal not imported,
   and they use the Skin system (not SkelAnime): needs import + a Skin-limb baker. Next batch.
@@ -356,7 +689,9 @@ sprite code +864 B). No head turn, focus fixed at 85% height. If liked: bake all
 streaming cels as the NPC draw path (replaces most of step B). Undo: revert npc_draw.c,
 build.sh, build_npc_models.py, delete tools/build_npc_sprites.py.
 
-Roadmap (each step = one batch, build both images, one human test; gate before next):
+Historical roadmap (implementation below records its progress). The current
+review orders performance proposals; the current Clean-only/batched-verification
+directive supersedes this roadmap's earlier build-both-images/per-step test rule.
 
 PHASE 1: make the decomp path cheap (nothing new until these pass)
  A. Grass back. DONE 2026-10-03: human Kronos PASS (grass back, cuts right at 15+30 fps).
@@ -470,7 +805,9 @@ Other uncommitted work in the tree (build.sh, makefile, oot-core/*, npc_draw.c,
 oot_core_host.c, npc_sprite.*, build_npc_*.py, BUILD.md) is NOT Claude's this session:
 leave it alone. Nothing committed.
 
-## NEXT SESSION: GAME CONTENT ROUTE (approved by human 2026-10-02)
+## Historical NEXT SESSION: GAME CONTENT ROUTE (approved by human 2026-10-02)
+The current performance review was explicitly requested on 2026-10-03 and
+supersedes the historical tuning restriction in this checkpoint.
 Goal: the actual game through the decomp: NPCs, dialogue paths, event triggers, actors
 present/absent by progress flags, child/adult and day/night layers. No more perf tuning
 unless a real frame-time problem blocks content (row 16 `ou` = decomp update us/step).
@@ -590,7 +927,7 @@ oot_math sqrtf = divider Newton, sinf/cosf = Q30 table + interpolation, after Sa
   run if possible. 32-bit Fx would halve again but needs an overflow audit (not started).
   dv still slow: check fx_div hardware path is taken (FX_RUNTIME / range test) before more work.
 
-## NEXT SESSION: Phase 1 step 5 (first live decomp actor)
+## Historical NEXT SESSION: Phase 1 step 5 (first live decomp actor)
 Rule: game logic comes from decomp source via `tools/oot_core_import.py`. Do not rewrite a
 system by hand that the decomp already has. Our C code stays only as the Saturn backend
 (render, audio, VDP2 UI, file IO). Read game/docs/BUILD.md first (Linux/WSL build only;

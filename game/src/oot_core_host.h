@@ -55,6 +55,7 @@ static inline bool oot_core_owns_kokiri_npcs(void) { return false; }
 static inline bool oot_core_owns_kokiri_props(void) { return false; }
 static inline bool oot_core_owns_kokiri_npcs(void) { return false; }
 static inline unsigned int oot_core_talk(void) { return 0; }
+static inline unsigned int oot_core_update_us(void) { return 0; }
 static inline bool oot_core_message_box(void) { return false; }
 static inline int oot_core_prop(short id, int x, int z) { (void)id; (void)x; (void)z; return -1; }
 #endif
