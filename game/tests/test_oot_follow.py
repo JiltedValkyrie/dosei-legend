@@ -70,6 +70,21 @@ class OotFollowCamera(unittest.TestCase):
     def tearDownClass(cls):
         cls.tmp.cleanup()
 
+    def setUp(self):
+        self.lib.oot_follow_set_adult(False)
+
+    def test_adult_uses_source_height_scale_and_keeps_feet_origin(self):
+        self.lib.oot_follow_set_adult(True)
+        still, eye, _, pitch = self.run_steps(150, moving=False, player=Position(0,90,0))
+        moving, _, _, _ = self.run_steps(150, moving=True, player=Position(0,90,0))
+        self.assertEqual(still.distance,136)
+        self.assertEqual(moving.distance,204)
+        rise=still.distance*math.sin(still.pitch*2*math.pi/65536)
+        self.assertAlmostEqual(eye.y-rise,68-14,delta=1)
+        self.lib.oot_follow_set_adult(False)
+        child, _, _, _ = self.run_steps(150,moving=True,player=Position(0,90,0))
+        self.assertEqual(child.distance,139)
+
     def run_steps(self, steps, facing=0, moving=True, player=None):
         cam, eye = Follow(), Position()
         yaw, pitch = ctypes.c_uint16(), ctypes.c_int32()

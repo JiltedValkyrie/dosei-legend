@@ -41,11 +41,17 @@ class PropLists(link.LimbLists):
         super().triangle(word,transparent)
         for face in self.faces[first:]:face['scrolling']=self.scrolling
 
-def static_mesh(oot, rom_dir, obj, symbol, dest, scale=1.0, setup=None, extra=(), flat=False, cutout=False, matrix=None, texture8=None):
+def static_mesh(oot, rom_dir, obj, symbol, dest, scale=1.0, setup=None, extra=(), flat=False, cutout=False, matrix=None, texture8=None, setup25=False):
     data = link.read_object(oot, obj, rom_dir)
     xml = ET.parse(oot / 'assets/xml/objects' / (obj + '.xml'))
     offsets = {e.attrib['Name']: int(e.attrib['Offset'], 16) for e in xml.iter('DList')}
     lists = PropLists(b'', b'')
+    if setup25:
+        # EnDoor_Draw calls Gfx_SetupDL_25Opa before its leaf list. The leaf
+        # inherits texture enable and lighting; its RGB bytes are normals.
+        lists.texture_on = True
+        lists.scale = (65535 / 65536, 65535 / 65536)
+        lists.geom = 0x220405  # ZBUFFER | SHADE | CULL_BACK | LIGHTING | SHADING_SMOOTH
     segment = int(next(xml.iter("File")).attrib.get("Segment", "6"), 0)
     lists.segments = {segment: data, 8: struct.pack('>II', 0xDF000000, 0)}
     if texture8:
@@ -77,7 +83,15 @@ def static_mesh(oot, rom_dir, obj, symbol, dest, scale=1.0, setup=None, extra=()
     faces = link.scale_faces(lists.faces, scale) if scale != 1.0 else lists.faces
     if matrix is not None:
         for face in faces:
-            face['vertices']=[tuple(round(n) for n in link.transform(matrix,(0,0,0),v[:3]))+tuple(v[3:]) for v in face['vertices']]
+            moved = []
+            for v in face['vertices']:
+                colour = tuple(v[5:8])
+                if face['lighting']:
+                    normal = tuple(n if n < 128 else n - 256 for n in colour)
+                    colour = tuple(round(n) for n in link.transform(matrix, (0, 0, 0), normal))
+                moved.append(tuple(round(n) for n in link.transform(matrix, (0, 0, 0), v[:3])) +
+                             tuple(v[3:5]) + colour + (v[8],))
+            face['vertices'] = moved
     positions, tiles, _owners, _locals = link.write_model(faces, dest, character=False)
     if not flat and symbol in ('gGiNutDL', 'gGiRecoveryHeartDL'):
         # Bake the source scrolling UVs per face, preserving its UV mapping;

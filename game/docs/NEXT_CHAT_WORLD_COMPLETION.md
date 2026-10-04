@@ -1,9 +1,26 @@
-# Next chat: cleanup blocker, connected world, complete NPC/dialogue coverage
+# Next chat: populated-room regressions, connected world and full actor coverage
 
 2026-10-04, main carries the oot-core checkpoint. Preserve shared work. This handoff records
 partial implementation and remaining work, not world/runtime acceptance. Read AGENTS.md,
 CLAUDE.md, DOSEI-LEGEND-BIBLE.md, DEMO_PLAN.md, OOT_CORE_PIPELINE_PLAN.md and
 ACTOR_SPRITE_ROLLOUT_PLAN.md first.
+
+New active human report: capped inventory owns all source slots but pause art
+shows four items/Emerald; map stuck at Kokiri; Ocarina cannot equip/play; Adult
+Link missing; generic interiors have only top view; doors have magenta normals;
+hearts flicker; Ranch/Kakariko with Cuccos run slowly; graveyard tomb texture
+has holes. Fixes are implemented, host-tested and Clean target-built. See
+[PLAYER_REGRESSIONS_2026-10-04.md](PLAYER_REGRESSIONS_2026-10-04.md)
+for controls, resource layout, verification and remaining song/item/adult gaps.
+The prior build evidence below is historical.
+Source collision differential: 3,190 probes match, sqrt calls 27,214 -> 701.
+578 distinct host cases pass. Final .bss end 0x06083E80 leaves 384 B below SGL;
+Link pose/matrix/skin and actor-view carves preserve heap/actor capacities.
+Matching SH-2 audit passes new bounded paths, max audited frame 172 B; existing
+wide math remains debt. The ISO matches all 889 staged payloads. No emulator
+launched; human visual/performance acceptance remains pending. Logs:
+build/regression-clean-final-link.log, build/regression-target-audit.log,
+build/regression-iso-audit.log. Keep the old 656 B margin below historical.
 
 Baseline 9d384cd contains the prior sprite/CPU/save/cleanup checkpoint. Current
 continuation is recorded in cf9ba39 and merged into main. The prior main is
@@ -39,7 +56,7 @@ scene IDs. Post-emitter uniqueness/header checks prevent the original room
 overwrites. Removed 76 exact retired generated/staged S2/S3/S4 MSH/TEX/MAP
 files, preserving real RGB backdrops. Staged scenery/budget checks pass.
 
-## Latest human evidence supersedes prior build success
+## Earlier human evidence and cleanup history
 
 - Startup/zone changes repeatedly show Jo Engine error:
   `In dosei_allocator_free(): Null pointer`. Screenshot: dynamic memory 22%,
@@ -76,7 +93,7 @@ all 256 empty/partial/full story/emerald allocation combinations, repeated
 teardown and cutscene cleanup before loading/after freeing. That baseline Clean
 rebuild passed; continuation target verification now passes too. Human still
 verifies startup and repeated transitions without dismissals.
-Next implementation priorities are P1 doors and P2 NPC/dialogue coverage.
+The newer player regressions above take priority; full P1/P2 coverage remains required.
 
 ## P1: wire the whole scene/room/entrance graph
 
@@ -161,7 +178,8 @@ save/reload, cutscene completion/skip and dynamic replacements.
 ## Permanent constraints and acceptance
 
 Latest user addition is implemented: Level Select **ALL ITEMS + MAX STATS**,
-default No every open; L/R toggle, A enters. Yes grants source inventory slots
+default No every open; L toggles items, R selects Child/Adult, A enters. Era defaults
+Child. Yes grants source inventory slots
 (Time Ocarina/Longshot and final trade variants), all gear owned, quest mask
 0x00ffffff (all stones/medallions/songs), 20 hearts, capped ammo/magic/upgrades,
 500 rupees, 100 source tokens, dungeon items and eight source-debug keys. No

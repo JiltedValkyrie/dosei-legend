@@ -237,6 +237,9 @@ $(OOT_CORE_OBJDIR):
 # Static ctors are fine: OotCoreEntry.init runs the blob's ctor table.
 $(OOT_CORE_OBJDIR)/%.o: %.cpp oot-core/include/fx.h oot-core/include/oot_prelude.h oot-core/include/oot_core_bench.h oot-core/include/oot_core_api.h oot-core/include/oot_core_host.h | $(OOT_CORE_OBJDIR)
 	$(OOT_CORE_CXX) $(OOT_CORE_CXXFLAGS) -c $< -o $@
+$(OOT_CORE_OBJDIR)/bridge_message.o: build/oot-core/ocarina_restrictions.inc
+$(OOT_CORE_OBJDIR)/z_bgcheck.o: oot-core/include/bgcheck_bounds.h
+$(OOT_CORE_OBJDIR)/bridge_player.o: oot-core/include/bgcheck_bounds.h
 build/oot-core/oot-core.elf: $(OOT_CORE_OBJS) build/oot-core/sources.mk oot-core/oot-core.ld build/oot-core/obj_syms.ld build/oot-core/msg_syms.ld
 	$(OOT_CORE_CXX) -m2 -nostdlib -nostartfiles -T oot-core/oot-core.ld \
 		-Wl,--defsym,OOT_CORE_LOAD_ADDR=$(OOT_CORE_LOAD_ADDR) \

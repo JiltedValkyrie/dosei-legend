@@ -28,6 +28,8 @@
 #include "room_portal.h"
 #include "link_scene.h"
 #include "link_clips.h"
+#include "link_age.h"
+#include "adult_link.h"
 #include "kokiri_sgl.h"
 #include "npc_sprite.h"
 #include "minimap.h"
@@ -257,6 +259,8 @@ static bool          reticle_ready;
 */
 static unsigned char *opening_pixel_pool;
 static int opening_pixel_pool_bytes;
+/* A validated Link bank stays staged until the whole age switch commits. */
+static const void *mesh_staged_pixels;
 
 static bool __attribute__((optimize("Os"))) mesh_load(const char *file, unsigned int pixel_bytes,
                               const kokiri_tile *tiles, unsigned int tile_count,
@@ -309,6 +313,12 @@ static bool __attribute__((optimize("Os"))) mesh_load(const char *file, unsigned
         slDMAWait();
         loaded = (char *)pixel_vram;
         length = pixel_bytes;
+    } else if (mesh_staged_pixels) {
+        slDMAWait();
+        jo_dma_copy((void *)mesh_staged_pixels,pixel_vram,pixel_bytes);
+        slDMAWait();
+        loaded=(char *)pixel_vram;
+        length=pixel_bytes;
     } else {
         asset_loading(file);
         loaded = jo_fs_read_file_ptr(file, pixel_vram, &length);
@@ -1154,6 +1164,97 @@ static bool __attribute__((optimize("Os"))) room_load_bank(unsigned int scene, u
 }
 #endif
 
+static unsigned link_vram_start,link_sprite_start;
+static bool link_model_ready;
+
+static bool __attribute__((optimize("Os"))) link_model_load(bool adult)
+{
+    unsigned polygons=adult ? ADULT_LINK_POLYGON_COUNT : LINK_POLYGON_COUNT;
+    unsigned tiles=adult ? ADULT_LINK_TILE_COUNT : LINK_TILE_COUNT;
+    unsigned pixels=adult ? ADULT_LINK_PIXEL_BYTES : LINK_PIXEL_BYTES;
+    unsigned mesh_bytes=polygons*(sizeof(POLYGON)+sizeof(ATTR));
+    unsigned tex_bytes=tiles*(sizeof(link_tile)+32);
+    const char *mesh_file=adult ? "ADLTMESH.BIN" : LINK_MESH_FILE;
+    const char *tex_file=adult ? "ADLTTEX.BIN" : LINK_TEX_FILE;
+    unsigned char *mesh=ram_cart_fixed(RAM_CART_LINKMESH_OFFSET,RAM_CART_LINKMESH_BYTES);
+    unsigned char *tex=ram_cart_fixed(RAM_CART_LINKTEX_OFFSET,RAM_CART_LINKTEX_BYTES);
+    unsigned vertices=adult ? ADULT_LINK_VERTEX_COUNT : LINK_VERTEX_COUNT;
+    unsigned bank=((pixels+31u)&~31u)+tiles*32u;
+    unsigned reserve_tiles=LINK_TILE_COUNT>ADULT_LINK_TILE_COUNT ? LINK_TILE_COUNT : ADULT_LINK_TILE_COUNT;
+    unsigned child_bank=((LINK_PIXEL_BYTES+31u)&~31u)+LINK_TILE_COUNT*32u;
+    unsigned adult_bank=((ADULT_LINK_PIXEL_BYTES+31u)&~31u)+ADULT_LINK_TILE_COUNT*32u;
+    unsigned reserve=child_bank>adult_bank ? child_bank : adult_bank;
+    unsigned defs=reserve_tiles*sizeof(__jo_sprite_def[0]);
+    unsigned char *staged[3]={0,0,0},*backup=0;
+    const char *files[3]={mesh_file,tex_file,adult ? "ADULT.TEX" : LINK_PIXEL_FILE};
+    unsigned sizes[3]={mesh_bytes,tex_bytes,pixels};
+    unsigned i,j;
+    bool ok=false;
+    PDATA pending=link_pdata;
+    if(!mesh || !tex || mesh_bytes+1>RAM_CART_LINKMESH_BYTES || tex_bytes+1>RAM_CART_LINKTEX_BYTES)
+        return false;
+    if(vram_used+bank>TEXTURE_CAPACITY || sprite_next+tiles>JO_MAX_SPRITE)return false;
+    for(i=0;i<3;++i) {
+        int length=0;
+        staged[i]=(unsigned char *)jo_fs_read_file(files[i],&length);
+        if(!staged[i] || length!=(int)sizes[i])goto done;
+    }
+    pending.pltbl=(POLYGON *)staged[0];
+    pending.attbl=(ATTR *)(staged[0]+polygons*sizeof(POLYGON));
+    pending.nbPoint=vertices;pending.nbPolygon=polygons;
+    for(i=0;i<polygons;++i) {
+        for(j=0;j<4;++j)if(pending.pltbl[i].Vertices[j]>=vertices)goto done;
+        if((pending.attbl[i].dir&7)<4 && pending.attbl[i].texno>=tiles)goto done;
+    }
+    for(i=0;i<tiles;++i) {
+        const link_tile *tile=((const link_tile *)staged[1])+i;
+        if(!tile->width || (tile->width&7) || !tile->height || tile->width>504 || tile->height>255 ||
+           tile->offset>pixels || tile->length>pixels-tile->offset ||
+           tile->length<tile->width*tile->height/2u)goto done;
+    }
+    if(link_model_ready) {
+        backup=jo_malloc(reserve+defs);
+        if(!backup || !link_anim_prepare_age(adult))goto done;
+        memcpy(backup,(void *)(JO_VDP1_VRAM+texture_base+vram_used),reserve);
+        memcpy(backup+reserve,__jo_sprite_def+sprite_next,defs);
+    }
+    mesh_staged_pixels=staged[2];
+    ok=mesh_load(files[2],pixels,(const kokiri_tile *)staged[1],tiles,
+        (const unsigned short (*)[16])(staged[1]+tiles*sizeof(link_tile)),&pending,polygons,0);
+    mesh_staged_pixels=0;
+    if(!ok) {
+        if(backup) {
+            slDMAWait();
+            jo_dma_copy(backup,(void *)(JO_VDP1_VRAM+texture_base+link_vram_start),reserve);
+            slDMAWait();
+            memcpy(__jo_sprite_def+link_sprite_start,backup+reserve,defs);
+        }
+        goto done;
+    }
+    memcpy(mesh,staged[0],mesh_bytes);memcpy(tex,staged[1],tex_bytes);
+    pending.pltbl=(POLYGON *)mesh;pending.attbl=(ATTR *)(mesh+polygons*sizeof(POLYGON));
+    link_pdata=pending;
+    if(link_model_ready)link_anim_commit_age();
+done:
+    if(!ok)link_anim_cancel_age();
+    for(i=0;i<3;++i)if(staged[i])jo_free(staged[i]);
+    if(backup)jo_free(backup);
+    return ok;
+}
+
+bool __attribute__((optimize("Os"))) kokiri_link_set_age(bool adult)
+{
+    unsigned used=vram_used,next=sprite_next;
+    bool ok;
+    if(!link_model_ready || adult==link_anim_is_adult())return true;
+    if(!vdp1_wait_for_draw_end())return false;
+    vram_used=link_vram_start;sprite_next=link_sprite_start;
+    ok=link_model_load(adult);
+    vram_used=used;sprite_next=next;
+    invalidate_equipped();
+    return ok;
+}
+
 bool __attribute__((optimize("Os"))) kokiri_scene_load(void)
 {
     forest_prepared = false;
@@ -1164,45 +1265,18 @@ bool __attribute__((optimize("Os"))) kokiri_scene_load(void)
                    KOKIRI_POLYGON_COUNT, 0))
         return (false);
 #endif
+    link_vram_start=vram_used;link_sprite_start=sprite_next;
+    if(!link_model_load(false))return false;
+    /* Reserve the larger age's complete pixel/CLUT and sprite footprint once.
+     * Age changes overwrite only this block, leaving HUD/actors untouched. */
     {
-        /* Link's POLYGON/ATTR tables are cold (equipment changes copy them),
-        ** so they live on the cart, not in work RAM. */
-        unsigned char *mesh = (unsigned char *)ram_cart_fixed(RAM_CART_LINKMESH_OFFSET,
-                                                              RAM_CART_LINKMESH_BYTES);
-        int length = 0;
-        typedef char link_mesh_fits_carve[LINK_MESH_BYTES <= RAM_CART_LINKMESH_BYTES ? 1 : -1];
-        jo_file probe;
-        /* jo_fs_read_file_ptr writes the whole file: refuse a disc file that
-        ** would overrun the carve (it once clobbered Navi glow/LOD/DEKUBABA). */
-        if (jo_fs_open(&probe, LINK_MESH_FILE)) {
-            int size = probe.size;
-            jo_fs_close(&probe);
-            if (size > (int)RAM_CART_LINKMESH_BYTES) {
-                jo_core_error("%s is %d B, cart carve %d B", LINK_MESH_FILE,
-                              size, (int)RAM_CART_LINKMESH_BYTES);
-                return (false);
-            }
-        }
-        if (!mesh || !jo_fs_read_file_ptr(LINK_MESH_FILE, mesh, &length) ||
-            length != (int)LINK_MESH_BYTES)
-            return (false);
-        link_pdata.pltbl = (POLYGON *)mesh;
-        link_pdata.attbl = (ATTR *)(mesh + LINK_POLYGON_COUNT * sizeof(POLYGON));
+        unsigned child=((LINK_PIXEL_BYTES+31u)&~31u)+LINK_TILE_COUNT*32u;
+        unsigned adult=((ADULT_LINK_PIXEL_BYTES+31u)&~31u)+ADULT_LINK_TILE_COUNT*32u;
+        vram_used=link_vram_start+(child>adult ? child : adult);
+        sprite_next=link_sprite_start+(LINK_TILE_COUNT>ADULT_LINK_TILE_COUNT ? LINK_TILE_COUNT : ADULT_LINK_TILE_COUNT);
+        if(vram_used>TEXTURE_CAPACITY || sprite_next>JO_MAX_SPRITE)return false;
     }
-    {
-        /* Tile descriptors + CLUTs: read here only (LINKTEX.BIN, cart). */
-        unsigned char *tex = (unsigned char *)ram_cart_fixed(RAM_CART_LINKTEX_OFFSET,
-                                                             RAM_CART_LINKTEX_BYTES);
-        int length = 0;
-        if (!tex || LINK_TEX_BYTES > RAM_CART_LINKTEX_BYTES ||
-            !jo_fs_read_file_ptr(LINK_TEX_FILE, tex, &length) ||
-            length != (int)LINK_TEX_BYTES ||
-            !mesh_load(LINK_PIXEL_FILE, LINK_PIXEL_BYTES, (const kokiri_tile *)tex,
-                       LINK_TILE_COUNT,
-                       (const unsigned short (*)[16])(tex + LINK_TILE_COUNT * sizeof(link_tile)),
-                       &link_pdata, LINK_POLYGON_COUNT, 0))
-            return (false);
-    }
+    link_model_ready=true;
     if (!fairy_load()) return (false);
     (void)karebaba_draw_load();
     /* Immutable 16 red + 16 blue RGB-offset tables, shared by all actors.
@@ -1392,10 +1466,22 @@ static void link_part(unsigned int first, unsigned int count)
         ATTRIBUTE(Dual_Plane,SORT_CEN|UseNearClip,0,C_RGB(0,0,31),No_Gouraud,ECdis,sprPolygon,No_Option),
         ATTRIBUTE(Dual_Plane,SORT_CEN|UseNearClip,0,C_RGB(25,0,0),No_Gouraud,ECdis,sprPolygon,No_Option)};
     unsigned int i;
+    const unsigned char *tunic_faces=link_tunic_faces;
+    if(link_age_model) {
+        static const uint16_t groups[9]={LINK_BODY_FIRST,LINK_LEFT_EMPTY_FIRST,LINK_LEFT_SWORD_FIRST,
+            LINK_RIGHT_EMPTY_FIRST,LINK_RIGHT_SHIELD_FIRST,LINK_SHEATH_FIRST,
+            LINK_SHEATH_SWORD_FIRST,LINK_SHEATH_SHIELD_FIRST,LINK_RH_OCARINA_FIRST};
+        for(i=0;i<9;++i)if(first==groups[i]) {
+            first=link_age_model->gear[i][0];count=link_age_model->gear[i][1];break;
+        }
+        if(i==9)return; /* Child first-person arms are not adult equipment. */
+        tunic_faces=(const unsigned char *)(link_age_model+1)+((link_age_model->vertices+3u)&~3u)+
+                     link_age_model->vertices*sizeof(link_vec3_t);
+    }
     for (i = 0; i < count; ++i) {
         equipped_polygons[equipped_count] = link_pdata.pltbl[first+i];
         equipped_attributes[equipped_count++] = save_state.tunic>0 && save_state.tunic<=2 &&
-            (link_tunic_faces[(first+i)/8]&(1u<<((first+i)%8))) ? tunics[save_state.tunic-1] : link_pdata.attbl[first+i];
+            (tunic_faces[(first+i)/8]&(1u<<((first+i)%8))) ? tunics[save_state.tunic-1] : link_pdata.attbl[first+i];
     }
 }
 
@@ -1785,16 +1871,28 @@ void                kokiri_link_draw(int x, int y, int z, int yaw)
                                     -LINK_ANIM_SHIFT_Z);
         }
         unsigned visible_gear = player_items_stick() ? gameplay.equipped & ~GP_SWORD : gameplay.equipped;
+        bool ocarina = (oot_core_ocarina_state() & 1u) != 0;
+        if (ocarina) visible_gear |= 0x10000u;
         if (equipped_mask != (visible_gear | (save_state.tunic<<8))) {
             equipped_count = 0;
             link_part(LINK_BODY_FIRST, LINK_BODY_COUNT);
-            if (visible_gear & GP_SWORD) {
+            if (ocarina) {
+                link_part(LINK_LEFT_EMPTY_FIRST, LINK_LEFT_EMPTY_COUNT);
+                link_part(LINK_RH_OCARINA_FIRST, LINK_RH_OCARINA_COUNT);
+                if (visible_gear & GP_SWORD) {
+                    if (visible_gear & GP_SHIELD)
+                        link_part(LINK_SHEATH_SHIELD_FIRST, LINK_SHEATH_SHIELD_COUNT);
+                    else link_part(LINK_SHEATH_SWORD_FIRST, LINK_SHEATH_SWORD_COUNT);
+                }
+            } else if (visible_gear & GP_SWORD) {
                 link_part(LINK_LEFT_SWORD_FIRST, LINK_LEFT_SWORD_COUNT);
                 link_part(LINK_SHEATH_FIRST, LINK_SHEATH_COUNT);
             } else link_part(LINK_LEFT_EMPTY_FIRST, LINK_LEFT_EMPTY_COUNT);
-            if (gameplay.equipped & GP_SHIELD)
-                link_part(LINK_RIGHT_SHIELD_FIRST, LINK_RIGHT_SHIELD_COUNT);
-            else link_part(LINK_RIGHT_EMPTY_FIRST, LINK_RIGHT_EMPTY_COUNT);
+            if (!ocarina) {
+                if (gameplay.equipped & GP_SHIELD)
+                    link_part(LINK_RIGHT_SHIELD_FIRST, LINK_RIGHT_SHIELD_COUNT);
+                else link_part(LINK_RIGHT_EMPTY_FIRST, LINK_RIGHT_EMPTY_COUNT);
+            }
             equipped_mask = visible_gear | (save_state.tunic<<8);
         }
         /* One submission: submitting each variant separately would transform
@@ -1807,7 +1905,7 @@ void                kokiri_link_draw(int x, int y, int z, int yaw)
 #ifdef LINK_BASE_VERTICES
             /* The first-person arm's vertices are the tail; never transform
              * them for the third-person body. */
-            equipped.nbPoint = LINK_BASE_VERTICES;
+            equipped.nbPoint = link_age_model ? link_age_model->vertices : LINK_BASE_VERTICES;
 #endif
             if(!cutscene_is_playing() && gameplay.hurt_flash_timer && !gameplay.dead){
                 int32_t sn,cs;kokiri_camera_sincos(gameplay.hurt_flash_phase,&sn,&cs);
@@ -2132,6 +2230,7 @@ unsigned int kokiri_bank_room(void)
 unsigned int kokiri_scene_room(void)
 {
 #ifdef KOKIRI_STREAM_ROOMS
+    if (forest_scene == STORY_BANK_PANORAMA) return 0;
     return forest_room < 0 ? 0 : (unsigned int)forest_room;
 #else
     return 0;
@@ -2165,7 +2264,13 @@ static void rupee_world(int x, int y, int z, unsigned int room,
 ** C pickup billboards until the Phase 2 draw shim. ITEM00 type = params. */
 #define OOT_ACTOR_EN_ITEM00 0x0015
 #define OOT_ACTOR_EN_KUSA   0x0125
+#ifdef __sh__
+/* Query fills exactly the returned rows; zero actors never reads old RAM. */
+#define core_view ((OotCoreActorView *)RAM_LOW(RAM_LOW_CORE_VIEW_OFFSET))
+typedef char core_view_fits[24*sizeof(OotCoreActorView) <= RAM_LOW_CORE_VIEW_BYTES ? 1 : -1];
+#else
 static OotCoreActorView core_view[24];
+#endif
 
 static void core_drops_draw(unsigned int tick)
 {

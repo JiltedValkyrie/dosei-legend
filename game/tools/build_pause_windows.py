@@ -16,7 +16,7 @@ WIDTH, HEIGHT = 320, 240
 
 
 def load_texture(root, name):
-    for folder in ('icon_item_nes_static','icon_item_static','icon_item_field_static','icon_item_24_static'):
+    for folder in ('icon_item_nes_static','icon_item_static','icon_item_field_static','icon_item_24_static','parameter_static'):
         candidates = list((root/folder).glob(name+'.*.png'))
         if candidates:
             return Image.open(candidates[0]).convert('RGBA')
@@ -32,7 +32,7 @@ def source_colours(source):
     return channels
 
 
-def page_image(oot, page, gear=0, stick=False, emerald=False, slingshot=False, nut=False, ocarina=False):
+def page_image(oot, page, gear=0, stick=False, emerald=False, slingshot=False, nut=False, ocarina=False, dynamic=False):
     textures=oot/'extracted/ntsc-1.2/assets/textures'
     source=(oot/'src/overlays/misc/ovl_kaleido_scope/z_kaleido_scope.c').read_text(encoding='utf-8')
     colours=source_colours(source)
@@ -69,7 +69,7 @@ def page_image(oot, page, gear=0, stick=False, emerald=False, slingshot=False, n
         icon('gItemIconSlingshotTex',66,96)
     if page==0 and ocarina:
         icon('gItemIconOcarinaFairyTex',98,96)
-    if page==3:
+    if page==3 and not dynamic:
         if gear&1: icon('gItemIconSwordKokiriTex',174,64)
         if gear&2: icon('gItemIconShieldDekuTex',174,96)
         icon('gItemIconTunicKokiriTex',174,128)
@@ -93,13 +93,13 @@ def page_image(oot, page, gear=0, stick=False, emerald=False, slingshot=False, n
         ys=numbers('sVtxPageMapWorldQuadsY[')
         map_source=(oot/'src/overlays/misc/ovl_kaleido_scope/z_kaleido_map.c').read_text(encoding='utf-8')
         cloud_names=re.findall(r'gWorldMapCloud\w+Tex',map_source.split('cloudTexs[] = {',1)[1].split('};',1)[0])
-        for i,name in enumerate(cloud_names):
+        for i,name in enumerate(() if dynamic else cloud_names):
             cloud=load_texture(textures,name)
             cloud.putdata([(180,185,195,r*96//255) for r,g,b,a in cloud.getdata()])
             map_layer.alpha_composite(cloud,(160+xs[i],120-ys[i]))
         dot=load_texture(textures,'gWorldMapDotTex')
         dot.putdata([(r,r,0,a) for r,g,b,a in dot.getdata()])
-        map_layer.alpha_composite(dot,(234,129))
+        if not dynamic: map_layer.alpha_composite(dot,(234,129))
         # Reuse the page's stone rim around the enlarged map. The frame sits
         # outside its 288x171 image, so no terrain is cropped or squeezed.
         stone=image.crop((48,192,128,200))
@@ -118,9 +118,10 @@ def page_image(oot, page, gear=0, stick=False, emerald=False, slingshot=False, n
         # Current region marker: a dark outline and white ring remain visible
         # against both forest greens and pale clouds. Baked VDP2 art, no sprite.
         marker=ImageDraw.Draw(image)
-        marker.ellipse((254,121,274,141),fill=(8,12,20,255))
-        marker.ellipse((256,123,272,139),fill=(255,255,255,255))
-        marker.ellipse((259,126,269,136),fill=(255,224,32,255))
+        if not dynamic:
+            marker.ellipse((254,121,274,141),fill=(8,12,20,255))
+            marker.ellipse((256,123,272,139),fill=(255,255,255,255))
+            marker.ellipse((259,126,269,136),fill=(255,224,32,255))
     if page==4:
         for name,x,y in (('gPauseSavePromptENGTex',84,84),
                          ('gPauseYesENGTex',102,126),('gPauseNoENGTex',170,126)):
@@ -211,9 +212,9 @@ def menu_font(sdk):
 def build(oot,cd,out,sdk=ROOT.parent.parent/'joengine'):
     cd.mkdir(parents=True,exist_ok=True);out.mkdir(parents=True,exist_ok=True)
     for page in range(6):
-        variants=range(16) if page==0 else range(16) if page==3 else range(2) if page==2 else range(1)
+        variants=range(1)
         for variant in variants:
-            image=page_image(oot,page,variant,page==0 and bool(variant&1),page==2 and variant==1,page==0 and bool(variant&2),page==0 and bool(variant&4),page==0 and bool(variant&8))
+            image=page_image(oot,page,dynamic=True)
             blob=pack(image)
             (cd/('PAUSE%d%X.BIN'%(page,variant))).write_bytes(blob)
             image.save(out/('pause-%d-%d.png'%(page,variant)))
@@ -237,6 +238,8 @@ def build(oot,cd,out,sdk=ROOT.parent.parent/'joengine'):
     (out/'pause_cursor_data.h').write_text('/* Original OoT cursor alpha masks. */\nstatic const unsigned short pause_cursor_masks[4][16] = {\n'+
         ',\n'.join('{'+','.join(map(str,m))+'}' for m in masks)+'\n};\n')
     (cd/'PAUSEFNT.BIN').write_bytes(menu_font(sdk))
+    from pause_inventory_assets import build as build_inventory
+    build_inventory(oot,cd,out,load_texture)
     print('Pause windows: full RGB555, 153600 bytes per page; font 1024 bytes')
 
 

@@ -35,6 +35,12 @@ const oot_core_sprite_stats_t *oot_core_sprite_stats(void);
 int oot_core_door_action(unsigned int kind, unsigned int flag, int front_side, bool commit);
 unsigned int oot_core_scene_layer(void);
 int oot_core_transition_request(bool consume);
+bool oot_core_ocarina_start(void);
+unsigned int oot_core_ocarina_state(void);
+unsigned int oot_core_ocarina_note(void); /* 0 none, 1 A, 2 down, 3 right, 4 left, 5 up */
+unsigned int oot_core_ocarina_song(void); /* completed source song + 1; consume */
+bool oot_core_ocarina_sun_allowed(void);
+void oot_core_scene_restart(void); /* after a successful full scene reload */
 /* Phase 2 draw shim meshes: upload after a bank reset, draw the items. */
 void oot_core_meshes_upload(void);
 void oot_core_meshes_draw(void);
@@ -68,6 +74,12 @@ static inline int oot_core_door_action(unsigned int kind, unsigned int flag, int
 { (void)kind; (void)flag; (void)front_side; (void)commit; return 0xFF00; }
 static inline unsigned int oot_core_scene_layer(void) { return 0; }
 static inline int oot_core_transition_request(bool consume) { (void)consume; return -1; }
+static inline bool oot_core_ocarina_start(void) { return false; }
+static inline unsigned int oot_core_ocarina_state(void) { return 0; }
+static inline unsigned int oot_core_ocarina_note(void) { return 0; }
+static inline unsigned int oot_core_ocarina_song(void) { return 0; }
+static inline bool oot_core_ocarina_sun_allowed(void) { return false; }
+static inline void oot_core_scene_restart(void) {}
 static inline int oot_core_prop(short id, int x, int z) { (void)id; (void)x; (void)z; return -1; }
 #endif
 

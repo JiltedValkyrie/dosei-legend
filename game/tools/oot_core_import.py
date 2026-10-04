@@ -590,6 +590,8 @@ MACRO_REWRITES = {
     # English only (gSaveContext.language = LANGUAGE_ENG): the Japanese
     # entry table would be 17 KB of blob for text that is never shown.
     'src/code/z_message.c': [
+        ('player->naviActor->flags |= ACTOR_FLAG_TALK_OFFER_AUTO_ACCEPTED;',
+         'if (player->naviActor != NULL) player->naviActor->flags |= ACTOR_FLAG_TALK_OFFER_AUTO_ACCEPTED; /* C Navi */'),
         ('''    /* Present */ DEFINE_MESSAGE_JPN(textId, type, yPos, jpnMessage, nesMessage, gerMessage, fraMessage)
 #include "assets/text/message_data.h"''',
          '''    /* Present */ DEFINE_MESSAGE_JPN(textId, type, yPos, jpnMessage, nesMessage, gerMessage, fraMessage)
@@ -636,6 +638,28 @@ def fix_sprite_actors(rel, text, stats):
             replace('    if ((thisx->xzDistToPlayer < 150.0f) &&',
                     '    return; /* action/collision ran; no sprite head tracking */\n'
                     '    if ((thisx->xzDistToPlayer < 150.0f) &&')
+        if rel.endswith('z_en_niw.c'):
+            replace('void func_80AB5BF8(EnNiw* this, PlayState* play, s16 arg2) {',
+                    '''void func_80AB5BF8(EnNiw* this, PlayState* play, s16 arg2) {
+    /* Preserve the source's cosmetic clocks and random calls, without doing
+     * any wing/head pose work for the baked sprite. Action timers 3+ remain
+     * in the original action/update functions below. */
+    if (this->timer1 == 0) {
+        this->unk_298++;
+        this->timer1 = 3;
+        if (!(this->unk_298 & 1) && arg2 == 0)
+            this->timer1 = Rand_ZeroFloat(30.0f);
+    }
+    if (this->timer2 == 0) {
+        this->unk_29C = (this->unk_29C + 1) & 1;
+        switch (arg2) {
+            case 1: this->timer2 = 3; break;
+            case 2: case 3: this->timer2 = 2; break;
+            case 4: this->timer1 = 5; break;
+            case 5: this->timer2 = 5; break;
+        }
+    }
+    return; /* remaining source fields feed only EnNiw_OverrideLimbDraw */''')
         if rel.endswith('z_en_ta.c'):
             replace('    if (this->stateFlags & TALON_STATE_FLAG_TRACKING_PLAYER) {',
                     '    if (!OotCore_IsSprite(&this->skelAnime)) {\n'
@@ -655,6 +679,57 @@ def fix_sprite_actors(rel, text, stats):
         replace('void SkelAnime_Free(SkelAnime* skelAnime, PlayState* play) {',
                 'void SkelAnime_Free(SkelAnime* skelAnime, PlayState* play) {\n'
                 '    if (OotCore_IsSprite(skelAnime)) return;')
+    return text
+
+
+def fix_bgcheck_bounds(rel, text, stats):
+    """Cheap conservative rejects; retain source collision/contact behavior."""
+    if rel != 'src/code/z_bgcheck.c':
+        return text
+    text = '#include "bgcheck.h"\n#include "bgcheck_bounds.h"\n' + text
+
+    def insert_at_body(name, line):
+        nonlocal text
+        pattern = r'(s32 ' + re.escape(name) + r'\([^{};]*\) \{)'
+        text, count = re.subn(pattern, lambda m: m[1] + '\n' + line, text)
+        if count != 1:
+            stats['problems'].append(f'{rel}: bounds hook not unique: {name}')
+        else:
+            stats['macros'] += 1
+
+    for name in ('CollisionPoly_CheckYIntersectApprox1', 'CollisionPoly_CheckYIntersect'):
+        insert_at_body(name,
+                      '    if (!OotCore_BgPolyNear(poly, vtxList, x, 0, z, chkDist, 5)) return false;')
+    for name, coordinates, axes in (
+            ('CollisionPoly_CheckXIntersectApprox', '0, y, z', 6),
+            ('CollisionPoly_CheckZIntersectApprox', 'x, y, 0', 3)):
+        insert_at_body(name,
+                      f'    if (!OotCore_BgPolyNear(poly, vtxList, {coordinates}, 1, {axes})) return false;')
+
+    # Both static-wall passes previously took sqrt before even checking the
+    # plane distance or exclusion flags. Skip far triangles first and defer
+    # sqrt until the source distance check has accepted a nearby candidate.
+    first = text.index('s32 BgCheck_SphVsStaticWall(')
+    last = text.index('\ns32 BgCheck_CheckStaticCeiling(', first)
+    wall = text[first:last]
+    old = '        nx = COLPOLY_GET_NORMAL(curPoly->normal.x);'
+    new = '''        if (COLPOLY_VTX_CHECK_FLAGS_ANY(curPoly->flags_vIA, xpFlags) ||
+            !OotCore_BgPolyNear(curPoly, vtxList, resultPos.x, pos->y, resultPos.z, radius, 7)) {
+            if (curNode->next == SS_NULL) break;
+            curNode = &colCtx->polyNodes.tbl[curNode->next];
+            continue;
+        }
+''' + old
+    if wall.count(old) != 2 or wall.count('        normalXZ = sqrtf(SQ(nx) + SQ(nz));\n') != 2:
+        stats['problems'].append(f'{rel}: static-wall bounds hooks changed')
+    else:
+        wall = wall.replace(old, new)
+        wall = wall.replace('        normalXZ = sqrtf(SQ(nx) + SQ(nz));\n', '')
+        wall = wall.replace('        ASSERT(!IS_ZERO(normalXZ),',
+                            '        normalXZ = sqrtf(SQ(nx) + SQ(nz));\n'
+                            '        ASSERT(!IS_ZERO(normalXZ),')
+        text = text[:first] + wall + text[last:]
+        stats['macros'] += 2
     return text
 
 
@@ -678,6 +753,7 @@ def fixup(rel, text, stats):
     text = fix_anon_aggregates(rel, text, stats)
     text = fix_macros(rel, text, stats)
     text = fix_sprite_actors(rel, text, stats)
+    text = fix_bgcheck_bounds(rel, text, stats)
     text = fix_float_literals(text, stats)
     return fix_mtxf(text, stats)
 
@@ -738,11 +814,22 @@ def write_if_changed(path, text):
     return True
 
 
+def ocarina_restrictions_source(oot):
+    """Original interface restrictions; no Saturn scene-number assumptions."""
+    text = (oot / 'src/code/z_parameter.c').read_text(encoding='utf-8')
+    body = text.split('static RestrictionFlags sRestrictionFlags[] = {', 1)[1].split('};', 1)[0]
+    rows = re.findall(r'\{\s*(SCENE_\w+|0xFF),\s*0x[0-9A-F]+,\s*(0x[0-9A-F]+),\s*(0x[0-9A-F]+)\s*\}', body)
+    if not rows or rows[-1][0] != '0xFF':
+        raise ValueError('Source song restriction table changed')
+    return ''.join('    {%s,%s,%s},\n' % row for row in rows)
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument('--oot', type=pathlib.Path, default=OOT_DEFAULT)
     ap.add_argument('--out', type=pathlib.Path, default=OUT_DEFAULT)
     args = ap.parse_args()
+    write_if_changed(args.out / 'ocarina_restrictions.inc', ocarina_restrictions_source(args.oot))
 
     stats = {'macros': 0, 'fxl': 0, 'anon': 0, 'mtxf': 0, 'files': 0, 'written': 0, 'problems': []}
     files = set()

@@ -81,6 +81,7 @@ cp "$here/disc/ABS.TXT" "$here/disc/BIB.TXT" "$here/disc/CPY.TXT" "$here/build/c
 # on the CD image. Both are cheap and keep game.iso consistent with FOREST.BIN.
 "$python" "$here/tools/build_sgl_area.py" --source "$sgl_source" --max-polygons "${SGL_MAX_POLYGONS:-3750}" --max-vertices 3200
 "$python" "$here/tools/build_link_model.py" --flat --animate --oot "$oot" --rom-dir "$roms"
+"$python" "$here/tools/build_adult_link.py" --oot "$oot" --rom-dir "$roms"
 quad_args=()
 if [ -n "${QUAD_OBJ:-}" ]; then
     quad_args=(--quad-obj "$QUAD_OBJ")
@@ -119,9 +120,9 @@ fi
 if [ -n "${AUTHORED_OBJ:-}" ]; then
     quad_args+=(--skip-scene)
 fi
-# Ranch must reserve the live actor bank before room registration/staging.
-# The generic-scene cache predates NPC support; do not reuse that oversized bake.
-"$python" "$here/tools/build_all_scenes.py" --oot "$oot" --rom-dir "$roms" --only spot20
+# Generic banks must match source, converter/material rules and live actor
+# budgets. Previously only Ranch refreshed and every other scene stayed stale.
+    "$python" "$here/tools/build_all_scenes.py" --oot "$oot" --rom-dir "$roms" --refresh-stale --registered-only
 "$python" "$here/tools/build_sgl_scene.py" --texture-path "${TEXTURE_PATH:-hybrid}" --oot "$oot" --rom-dir "$roms" "${quad_args[@]}"
 # Overwrite the generated forest with the authored import. Link's tables and
 # vdp1_layout.h come from the run above and are left alone.

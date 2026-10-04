@@ -12,6 +12,50 @@ const char *save_scene_name(unsigned scene)
     return scene<SAVE_SCENE_COUNT?names[scene]:"UNKNOWN AREA";
 }
 
+unsigned save_inventory_item(unsigned slot)
+{
+    if (slot >= 24) return 0xff;
+    if (slot == 0) return save_state.stick_owned ? 0 : 0xff;
+    if (slot == 1) return save_state.nut_owned ? 1 : 0xff;
+    if (slot == 6) return save_state.slingshot ? 6 : 0xff;
+    if (slot == 7) return save_state.source_items[7] == 8 ? 8 :
+        save_state.fairy_ocarina ? 7 : 0xff;
+    if (slot >= 18 && slot < 22) return save_state.bottle_items[slot - 18];
+    return save_state.source_items[slot];
+}
+
+unsigned save_c_item_for_slot(unsigned slot)
+{
+    if (save_inventory_item(slot) == 0xff || !save_inventory_slot_usable(slot)) return 0;
+    return slot == 0 ? 1 : slot == 6 ? 2 : slot == 1 ? 3 : slot == 7 ? 4 : 0x20 + slot;
+}
+
+bool save_inventory_slot_usable(unsigned slot)
+{
+    /* z_kaleido_scope.c gSlotAgeReqs: 0 adult, 1 child, 9 unrestricted. */
+    static const uint8_t age[24] = {1,9,9,0,0,9,1,9,9,0,0,9,1,9,1,0,0,9,9,9,9,9,0,1};
+    return slot < 24 && (age[slot] == 9 || age[slot] == save_state.link_age);
+}
+
+void __attribute__((optimize("Os"))) save_set_link_age(unsigned age)
+{
+    unsigned i;
+    save_state.link_age = age ? 1 : 0;
+    save_state.owned_sword = save_state.equip_sword = age ? EQUIP_VALUE_SWORD_KOKIRI : EQUIP_VALUE_SWORD_MASTER;
+    save_state.owned_shield = save_state.equip_shield = age ? EQUIP_VALUE_SHIELD_DEKU : EQUIP_VALUE_SHIELD_HYLIAN;
+    save_state.source_equipment |= age ? 0x11 : 0x22;
+    for (i=0;i<3;++i)
+        if (!save_inventory_slot_usable(save_c_item_inventory_slot(save_state.c_items[i])))
+            save_state.c_items[i] = 0;
+}
+
+unsigned save_c_item_inventory_slot(unsigned action)
+{
+    static const uint8_t legacy[] = {0xff, 0, 6, 1, 7};
+    if (action < sizeof(legacy)) return legacy[action];
+    return action >= 0x20 && action < 0x38 ? action - 0x20 : 0xff;
+}
+
 #if !defined(__sh__)
 save_state_t    save_state;
 #endif
@@ -28,8 +72,8 @@ unsigned save_skull_count(void) {
     return n<save_state.source_tokens?save_state.source_tokens:n;
 }
 bool save_tunic_unlocked(unsigned tunic) {
-    return tunic==0 || (tunic==1 && save_skull_count()>=1) ||
-           (tunic==2 && save_skull_count()>=5);
+    return tunic==0 || (tunic==1 && ((save_state.source_equipment&0x400) || save_skull_count()>=1)) ||
+           (tunic==2 && ((save_state.source_equipment&0x200) || save_skull_count()>=5));
 }
 bool save_equip_tunic(unsigned tunic) {
     if(!save_tunic_unlocked(tunic))return false;
@@ -351,7 +395,8 @@ void            save_cheat_refill(void)
         save_state.ammo_seeds = save_seed_capacity();
 }
 
-void save_test_max_gear(void)
+/* Test-entry setup is cold; keep it out of hot callers' inline expansion. */
+void __attribute__((optimize("Os"))) save_test_max_gear(void)
 {
     unsigned i;
     /* Source inventory slots, using upgraded ocarina/longshot. Bottle/trade

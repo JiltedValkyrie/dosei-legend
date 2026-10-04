@@ -172,7 +172,8 @@ def emit(head, verts, faces, tiles, out_dir, name='kokiri'):
         # translation unit.
         lines = [banner, '', '#include <jo/jo.h>', '#include "@n@_scene.h"', '',
                  '/* Skinned at runtime by link_anim.c; see link_clips.h. */',
-                 'POINT @n@_points[@N@_VERTEX_COUNT];', '']
+                 'typedef char link_points_fit[@N@_VERTEX_COUNT*sizeof(POINT) <= RAM_LOW_LINK_POINTS_BYTES ? 1 : -1];',
+                 '#ifndef __sh__', 'POINT @n@_points[@N@_VERTEX_COUNT];', '#endif', '']
     else:
         lines = [banner, '', '#include <jo/jo.h>', '#include "@n@_scene.h"', '',
                  'static POINT @n@_points[@N@_VERTEX_COUNT] = {']
@@ -339,7 +340,10 @@ def emit(head, verts, faces, tiles, out_dir, name='kokiri'):
                    '# define @N@_TEX_FILE         "LINKTEX.BIN"',
                    '# define @N@_TEX_BYTES        (@N@_TILE_COUNT * (sizeof(@n@_tile) + 32))',
                    '/* Rewritten in place by the runtime skinner; see link_anim.h. */',
-                   'extern POINT                 @n@_points[@N@_VERTEX_COUNT];']
+                   '#include "ram_low.h"',
+                   '#ifdef __sh__',
+                   '#define @n@_points ((POINT *)RAM_LOW(RAM_LOW_LINK_POINTS_OFFSET))',
+                   '#else', 'extern POINT @n@_points[@N@_VERTEX_COUNT];', '#endif']
     if name != 'link':
         header += ['extern const @n@_tile     @n@_tiles[@N@_TILE_COUNT];',
                    'extern const unsigned short  @n@_cluts[@N@_TILE_COUNT][16];']
@@ -349,6 +353,36 @@ def emit(head, verts, faces, tiles, out_dir, name='kokiri'):
               '']
     (out_dir / fix('@n@_scene.h')).write_text(fix('\n'.join(header)))
     return len(blob)
+
+
+def link_actor_budget(model):
+    """Reserve either age in one replaceable bank, including sprite slots.
+
+    The descriptor list is only a conservative budget, never uploaded. Use
+    the age with more descriptors and extend it if the other age costs more
+    texture bytes. Geometry likewise reserves the larger of the two models.
+    """
+    from vdp1_budget import tile_bytes
+    models = [pathlib.Path(model)]
+    adult = models[0].with_name('ADULT.BIN')
+    if models[0].name == 'LINK.BIN' and adult.is_file():
+        models.append(adult)
+    budgets = []
+    for path in models:
+        data, head, vertices, faces = read_scene(path)
+        tiles = collect_tiles(data, head, faces)
+        sizes = [(t['width'], t['height']) for t in tiles.values()]
+        budgets.append(dict(tiles=sizes, polygons=len(faces), vertices=len(vertices)))
+    result = dict(max(budgets, key=lambda b: len(b['tiles'])))
+    result['tiles'] = list(result['tiles'])
+    required = max(sum(tile_bytes(w, h) for w, h in b['tiles']) for b in budgets)
+    used = sum(tile_bytes(w, h) for w, h in result['tiles'])
+    while used < required:
+        result['tiles'].append((8, 1))
+        used += tile_bytes(8, 1)
+    result['polygons'] = max(b['polygons'] for b in budgets)
+    result['vertices'] = max(b['vertices'] for b in budgets)
+    return result
 
 
 def main():
@@ -403,10 +437,7 @@ def main():
             from build_hybrid_scene import convert
             actor = dict(tiles=[], polygons=0, vertices=0)
             if args.model.is_file():
-                ad, ah, av, af = read_scene(args.model)
-                at = collect_tiles(ad, ah, af)
-                actor = dict(tiles=[(t['width'],t['height']) for t in at.values()],
-                             polygons=len(af), vertices=len(av))
+                actor = link_actor_budget(args.model)
             if args.stream_rooms:
                 from build_room_scene import emit_rooms
                 emit_rooms(args,head,actor,face_normal)
@@ -418,7 +449,11 @@ def main():
             replace_with_checker(tiles)
         blob_bytes = emit(head, verts, faces, tiles, args.out, name)
         total_polygons += len(faces)
-        budget.add(name, [(t['width'],t['height']) for t in tiles.values()], len(faces), len(verts))
+        if name == 'link':
+            actor = link_actor_budget(source)
+            budget.add(name, actor['tiles'], actor['polygons'], actor['vertices'])
+        else:
+            budget.add(name, [(t['width'],t['height']) for t in tiles.values()], len(faces), len(verts))
 
         cull = sum(1 for f in faces if f['cull'])
         mesh = sum(1 for f in faces if f['mesh'])

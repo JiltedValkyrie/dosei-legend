@@ -166,6 +166,13 @@ static void play(unsigned int id, unsigned int slot)
                 12, false);
 }
 
+void action_audio_ocarina(unsigned int note)
+{
+    static const unsigned char id[5] = {ACTION_OCARINA0,ACTION_OCARINA1,
+        ACTION_OCARINA2,ACTION_OCARINA3,ACTION_OCARINA4};
+    if (!opening_bank && note < 5) play(id[note], 29);
+}
+
 /* Area one-shot: silent when the current area bank lacks the sound.
 ** `shift` is added to the sample's pitch register (OCT/FNS). */
 static void play_area_pitch(unsigned int id, unsigned int slot, unsigned int shift);

@@ -26,6 +26,10 @@
 #include "view.h"
 #include "interface.h"
 #include "oot_core_host.h"
+#include "player.h"
+#include "save.h"
+#include "item.h"
+#include "controller.h"
 
 extern const OotCoreHost* gOotCoreHost;
 
@@ -88,7 +92,7 @@ void Interface_SetDoAction(PlayState* play, u16 action) { /* STUB */
 void Interface_LoadActionLabelB(PlayState* play, u16 action) { /* STUB */
 }
 
-/* ---- audio: message sfx to the host PCM bank, ocarina absent ---- */
+/* ---- audio: message SFX and Ocarina notes to the host PCM bank ---- */
 void Audio_PlaySfxIfNotInCutscene(u16 sfxId) { /* HOST */
     if (gOotCoreHost != NULL && gOotCoreHost->play_sfx != NULL) {
         gOotCoreHost->play_sfx(sfxId, 0, 0, 0);
@@ -102,19 +106,43 @@ void Audio_PlayFanfare(u16 seqId) { /* STUB: C music owns fanfares */
 void Audio_SetSfxBanksMute(u16 muteMask) { /* STUB */
 }
 
-static OcarinaStaff sOcarinaStaff;
+static OcarinaStaff sOcarinaStaff, sPlaybackStaff;
+static u16 sSongMask;
+static u8 sNotes[8], sNoteCount, sPlaybackSong, sPlaybackTick, sSoundedNote;
+static u8 sInstrument, sOcarinaActive, sCompletedSong, sListening;
 OcarinaNote* gScarecrowLongSongPtr;
 u8* gScarecrowSpawnSongPtr;
-OcarinaSongButtons gOcarinaSongButtons[OCARINA_SONG_MAX];
+/* src/audio/game/general.c gOcarinaSongButtons. Button order is A, down,
+ * right, left, up. Timing/bend/vibrato remain a Saturn approximation. */
+OcarinaSongButtons gOcarinaSongButtons[OCARINA_SONG_MAX] = {
+    {6,{0,4,3,2,3,2}}, {8,{1,0,1,0,2,1,2,1}}, {5,{0,1,2,2,3}},
+    {6,{0,1,0,2,1,0}}, {7,{3,2,2,0,3,2,1}}, {6,{4,2,4,2,3,4}},
+    {6,{1,2,3,1,2,3}}, {6,{4,3,2,4,3,2}}, {6,{3,4,2,3,4,2}},
+    {6,{2,1,4,2,1,4}}, {6,{2,0,1,2,0,1}}, {6,{0,1,4,0,1,4}},
+    {8,{0}}, {0,{0}}
+};
 
-/* STUB (all): ocarina playing is not on Saturn yet (audio/game/ocarina.c). */
 void AudioOcarina_Start(u16 ocarinaFlags) {
+    sSongMask = ocarinaFlags & 0x0fff;
+    sListening = 1;
+    sNoteCount = 0;
+    sOcarinaStaff.buttonIndex = OCARINA_BTN_INVALID;
+    sOcarinaStaff.state = 0xfe;
+    sOcarinaStaff.pos = 0;
 }
 void AudioOcarina_SetInstrument(u8 ocarinaInstrumentId) {
+    sInstrument = ocarinaInstrumentId;
+    if (!sInstrument) { sSongMask = 0; sListening = 0; }
 }
 void AudioOcarina_SetPlaybackSong(s8 songIndexPlusOne, s8 playbackState) {
+    sPlaybackSong = songIndexPlusOne > 0 && songIndexPlusOne <= 12 ? songIndexPlusOne - 1 : 0xff;
+    sPlaybackTick = 0;
+    sPlaybackStaff.pos = 0;
+    sPlaybackStaff.state = sPlaybackSong < 12 && playbackState ? 1 : 0;
 }
 void AudioOcarina_SetRecordingState(u8 recordingState) {
+    /* Scarecrow recording/storage is not yet imported. Reject explicitly. */
+    sOcarinaStaff.state = recordingState ? OCARINA_RECORD_REJECTED : OCARINA_RECORD_OFF;
 }
 OcarinaStaff* AudioOcarina_GetRecordingStaff(void) {
     return &sOcarinaStaff;
@@ -123,12 +151,114 @@ OcarinaStaff* AudioOcarina_GetPlayingStaff(void) {
     return &sOcarinaStaff;
 }
 OcarinaStaff* AudioOcarina_GetPlaybackStaff(void) {
-    return &sOcarinaStaff;
+    return &sPlaybackStaff;
 }
 void AudioOcarina_MemoryGameInit(u8 minigameRound) {
 }
 s32 AudioOcarina_MemoryGameNextNote(void) {
-    return 0;
+    return 1; /* no generated next note: memory game remains unsupported */
+}
+
+extern PlayState* gOotCorePlay;
+void OotCore_OcarinaScene(PlayState* play) {
+    static const u8 restrictions[][3] = {
+#include "../../build/oot-core/ocarina_restrictions.inc"
+    };
+    for (unsigned i=0;restrictions[i][0]!=0xff;++i) if (restrictions[i][0]==play->sceneId) {
+        play->interfaceCtx.restrictions.ocarina = (restrictions[i][1] >> 2) & 3;
+        play->interfaceCtx.restrictions.warpSongs = restrictions[i][1] & 3;
+        play->interfaceCtx.restrictions.sunsSong = restrictions[i][2] >> 6;
+        break;
+    }
+}
+void OotCore_OcarinaReset(void) {
+    sOcarinaActive = sSongMask = sInstrument = sCompletedSong = sSoundedNote = sListening = 0;
+    sPlaybackStaff.state = 0;
+}
+
+/* command 0 state, 1 start, 2 consume note (1..5), 3 completed song (1..12).
+ * State bit 0 owns Link; bit 1 accepts notes; bits 8..15 = last song + 1. */
+unsigned int OotCore_Ocarina(unsigned int command) {
+    PlayState* play = gOotCorePlay;
+    Player* player = play ? GET_PLAYER(play) : NULL;
+    if (command == 2 || command == 3) {
+        u8 result = command == 2 ? sSoundedNote : sCompletedSong;
+        if (command == 2) sSoundedNote = 0; else sCompletedSong = 0;
+        return result;
+    }
+    if (!play || !player) return 0;
+    if (command == 4) {
+        /* Source dungeon room types are not yet in OOC. Restrict this cheap
+         * time bridge to named overworld scenes; dungeon stun stays pending. */
+        return play->sceneId >= SCENE_HYRULE_FIELD && play->sceneId <= SCENE_OUTSIDE_GANONS_CASTLE &&
+            play->interfaceCtx.restrictions.sunsSong != 3 && !play->msgCtx.disableSunsSong;
+    }
+    if (command == 1) {
+        if (sOcarinaActive || play->msgCtx.msgMode != MSGMODE_NONE ||
+            play->interfaceCtx.restrictions.ocarina ||
+            (INV_CONTENT(ITEM_OCARINA_FAIRY) != ITEM_OCARINA_FAIRY &&
+             INV_CONTENT(ITEM_OCARINA_FAIRY) != ITEM_OCARINA_OF_TIME)) return 0;
+        sOcarinaActive = 1;
+        player->stateFlags2 |= PLAYER_STATE2_USING_OCARINA;
+        /* Source song-check actors observe 24 after the start animation. */
+        player->stateFlags2 |= PLAYER_STATE2_24;
+        Message_StartOcarina(play, OCARINA_ACTION_FREE_PLAY);
+    }
+    return sOcarinaActive ? 1u | (sListening ? 2u : 0u) |
+        (play->msgCtx.lastPlayedSong < 12 ? (play->msgCtx.lastPlayedSong + 1u) << 8 : 0u) : 0;
+}
+
+void OotCore_OcarinaStep(PlayState* play) {
+    Player* player = GET_PLAYER(play);
+    unsigned i, j, note = 5;
+    u16 press = play->state.input[0].press.button;
+    if (!player) return;
+    if (sOcarinaActive) {
+        if (play->msgCtx.ocarinaMode == OCARINA_MODE_02 && play->msgCtx.lastPlayedSong < 6) {
+            /* z_player.c sWarpSongEntrances / Environment_WarpSongLeave.
+             * The common transition loader preserves destination spawn/yaw.
+             * Warp particles/camera choreography remain unimported. */
+            static const u16 entrance[6] = {0x0600,0x04f6,0x0604,0x01f1,0x0568,0x05f4};
+            play->nextEntranceIndex = entrance[play->msgCtx.lastPlayedSong];
+            play->transitionTrigger = TRANS_TRIGGER_START;
+            play->msgCtx.ocarinaMode = OCARINA_MODE_04;
+        }
+        if (play->msgCtx.msgMode == MSGMODE_NONE &&
+            (play->msgCtx.ocarinaMode == OCARINA_MODE_04 ||
+             play->msgCtx.ocarinaAction == OCARINA_ACTION_FREE_PLAY_DONE)) {
+            if (play->msgCtx.ocarinaAction == OCARINA_ACTION_FREE_PLAY_DONE && play->msgCtx.lastPlayedSong < 12)
+                sCompletedSong = play->msgCtx.lastPlayedSong + 1;
+            sOcarinaActive = 0;
+            player->stateFlags2 &= ~(PLAYER_STATE2_USING_OCARINA | PLAYER_STATE2_23 | PLAYER_STATE2_24 | PLAYER_STATE2_25);
+            play->msgCtx.ocarinaMode = OCARINA_MODE_04;
+        }
+    }
+    if (sPlaybackStaff.state && sPlaybackSong < 12 && ++sPlaybackTick >= 8) {
+        sPlaybackTick = 0;
+        if (sPlaybackStaff.pos >= gOcarinaSongButtons[sPlaybackSong].numButtons) sPlaybackStaff.state = 0;
+        else {
+            sPlaybackStaff.buttonIndex = gOcarinaSongButtons[sPlaybackSong].buttonsIndex[sPlaybackStaff.pos++];
+            sSoundedNote = sPlaybackStaff.buttonIndex + 1;
+        }
+    }
+    if (!sListening || !sInstrument || sOcarinaStaff.state < 12) return;
+    if (press & BTN_A) note = 0;
+    else if (press & BTN_CDOWN) note = 1;
+    else if (press & BTN_CRIGHT) note = 2;
+    else if (press & BTN_CLEFT) note = 3;
+    else if (press & BTN_CUP) note = 4;
+    if (note == 5) return;
+    if (sNoteCount == 8) { for (i=1;i<8;++i) sNotes[i-1]=sNotes[i]; --sNoteCount; }
+    sNotes[sNoteCount++] = note;
+    sSoundedNote = note + 1;
+    sOcarinaStaff.buttonIndex = note;
+    sOcarinaStaff.pos = sNoteCount;
+    for (i=0;i<12;++i) if (sSongMask & (1u<<i)) {
+        unsigned n = gOcarinaSongButtons[i].numButtons;
+        if (n > sNoteCount) continue;
+        for (j=0;j<n && sNotes[sNoteCount-n+j] == gOcarinaSongButtons[i].buttonsIndex[j];++j) {}
+        if (j == n) { sOcarinaStaff.state = i; sSongMask = 0; sListening = 0; break; }
+    }
 }
 
 /* ---- graph.c: scratch display lists for Message_Draw (never executed) ---- */

@@ -24,4 +24,5 @@ void action_audio_owl_flap(void);
 /* oot-core OotCoreHost.play_sfx: decomp sfxId (NA_SE_*) -> loaded PCM.
 ** Ids without a Saturn sample are ignored. */
 void action_audio_decomp_sfx(unsigned int sfx_id);
+void action_audio_ocarina(unsigned int note); /* source button index 0..4 */
 #endif

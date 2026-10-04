@@ -144,15 +144,16 @@ static jo_texture_definition __jo_sprite_def[8];
 static unsigned texture_base=256,vram_used,sprite_next,kokiri_sprite_peak;
 static PDATA kokiri_pdata;
 static unsigned char *forest_palette,*opening_pixel_pool;
+static const void *mesh_staged_pixels;
 static int opening_pixel_pool_bytes;
-static unsigned disk_bytes, errors;
+static unsigned disk_bytes, errors, reads;
 static void jo_core_error(const char *s,...) { ++errors; }
 static void asset_loading(const char *s) {}
 static void asset_loading_done(void) {}
 static void slDMAWait(void) {}
 static void jo_dma_copy(void *s,void *d,unsigned n) { memcpy(d,s,n); }
 static char *jo_fs_read_file_ptr(const char *s,void *d,int *n) {
-    memset(d,0x12,disk_bytes); ((char *)d)[disk_bytes]=0; *n=disk_bytes; return d;
+    ++reads; memset(d,0x12,disk_bytes); ((char *)d)[disk_bytes]=0; *n=disk_bytes; return d;
 }
 ''' + upload + r'''
 int main(void) {
@@ -164,14 +165,17 @@ int main(void) {
     kokiri_pdata.attbl=attrs;
     for(i=0;i<2;++i) for(j=0;j<16;++j) palettes[i][j]=0x8000+i*32+j;
     memset(pool,0x12,sizeof(pool)); opening_pixel_pool=pool; opening_pixel_pool_bytes=16;
-    for(cached=0;cached<2;++cached) for(start=0;start<32;start+=8) {
+    for(cached=0;cached<3;++cached) for(start=0;start<32;start+=8) {
         /* Actual resident Link payload (8912) has remainder 16, which broke
          * every Link palette and propagated into the house panorama bank. */
         disk_bytes=cached?16:8912; vram_used=start; sprite_next=1;
+        mesh_staged_pixels=cached==2 ? pool : 0; reads=0;
         memset(attrs,0,sizeof(attrs)); attrs[0].dir=attrs[1].dir=2;
         attrs[1].texno=1; attrs[2].dir=4; attrs[2].colno=0xabcd;
         assert(mesh_load("TEST.TEX",disk_bytes,tiles,2,palettes,&kokiri_pdata,3,
-                         cached?offsets:0));
+                         cached==1?offsets:0));
+        assert(reads==(cached==0));
+        for(i=0;i<16;++i)assert(raw_vram[texture_base+start+i]==pool[i]);
         for(i=0;i<2;++i) {
             unsigned lut=(attrs[i].colno&~3u)<<3;
             assert(!(attrs[i].colno&3));

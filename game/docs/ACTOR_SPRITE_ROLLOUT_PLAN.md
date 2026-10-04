@@ -27,6 +27,21 @@ render time. Approximation is explicitly allowed; no new 64-bit runtime math.
 
 ## Current evidence and gaps
 
+New populated-room regression (2026-10-04): Ranch Cuccos and Kakariko cause
+severe slowdown; title scenery without actors runs smoothly. Imported Cucco
+still performed eight unused wing/head pose interpolations. Those calls are
+removed while clip clocks, gameplay timers and RNG advancement stay intact.
+Conservative 32-bit bounds now reject distant source static collision triangles
+before expensive Fx narrow phase; actual imported collision tests preserve all
+3,190 probe contacts and reduce square-root calls 27,214 -> 701. Dynamic actor
+collision and boss hitboxes are unchanged. Full assets and the final Clean
+relink now pass, with 578 distinct host cases across the affected batch and
+384 B high-RAM margin. The matched SH-2 bounds wrappers use the actual Fx ABI
+without wide/float helpers; Saria proximity also reads 32-bit words directly.
+Actor-view scratch retains 24 rows in a checked, fill-before-read low-RAM carve.
+Human populated-room FPS acceptance remains pending. Full Fx-wide migration
+and actors missing from the coverage ledger remain required.
+
 The sprite/CPU/save/cleanup baseline is now commit 9d384cd; the continuation
 below is recorded in this checkpoint, with commit/push and main integration
 authorized on 2026-10-04. 400 distinct host checks pass. Full assets and the final
@@ -36,7 +51,7 @@ Story banks use IDs 1024+ and C-prefixed files; real room banks no longer collid
 Staging/budget checks pass; prior build figures below are historical. Human
 runtime acceptance and complete actor coverage remain open.
 
-Latest human test reports six repeated null-free errors at startup/zone changes,
+Earlier human test reports six repeated null-free errors at startup/zone changes,
 one Ranch NPC visible and generic doors unusable. Cleanup guards are now fixed
 in all three sprite teardown paths; stubs detect NULL frees. Eleven focused
 host checks pass, including 256 allocation combinations and repeated cleanup.

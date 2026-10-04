@@ -78,8 +78,8 @@ def read_object(oot, name, rom_dir=None):
     sys.exit('%s not found in segments.csv' % name)
 
 
-def read_limbs(data):
-    pointers = struct.unpack_from('>%dI' % LIMB_COUNT, data, LIMB_TABLE)
+def read_limbs(data, table=LIMB_TABLE):
+    pointers = struct.unpack_from('>%dI' % LIMB_COUNT, data, table)
     limbs = []
     for pointer in pointers:
         x, y, z, child, sibling, near, far = struct.unpack_from(
@@ -304,19 +304,19 @@ GEAR_LISTS = (
 )
 
 
-def collect_equipment(data, keep, placed, oot):
+def collect_equipment(data, keep, placed, oot, object_name=OBJECT, gear_lists=GEAR_LISTS):
     """z_player_lib.c hand/sheathed-sword DL variants; retain Flex slot layout.
 
     Replay the whole skeleton for each replacement so preceding material and
     matrix state is real. Only the replaced limb's faces join the resident mesh.
     """
-    xml = ET.parse(oot / 'assets/xml/objects/object_link_child.xml')
+    xml = ET.parse(oot / 'assets/xml/objects' / (object_name + '.xml'))
     offsets = {e.attrib['Name']: int(e.attrib['Offset'], 0)
                for e in xml.iter('DList')}
     source = (oot / 'src/code/z_player_lib.c').read_text()
     base = collect_faces(data, keep, placed)
     faces = [dict(f, group='body') for f in base if f['limb'] not in (15, 18, 19)]
-    for group, limb, symbol in GEAR_LISTS:
+    for group, limb, symbol in gear_lists:
         if symbol not in source:
             raise ValueError('Player equipment list no longer referenced: ' + symbol)
         selected = [(i, m, o, (0x06000000 | offsets[symbol]) if i == limb else dl)

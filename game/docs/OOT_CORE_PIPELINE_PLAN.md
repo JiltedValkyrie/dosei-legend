@@ -2,6 +2,18 @@
 
 ## Current handoff (2026-10-04)
 
+Active regression batch: complete source inventory/quest display, current-region
+map, Ocarina/song bridge, real Adult Link asset/era path, interior views, door
+materials, tomb alpha and populated Cucco CPU cost. Human screenshots supersede
+the older cleanup report below. See DEMO_PLAN.md for current test/build status;
+the 400-check Clean evidence below describes the committed baseline only.
+This regression batch now has 578 distinct passing host cases, full asset
+generation and a passing WSL Clean relink. Final .bss end 0x06083E80 leaves
+384 B below SGL. Matched target audit passes new bounded paths (max audited
+frame 172 B); existing core wide math remains migration debt. All 889 staged
+payloads match the mastered ISO. No emulator/human acceptance. Detailed changes,
+logs/hash and remaining song/adult/item gaps: PLAYER_REGRESSIONS_2026-10-04.md.
+
 Baseline sprite/CPU/save/cleanup work is committed as 9d384cd. This continuation
 is recorded in cf9ba39 and merged into main, now the active development branch.
 The former main is preserved as oot-vslice-demo (7c8cc93); retired dev's unique
@@ -9,7 +21,7 @@ tip is tagged archive/dev-2026-10-04 (5b560ab), with dirty worktree files intact
 Historical checkpoint sections
 below retain their original evidence and do not describe the current image.
 
-400 distinct host checks pass. Full WSL asset regeneration and the final
+Committed baseline evidence: 400 distinct host checks passed. Full WSL asset regeneration and the final
 C-only Clean relink pass (`world-completion-build.log`, `world-completion-link.log`).
 Usual game-clean.cue/.iso rebuilt; .bss ends 0x06083D70, 656 B below SGL.
 Save state, write/preview scratch and draw-cache ownership use checked low-RAM
@@ -17,7 +29,7 @@ carves; boot initializes persistent state/cache before use. Virtual story banks
 use IDs 1024+ and C-prefixed files, with no real-room overwrite. Staging and
 budget checks pass; retired aliases removed. Runtime acceptance remains open.
 
-**Latest runtime report:** repeated `dosei_allocator_free(): Null pointer` at
+**Earlier runtime report:** repeated `dosei_allocator_free(): Null pointer` at
 startup/zone changes, about six dismissals; one Ranch NPC visible; generic doors
 still unwired. Confirmed source regression: story_route_free directly frees six
 optional sprite pointers without guards. SDK rejects NULL; host stubs incorrectly
@@ -52,8 +64,8 @@ Current Clean target verification passes; horse gameplay remains unfinished.
 Follow [NEXT_CHAT_WORLD_COMPLETION.md](NEXT_CHAT_WORLD_COMPLETION.md).
 Prior build success does not supersede the human failures.
 
-Latest user addition: Level Select ALL ITEMS + MAX STATS, default No, L/R
-toggle, applies on confirmed test entry only. All source quest bits include
+Level Select ALL ITEMS + MAX STATS defaults No; L toggles items and R selects
+Child/Adult (default Child). Applies on confirmed test entry only. All source quest bits include
 the three stones/Emerald, medallions and songs; source inventory/owned gear,
 20 hearts, capped ammo/magic/upgrades, 500 rupees, tokens and dungeon test keys
 are included. No new story completion flags. Mutually exclusive slots use

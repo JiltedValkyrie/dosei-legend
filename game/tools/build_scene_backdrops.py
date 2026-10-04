@@ -35,6 +35,7 @@ from build_scene_table import SCENES
 
 from PIL import Image
 import asset_names
+from interior_panorama import PANORAMAS, panorama_room
 
 WIDTH = 320
 HEIGHT = 240
@@ -120,10 +121,13 @@ def main():
     # 2: SKYBOX_KOKIRI_SHOP (KSVR): two faces (Skybox_Calculate256 shop
     # range) turned by skyboxCtx->rot.y 0.8: the shop's browsing view
     # (Play_SetShopBrowsingViewpoint), never the player toggle.
-    panoramas = {0: ('LHVR', 4), 2: ('KSVR', 2, 0.8), 3: ('KHVR', 4), 4: ('K3VR', 3),
-                 5: ('K4VR', 3), 6: ('K5VR', 3)}
-    for index, spec in panoramas.items():
-        vertices, faces, tiles = house_panorama(args.oot, *spec)
+    for prefix, (index, _skybox, asset, sides, rotation) in PANORAMAS.items():
+        entry = next((s for s in SCENES if s['prefix'] == prefix), None)
+        if entry is None:
+            continue
+        scene = source.extract(args.oot, args.rom_dir, prefix=prefix)[prefix + '_scene']
+        panorama_room(prefix, scene, source)
+        vertices, faces, tiles = house_panorama(args.oot, asset, sides, rotation)
         records = [dict(object=0, indices=list(f['idx'])) for f in faces]
         mesh, pixels, _ = pack_room(vertices, faces, tiles, records, normal)
         if bank_bytes(len(pixels), len(tiles)) > 140000:

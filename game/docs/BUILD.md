@@ -265,9 +265,11 @@ BIOS. Agents build; the human launches
   resolves `generic_sprites.h` after `obj_syms.ld` and rebuilds the host consumer.
   Object compaction otherwise makes loaded NPCs invisible (Malon: ROM 0x820,
   previously linked 0xBD8). Current compact sprite objects keep frame counts only.
-- Full builds rebake `spot20` before registering/staging rooms. Old all-scenes
-  caches reserved no Ranch actor bank and spent that space on terrain. Count
-  64 KiB actor reserve and 32 KiB spare in both density passes and final checks.
+- Full builds refresh stale registered scene banks before staging. Cache keys
+  include source bytes, converters and both Link ages' budget inputs; a lone
+  Ranch rebake leaves every other room using obsolete alpha/material rules.
+  Preserve unregistered preflight rows and explicit blocked destinations.
+  Count 64 KiB actor reserve and 32 KiB spare in both density passes/final checks.
 - `build_fairy.py` owns all 32x32 wing/glow cels. `build_demo_assets.py` delegates
   to it; do not overwrite FAIRY.RGB with the old 16x16 helper. Runtime no longer
   consumes FAIRY.BIN. Character offline models remain in generated/cache folders;
@@ -276,6 +278,29 @@ BIOS. Agents build; the human launches
   subsequent blocks at obsolete file offsets and report misleading syntax errors.
   Finish script edits before starting the build; restart from the saved script
   if this occurs. `bash -n build.sh` validates the file itself.
+- Keep one WSL process active at a time in this workspace. A second launch has
+  failed with `SessionLeader ... Failed to read ... EventFd 0` and terminated
+  the existing bake. Poll its existing process session; do host checks on Windows.
+  The interrupted `populated-scenes-bake.log` is not a completed target build.
+- Pause now shares `PAUSEINV.BIN` with the HUD. Full builds must regenerate both
+  `pause_inventory_data.h` and `gameplay_hud_data.h` before target compilation.
+  The atlas lives in VDP2 B0 at 0x52000 and pause reads its backed-up copy. Source
+  icons use 56,272 bytes, with no extra runtime heap or per-pause CD load. Heart
+  banks at 0x50000/0x51000 and C-item banks at 0x4B000 remain disjoint.
+- `build_adult_link.py` must precede scene budgeting. Both source ages share one
+  live Link mesh/animation bank, 184 sprite slots and 13,856 bytes of reserved
+  pixels/palettes. The offline combined-age upper bound is deliberately larger.
+  Link points/matrices/alternate skin occupy checked low-RAM carves at
+  0x17800/0x18C00/0x19800; actor-view scratch uses 0x19000. The first combined
+  link exceeded SGL by 1,264 bytes. Keep the matrix reset and fill-before-read
+  view ownership; low RAM is not boot-zeroed. Stage all five ADULT/ADLT files; they are Link assets,
+  separate from forbidden NPC model/animation packages. No second resident age
+  bank or heap/capacity reduction is needed. Age-load transactions fence VDP1
+  before replacing live textures and preserve the old age on ordinary failure.
+- Generated core includes need an explicit path (as other bridge files use).
+  `bridge_message.cpp` includes `../../build/oot-core/ocarina_restrictions.inc`;
+  the make dependency rebuilds it when restrictions change. Both z_bgcheck and
+  bridge_player explicitly depend on the shared 32-bit bounds/extraction header.
 
 - `tools/oot_core_import.py` regenerates `build/oot-core/decomp/` (run by `build.sh` when
   `OOT_CORE=1`). Report: `build/oot-core/import_report.txt`.

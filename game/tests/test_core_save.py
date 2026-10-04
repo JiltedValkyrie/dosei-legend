@@ -19,6 +19,7 @@ class CoreSave(unittest.TestCase):
 ''' + '#include "' + (ROOT / 'oot-core/include/oot_core_api.h').as_posix() + '"\n'
             + '#include "' + (ROOT / 'src/save_state.c').as_posix() + '"\n' + r'''
 typedef uint32_t u32;
+typedef uint8_t u8;
 typedef struct { unsigned char playerName[8];int health,healthCapacity,rupees,magicLevel,magic;
     int isMagicAcquired,isDoubleMagicAcquired,isDoubleDefenseAcquired,bgsFlag;
 } SavePlayerData;
@@ -54,9 +55,12 @@ static unsigned sGenericScene;
 enum {SLOT_DEKU_STICK=0,SLOT_DEKU_NUT=1,SLOT_BOMB=2,SLOT_BOW=3,
       SLOT_SLINGSHOT=6,SLOT_OCARINA=7,SLOT_BOTTLE_1=18};
 enum {ITEM_DEKU_STICK=0,ITEM_DEKU_NUT=1,ITEM_SLINGSHOT=6,ITEM_OCARINA_FAIRY=7,ITEM_OCARINA_OF_TIME=8,ITEM_NONE=255};
+enum {ITEM_SONG_MINUET=0x5a,ITEM_SONG_STORMS=0x65,QUEST_SONG_MINUET=6};
+static struct { u8 (*give_item)(u8 item); } *gOotCoreHost;
 ''' + graphics.function(source, 'static void seed_scene_save(')
             + graphics.function(source, 'static void save_copy_out(')
-            + graphics.function(source, 'static void oot_core_set_save(') + r'''
+            + graphics.function(source, 'static void oot_core_set_save(')
+            + graphics.function(ROOT / 'oot-core/src/bridge_play.cpp', 'u8 Item_Give(') + r'''
 int main(void) {
     unsigned short events[14]={0},items[4]={0},info[30]={0};
     unsigned long scene[4]={0x11223344,1u<<31,2,4};
@@ -108,6 +112,19 @@ int main(void) {
     assert(gSaveContext.save.info.equips.equipment==0x1100);
     assert(inv->equipment==0x1121 && inv->items[SLOT_OCARINA]==255);
     assert(inv->items[18]==0x1a && inv->items[20]==255);
+    /* Message_Draw learning grants each song in core, then the end-of-update
+     * copy commits it. A host-only grant used to be overwritten here. */
+    quest=1u<<18;oot_core_set_save(&in);
+    for(unsigned song=ITEM_SONG_MINUET;song<=ITEM_SONG_STORMS;++song) {
+        assert(Item_Give(&play,song)==ITEM_NONE);
+        save_copy_out(&play);
+        assert(quest&(1u<<(song-ITEM_SONG_MINUET+QUEST_SONG_MINUET)));
+        memset(&gSaveContext,0,sizeof(gSaveContext));oot_core_set_save(&in);
+        assert(inv->questItems==quest);
+    }
+    assert(quest==((1u<<18)|0x3ffc0));
+    assert(Item_Give(&play,ITEM_SONG_MINUET)==ITEM_NONE);
+    save_copy_out(&play);assert(quest==((1u<<18)|0x3ffc0));
     /* Max Level Select loadout must reach source predicates, including the
      * stones/songs and slots that have no C action implementation yet. */
     save_new_game();save_test_max_gear();

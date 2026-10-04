@@ -261,6 +261,16 @@ LOADER_ADAPTER = r'''
 #include <string.h>
 #include <math.h>
 #include "link_clips.h"
+#include "link_age.h"
+#include "adult_link.h"
+#include "ram_low.h"
+#include <assert.h>
+#define LINK_VERTEX_COUNT LINK_SKIN_VERTICES
+typedef struct { int size; } jo_file;
+static bool jo_fs_open(jo_file *f,const char *name) { (void)f;(void)name;return false; }
+static void jo_fs_close(jo_file *f) { (void)f; }
+static void *jo_fs_read_file_ptr(const char *name,void *dest,int *size) { (void)name;(void)dest;(void)size;return 0; }
+void link_anim_reset(void);
 typedef int32_t FIXED;
 typedef uint16_t ANGLE;
 #define X 0
@@ -285,7 +295,7 @@ static void *jo_fs_read_file(const char *name, int *length)
     *length = disc_length;
     return copy;
 }
-static void jo_free(void *p) { free(p); }
+static void jo_free(void *p) { assert(p);free(p); }
 '''
 LOADER_RESET = r'''
 void test_unload(void) { free((void *)((const char *)link_root - 16)); link_root = 0; link_rotations = 0; }
@@ -307,7 +317,7 @@ class LinkAnimLoader(unittest.TestCase):
         env = dict(os.environ)
         env['PATH'] = str(GCC.parent) + os.pathsep + env.get('PATH', '')
         subprocess.run([str(GCC), '-shared', '-O2', '-DLINK_FRAMES_FROM_DISC',
-                        '-I' + str(GENERATED), '-x', 'c', '-', str(GENERATED / 'link_clips.c'),
+                        '-I' + str(GENERATED), '-I' + str(ROOT / 'src'), '-x', 'c', '-', str(GENERATED / 'link_clips.c'),
                         '-lm', '-o', str(output)],
                        input=LOADER_ADAPTER + source + LOADER_RESET, text=True, env=env,
                        check=True)

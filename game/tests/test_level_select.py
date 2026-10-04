@@ -28,6 +28,8 @@ unsigned kit(void){return save_state.equip_sword && save_state.equip_shield && s
 unsigned saved_scene(void){return save_state.scene_id;}
 unsigned puzzle_flags(void){return save_state.scene[SAVE_SCENE_DEKU_TREE].clear;}
 unsigned boosted(void){return level_select.max_gear;}
+unsigned adult(void){return level_select.adult;}
+unsigned saved_age(void){return save_state.link_age;}
 static save_state_t snapshot;
 void capture(void){snapshot=save_state;}
 unsigned unchanged(void){return !memcmp(&snapshot,&save_state,sizeof(snapshot));}
@@ -98,3 +100,12 @@ unsigned basic_hearts(void){return save_state.health==48 && save_state.health_ca
         g=self.lib;g.level_select_open();g.level_select_toggle_max_gear();g.level_select_toggle_max_gear()
         g.level_select_prepare()
         self.assertTrue(g.kit());self.assertTrue(g.basic_hearts());self.assertFalse(g.max_kit())
+    def test_era_defaults_child_and_applies_only_on_confirm(self):
+        g=self.lib;g.save_new_game();g.capture();g.level_select_open()
+        self.assertFalse(g.adult());self.assertEqual(g.saved_age(),1)
+        g.level_select_toggle_era()
+        self.assertTrue(g.adult());self.assertTrue(g.unchanged())
+        g.level_select_prepare();self.assertEqual(g.saved_age(),0)
+        g.capture();g.level_select_open()
+        self.assertFalse(g.adult());self.assertTrue(g.unchanged())
+        g.level_select_prepare();self.assertEqual(g.saved_age(),1)

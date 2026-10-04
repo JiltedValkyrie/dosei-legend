@@ -40,11 +40,11 @@ static bool near_climb_end(const camera_position_t *player, uint16_t facing)
     bg_hit_t hit;
     int32_t feet = ray.y-1, floor, sine, cosine;
     floor = bg_floor(&ray, BG_IGNORE_CAMERA, &hit);
-    if (floor != BG_Y_MIN && feet-floor < OOT_CAM_PLAYER_HEIGHT) return true;
+    if (floor != BG_Y_MIN && feet-floor < oot_follow_scale.height) return true;
     kokiri_camera_sincos(facing, &sine, &cosine);
     ray.x += sine * 25 / 65536;
     ray.z += cosine * 25 / 65536;
-    ray.y = feet + OOT_CAM_PLAYER_HEIGHT * 22 / 10;
+    ray.y = feet + oot_follow_scale.height * 22 / 10;
     floor = bg_floor(&ray, BG_IGNORE_CAMERA, &hit);
     return floor != BG_Y_MIN && floor > feet;
 }
@@ -69,26 +69,28 @@ void player_camera_update(player_camera_t *camera, oot_follow_t *follow,
     unsigned mode, const camera_position_t *player, uint16_t facing, bool moving,
     camera_position_t *eye, uint16_t *yaw, int32_t *pitch)
 {
-    oot_follow_profile_t profile = {OOT_CAM_Y_OFFSET, OOT_CAM_PITCH_TARGET, 18, 0};
+    oot_follow_profile_t profile = {oot_follow_scale.y_offset, OOT_CAM_PITCH_TARGET, 18, 0};
     camera_position_t anchor = *player;
     int32_t target;
     bool transition;
     if (!camera->initialized) {
-        camera->at_y = player->y-OOT_CAM_PLAYER_ORIGIN+OOT_CAM_PLAYER_HEIGHT+OOT_CAM_Y_OFFSET;
+        camera->at_y = player->y-OOT_CAM_PLAYER_ORIGIN+oot_follow_scale.height+oot_follow_scale.y_offset;
         camera->previous_y = player->y;
         camera->initialized = true;
     }
     if (mode != camera->mode) {
         if (mode == PLAYER_CAMERA_CLIMB)
-            camera->climb_offset = player->y > camera->previous_y ? -14 : -5;
+            camera->climb_offset = player->y > camera->previous_y ?
+                (oot_follow_scale.height == 68 ? -20 : -14) :
+                (oot_follow_scale.height == 68 ? -7 : -5);
         if (mode == PLAYER_CAMERA_NORMAL) camera->returning = true;
         oot_follow_look_exit(follow);
     }
     /* sSetNormal0ModeLedgeHangData / Unique1: yOffset -80, pitch 40.
      * Jump2 offsets (-20 +/-10) depend on climb direction on entry.
-     * All offsets use the Normal1 player-height scale .464 (child 44, BUG-009). */
+     * Offsets use Normal1 height scales .464 (child 44) or .68 (adult 68). */
     if (mode == PLAYER_CAMERA_HANG) {
-        profile.y_offset = -37;
+        profile.y_offset = oot_follow_scale.height == 68 ? -54 : -37;
         profile.pitch_target = 7282;
         profile.pitch_rate = 150;
         profile.yaw_policy = 2;
@@ -98,7 +100,7 @@ void player_camera_update(player_camera_t *camera, oot_follow_t *follow,
         profile.pitch_rate = 30;
         profile.yaw_policy = 1;
     }
-    target = player->y-OOT_CAM_PLAYER_ORIGIN+OOT_CAM_PLAYER_HEIGHT+profile.y_offset;
+    target = player->y-OOT_CAM_PLAYER_ORIGIN+oot_follow_scale.height+profile.y_offset;
     transition = mode != PLAYER_CAMERA_NORMAL || camera->returning;
     camera->at_y = transition ? ease(camera->at_y, target) : target;
     if (camera->at_y == target) camera->returning = false;

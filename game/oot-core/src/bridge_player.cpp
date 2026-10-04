@@ -22,6 +22,8 @@
 #include "message.h"
 #include "libu64/pad.h"
 #include "controller.h"
+#include "save.h"
+#include "bgcheck_bounds.h"
 
 /* Set by oot_core_set_player (oot_core_api.cpp), read in update. */
 Vec3f gOotCorePlayerPos;
@@ -35,6 +37,7 @@ Vec3f gOotCoreSwordTip;
  * Q0): the C side moves C Link by it (oot_core_api.cpp player_push). */
 s32 gOotCorePlayerPushX;
 s32 gOotCorePlayerPushZ;
+static u8 sSariaSongTalk;
 
 /* z_player.c D_80854624: the player's body cylinder (OC pushes, AC). */
 static ColliderCylinderInit sBodyCylinderInit = {
@@ -122,7 +125,8 @@ static void PlayerProxy_UpdateSword(Player* this, PlayState* play) {
         w->active = false; /* func_80832318 */
         return;
     }
-    this->meleeWeaponQuads[0].elem.atDmgInfo.dmgFlags = DMG_SLASH_KOKIRI;
+    this->meleeWeaponQuads[0].elem.atDmgInfo.dmgFlags = LINK_IS_ADULT ? DMG_SLASH_MASTER : DMG_SLASH_KOKIRI;
+    this->meleeWeaponQuads[0].elem.atDmgInfo.damage = LINK_IS_ADULT ? 2 : 1;
     this->meleeWeaponQuads[0].elem.atElemFlags = ATELEM_ON | ATELEM_NEAREST;
     if (!w->active) {
         /* Saturn: the real first frame only primes (no AT). The decomp runs
@@ -147,21 +151,21 @@ static void PlayerProxy_UpdateSword(Player* this, PlayState* play) {
     PlayerProxy_UpdateWeaponInfo(play, &this->meleeWeaponQuads[0], w, &gOotCoreSwordTip, &gOotCoreSwordBase);
 }
 
-/* Child Link eye height used for focus (attention arrows, actor look-at).
- * APPROXIMATE: the real player sets focus from the head limb each frame. */
-#define PROXY_FOCUS_HEIGHT 40
+/* Player_GetHeight's age-dependent eye height for actor attention. The real
+ * player sets focus from the head limb; this proxy uses an integer anchor. */
 
 static void PlayerProxy_Sync(Actor* thisx) {
     thisx->world.pos = gOotCorePlayerPos;
     thisx->world.rot.y = gOotCorePlayerYaw;
     thisx->shape.rot.y = gOotCorePlayerYaw;
     thisx->focus.pos = gOotCorePlayerPos;
-    thisx->focus.pos.y = thisx->focus.pos.y + PROXY_FOCUS_HEIGHT;
+    thisx->focus.pos.y = thisx->focus.pos.y + (LINK_IS_ADULT ? 68 : 44);
     thisx->focus.rot.y = gOotCorePlayerYaw;
 }
 
 static void PlayerProxy_Init(Actor* thisx, PlayState* play) {
     Player* this = (Player*)thisx;
+    sSariaSongTalk = 0;
 
     Collider_InitCylinder(play, &this->cylinder);
     Collider_SetCylinder(play, &this->cylinder, thisx, &sBodyCylinderInit);
@@ -228,17 +232,83 @@ static void PlayerProxy_GetItem(Player* this, PlayState* play) {
     this->getItemDirection = 0x8000;
 }
 
-/* Talking, from z_player.c: Player_ActionHandler_Talk (offer accepted with
- * A), Player_StartTalking + Player_SetupTalk (Message_StartTextbox with the
- * actor's textId), Player_Action_Talk (ends on TEXT_STATE_CLOSING) and the
- * end-of-update offer reset in Player_UpdateCommon. APPROXIMATE: no C-Up /
- * Navi talk, no lock-on or carrying checks, Link is assumed on the ground,
- * no talk animations (the C player owns Link's pose). */
+/* z_elf_message.c sChild/AdultSariaQuestHints, with the same ordered checks.
+ * Nearby Saria uses bounded integer distance instead of a float square root. */
+static u16 PlayerProxy_SariaHint(PlayState* play) {
+    if (!LINK_IS_ADULT) {
+        Player* player = GET_PLAYER(play);
+        for (Actor* actor=play->actorCtx.actorLists[ACTORCAT_NPC].head;actor;actor=actor->next) {
+            if (actor->id == ACTOR_EN_SA) {
+                s32 x=OotCore_BgInt(actor->world.pos.x)-OotCore_BgInt(player->actor.world.pos.x);
+                s32 y=OotCore_BgInt(actor->world.pos.y)-OotCore_BgInt(player->actor.world.pos.y);
+                s32 z=OotCore_BgInt(actor->world.pos.z)-OotCore_BgInt(player->actor.world.pos.z);
+                if (x>=-800 && x<=800 && y>=-800 && y<=800 && z>=-800 && z<=800 &&
+                    x*x+y*y+z*z<=800*800) return 0x160;
+            }
+        }
+        if (CUR_UPG_VALUE(UPG_STRENGTH) == 0) return GET_EVENTCHKINF(EVENTCHKINF_37) ? 0x164 : 0x161;
+        if (!GET_EVENTCHKINF(EVENTCHKINF_25)) return 0x162;
+        if (!GET_EVENTCHKINF(EVENTCHKINF_37)) return 0x163;
+        if (!GET_EVENTCHKINF(EVENTCHKINF_43)) return 0x165;
+        if (!CHECK_QUEST_ITEM(QUEST_MEDALLION_FOREST) || !CHECK_QUEST_ITEM(QUEST_MEDALLION_FIRE) ||
+            !CHECK_QUEST_ITEM(QUEST_MEDALLION_WATER)) return 0x166;
+        if (!CHECK_QUEST_ITEM(QUEST_SONG_STORMS)) return 0x167;
+        if (!CHECK_QUEST_ITEM(QUEST_MEDALLION_SPIRIT) || !CHECK_QUEST_ITEM(QUEST_MEDALLION_SHADOW)) return 0x168;
+        return 0x169;
+    }
+    if (!CHECK_QUEST_ITEM(QUEST_MEDALLION_FOREST)) return 0x16a;
+    if (!CHECK_QUEST_ITEM(QUEST_MEDALLION_FIRE) || !CHECK_QUEST_ITEM(QUEST_MEDALLION_WATER)) return 0x16b;
+    if (!CHECK_QUEST_ITEM(QUEST_MEDALLION_SPIRIT) || !CHECK_QUEST_ITEM(QUEST_MEDALLION_SHADOW)) return 0x16c;
+    return 0x16d;
+}
+
+/* En_Elf func_80A052F4/5208/5188/5114/5040 dialogue callbacks. C owns Navi's
+ * sprite; only the original talk state machine runs here, with no actor mesh. */
+static void PlayerProxy_SariaSongTalk(PlayState* play) {
+    unsigned state=Message_GetState(&play->msgCtx);
+    if (!sSariaSongTalk || (state != TEXT_STATE_CHOICE && state != TEXT_STATE_EVENT) ||
+        !Message_ShouldAdvance(play)) return;
+    if (state == TEXT_STATE_CHOICE) {
+        if (sSariaSongTalk == 1) {
+            play->msgCtx.unk_E3F2 = 0xff;
+            if (play->msgCtx.choiceIndex == 0) {
+                Message_ContinueTextbox(play,0xe2);sSariaSongTalk=2;
+            } else { Message_ContinueTextbox(play,0xe1);sSariaSongTalk=5; }
+        } else if (sSariaSongTalk == 4 || sSariaSongTalk == 5) {
+            if (play->msgCtx.choiceIndex == 0) {
+                /* Source OOC scenes currently have no Navi quest script.
+                 * QuestHint_GetNaviTextId then returns zero: EnElf uses 15F. */
+                Message_ContinueTextbox(play,sSariaSongTalk==4 ? PlayerProxy_SariaHint(play) : 0x15f);
+                sSariaSongTalk=sSariaSongTalk==4 ? 3 : 0;
+            } else { Message_CloseTextbox(play);sSariaSongTalk=0; }
+        }
+    } else if (state == TEXT_STATE_EVENT) {
+        if (sSariaSongTalk == 2) {
+            Message_ContinueTextbox(play,PlayerProxy_SariaHint(play));sSariaSongTalk=3;
+        } else if (sSariaSongTalk == 3) {
+            Message_ContinueTextbox(play,0xe3);sSariaSongTalk=4;
+        }
+    }
+}
+
+/* Source offer acceptance, talk start/end and Player_UpdateCommon offer reset.
+ * The C player still owns C-Up Navi, carrying/lock checks and talk poses;
+ * source Saria-song follow-up delegates to the callbacks above. */
 static void PlayerProxy_UpdateTalk(Player* this, PlayState* play) {
     Input* input = &play->state.input[0];
 
+    if (this->stateFlags2 & PLAYER_STATE2_USING_OCARINA) return;
+    if (this->naviTextId < 0 && this->naviActor == NULL && play->msgCtx.msgMode == MSGMODE_NONE) {
+        sSariaSongTalk = this->naviTextId == -0xe0 ? 1 : 0;
+        Message_StartTextbox(play, -this->naviTextId, NULL);
+        this->naviTextId = 0;
+        this->stateFlags1 |= PLAYER_STATE1_TALKING;
+    }
+
     if (this->stateFlags1 & PLAYER_STATE1_TALKING) {
+        PlayerProxy_SariaSongTalk(play);
         if (Message_GetState(&play->msgCtx) == TEXT_STATE_CLOSING) {
+            sSariaSongTalk = 0;
             this->actor.flags &= ~ACTOR_FLAG_TALK;
             this->stateFlags1 &= ~(PLAYER_STATE1_TALKING | PLAYER_STATE1_29);
             this->focusActor = NULL;
@@ -277,6 +347,9 @@ static void PlayerProxy_UpdateBody(Player* this, PlayState* play) {
     gOotCorePlayerPushX += (s32)this->actor.colChkInfo.displacement.x;
     gOotCorePlayerPushZ += (s32)this->actor.colChkInfo.displacement.z;
     this->actor.colChkInfo.mass = (this->stateFlags1 & PLAYER_STATE1_29) ? MASS_IMMOVABLE : 50;
+    /* Source body cylinder reaches the posed head plus ten. Keep the existing
+     * child bound and use Adult Link's 68-unit head anchor plus ten. */
+    this->cylinder.dim.height = LINK_IS_ADULT ? 78 : 60;
     Collider_UpdateCylinder(&this->actor, &this->cylinder);
     CollisionCheck_SetOC(play, &play->colChkCtx, &this->cylinder.base);
 }

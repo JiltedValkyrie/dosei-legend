@@ -6,6 +6,35 @@ This is not a new standalone demo or a rewrite of OoT gameplay.
 
 ## Current priority
 
+Latest human report (2026-10-04, after main integration): the capped test save
+still displays only four inventory items and Emerald; world map remains Kokiri,
+Ocarina cannot equip/play, generic interiors lack view switching, doors show
+normal-vector colours, hearts flicker, and populated Ranch/Kakariko Cucco scenes
+slow severely. Graveyard tomb textures also lose dark detail. These are the
+active regression priorities, superseding the earlier null-free report below.
+Implemented work replaces slice-only pause art with all source slot/quest icons and
+scene-area map markers, double-buffers heart tiles, connects source Ocarina
+recognition, repairs scene camera/material extraction, and bounds source actor
+collision work. Real child/adult source meshes share a transactional renderer;
+Level Select chooses the era before source actor initialization. Full assets and
+the final WSL Clean relink pass; human acceptance remains pending. Detailed changes, controls,
+resource layout and limits: [player regression checkpoint](PLAYER_REGRESSIONS_2026-10-04.md).
+Prior Clean evidence below belongs to the committed baseline.
+
+Verification: 578 distinct host cases pass across the final affected batches.
+The usual game-clean.cue/.iso is rebuilt; .bss ends 0x06083E80, 384 B below SGL.
+Link points/matrices/skin and draw-view scratch use checked low-RAM carves;
+heap size, SGL limits and actor counts are unchanged. Matching SH-2 audit finds
+no wide/soft-float helpers in the new bounded paths; audited frames peak at 172 B.
+The mastered ISO matches all 889 staged payloads. This proves build/staging,
+not human visual/FPS acceptance. Full logs and image hash are in the checkpoint.
+3,190 real Ranch/Kakariko collision probes match original
+contacts while source square-root calls fall from 27,214 to 701. Cucco unused
+wing/head pose interpolation is removed; timers/RNG/gameplay remain. Existing
+wide Fx narrow-phase math remains migration debt. Pause renderer checks cover
+all 24 inventory slots and quest bits, upgraded Ocarina, region changes, page
+lifecycle and VRAM restoration. Runtime checks remain pending.
+
 The prior sprite/CPU/save/cleanup checkpoint is now 9d384cd. The current
 world-completion continuation is recorded in this checkpoint. The user authorized
 commit/push and integration into main on 2026-10-04. This merge preserves the
@@ -14,7 +43,7 @@ feature/kokiri-slice-actions retired. Tag archive/dev-2026-10-04 preserves the
 dev-only tip 5b560ab; its dirty worktree remains detached with files intact.
 Earlier build evidence below describes those prior checkpoints.
 
-Latest human test: startup/each zone shows `dosei_allocator_free(): Null pointer`
+Earlier human test: startup/each zone shows `dosei_allocator_free(): Null pointer`
 about six times (22% dynamic memory, 0% sprite memory); one Ranch NPC visible;
 generic-zone doors still unusable. Prior build/host success is not runtime
 acceptance. Confirmed cleanup defect: story_route_free unconditionally frees
@@ -28,19 +57,19 @@ adds generic source-scene flags, dungeon keys/items, bottles and era/time.
 Same-room NPC spawns discover sheets; diagnostics separate actor, missing-sheet,
 fallback-pose and allocated-slot counts. Automatic talk offers and Ranch milk
 reward/textbox handshakes now use the original source identifiers.
-400 distinct host checks pass. Full WSL asset regeneration and the final C-only
+At the committed baseline, 400 distinct host checks passed. Full WSL asset regeneration and the final C-only
 Clean relink pass (`world-completion-build.log`, `world-completion-link.log`).
-The usual game-clean.cue/.iso is rebuilt; .bss ends 0x06083D70, 656 B below SGL.
+That game-clean.cue/.iso had .bss end 0x06083D70, 656 B below SGL.
 Save state, separate write/preview scratch and draw-cache ownership now use
 bounded, initialized low-RAM carves. Virtual story banks use IDs 1024+ and
 C-prefixed files; real room banks no longer get overwritten. Staging/budget
 checks pass and retired story aliases are removed. Previous margins below
-are historical. Current memory headroom is small; preserve boundary checks.
+are historical. Preserve heap sizes, actor capacities and boundary checks.
 Full world traversal and NPC coverage remain incomplete. Continue missing
 destinations, special transitions, runtime horse logic, missing actors, dialogue,
 rewards and resource gates. No complete-world or runtime acceptance claim.
 The added Level Select option is **ALL ITEMS + MAX STATS**, default **NO**;
-L/R toggles it and confirmed entry grants the test loadout. The user clarified
+L toggles it; R selects Child/Adult, default Child. Confirmed entry grants the test loadout. The user clarified
 that quest items are required too: all stones (including Kokiri Emerald), songs,
 medallions and other quest bits are granted, plus source inventory/equipment,
 20 hearts, capped ammunition/magic, 500 rupees and eight source-debug small keys.
@@ -91,10 +120,13 @@ and nightmare screenshots still show severe VDP1 corruption before the CLUT fix.
 
 ## Current continuation: implementation and verification
 
-Cleanup rollback/retry, common door policies, source save predicates, same-room
+The committed baseline includes cleanup rollback/retry, common door policies, source save predicates, same-room
 sprite discovery, automatic talk/milk handshakes and the opt-in full test loadout
-are implemented, host-tested and included in the current Clean image. The final
-target/staging checks pass after the RAM and virtual-bank repairs above.
+with passing host, target and staging checks after the RAM and virtual-bank repairs above.
+The current regression batch extends this with full pause/HUD item pictures,
+quest display, source map regions, real era assets, Ocarina and populated-room
+render/CPU fixes. Source song recognition does not finish the missing song puzzle
+actors, Temple sword time travel, dungeon Sun stun, or every inventory action.
 No emulator was launched; human acceptance of these changes remains pending.
 
 The source inventories enumerate 110 scenes and 429 actor profiles. Only 75
@@ -246,18 +278,20 @@ counts and image contents describe those builds, not the current continuation.
 
 ## Next actions / remaining work
 
-1. Preserve the passing combined Clean target/staging checks and the small
-   656-byte high-WRAM margin. Startup/zone cleanup, new routes, save migration
-   and NPC visibility still need eventual human acceptance. No emulator launch
-   by agents. Keep the SDK error
-   handler enabled. The later user request adds a Level Select max gear/hearts
-   option (all items/quest items/stats), default No; entering with it enabled is
-   the only grant trigger. Wallet cache/HUD now safely retain three-digit values.
+1. Preserve passing combined regression verification and the usual Clean image,
+   heap sizes, actor capacities and SDK error handler. Human still checks all
+   inventory/quest pages, Ocarina input, both eras, house views, door/tomb art,
+   steady hearts and populated Ranch/Kakariko frame timings. No agent emulator
+   launch. Capped items remains opt-in on confirmed Level Select entry; L toggles
+   it, R selects era. Complete the missing source song actors and adult story path.
 2. Finish the source entrance graph. Current route audit separates structural
    reach from traversal acceptance and records every known missing destination,
    reverse edge, source gate and extraction error. Thirty-five absent scene
    assets, special grotto returns, alternate collision/spawn headers, transition cameras/fades and
-   unimported scripted/warp actors remain blockers. Preserve keys and boss logic.
+   unimported scripted/warp actors remain blockers. Kakariko cutscene layers also
+   share collision exit indices beyond their shorter exit arrays; the old audit
+   overreads following light data as entrances. Bound extraction by referenced
+   data before trusting those edges; do not guess a destination. Preserve keys and boss logic.
 3. Review and extend the generated actor ledger across eras/time/story/dynamic
    triggers. Prioritize missing Ranch horse runtime and En_Ma3, then remaining
    actors/dialogue/rewards.

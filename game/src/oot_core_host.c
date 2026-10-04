@@ -475,13 +475,23 @@ void oot_core_meshes_draw(void)
 static void send_input(const gameplay_input_t *in)
 {
     unsigned short press = (unsigned short)((in->interact ? 0x8000u : 0u) | (in->cancel ? 0x4000u : 0u));
+    if (ENTRY->ocarina(0) & 2u) {
+        /* Ocarina owns the menu-style D-pad edges, including C+direction on
+         * digital pads. Warp choices still use ordinary message navigation. */
+        if (in->c_up || in->menu_dy < 0) press |= 0x0008;
+        if (in->c_use == 1 || in->menu_dy > 0) press |= 0x0004;
+        if (in->c_use == 2 || in->menu_dx < 0) press |= 0x0002;
+        if (in->c_use == 3 || in->menu_dx > 0) press |= 0x0001;
+    }
     ENTRY->set_input(press, press, 0, (signed char)(in->menu_step < 0 ? 60 : in->menu_step > 0 ? -60 : 0));
 }
 
 void oot_core_frame(const gameplay_input_t *in)
 {
     unsigned int scene = scene_flow_scene();
-    if (!loaded) return;
+    /* A panorama's bank room identifies its artwork, not an OoT actor room. */
+    int room = scene_flow_is_interior() ? 0 : (int)kokiri_bank_room();
+    if (!loaded || gameplay_is_paused()) return;
     if (scene != play_scene) {
         playing = false;
         sprites_reset();
@@ -491,7 +501,7 @@ void oot_core_frame(const gameplay_input_t *in)
         mirror_save(); /* age/time/flags before play_init picks the layer */
         playing = ENTRY->play_init(RAM_LOW(RAM_LOW_OOTPLAY_OFFSET), RAM_LOW_OOTPLAY_BYTES,
                                    scene_flow_entry()->oot_scene, (const void *)OOT_SCENECOL_ADDR,
-                                   (int)kokiri_bank_room(),
+                                   room,
                                    (short)demo_link.x, (short)(demo_link.y - DEMO_LINK_EYE_HEIGHT),
                                    (short)demo_link.z, (short)demo_link_yaw) != 0;
         if (playing) {
@@ -509,7 +519,7 @@ void oot_core_frame(const gameplay_input_t *in)
     ENTRY->set_camera((short)demo_yaw);
     send_input(in);
     mirror_save();
-    ENTRY->set_room((int)kokiri_bank_room());
+    ENTRY->set_room(room);
     {
         int32_t base[3], tip[3];
         bool have = gameplay_blade_points(base, tip);
@@ -523,8 +533,8 @@ void oot_core_frame(const gameplay_input_t *in)
         unsigned int t0 = frame_timer_ticks();
         ENTRY->update();
         update_us = frame_timer_ticks_to_us(frame_timer_ticks() - t0);
-        if (meshes_room != (int)kokiri_bank_room()) {
-            meshes_room = (int)kokiri_bank_room();
+        if (meshes_room != room) {
+            meshes_room = room;
             load_meshes();
         } else if (sprites_refresh()) npc_draw_reupload();
         {
@@ -554,6 +564,12 @@ int oot_core_transition_request(bool consume)
 {
     return playing ? ENTRY->transition_request(consume) : -1;
 }
+bool oot_core_ocarina_start(void) { return playing && ENTRY->ocarina(1) != 0; }
+unsigned int oot_core_ocarina_state(void) { return playing ? ENTRY->ocarina(0) : 0; }
+unsigned int oot_core_ocarina_note(void) { return playing ? ENTRY->ocarina(2) : 0; }
+unsigned int oot_core_ocarina_song(void) { return playing ? ENTRY->ocarina(3) : 0; }
+bool oot_core_ocarina_sun_allowed(void) { return playing && ENTRY->ocarina(4) != 0; }
+void oot_core_scene_restart(void) { playing = false; play_scene = ~0u; }
 
 /* The decomp text box on the VDP2 text layer, in the C dialogue rows.
 ** VDP2 keeps text, so rows are reprinted only when the view changes and

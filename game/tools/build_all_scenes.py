@@ -8,6 +8,7 @@ its error; nothing is skipped silently. Output: build/all-scenes/ +
 scene_preflight.json. Not registered in the runtime by this script.
 """
 import argparse
+import hashlib
 import json
 import re
 import traceback
@@ -20,6 +21,40 @@ import build_sgl_scene as sgl
 ROOT = Path(__file__).resolve().parents[1]
 SCENE_LINE = re.compile(r'/\*\s*(0x[0-9A-Fa-f]+)\s*\*/\s*DEFINE_SCENE\(\s*(\w+)_scene\s*,\s*\w+\s*,\s*(\w+)')
 ROOM_SHAPE_IMAGE = 1
+
+
+def converter_fingerprint():
+    """Invalidate old room banks when a decoder, material or budget changes."""
+    digest = hashlib.sha256()
+    paths = [Path(__file__), ROOT.parent / 'shared/tools/build_kokiri_scene.py']
+    paths += [ROOT / 'tools' / name for name in (
+        'build_hybrid_scene.py', 'build_quads.py', 'build_room_scene.py',
+        'build_sgl_scene.py', 'vdp1_budget.py', 'map_meshes.py')]
+    paths += [ROOT / 'build/generated/LINK.BIN', ROOT / 'build/generated/ADULT.BIN']
+    for path in paths:
+        digest.update(path.name.encode('utf-8'))
+        digest.update(path.read_bytes())
+    return digest.hexdigest()
+
+
+def scene_fingerprint(converter, segments):
+    digest = hashlib.sha256(converter.encode('ascii'))
+    for name, data in sorted(segments.items()):
+        digest.update(name.encode('utf-8'))
+        digest.update(data)
+    return digest.hexdigest()
+
+
+def cache_current(rows, fingerprint, out):
+    if not rows or any(row.get('fingerprint') != fingerprint for row in rows):
+        return False
+    for row in rows:
+        if row['status'] == 'baked':
+            folder = out / ('%s_room_%d' % (row['prefix'], row['room']))
+            if any(not (folder / name).is_file() for name in
+                   ('room.msh', 'room.tex', 'texture_manifest.json')):
+                return False
+    return True
 
 
 def scene_list(oot):
@@ -52,6 +87,10 @@ def main():
     ap.add_argument('--rom-dir', type=Path)
     ap.add_argument('--out', type=Path, default=ROOT / 'build/all-scenes')
     ap.add_argument('--only', action='append', help='scene prefix (repeatable)')
+    ap.add_argument('--refresh-stale', action='store_true',
+                    help='reuse only banks matching current source, converters and actor budget')
+    ap.add_argument('--registered-only', action='store_true',
+                    help='refresh currently registered scenes; retain unregistered report rows')
     args = ap.parse_args()
     args.out.mkdir(parents=True, exist_ok=True)
     # Generic import mode (shared/tools/build_kokiri_scene.py): room G_MTX
@@ -59,28 +98,39 @@ def main():
     hybrid.source.DisplayLists.generic_scene = True
     hybrid.source.DisplayLists.include_depth_branches = True
     _, head, _, _ = sgl.read_scene(ROOT / 'levels/kokiri/assets/static/FOREST.BIN')
-    data, ah, av, af = sgl.read_scene(ROOT / 'build/generated/LINK.BIN')
-    tiles = sgl.collect_tiles(data, ah, af)
-    actor = dict(tiles=[(t['width'], t['height']) for t in tiles.values()],
-                 polygons=len(af), vertices=len(av))
+    actor = sgl.link_actor_budget(ROOT / 'build/generated/LINK.BIN')
     report = args.out / 'scene_preflight.json'
-    old = json.loads(report.read_text()) if args.only and report.exists() else []
-    results = [r for r in old if r['prefix'] not in args.only] if args.only else []
+    old = json.loads(report.read_text()) if (args.only or args.refresh_stale or args.registered_only) and report.exists() else []
+    selected = set(args.only) if args.only else None
+    if args.registered_only:
+        from build_scene_table import SCENES
+        registered = {row['prefix'] for row in SCENES}
+        selected = registered if selected is None else selected & registered
+    results = [r for r in old if r['prefix'] not in selected] if selected is not None else []
+    converter = converter_fingerprint()
+    changed = False
     for sc in scene_list(args.oot):
         prefix = sc['prefix']
-        if args.only and prefix not in args.only:
+        if selected is not None and prefix not in selected:
             continue
         try:
             segments = hybrid.source.extract(args.oot, args.rom_dir, prefix=prefix)
         except Exception as error:  # noqa: BLE001 - report every failure
             results.append(dict(sc, room=None, status='blocked', error='extract: %s' % error))
             print('%s: extract blocked: %s' % (prefix, error), flush=True)
+            changed = True
             continue
+        fingerprint = scene_fingerprint(converter, segments)
+        cached = [r for r in old if r['prefix'] == prefix]
+        if args.refresh_stale and cache_current(cached, fingerprint, args.out):
+            results.extend(cached)
+            continue
+        changed = True
         names = sorted((n for n in segments if n.startswith(prefix + '_room_')),
                        key=lambda n: int(n.rsplit('_', 1)[1]))
         for name in names:
             room_id = int(name.rsplit('_', 1)[1])
-            entry = dict(sc, room=room_id)
+            entry = dict(sc, room=room_id, fingerprint=fingerprint)
             shape = room_shape(segments[name])
             if shape == ROOM_SHAPE_IMAGE:
                 entry.update(status='image')
@@ -102,7 +152,14 @@ def main():
             results.append(entry)
             print('%s room %d: %s%s' % (prefix, room_id, entry['status'],
                   ' (%s)' % entry['error'] if 'error' in entry else ''), flush=True)
-        (args.out / 'scene_preflight.json').write_text(json.dumps(results, indent=1) + '\n')
+        # Keep unvisited cached rows during a long refresh. An interrupted
+        # bake must not make every later scene disappear from registration.
+        visited = {r['prefix'] for r in results}
+        checkpoint = results + [r for r in old if r['prefix'] not in visited]
+        report.write_text(json.dumps(checkpoint, indent=1) + '\n')
+    # Include extraction failures at the end too (no room loop writes them).
+    if changed:
+        report.write_text(json.dumps(results, indent=1) + '\n')
     counts = {}
     for r in results:
         counts[r['status']] = counts.get(r['status'], 0) + 1

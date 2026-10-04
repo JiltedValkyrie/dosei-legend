@@ -389,6 +389,12 @@ def build(oot, source, out):
     font = ET.parse(source / 'soundfonts/Soundfont_0.xml')
     fonts = {0: font, 1: ET.parse(source / 'soundfonts/Soundfont_1.xml')}
     entries = []
+    # seq_0 ARRAY_5F30's default ocarina is Soundfont 0, instrument 52.
+    # Resident half-rate, bounded one-shots: no CD reads while entering notes.
+    # Original D4/F4/A4/B4/D5 pitches; note lengths/vibrato remain approximate.
+    ocarina = font.find('.//Instrument[@ProgramNumber="52"]').attrib['Sample']
+    for i, pitch in enumerate(('D4', 'F4', 'A4', 'B4', 'D5')):
+        entries.append(('ocarina%d' % i, ocarina, note(pitch), .28, 'ARRAY_5F30 / SF0_INST_52'))
     for name, layer, inst, pitch, duration, *which in EFFECTS:
         which = which[0] if which else 0
         prefix = '.channel ' if layer.startswith('CHAN_') else '.layer '

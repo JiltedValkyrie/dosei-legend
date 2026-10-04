@@ -40,6 +40,10 @@ extern s32 gOotCorePlayerPushX;
 extern s32 gOotCorePlayerPushZ;
 /* bridge_message.cpp / oot_core_views.cpp */
 void OotCore_SetText(const void* data, u32 bytes);
+unsigned int OotCore_Ocarina(unsigned int command);
+void OotCore_OcarinaReset(void);
+void OotCore_OcarinaScene(PlayState* play);
+void OotCore_OcarinaStep(PlayState* play);
 GraphicsContext* OotCore_GfxCtx(void);
 void OotCore_GfxReset(void);
 u32 OotCore_GfxBytes(void);
@@ -237,6 +241,8 @@ static int oot_core_play_init(void* block, unsigned int bytes, int scene_id, con
     EffectSs_InitInfo(play, 0x55);
     Regs_InitData(play);
     Message_Init(play);
+    OotCore_OcarinaReset();
+    OotCore_OcarinaScene(play);
     Matrix_Init(&play->state); /* Play_Init: sys_matrix stack (draws, some updates) */
     CollisionCheck_InitContext(play, &play->colChkCtx);
     AnimTaskQueue_Reset(&play->animTaskQueue);
@@ -555,6 +561,7 @@ static void oot_core_update(void) {
     sPendingStickY = 0;
     play->state.input[0] = sHostInput;
     sHostInput.press.button = 0;
+    OotCore_OcarinaStep(play);
     /* Play_Update order. */
     AnimTaskQueue_Reset(&play->animTaskQueue);
     t0 = Phase_Now();
@@ -735,4 +742,5 @@ extern "C" const OotCoreEntry oot_core_entry __attribute__((section(".oot_entry"
     oot_core_door_action,
     oot_core_current_layer,
     oot_core_transition_request,
+    OotCore_Ocarina,
 };

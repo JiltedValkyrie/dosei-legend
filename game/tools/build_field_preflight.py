@@ -39,10 +39,7 @@ def main():
     ledger['source_tessellation'] = args.source_tessellation
     ledger['budget_note'] = 'Link/resident effects only; owl, props and worst-view submission still require measurement.'
     _, head, _, _ = sgl.read_scene(ROOT / 'levels/kokiri/assets/static/FOREST.BIN')
-    data, link_head, vertices, faces = sgl.read_scene(ROOT / 'build/generated/LINK.BIN')
-    tiles = sgl.collect_tiles(data, link_head, faces)
-    actor = dict(tiles=[(t['width'], t['height']) for t in tiles.values()],
-                 polygons=len(faces), vertices=len(vertices))
+    actor = sgl.link_actor_budget(ROOT / 'build/generated/LINK.BIN')
     if args.with_owl:
         ledger['owl_assets'] = owl.build(args.oot, args.rom_dir, args.out/'owl')
         models = ledger['owl_assets']['models']

@@ -124,10 +124,13 @@ int main(void) {
 #define OOT_SCENECOL_ADDR 0
 #define DEMO_LINK_EYE_HEIGHT 16
 typedef struct { int unused; } gameplay_input_t;
-static bool loaded=true, playing;
+static bool loaded=true, playing, interior, paused;
+static unsigned inputs;
+static bool gameplay_is_paused(void) { return paused; }
 static unsigned play_scene=0xffff,step_phase,update_us;
 static int meshes_room=-1;
 static unsigned scene=14,room,updates,loads,spawns;
+static int source_room=-1, init_room=-1;
 static struct { int x,y,z; } demo_link;
 static int demo_link_yaw,demo_yaw;
 static const void *scene_objects[1]; static unsigned scene_object_count;
@@ -136,10 +139,11 @@ static unsigned scene_flow_scene(void) { return scene; }
 static void *scene_flow_entry(void) { return &entry; }
 #define scene_flow_entry() (&entry)
 static unsigned kokiri_bank_room(void) { return room; }
+static bool scene_flow_is_interior(void) { return interior; }
 static bool load_scene_blob(unsigned s) { return true; }
 static void mirror_save(void) {}
 static void sync_player(void) {}
-static void send_input(const gameplay_input_t *in) {}
+static void send_input(const gameplay_input_t *in) { ++inputs; }
 static bool gameplay_blade_points(int32_t *a,int32_t *b) { return false; }
 static bool gameplay_sword_active(void) { return false; }
 static unsigned frame_timer_ticks(void) { return 10; }
@@ -149,12 +153,12 @@ static void sprites_reset(void) {}
 static bool sprites_refresh(void) { return false; }
 static void npc_draw_reupload(void) {}
 static int init(void *a,unsigned b,int c,const void *d,int r,short x,short y,short z,short yaw) {
-    spawns=0; return 1;
+    init_room=r; spawns=0; return 1;
 }
 static void objects(const void *const *o,unsigned n) {}
 static void flags(unsigned f) { assert(f==OOT_CORE_FLAG_NPC_SPRITES); }
 static void camera(short y) {}
-static void set_room(int r) {}
+static void set_room(int r) { source_room=r; }
 static void sword(int active,const int *base,const int *tip) {}
 static void update(void) { ++updates; spawns=1; }
 static void push(int *x,int *z) { *x=*z=0; }
@@ -174,6 +178,16 @@ int main(void) {
     ++scene;
     oot_core_frame(&in); assert(updates==4 && loads==2);
     oot_core_frame(&in); assert(updates==5 && loads==3);
+    ++scene; interior=true; room=10; /* Ranch panorama artwork bank */
+    oot_core_frame(&in); assert(init_room==0 && source_room==0);
+    oot_core_frame(&in); assert(meshes_room==0 && loads==4);
+    room=0; /* C-Up switches to the fixed JPEG; actor room must stay put */
+    oot_core_frame(&in); assert(source_room==0 && meshes_room==0 && loads==4);
+    unsigned old_updates=updates,old_phase=step_phase,old_inputs=inputs;
+    paused=true;
+    for(unsigned i=0;i<8;++i)oot_core_frame(&in);
+    assert(updates==old_updates && step_phase==old_phase && inputs==old_inputs);
+    paused=false;oot_core_frame(&in);assert(inputs==old_inputs+1);
     return 0;
 }
 ''')

@@ -119,7 +119,7 @@ def main():
     # No runtime door skeleton or animation payload is needed.
     # Source idle limb 1 rotates -0x4000 about X; the raw leaf is in XZ.
     static_mesh(args.oot,args.rom_dir,'gameplay_field_keep','gFieldDoorLeftDL',args.out/'ENDOOR.BIN',.01,
-                matrix=link.rotation_matrix((-0x4000,0,0)))
+                matrix=link.rotation_matrix((-0x4000,0,0)),setup25=True)
     from build_tree_mouth import build as build_tree_mouth
     build_tree_mouth(args.oot,args.rom_dir,args.out)
     dungeon_webs(args.oot,args.rom_dir,args.out)

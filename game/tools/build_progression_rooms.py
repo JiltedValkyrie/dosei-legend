@@ -29,10 +29,7 @@ def main():
     args = ap.parse_args()
     args.out.mkdir(parents=True, exist_ok=True)
     _, head, _, _ = sgl.read_scene(ROOT / 'levels/kokiri/assets/static/FOREST.BIN')
-    data, ah, av, af = sgl.read_scene(ROOT / 'build/generated/LINK.BIN')
-    tiles = sgl.collect_tiles(data, ah, af)
-    actor = dict(tiles=[(t['width'], t['height']) for t in tiles.values()],
-                 polygons=len(af), vertices=len(av))
+    actor = sgl.link_actor_budget(ROOT / 'build/generated/LINK.BIN')
     results = []
     for prefix in args.scene or SCENE_IDS:
         scene_id = SCENE_IDS[prefix]

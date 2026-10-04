@@ -150,6 +150,13 @@ void Player_ReleaseLockOn(Player* this) { /* STUB: C attention system owns lock-
 
 /* ---- z_parameter.c: save-owned state stays on the C side for now ---- */
 u8 Item_Give(PlayState* play, u8 item) { /* HOST */
+    if (item >= ITEM_SONG_MINUET && item <= ITEM_SONG_STORMS) {
+        /* z_parameter.c Item_Give: song ownership belongs to the source
+         * inventory. save_copy_out commits it to the host after this update. */
+        gSaveContext.save.info.inventory.questItems |=
+            1u << (item - ITEM_SONG_MINUET + QUEST_SONG_MINUET);
+        return ITEM_NONE;
+    }
     if (gOotCoreHost != NULL && gOotCoreHost->give_item != NULL) {
         return gOotCoreHost->give_item(item);
     }

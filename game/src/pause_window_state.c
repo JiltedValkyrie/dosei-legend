@@ -47,8 +47,14 @@ unsigned pause_window_step(pause_window_state_t *s, int dx, int dy,
         }
         return PAUSE_NONE;
     }
-    /* Only Kokiri and the Emerald have state in the current slice. */
-    if (s->page == PAUSE_MAP || s->page == PAUSE_QUEST) return confirm ? PAUSE_DENY : PAUSE_NONE;
+    if (s->page == PAUSE_MAP) return confirm ? PAUSE_DENY : PAUSE_NONE;
+    if (s->page == PAUSE_QUEST) {
+        if (dx || dy) {
+            s->cursor[PAUSE_QUEST]=(s->cursor[PAUSE_QUEST]+(dx ? dx : dy)+24)%24;
+            return PAUSE_MOVE;
+        }
+        return confirm ? PAUSE_DENY : PAUSE_NONE;
+    }
     width = s->page == PAUSE_ITEMS ? 6 : s->page == PAUSE_EQUIPMENT ? 4 : 6;
     height = s->page == PAUSE_MAP ? 2 : 4;
     if (dx || dy) {
@@ -64,7 +70,9 @@ unsigned pause_window_step(pause_window_state_t *s, int dx, int dy,
         if(s->cursor[s->page]>=9 && s->cursor[s->page]<=11)
             return PAUSE_TUNIC_GREEN+s->cursor[s->page]-9;
         if (s->cursor[s->page] == 1 && (owned & 1)) return PAUSE_EQUIP_SWORD;
+        if (s->cursor[s->page] == 2 && (owned & 1)) return PAUSE_EQUIP_MASTER;
         if (s->cursor[s->page] == 5 && (owned & 2)) return PAUSE_EQUIP_SHIELD;
+        if (s->cursor[s->page] == 6 && (owned & 2)) return PAUSE_EQUIP_HYLIAN;
     }
     return PAUSE_DENY;
 }

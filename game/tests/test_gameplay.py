@@ -937,6 +937,20 @@ class Gameplay(unittest.TestCase):
         self.lib.gp_assign_item(5, 3)
         self.assertEqual(self.lib.gp_c_item(2), 1)
 
+    def test_ocarina_assignment_and_adult_slot_gates(self):
+        self.lib.save_test_max_gear()
+        self.lib.gp_assign_item(7,1)
+        self.assertEqual(self.lib.gp_c_item(0),4)
+        self.lib.gp_assign_item(7,3)
+        self.assertEqual([self.lib.gp_c_item(i) for i in range(3)],[0,0,4])
+        self.lib.gp_assign_item(3,1) # source bow belongs to adult
+        self.assertEqual(self.lib.gp_c_item(0),0)
+        self.lib.save_set_link_age(0)
+        self.lib.gp_assign_item(3,1)
+        self.assertEqual(self.lib.gp_c_item(0),0x23)
+        self.lib.gp_assign_item(0,2) # sticks remain child-only
+        self.assertEqual(self.lib.gp_c_item(1),0)
+
     def test_full_bag_still_consumes_the_stick(self):
         self.lib.gp_sticks(1, 10, 1)
         self.wake()

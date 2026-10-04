@@ -89,17 +89,21 @@ typedef uint16_t u16;
 #define TEXT_STATE_CLOSING 9
 #define EXCH_ITEM_NONE 0
 #define BTN_A 0x8000
+#define PLAYER_STATE2_USING_OCARINA (1u<<27)
+#define MSGMODE_NONE 0
 #define MAXFLOAT 1000000
 #define CHECK_BTN_ALL(value,mask) (((value)&(mask))==(mask))
 #define ACTOR_FLAGS_CHECK_ALL(a,mask) CHECK_BTN_ALL((a)->flags,mask)
 #define NA_SE_SY_GET_ITEM 1
 typedef struct Actor { unsigned flags,textId; struct Actor *parent; } Actor;
 typedef struct { struct { unsigned button; } press; } Input;
-typedef struct { unsigned state; } MessageContext;
+typedef struct { unsigned state,msgMode; } MessageContext;
 typedef struct { struct { Input input[1]; } state; MessageContext msgCtx; } PlayState;
-typedef struct { Actor actor; unsigned stateFlags1,exchangeItemId,getItemId,getItemDirection;
-    Actor *talkActor,*focusActor,*interactRangeActor; int talkActorDistance; } Player;
+typedef struct { Actor actor; unsigned stateFlags1,stateFlags2,exchangeItemId,getItemId,getItemDirection;
+    Actor *talkActor,*focusActor,*interactRangeActor,*naviActor; int talkActorDistance,naviTextId; } Player;
 static unsigned gives,messages,sounds,last_item,last_text,refuse;
+static unsigned sSariaSongTalk;
+static void PlayerProxy_SariaSongTalk(PlayState *p) {}
 static int gSfxDefaultPos,gSfxDefaultFreqAndVolScale,gSfxDefaultReverb;
 static unsigned Message_GetState(MessageContext *m) { return m->state; }
 static void Message_StartTextbox(PlayState *p,unsigned id,Actor *a) {

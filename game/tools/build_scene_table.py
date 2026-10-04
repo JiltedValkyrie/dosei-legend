@@ -34,6 +34,7 @@ import sys
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[2] / 'shared/tools'))
 import build_kokiri_scene as source
 import asset_names
+from interior_panorama import panorama_room
 
 # The scenes this slice contains, in runtime order. `save` is the SAVE_SCENE_*
 # id in src/save_state.h; `scene` is the decomp SCENE_* name, used to resolve
@@ -457,6 +458,7 @@ def main():
         sound = source.scene_header(scene).get(0x15)
         seq = sound[0][7] if sound else 0x7F
         summaries.append(dict(index=index, prefix=entry['prefix'], seq=seq,
+                              panorama=panorama_room(entry['prefix'], scene, source),
                               climbable=sum(1 for b in flags if b & 0x0E),
                               ladders=sum(1 for b in flags if b & 0x08),
                               crawlspaces=sum(1 for b in flags if b & 0x30),
@@ -528,6 +530,7 @@ def main():
                '   rendered with the follow camera. */',
                'typedef struct {',
                '    uint8_t  image;       /* 1 = prerendered backdrop room */',
+               '    uint8_t  panorama;    /* virtual panorama bank room, 255 = fixed view only */',
                '    int16_t  cam_x, cam_y, cam_z;',
                '    uint16_t cam_pitch, cam_yaw;',
                '    int16_t  cam_fov;     /* hundredths of a degree */',
@@ -584,8 +587,9 @@ def main():
         dist = 0
         if half > 0:
             dist = int(round(120.0 / math.tan(math.radians(half))))
-        body.append('    { %d, %d, %d, %d, 0x%04X, 0x%04X, %d, %d, %d, %d, %d, %s, %d, %d, %d },'
+        body.append('    { %d, %d, %d, %d, %d, 0x%04X, 0x%04X, %d, %d, %d, %d, %d, %s, %d, %d, %d },'
                     % (1 if entry['shape'] == 'image' else 0,
+                       summary['panorama'],
                        cam['x'], cam['y'], cam['z'],
                        cam['pitch'] & 0xFFFF, cam['yaw'] & 0xFFFF, cam['fov'],
                        dist, entry['rooms'], summary['first_spawn'],

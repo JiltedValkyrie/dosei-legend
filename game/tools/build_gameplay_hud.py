@@ -9,7 +9,8 @@ CELL_LIMIT = 0x4000
 ITEM_PATCH_CELLS = [(y,x) for y in range(2,8) for x in range(9,19)]
 
 
-def make_images(oot, analog=False, mode="saturn", citems=None):
+def make_images(oot, analog=False, mode="saturn", citems=None,
+                empty_buttons=False, overlay_only=False):
     root = Path(oot) / 'extracted/ntsc-1.2/assets/textures'
     def tex(group, name):
         return Image.open(root / group / name).convert('RGBA')
@@ -72,13 +73,15 @@ def make_images(oot, analog=False, mode="saturn", citems=None):
                                    'gItemIconSlingshotTex.rgba32.png',
                                    'gItemIconDekuNutTex.rgba32.png')[item-1])
                         place(im,icon.resize((26,26),Image.Resampling.LANCZOS),x,y)
-                    else:
+                    elif not empty_buttons:
                         arrow = tex('parameter_static','gEmptyC%sArrowTex.ia8.png' % name)
                         place(im,arrow.resize((26,26),Image.Resampling.NEAREST),x,y)
                 header = ('C' if mode=='n64' else 'C-STICK' if mode=='gamecube' else
                           'D-PAD' if analog else 'C+DPAD' if mode=='xbox' else
                           'L1+DPAD' if mode=='playstation' else 'C')
                 label(im,header,240 if len(header)>5 else 244 if len(header)>1 else 252,6)
+                if overlay_only:
+                    im = Image.new('RGBA', (W,H))
                 if navi:
                     place(im,tint(circle,(255,160,0)).resize((16,16),Image.Resampling.NEAREST),254,16)
                     place(im,tex('parameter_static','gNaviCUpENGTex.ia4.png'),247,20)
@@ -121,9 +124,13 @@ def build(oot, out_cd, out_gen):
     # Each preset contributes only changed label cells, never duplicate full maps.
     variants = [make_images(oot, analog=a, mode=m) for m in
                 ('saturn','xbox','n64','gamecube','playstation') for a in (False,True)]
-    item_images = [im for assignment in range(64) for im in make_images(oot,
-                   citems=(assignment & 3, (assignment >> 2) & 3, assignment >> 4))]
-    blob, palette, all_maps = encode([im for group in variants for im in group] + item_images)
+    # Runtime composes source ItemId icons into cached C-area banks. Keep only
+    # clean button backgrounds and a transparent Navi overlay, avoiding an
+    # exponential map for every assignment (and supporting all inventory slots).
+    background = make_images(oot,citems=(0,0,0),empty_buttons=True)[0]
+    navi_overlay = make_images(oot,citems=(0,0,0),overlay_only=True)[1]
+    blob, palette, all_maps = encode([im for group in variants for im in group] +
+                                     [background,navi_overlay])
     maps = all_maps[:32]
     # Includes C header, sword label (two rows), and action label (two rows).
     patch_cells = [(y,x) for y in range(2) for x in range(11,15)] + [(5,2),(6,2),(5,6),(6,6)]
@@ -139,7 +146,7 @@ def build(oot, out_cd, out_gen):
     item_offset = len(map_words)
     map_words += [mapping[y*(W//8)+x] for mapping in all_maps[320:]
                   for y,x in ITEM_PATCH_CELLS]
-    if len(map_words)*2 > 0x8000: raise ValueError('HUD maps exceed B0 reservation')
+    if len(map_words)*2 > 0x3000: raise ValueError('HUD maps collide with composed C-item banks')
     (out_cd/'BUTTONS.MAP').write_bytes(struct.pack('>%dH'%len(map_words),*map_words))
     h = ['/* Generated original OoT graphics with Saturn control labels. */',
          '#ifndef GAMEPLAY_HUD_DATA_H','#define GAMEPLAY_HUD_DATA_H',
@@ -149,7 +156,9 @@ def build(oot, out_cd, out_gen):
          'static const unsigned short hud_palette[16] = {%s};' % ','.join(map(str,palette)),
          '#define HUD_VARIANT_COUNT 32',
          '#define HUD_ITEM_OFFSET %d' % item_offset,
+         '#define HUD_NAVI_OFFSET %d' % (item_offset+len(ITEM_PATCH_CELLS)),
          '#define HUD_ITEM_COUNT %d' % len(ITEM_PATCH_CELLS),
+         '#define HUD_ITEM_W 10', '#define HUD_ITEM_X 9', '#define HUD_ITEM_Y 2',
          'static const unsigned short hud_item_positions[] = {%s};' %
              ','.join(str(y*64+x+X//8) for y,x in ITEM_PATCH_CELLS),
          '#define HUD_MAP_BYTES %d' % (len(map_words)*2),

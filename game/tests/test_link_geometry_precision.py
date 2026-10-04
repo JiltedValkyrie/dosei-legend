@@ -85,7 +85,10 @@ class LiveSkinner(unittest.TestCase):
         adapter = '''
 #include <stdint.h>
 #include <math.h>
+#include <string.h>
 #include "link_clips.h"
+#include "link_age.h"
+#include "ram_low.h"
 typedef int32_t FIXED;
 typedef uint16_t ANGLE;
 #define X 0
@@ -96,12 +99,29 @@ static FIXED slSin(ANGLE a) { return (FIXED)lround(sin(a*6.283185307179586/65536
 static FIXED slCos(ANGLE a) { return (FIXED)lround(cos(a*6.283185307179586/65536)*65536); }
 static FIXED slMulFX(FIXED a, FIXED b) { return (FIXED)(((int64_t)a*b)>>16); }
 int32_t link_points[LINK_SKIN_VERTICES][3];
+/* Exercise the target's actual matrix pointer with poisoned nonzero RAM. */
+static uint32_t test_low[(RAM_LOW_LINK_MATRICES_BYTES+16)/4];
+#undef RAM_LOW
+#define RAM_LOW(offset) ((void *)((unsigned char *)test_low+8+(offset)-RAM_LOW_LINK_MATRICES_OFFSET))
+#define __sh__
+'''
+        wrapper = '''
+void test_poison_and_reset(void) {
+ memset(test_low,0xA5,sizeof test_low);link_anim_reset();
+}
+int test_matrix_guards(void) {
+ const unsigned char *bytes=(const unsigned char *)test_low;unsigned i;
+ for(i=0;i<8;++i)if(bytes[i]!=0xA5)return 0;
+ for(i=8+LINK_LIMB_COUNT*sizeof(limb_matrix_t);i<sizeof test_low;++i)
+  if(bytes[i]!=0xA5)return 0;
+ return 1;
+}
 '''
         env = dict(os.environ)
         env['PATH'] = str(GCC.parent)+os.pathsep+env.get('PATH','')
-        subprocess.run([str(GCC), '-shared', '-O2', '-I'+str(GEN), '-x', 'c', '-',
+        subprocess.run([str(GCC), '-shared', '-O2', '-I'+str(GEN), '-I'+str(ROOT/'src'), '-x', 'c', '-',
                         str(GEN/'link_clips.c'), '-lm', '-o', str(output)],
-                       input=adapter+source, text=True, env=env, check=True)
+                       input=adapter+source+wrapper, text=True, env=env, check=True)
         cls.lib = ctypes.CDLL(str(output))
         header = (GEN/'link_clips.h').read_text()
         cls.define = lambda name: int(re.search(r'#\s*define\s+'+name+r'\s+(-?\d+)', header)[1])
@@ -173,6 +193,31 @@ int32_t link_points[LINK_SKIN_VERTICES][3];
                         value = (expected[axis]*scale+shift[axis])*(-1 if axis==1 else 1)
                         self.assertAlmostEqual(points[i][axis]/65536,value,delta=.2,
                             msg=f'clip {clip_id} frame {frame} vertex {i} axis {axis}')
+
+    def test_poisoned_low_ram_reset_and_pose_preserve_guards(self):
+        self.lib.link_anim_upper_clear()
+        self.lib.link_anim_reset()
+        self.lib.link_anim_pose(1,7,85)
+        expected=self._skin()
+        focus=(ctypes.c_int32*3)()
+        blade=((ctypes.c_int32*3)*2)()
+        self.lib.link_anim_focus(focus)
+        self.lib.link_anim_blade(blade)
+        old_focus=list(focus)
+        old_blade=[list(row) for row in blade]
+        for _ in range(3):
+            self.lib.test_poison_and_reset()
+            self.lib.link_anim_focus(focus)
+            shifts=[type(self).define('LINK_ANIM_SHIFT_'+axis)*65536 for axis in 'XYZ']
+            self.assertEqual(list(focus),shifts, 'reset anchor read poisoned RAM')
+            self.assertEqual(self.lib.test_matrix_guards(),1)
+            self.lib.link_anim_pose(1,7,85)
+            self.assertEqual(self._skin(),expected)
+            self.lib.link_anim_focus(focus)
+            self.lib.link_anim_blade(blade)
+            self.assertEqual(list(focus),old_focus)
+            self.assertEqual([list(row) for row in blade],old_blade)
+            self.assertEqual(self.lib.test_matrix_guards(),1)
 
     # Carrying is OoT's upper-body scheme (Player_UpdateUpperBody): the main
     # clip keeps the legs, the overlay clip owns UPPER..TORSO. OoT limbs
@@ -296,7 +341,9 @@ class FirstPersonSkinGate(unittest.TestCase):
 #include <stdint.h>
 #include <stdbool.h>
 #include <math.h>
+#include <string.h>
 #include "link_clips.h"
+#include "link_age.h"
 typedef int32_t FIXED;
 typedef uint16_t ANGLE;
 #define X 0
@@ -312,7 +359,7 @@ int32_t link_points[LINK_SKIN_VERTICES][3];
         with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             out = pathlib.Path(tmp)/'gate.dll'
             env = dict(os.environ); env['PATH'] = str(GCC.parent)+os.pathsep+env.get('PATH','')
-            subprocess.run([str(GCC), '-shared', '-O2', '-I'+str(GEN), '-x', 'c', '-',
+            subprocess.run([str(GCC), '-shared', '-O2', '-I'+str(GEN), '-I'+str(ROOT/'src'), '-x', 'c', '-',
                             str(GEN/'link_clips.c'), '-lm', '-o', str(out)],
                            input=adapter+source, text=True, env=env, check=True)
             lib = ctypes.CDLL(str(out))
@@ -334,4 +381,4 @@ int32_t link_points[LINK_SKIN_VERTICES][3];
         self.assertIn("'#define LINK_BASE_VERTICES %d'", tool)
         self.assertIn("('aim_ready','gPlayerAnim_link_bow_bow_ready',0,0,1)", tool)
         draw = (ROOT/'src/kokiri_sgl.c').read_text()
-        self.assertIn('equipped.nbPoint = LINK_BASE_VERTICES;', draw)
+        self.assertIn('equipped.nbPoint = link_age_model ? link_age_model->vertices : LINK_BASE_VERTICES;', draw)

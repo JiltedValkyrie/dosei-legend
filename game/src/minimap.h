@@ -12,10 +12,12 @@
 ** Reservations (nothing else may use them):
 **   VDP2 VRAM B0 +0x0000  NBG2 page map, 64x64 one-word names (8 KB)
 **   VDP2 VRAM B0 +0x2000  Minimap cells, 16-colour, up to 8 KB
-**   VDP2 VRAM B0 +0x4000  Gameplay button cells, up to 8 KB
-**   VDP2 VRAM B0 +0x6000  Gameplay button label maps, up to 40 KB
-**                         (32 variants per preset; the heart atlas follows
-**                          at +0x10000, the bold font at +0x20000)
+**   VDP2 VRAM B0 +0x4000  Gameplay button cells, up to 16 KB
+**   VDP2 VRAM B0 +0x8000  Gameplay button label/background maps, up to 12 KB
+**   VDP2 VRAM B0 +0xB000  Four composed C-item banks, 8 KB
+**   VDP2 VRAM B0 +0x10000 Heart banks/atlas, through +0x11800
+**   VDP2 VRAM B0 +0x12000 Source ItemId icon atlas, up to +0x20000
+**                         (the bold font starts at +0x20000)
 **   CRAM 768..783         map palette (NBG2 palette 0 at CRAM offset 3)
 **   CRAM 784..799         marker palette (sprite colour bank 0x300)
 **   CRAM 800..815         gameplay buttons (NBG2 palette 2)
@@ -35,6 +37,8 @@
 bool    minimap_bind(const uint8_t *blob, uint32_t bytes);
 /* Once after the VDP1 texture setup: upload the marker frames. */
 bool    minimap_init(void);
+/* Source ItemId atlas is resident at B0 +0x12000 and covered by pause backup. */
+bool    minimap_icons_ready(void);
 /* Scene load: upload that scene's map, or switch the map off. */
 void    minimap_scene(unsigned int save_scene);
 /* L toggles the map; HUD buttons remain visible. */

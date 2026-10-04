@@ -99,6 +99,7 @@ gameplay_t gameplay;   /* wall_material for the wall-hit pitch */
 #define JO_VDP2_TVSTAT 0
 static bool jo_core_add_vblank_callback(void (*cb)(void)) { return true; }
 static bool music_busy(void) { return busy; }
+static const void *ram_cart_load_scratch(const char *name, int *length) { *length = 0; return 0; }
 static bool jo_fs_open(jo_file *f, const char *n) { return false; }
 static void jo_fs_close(jo_file *f) {}
 static int jo_fs_read_next_bytes(jo_file *f, char *b, unsigned int n) { return -1; }
@@ -133,6 +134,24 @@ void set_events2(unsigned int e) { gameplay.events2 = e; }
 
     def keyed(self, slot):
         return self.lib.reg(slot, 0) & 0x1800 == 0x1800
+
+    def test_ocarina_notes_use_resident_samples_without_touching_music(self):
+        samples = {s['name']: s for s in json.loads((GEN/'action_audio.json').read_text())['samples']}
+        for note in range(5):
+            self.lib.reset()
+            self.lib.action_audio_ocarina(note)
+            sample = samples['ocarina%d' % note]
+            self.assertTrue(self.keyed(29))
+            self.assertEqual(self.lib.reg(29, 6), sample['length'])
+            self.assertEqual(self.lib.reg(29, 2), (0x50000 + sample['offset']) & 0xffff)
+            for slot in range(24):
+                self.assertEqual(self.lib.reg(slot, 0), 0)
+        self.lib.reset()
+        self.lib.action_audio_ocarina(5)
+        self.assertFalse(self.keyed(29))
+        self.lib.use_opening()
+        self.lib.action_audio_ocarina(0)
+        self.assertFalse(self.keyed(29))
 
     def test_dungeon_events_play_once_from_tree_bank_without_touching_music(self):
         manifest=json.loads((GEN/'action_audio.json').read_text())

@@ -58,7 +58,15 @@ def check(root=ROOT):
     header = (root / 'build/generated/link_scene.h').read_text()
     value = lambda name: int(re.search(r'#\s*define\s+' + name + r'\s+(\d+)', header)[1])
     link_slots = value('LINK_TILE_COUNT')
-    resident = budget.bank_bytes(value('LINK_PIXEL_BYTES'), link_slots) + budget.RUNTIME_SPRITE_BYTES
+    link_bytes = budget.bank_bytes(value('LINK_PIXEL_BYTES'), link_slots)
+    adult_header = root / 'build/generated/adult_link.h'
+    if adult_header.is_file():
+        adult = adult_header.read_text()
+        adult_value = lambda name: int(re.search(r'#\s*define\s+ADULT_LINK_' + name + r'\s+(\d+)', adult)[1])
+        adult_slots = adult_value('TILE_COUNT')
+        link_slots = max(link_slots, adult_slots)
+        link_bytes = max(link_bytes, budget.bank_bytes(adult_value('PIXEL_BYTES'), adult_slots))
+    resident = link_bytes + budget.RUNTIME_SPRITE_BYTES
     for path in sorted(cd.glob('S1R*.MSH')):
         _, _, _, tiles, pixels, _, _, _ = struct.unpack_from('>8I', path.read_bytes())
         used = resident + budget.bank_bytes(pixels, tiles) + budget.FOREST_ACTOR_BYTES

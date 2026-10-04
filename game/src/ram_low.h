@@ -36,6 +36,19 @@
 #define RAM_LOW_ROOM_BOUNDS_BYTES   0x1000u
 #define RAM_LOW_SPRITES_OFFSET      0xB800u
 #define RAM_LOW_SPRITES_BYTES       0xC000u
+/* Shared child/adult Link pose and alternate skin metadata. The age switch
+ * overwrites these only between scenes; both are filled before use. */
+#define RAM_LOW_LINK_POINTS_OFFSET  0x17800u
+#define RAM_LOW_LINK_POINTS_BYTES   0x1400u
+/* Link's 21 joint matrices: rebuilt by pose_skeleton, cleared on reset.
+ * Use existing pose carve slack; keep the alternate skin's address fixed. */
+#define RAM_LOW_LINK_MATRICES_OFFSET 0x18C00u
+#define RAM_LOW_LINK_MATRICES_BYTES  0x0400u
+/* Shared 24-row actor-view query scratch; each query fills returned rows. */
+#define RAM_LOW_CORE_VIEW_OFFSET     0x19000u
+#define RAM_LOW_CORE_VIEW_BYTES      0x0200u
+#define RAM_LOW_LINK_SKIN_OFFSET    0x19800u
+#define RAM_LOW_LINK_SKIN_BYTES     0x2000u
 /* MUSICTRG.BIN is ~90 KB (2026-10-02); the carve shrank to grow the CD directory. */
 #define RAM_LOW_MUSICTRG_OFFSET     0x59500u
 #define RAM_LOW_MUSICTRG_BYTES      0x18000u
@@ -106,6 +119,14 @@ typedef char ram_low_ordered[RAM_LOW_EQUIP_POLY_OFFSET + RAM_LOW_EQUIP_POLY_BYTE
                              RAM_LOW_ROOM_BOUNDS_OFFSET + RAM_LOW_ROOM_BOUNDS_BYTES
                              <= RAM_LOW_SPRITES_OFFSET &&
                              RAM_LOW_SPRITES_OFFSET + RAM_LOW_SPRITES_BYTES
+                             <= RAM_LOW_LINK_POINTS_OFFSET &&
+                             RAM_LOW_LINK_POINTS_OFFSET + RAM_LOW_LINK_POINTS_BYTES
+                             <= RAM_LOW_LINK_MATRICES_OFFSET &&
+                             RAM_LOW_LINK_MATRICES_OFFSET + RAM_LOW_LINK_MATRICES_BYTES
+                             <= RAM_LOW_CORE_VIEW_OFFSET &&
+                             RAM_LOW_CORE_VIEW_OFFSET + RAM_LOW_CORE_VIEW_BYTES
+                             <= RAM_LOW_LINK_SKIN_OFFSET &&
+                             RAM_LOW_LINK_SKIN_OFFSET + RAM_LOW_LINK_SKIN_BYTES
                              <= RAM_LOW_SAVE_OFFSET &&
                              RAM_LOW_SAVE_OFFSET + RAM_LOW_SAVE_BYTES
                              <= RAM_LOW_SAVE_IO_OFFSET &&

@@ -226,6 +226,12 @@ class SaveFile(unittest.TestCase):
         self.assertEqual(self.unpack(old), SAVE_FILE_OK)
         self.assertEqual([self.lib.sf_c_item(i) for i in range(3)], [0, 0, 0])
 
+    def test_ocarina_and_source_slot_assignments_survive_reload(self):
+        for i,item in enumerate((4,0x23,0x37)): self.lib.sf_set_c_item(i,item)
+        block=self.pack(); self.lib.save_new_game()
+        self.assertEqual(self.unpack(block),SAVE_FILE_OK)
+        self.assertEqual([self.lib.sf_c_item(i) for i in range(3)],[4,0x23,0x37])
+
     def test_nuts_round_trip_and_v4_save_starts_without_nuts(self):
         self.lib.sf_set_nuts(1, 17, 1)
         block = self.pack()

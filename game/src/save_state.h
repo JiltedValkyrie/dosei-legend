@@ -93,6 +93,8 @@
 #define EQUIP_TYPE_SHIELD       1
 #define EQUIP_VALUE_SWORD_KOKIRI    1
 #define EQUIP_VALUE_SHIELD_DEKU     1
+#define EQUIP_VALUE_SWORD_MASTER    2
+#define EQUIP_VALUE_SHIELD_HYLIAN   2
 
 /* ---- scenes -------------------------------------------------------------
 ** The original carries SavedSceneFlags for all 124 scenes. Our slice visits a
@@ -159,7 +161,7 @@ typedef struct
     ** CUR_UPG_VALUE(UPG_DEKU_STICKS): capacity {0, 10, 20, 30}. */
     uint8_t             stick_owned;
     uint8_t             stick_ammo;
-    uint8_t             c_items[3];         /* down, left, right: 0 empty, 1 stick, 2 slingshot, 3 nut */
+    uint8_t             c_items[3];         /* stable actions: 0 empty, 1 stick, 2 seed, 3 nut, 4 ocarina; 0x20+slot */
     uint8_t             stick_upgrade;
     /* v5 (M3a): INV_CONTENT(ITEM_DEKU_NUT), AMMO(ITEM_DEKU_NUT),
     ** CUR_UPG_VALUE(UPG_DEKU_NUTS): capacity {0, 20, 30, 40}. */
@@ -297,6 +299,14 @@ void            save_cheat_refill(void);    /* playtest: hearts + consumables to
 void            save_test_max_gear(void);
 unsigned        save_wallet_capacity(void);
 unsigned        save_seed_capacity(void);
+/* Source inventory overlay used by pause, C assignment and the core mirror.
+ * 0xff is empty; legacy slice ownership remains authoritative for its slots. */
+unsigned        save_inventory_item(unsigned slot);
+unsigned        save_c_item_for_slot(unsigned slot);
+unsigned        save_c_item_inventory_slot(unsigned action); /* 0xff invalid */
+bool            save_inventory_slot_usable(unsigned slot);
+/* Level Select era kit: choose source age and its basic sword/shield. No events. */
+void            save_set_link_age(unsigned age);
 bool            save_is_dead(void);
 
 /* ---- lifecycle -------------------------------------------------------- */

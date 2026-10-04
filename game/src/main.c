@@ -541,6 +541,15 @@ static void         viewer_draw(void)
         }
     }
     inventory_menu();
+#ifdef DOSEI_OOT_CORE
+    {
+        static bool ocarina_hint;
+        bool active=(oot_core_ocarina_state()&1u) && !gameplay.paused && !demo_title_is_visible();
+        if (active) jo_printf(4,27,"A + D-Pad: Notes   B: Stop");
+        else if (ocarina_hint) jo_printf(4,27,"                          ");
+        ocarina_hint=active;
+    }
+#endif
     game_over_screen();
     file_select_screen();
     if (!gameplay_blocks_world() && !cutscene_is_playing()) viewer_hud();
@@ -1109,26 +1118,8 @@ static void __attribute__((optimize("Os"))) inventory_menu(void)
     {
         const pause_window_state_t *p = &gameplay.pause_window;
         const char *name = "";
-        unsigned cursor = p->cursor[p->page];
-        if (!p->save_prompt) {
-            if (p->page == PAUSE_EQUIPMENT) {
-                if (cursor == 1 && (gameplay.owned & GP_SWORD)) name = "Kokiri Sword";
-                if (cursor == 5 && (gameplay.owned & GP_SHIELD)) name = "Deku Shield";
-                if (cursor == 9) name = "Kokiri Tunic";
-                if (cursor == 10) name = save_tunic_unlocked(2) ? "Red Tunic" : "Need 5 Gold Tokens";
-                if (cursor == 11) name = save_tunic_unlocked(1) ? "Blue Tunic" : "Need 1 Gold Token";
-                if (cursor == 13) name = "Kokiri Boots";
-            } else if (p->page == PAUSE_ITEMS) {
-                if (cursor == 0 && save_state.stick_owned) name = "Deku Stick";
-                if (cursor == 1 && save_state.nut_owned) name = "Deku Nut";
-                if (cursor == 6 && save_state.slingshot) name = "Fairy Slingshot";
-                if (cursor == 7 && save_state.fairy_ocarina) name = "Fairy Ocarina";
-            } else if (p->page == PAUSE_MAP) name =
-                (save_state.scene_id == SAVE_SCENE_DEKU_TREE || save_state.scene_id == SAVE_SCENE_DEKU_TREE_BOSS)
-                ? "Deku Tree" : "Kokiri Forest";
-            else if (save_check_quest_item(QUEST_KOKIRI_EMERALD)) name = "Kokiri Emerald";
-        }
-        pause_windows_printf(11, 25, "%-18s", name);
+        if (!p->save_prompt) name=pause_windows_selection_name();
+        pause_windows_printf(6, 25, "%-28.28s", name);
         if (p->page == PAUSE_MAP && !p->save_prompt &&
             (save_state.scene_id == SAVE_SCENE_DEKU_TREE || save_state.scene_id == SAVE_SCENE_DEKU_TREE_BOSS)) {
             pause_windows_printf(4,27,"[%s]: Floor  Blue: visited",ui_button_label(UI_KEY_DPAD,false));
@@ -1137,13 +1128,15 @@ static void __attribute__((optimize("Os"))) inventory_menu(void)
             if (save_state.stick_owned) pause_windows_printf(9, 10, "%2u", (unsigned)save_state.stick_ammo);
             if (save_state.nut_owned) pause_windows_printf(13, 10, "%2u", (unsigned)save_state.nut_ammo);
             if (save_state.slingshot) pause_windows_printf(9, 14, "%2u", (unsigned)save_state.ammo_seeds);
+            if (save_inventory_item(2)!=255) pause_windows_printf(17,10,"%2u",(unsigned)save_state.source_ammo[2]);
+            if (save_inventory_item(3)!=255) pause_windows_printf(21,10,"%2u",(unsigned)save_state.source_ammo[3]);
+            if (save_inventory_item(8)!=255) pause_windows_printf(17,14,"%2u",(unsigned)save_state.source_ammo[8]);
+            if (save_inventory_item(14)!=255) pause_windows_printf(17,18,"%2u",(unsigned)save_state.source_ammo[14]);
             pause_windows_printf(5, 27, "Hold [%s]+[%s]: Assign", ui_assign_modifier_label(),
                                  ui_button_label(UI_KEY_DPAD, false));
-            pause_windows_printf(6, 23, "D:%-5s L:%-5s R:%-5s",
-                save_state.c_items[0] == 1 ? "Stick" : save_state.c_items[0] == 2 ? "Seeds" : save_state.c_items[0] == 3 ? "Nuts" : "--",
-                save_state.c_items[1] == 1 ? "Stick" : save_state.c_items[1] == 2 ? "Seeds" : save_state.c_items[1] == 3 ? "Nuts" : "--",
-                save_state.c_items[2] == 1 ? "Stick" : save_state.c_items[2] == 2 ? "Seeds" : save_state.c_items[2] == 3 ? "Nuts" : "--");
         }
+        if (p->page==PAUSE_QUEST && !p->save_prompt)
+            pause_windows_printf(10,12,"%3u",save_skull_count());
     }
     /* Backup writes remain the real demo/save-device path. */
     if (gameplay.pause_window.save_prompt) {
@@ -1426,8 +1419,8 @@ static void __attribute__((optimize("Os"))) file_select_screen(void)
         jo_printf(4,FS_ROW+4,"ROOM: %u / %u",level_select.room,scene_entries[level_select.scene].rooms-1);
         jo_printf(4,FS_ROW+6,"UP/DOWN: AREA  LEFT/RIGHT: ROOM");
         jo_printf(4,FS_ROW+8,"ALL ITEMS + MAX STATS: %-3s",level_select.max_gear?"YES":"NO");
-        jo_printf(4,FS_ROW+9,"L/R: TOGGLE  A: ENTER  B: TITLE");
-        jo_printf(4,FS_ROW+10,"SWORD, SHIELD, C ITEMS READY");
+        jo_printf(4,FS_ROW+9,"ERA: %-5s",level_select.adult?"ADULT":"CHILD");
+        jo_printf(4,FS_ROW+10,"L: ITEMS  R: ERA  A: ENTER B: BACK");
         jo_printf(4,FS_ROW+11,"TEST RUN - NO SAVE SLOT");
         if(level_select.failed)jo_printf(4,FS_ROW+12,"ROOM ENTRY UNAVAILABLE");
         was_open=true;return;

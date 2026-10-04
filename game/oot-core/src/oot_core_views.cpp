@@ -173,8 +173,7 @@ static void MsgView_Layout(PlayState* play) {
     }
 }
 
-/* Box on screen: from the box opening until it closes (Message_Update's
- * MSGMODE_TEXT_CLOSING ends it). Ocarina and other modes are not shown. */
+/* Ocarina notes use the C prompt; song-result text still comes from source. */
 const OotCoreMessageView* OotCore_MessageView(void) {
     PlayState* play = gOotCorePlay;
     u8 mode;
@@ -185,7 +184,8 @@ const OotCoreMessageView* OotCore_MessageView(void) {
     }
     mode = play->msgCtx.msgMode;
     sMsgView.active = (mode >= MSGMODE_TEXT_BOX_GROWING && mode <= MSGMODE_TEXT_DELAYED_BREAK) ||
-                      mode == MSGMODE_TEXT_AWAIT_NEXT || mode == MSGMODE_TEXT_DONE;
+                      mode == MSGMODE_TEXT_AWAIT_NEXT || mode == MSGMODE_TEXT_DONE ||
+                      mode == MSGMODE_DISPLAY_SONG_PLAYED_TEXT || mode == MSGMODE_SONG_PLAYED_ACT;
     if (sMsgView.active) {
         MsgView_Layout(play);
     }
@@ -526,5 +526,7 @@ unsigned int OotCore_TalkState(void) {
     if (play == NULL || (player = GET_PLAYER(play)) == NULL) {
         return 0;
     }
-    return ((player->stateFlags1 & PLAYER_STATE1_TALKING) ? 1u : 0u) | (player->talkActor != NULL ? 2u : 0u);
+    return (((player->stateFlags1 & PLAYER_STATE1_TALKING) ||
+             (player->stateFlags2 & PLAYER_STATE2_USING_OCARINA)) ? 1u : 0u) |
+           (player->talkActor != NULL ? 2u : 0u);
 }

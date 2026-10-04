@@ -1392,14 +1392,16 @@ static void collect_rupees(const gameplay_input_t *in)
 ** in either direction. */
 static void __attribute__((optimize("Os"))) sync_gear_to_save(void)
 {
+    unsigned sword = save_state.owned_sword ? save_state.owned_sword : save_state.link_age ? 1 : 2;
+    unsigned shield = save_state.owned_shield ? save_state.owned_shield : save_state.link_age ? 1 : 2;
     save_give_equip(EQUIP_TYPE_SWORD,
-                    (gameplay.owned & GP_SWORD) ? EQUIP_VALUE_SWORD_KOKIRI : 0);
+                    (gameplay.owned & GP_SWORD) ? sword : 0);
     save_give_equip(EQUIP_TYPE_SHIELD,
-                    (gameplay.owned & GP_SHIELD) ? EQUIP_VALUE_SHIELD_DEKU : 0);
+                    (gameplay.owned & GP_SHIELD) ? shield : 0);
     save_set_equip(EQUIP_TYPE_SWORD,
-                   (gameplay.equipped & GP_SWORD) ? EQUIP_VALUE_SWORD_KOKIRI : 0);
+                   (gameplay.equipped & GP_SWORD) ? sword : 0);
     save_set_equip(EQUIP_TYPE_SHIELD,
-                   (gameplay.equipped & GP_SHIELD) ? EQUIP_VALUE_SHIELD_DEKU : 0);
+                   (gameplay.equipped & GP_SHIELD) ? shield : 0);
     save_state.rupees = gameplay.rupees;
 }
 
@@ -1410,13 +1412,13 @@ static void __attribute__((optimize("Os"))) sync_gear_from_save(void)
 
     gameplay.owned = 0;
     gameplay.equipped = 0;
-    if (save_all_equip_value(EQUIP_TYPE_SWORD) == EQUIP_VALUE_SWORD_KOKIRI)
+    if (save_all_equip_value(EQUIP_TYPE_SWORD))
         gameplay.owned |= GP_SWORD;
-    if (save_all_equip_value(EQUIP_TYPE_SHIELD) == EQUIP_VALUE_SHIELD_DEKU)
+    if (save_all_equip_value(EQUIP_TYPE_SHIELD))
         gameplay.owned |= GP_SHIELD;
-    if (save_cur_equip_value(EQUIP_TYPE_SWORD) == EQUIP_VALUE_SWORD_KOKIRI)
+    if (save_cur_equip_value(EQUIP_TYPE_SWORD))
         gameplay.equipped |= GP_SWORD;
-    if (save_cur_equip_value(EQUIP_TYPE_SHIELD) == EQUIP_VALUE_SHIELD_DEKU)
+    if (save_cur_equip_value(EQUIP_TYPE_SHIELD))
         gameplay.equipped |= GP_SHIELD;
     gameplay.rupees = (uint16_t)(save_state.rupees > wallet_capacity
                                 ? wallet_capacity : save_state.rupees);
@@ -1686,6 +1688,7 @@ static bool         register_blade_quads(void)
         c->radius = GP_BLADE_RADIUS;
         c->at_type = AT_TYPE_PLAYER;
         c->at_dmg = player_attack_damage_flags(gameplay.attack_id);
+        if (!save_state.link_age) c->at_dmg = c->at_dmg == DMG_JUMP_KOKIRI ? DMG_JUMP_MASTER : DMG_SLASH_MASTER;
         if (player_items_stick()) c->at_dmg = DMG_DEKU_STICK;
         if (!c->at_dmg) c->at_dmg = DMG_SLASH_KOKIRI;
         c->ac_flags = COL_OUTSIDE_ACTOR;        /* Link owns it: AC_HARD bounces */
@@ -1718,6 +1721,7 @@ static void         register_blade(const gameplay_input_t *in)
                   gameplay.attack_id == ATTACK_BIG_SPIN) ? 32768 : 16384;
     blade->at_type = AT_TYPE_PLAYER;
     blade->at_dmg = player_attack_damage_flags(gameplay.attack_id);
+    if (!save_state.link_age) blade->at_dmg = blade->at_dmg == DMG_JUMP_KOKIRI ? DMG_JUMP_MASTER : DMG_SLASH_MASTER;
     if (player_items_stick()) blade->at_dmg = DMG_DEKU_STICK;
     if (!blade->at_dmg) blade->at_dmg = DMG_SLASH_KOKIRI;
     blade->attack_id = gameplay.swing_count ? gameplay.swing_count : 1;
@@ -2302,9 +2306,7 @@ static void __attribute__((optimize("Os"))) update_menu(const gameplay_input_t *
         !gameplay.pause_window.save_prompt && !gameplay.pause_window.system_confirm &&
         gameplay.pause_window.page == PAUSE_ITEMS) {
         unsigned cursor = gameplay.pause_window.cursor[PAUSE_ITEMS];
-        unsigned item = cursor == 0 && save_state.stick_owned ? 1 :
-                        cursor == 6 && save_state.slingshot ? 2 :
-                        cursor == 1 && save_state.nut_owned ? 3 : 0;
+        unsigned item = save_c_item_for_slot(cursor);
         if (item) {
             unsigned i;
             for (i = 0; i < 3; ++i)
@@ -2342,10 +2344,25 @@ static void __attribute__((optimize("Os"))) update_menu(const gameplay_input_t *
     case PAUSE_RETURN_TITLE: gameplay.events2 |= GP2_EVENT_RETURN_TITLE; break;
     case PAUSE_EQUIP_SWORD:
     case PAUSE_EQUIP_SHIELD:
-        gameplay.equipped |= result == PAUSE_EQUIP_SWORD ? GP_SWORD : GP_SHIELD;
-        sync_gear_to_save();
+    case PAUSE_EQUIP_MASTER:
+    case PAUSE_EQUIP_HYLIAN: {
+        bool adult = result == PAUSE_EQUIP_MASTER || result == PAUSE_EQUIP_HYLIAN;
+        bool sword = result == PAUSE_EQUIP_SWORD || result == PAUSE_EQUIP_MASTER;
+        unsigned value = adult ? 2 : 1;
+        unsigned type = sword ? EQUIP_TYPE_SWORD : EQUIP_TYPE_SHIELD;
+        unsigned bit = 1u << ((sword ? 0 : 4) + value - 1);
+        /* Renderer supports the selected era's basic equipment. Giant sword,
+         * Mirror Shield and child Hylian presentation remain unimplemented. */
+        if (adult == !!save_state.link_age ||
+            (!(save_state.source_equipment & bit) && save_all_equip_value(type) != value)) {
+            gameplay.events |= GP_EVENT_DENIED;
+            break;
+        }
+        save_give_equip(type,value);save_set_equip(type,value);
+        gameplay.equipped |= sword ? GP_SWORD : GP_SHIELD;
         gameplay.events |= GP_EVENT_EQUIP;
         break;
+    }
     case PAUSE_DENY: gameplay.events |= GP_EVENT_DENIED; break;
     default: break;
     }
@@ -3091,6 +3108,11 @@ void                gameplay_step(const gameplay_input_t *in)
         /* Closed this step: the same press must not also act on the world. */
         return;
     }
+    if (oot_core_ocarina_state() & 1u) {
+        gameplay.shielding = false;
+        gameplay.prompt = -1;
+        return;
+    }
     /* A conversation owns the input. Nothing else in the world advances from
     ** the pad while a box is open -- no pickup grab, no lock change, no swing,
     ** no guard -- so a held button cannot leak an action through the box. */
@@ -3170,6 +3192,15 @@ void                gameplay_step(const gameplay_input_t *in)
     if (in->c_use && in->c_use <= 3 && in->grounded &&
         !world_props_carrying() && !gameplay.attack_phase && !in->shield) {
         unsigned item = save_state.c_items[in->c_use - 1];
+        if (!save_inventory_slot_usable(save_c_item_inventory_slot(item))) {
+            gameplay.events |= GP_EVENT_DENIED;
+            return;
+        }
+        if (item == 4) {
+            if (!oot_core_ocarina_start()) gameplay.events |= GP_EVENT_DENIED;
+            else { player_items_putaway(); gameplay_attack_cancel(); }
+            return;
+        }
         uint16_t yaw = in->yaw;
         int16_t pitch = in->item_pitch;
         actor_t *target = actor_resolve(gameplay.target);

@@ -19,6 +19,7 @@
 
 #include "link_anim_state.h"
 #include "link_clips.h"
+#include "link_age.h"
 #include "gameplay.h"
 #include "kokiri_camera.h"
 
@@ -877,8 +878,8 @@ bool                    link_anim_pull_up_done(int32_t *local_x_q8, int32_t *loc
     row = link_clips[climb_clip].first + link_clips[climb_clip].count - 1;
     /* Measured from sSkeletonBaseTransl (x0.64: these clips are stored
     ** child-adjusted). */
-    *local_x_q8 = model_q8(link_root[row][0] - LINK_PINNED_ROOT_X);
-    *local_z_q8 = model_q8(link_root[row][2] - LINK_PINNED_ROOT_Z);
+    *local_x_q8 = model_q8(link_root[row][0] - link_anim_pinned_root(0));
+    *local_z_q8 = model_q8(link_root[row][2] - link_anim_pinned_root(2));
     *yaw = (uint16_t)link_rotations[row][1];
     return true;
 }
@@ -889,9 +890,9 @@ void                    link_anim_let_go(int32_t *local_x_q8, int32_t *y_q8,
     unsigned int row = stored_row(hang_clip, climb_phase);
 
     /* Player_ApplyAnimMovementScaledByAge measures from baseTransl. */
-    *local_x_q8 = model_q8(link_root[row][0] - LINK_PINNED_ROOT_X);
-    *y_q8 = model_q8(link_root[row][1] - LINK_PINNED_ROOT_Y);
-    *local_z_q8 = model_q8(link_root[row][2] - LINK_PINNED_ROOT_Z);
+    *local_x_q8 = model_q8(link_root[row][0] - link_anim_pinned_root(0));
+    *y_q8 = model_q8(link_root[row][1] - link_anim_pinned_root(1));
+    *local_z_q8 = model_q8(link_root[row][2] - link_anim_pinned_root(2));
     /* func_80837B9C: Player_Action_8084411C falling. */
     state = LINK_STATE_FALL;
     frame = 0;

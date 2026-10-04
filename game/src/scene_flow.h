@@ -24,8 +24,8 @@
 */
 
 /* Load a scene: its collision, and either its room bank or its backdrop.
-** False if the disc read fails, in which case the previous scene is left
-** alone.
+** False if a load fails. Collision, textures and actor storage may already be
+** replaced; callers must reload a valid scene before resuming gameplay.
 **
 ** Deliberately does NOT touch the save. demo_init() stages the forest here
 ** just to give the title's attract flight some collision to fly over, which

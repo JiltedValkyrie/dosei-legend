@@ -19,6 +19,7 @@
 #include "vdp1_draw_wait.h"
 #include "oot_core_host.h"
 #include "save_state.h"
+#include "oot_follow.h"
 
 static unsigned int current_scene;
 static bool         loaded;
@@ -85,7 +86,7 @@ bool            scene_flow_is_interior(void)
     return (loaded && scene_flow_entry()->image != 0);
 }
 
-/* Play_SetViewpoint: five house panoramas toggle against their locked JPEG.
+/* Play_SetViewpoint: source house panoramas toggle against their locked JPEG.
  * The shop has FIXED_SHOP_VIEWPOINT and never accepts the toggle. */
 bool scene_flow_pivot(void)
 {
@@ -96,14 +97,14 @@ bool scene_flow_toggle_view(void)
 {
     bool pivot = scene_flow_pivot(), ok;
     if (!scene_flow_is_interior() || current_scene == SCENE_KOKIRI_SHOP ||
-        current_scene >= SCENE_GENERIC_FIRST) /* no panorama baked */
+        scene_flow_entry()->panorama == 255)
         return false;
     if (!vdp1_wait_for_draw_end()) return false;
     ok = pivot ? kokiri_scene_load_backdrop(current_scene, 0) :
-                 kokiri_scene_load_bank(STORY_BANK_PANORAMA, current_scene);
+                 kokiri_scene_load_bank(STORY_BANK_PANORAMA, scene_flow_entry()->panorama);
     if (!ok) {
         /* A partial read can replace pixels. Restore the whole old view. */
-        ok = pivot ? kokiri_scene_load_bank(STORY_BANK_PANORAMA, current_scene) :
+        ok = pivot ? kokiri_scene_load_bank(STORY_BANK_PANORAMA, scene_flow_entry()->panorama) :
                      kokiri_scene_load_backdrop(current_scene, 0);
         if (!ok) jo_core_error("Interior view reload failed");
         return false;
@@ -120,11 +121,11 @@ bool scene_flow_shop_browse(bool on)
         on == scene_flow_pivot())
         return false;
     if (!vdp1_wait_for_draw_end()) return false;
-    ok = on ? kokiri_scene_load_bank(STORY_BANK_PANORAMA, current_scene) :
+    ok = on ? kokiri_scene_load_bank(STORY_BANK_PANORAMA, scene_flow_entry()->panorama) :
               kokiri_scene_load_backdrop(current_scene, 0);
     if (!ok) {
         ok = on ? kokiri_scene_load_backdrop(current_scene, 0) :
-                  kokiri_scene_load_bank(STORY_BANK_PANORAMA, current_scene);
+                  kokiri_scene_load_bank(STORY_BANK_PANORAMA, scene_flow_entry()->panorama);
         if (!ok) jo_core_error("Shop view reload failed");
         return false;
     }
@@ -206,15 +207,18 @@ bool            scene_flow_load(unsigned int scene, unsigned int spawn)
     if (scene_flow_spawn(scene, spawn)->room >= entry->rooms) return false;
     story_route_free();
     npc_draw_free();
+    if (!kokiri_link_set_age(save_state.link_age == 0))
+        return false;
+    oot_follow_set_adult(save_state.link_age == 0);
     if (!collision_load(scene))
         return (false);
     if (entry->image) {
         /* A prerendered interior: one backdrop on VDP2, no geometry at all. */
-        /* The shop and every all-scenes interior show their own backdrop;
-        ** the five Kokiri houses start on their separate panorama bank. */
+        /* Houses with source pivot cameras start on their panorama bank;
+        ** fixed-view rooms and shops retain the original JPEG view. */
         unsigned int room = scene_flow_spawn(scene, spawn)->room;
-        if (!(scene == SCENE_KOKIRI_SHOP || scene >= SCENE_GENERIC_FIRST ?
-              kokiri_scene_load_backdrop(scene, room) : kokiri_scene_load_bank(STORY_BANK_PANORAMA, scene)))
+        if (!(scene == SCENE_KOKIRI_SHOP || entry->panorama == 255 ?
+              kokiri_scene_load_backdrop(scene, room) : kokiri_scene_load_bank(STORY_BANK_PANORAMA, entry->panorama)))
             return (false);
     } else {
         if (!kokiri_scene_load_bank(scene, scene_flow_spawn(scene, spawn)->room))
@@ -231,6 +235,7 @@ bool            scene_flow_load(unsigned int scene, unsigned int spawn)
         jo_core_error("NPC model load failed: scene %u", entry->save_scene);
         return false;
     }
+    oot_core_scene_restart();
     return (true);
 }
 

@@ -30,6 +30,16 @@
 #include "oot_follow.h"
 #include "kokiri_camera.h"
 
+oot_follow_scale_t oot_follow_scale = {44, 93, 139, -9};
+
+void oot_follow_set_adult(bool adult)
+{
+    /* Adult Player_GetHeight=68, yNormal=1: source scale is exactly .68.
+    ** Precomputed integers avoid division in the camera's hot path. */
+    oot_follow_scale = adult ? (oot_follow_scale_t){68,136,204,-14} :
+                              (oot_follow_scale_t){44,93,139,-9};
+}
+
 /*
 ** Camera_LERPCeilF with a shift instead of a float step scale.
 **
@@ -139,7 +149,7 @@ static void     aim_target(const oot_follow_t *camera,
         return;
     }
     v[0] = camera->aim_focus[0] - player->x;
-    v[1] = camera->aim_focus[1] - (player->y - OOT_CAM_PLAYER_ORIGIN + OOT_CAM_PLAYER_HEIGHT);
+    v[1] = camera->aim_focus[1] - (player->y - OOT_CAM_PLAYER_ORIGIN + oot_follow_scale.height);
     v[2] = camera->aim_focus[2] - player->z;
     for (k = 0; k < 3; ++k) v[k] = clamp_axis(v[k]);
     r = isqrt_u32((uint32_t)(v[0] * v[0]) + (uint32_t)(v[1] * v[1]) + (uint32_t)(v[2] * v[2]));
@@ -198,7 +208,7 @@ static void     lock_frame(oot_follow_t *camera, const camera_position_t *player
     int32_t off, ec, t2, temp, t1, f;                                /* Q8 degrees */
     uint32_t r_head, r_at;
     int16_t x;
-    int32_t head_y = player->y - OOT_CAM_PLAYER_ORIGIN + OOT_CAM_PLAYER_HEIGHT;
+    int32_t head_y = player->y - OOT_CAM_PLAYER_ORIGIN + oot_follow_scale.height;
 
     at[0] = player->x + camera->aim_q8[0] / 256;
     at[1] = head_y + camera->aim_q8[1] / 256;
@@ -286,7 +296,7 @@ static void     place(const oot_follow_t *camera,
     /* z_camera.c Camera_CalcAtDefault/func_800458D4:
     ** atTarget.y = player origin + Player_GetHeight() + yOffset.
     ** Forgetting height put the camera only 9..20 units above the floor. */
-    eye_out->y = player->y - OOT_CAM_PLAYER_ORIGIN + OOT_CAM_PLAYER_HEIGHT
+    eye_out->y = player->y - OOT_CAM_PLAYER_ORIGIN + oot_follow_scale.height
                 + y_offset + height;
     eye_out->x += camera->aim_q8[0] / 256;
     eye_out->y += camera->aim_q8[1] / 256;
@@ -348,7 +358,7 @@ void            oot_follow_snap(oot_follow_t *camera,
                                 uint16_t facing)
 {
     (void)player;
-    camera->distance = OOT_CAM_DIST_MAX;
+    camera->distance = oot_follow_scale.distance_max;
     camera->yaw = facing;
     camera->pitch = OOT_CAM_PITCH_TARGET;
     camera->swing_timer = 0;
@@ -434,8 +444,8 @@ void            oot_follow_update_profile(oot_follow_t *camera,
     ** stopping on vines must not pull the eye into Link and the wall. */
     if (!(camera->targeting && camera->aim_active && !profile->yaw_policy)) {
         camera->distance = approach(camera->distance,
-                                    profile->yaw_policy == 1 ? OOT_CAM_DIST_MAX * 3 / 2 :
-                                    moving ? OOT_CAM_DIST_MAX : OOT_CAM_DIST_MIN,
+                                    profile->yaw_policy == 1 ? oot_follow_scale.distance_max * 3 / 2 :
+                                    moving ? oot_follow_scale.distance_max : oot_follow_scale.distance_min,
                                     XZ_RATE);
         camera->pitch = approach(camera->pitch, profile->pitch_target, profile->pitch_rate);
     }
@@ -477,7 +487,7 @@ void oot_follow_update(oot_follow_t *camera, const camera_position_t *player,
                       uint16_t facing, bool moving, camera_position_t *eye,
                       uint16_t *yaw, int32_t *pitch)
 {
-    const oot_follow_profile_t normal = {OOT_CAM_Y_OFFSET, OOT_CAM_PITCH_TARGET,
+    const oot_follow_profile_t normal = {oot_follow_scale.y_offset, OOT_CAM_PITCH_TARGET,
                                          PITCH_RATE, 0};
     oot_follow_update_profile(camera, player, facing, moving, eye, yaw, pitch, &normal);
 }

@@ -17,7 +17,7 @@
 #include "oot_core_host.h"
 
 #define OOT_CORE_MAGIC 0x4F4F5443u /* 'OOTC' */
-#define OOT_CORE_VERSION 17u
+#define OOT_CORE_VERSION 18u
 /* set_flags bits. NPC_SPRITES: generic NPCs are host sprites (NPC views carry
  * object/anim/frame; their Actor_Draw is skipped, no limb matrices). */
 #define OOT_CORE_FLAG_NPC_SPRITES 1u
@@ -221,6 +221,10 @@ typedef struct OotCoreEntry {
     unsigned int (*scene_layer)(void);
     /* Actor/script-owned transition request; -1 absent. Consume after handling. */
     int (*transition_request)(unsigned int consume);
+    /* 0 state (active bit0, accepts notes bit1, song+1 byte1), 1 start,
+     * 2 consume sounded note+1, 3 consume completed song+1,
+     * 4 whether this scene supports the overworld Sun's Song reload. */
+    unsigned int (*ocarina)(unsigned int command);
 } OotCoreEntry;
 
 #endif

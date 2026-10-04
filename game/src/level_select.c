@@ -6,6 +6,7 @@
 level_select_t level_select;
 void level_select_open(void) {level_select=(level_select_t){.scene=SCENE_YDAN,.visible=true};}
 void level_select_toggle_max_gear(void) {level_select.max_gear=!level_select.max_gear;}
+void level_select_toggle_era(void) {level_select.adult=!level_select.adult;}
 void level_select_move(int vertical,int horizontal)
 {
     if(vertical) {
@@ -18,7 +19,7 @@ void level_select_move(int vertical,int horizontal)
     }
     if(vertical || horizontal)level_select.failed=false;
 }
-void level_select_prepare(void)
+void __attribute__((optimize("Os"))) level_select_prepare(void)
 {
     save_new_game();
     save_item_give(SAVE_ITEM_SWORD_KOKIRI);save_item_give(SAVE_ITEM_SHIELD_DEKU);
@@ -31,4 +32,5 @@ void level_select_prepare(void)
     save_set_event_chk_inf(EVENTCHKINF_MIDO_STOOD_ASIDE_KOKIRI);save_set_event_chk_inf(EVENTCHKINF_DEKU_TREE_INTRO_CS_SEEN);
     save_state.scene_id=scene_entries[level_select.scene].save_scene;save_state.entrance=0;
     if(level_select.max_gear)save_test_max_gear();
+    save_set_link_age(level_select.adult ? 0 : 1);
 }

@@ -764,13 +764,14 @@ static void __attribute__((optimize("Os"))) interior_camera(void)
 }
 
 /* Walk Link through a doorway: load the far scene and stand him on its spawn.
- * Returns true when a transition happened, so the caller can abandon the rest
- * of the step rather than moving him around in a scene that just unloaded. */
+ * Returns true when a transition or recovery happened, so the caller abandons
+ * the rest of the step whose collision and actor pointers just unloaded. */
 static bool __attribute__((optimize("Os"))) take_door(void)
 {
     int                 index;
     int scripted=oot_core_transition_request(false);
     unsigned target,spawn,keep_music,entrance,variant;
+    unsigned resident=scene_flow_scene(),resident_spawn=save_state.entrance;
 
     index = scene_flow_door_at(demo_link.x, demo_link.y - DEMO_LINK_EYE_HEIGHT,
                                demo_link.z);
@@ -798,20 +799,29 @@ static bool __attribute__((optimize("Os"))) take_door(void)
         gameplay_actor_message(0xFF00);
         return true;
     }
+    /* Consume before loading: scene_flow_load may destroy the requesting play
+     * state even when a later asset read fails. Never retry its warp each step. */
+    if(scripted>=0)oot_core_transition_request(true);
     game_mode_set(GAME_MODE_LOADING);
     if (!scene_flow_load(target, spawn)) {
-        /* Disc read failed: stay where we are, and go back to playing there
-         * rather than leaving the mode stuck mid-load. */
+        /* A failed load can already have replaced collision, pixels and NPCs.
+         * Rebuild the source scene before resuming, at its saved entrance so
+         * Link and the restored room bank agree even after room crossings. */
+        if (!scene_flow_load(resident, resident_spawn))
+            jo_core_error("Door scene recovery load failed");
+        place_at_spawn(resident, resident_spawn);
+        gameplay_reset();
+        if (scene_flow_is_interior()) interior_camera();
         game_mode_set(GAME_MODE_PLAY);
-        return (false);
+        gameplay_actor_message(0xFF00);
+        return (true);
     }
-    if(scripted>=0)oot_core_transition_request(true);
     /* Record where the player now is, so a save made here reloads here. */
     save_state.scene_id = (uint8_t)scene_flow_entry()->save_scene;
     save_state.entrance = (uint8_t)spawn;
     if(!keep_music)scene_music();
     place_at_spawn(target, spawn);
-    save_state.source_entrance=(uint16_t)(scripted>=0 ? scripted : scene_doors[index].entrance);
+    save_state.source_entrance=(uint16_t)entrance;
     /* Per-scene state goes; the save (gear, rupees, quest flags) does not. */
     gameplay_reset();
     if (scene_flow_is_interior())
@@ -846,6 +856,38 @@ static void __attribute__((optimize("Os"))) scene_music(void)
         return;
     }
     music_play_fade(song, DEMO_MUSIC_FADE_FRAMES);
+}
+
+/* z_parameter's Sun's Song day/night result, with a full layer reload.
+ * Saturn skips accelerated sky time; retain Link's position and camera.
+ * Dungeon freezing and interiors' source room-type rules remain pending. */
+static bool finish_ocarina_song(void)
+{
+    unsigned song=oot_core_ocarina_song();
+    unsigned scene,spawn,old_time;
+    if(song!=10 || !oot_core_ocarina_sun_allowed())return false;
+    scene=scene_flow_scene();spawn=save_state.entrance;old_time=save_state.day_time;
+    save_state.day_time=old_time>=0x4555 && old_time<=0xC001 ? 0xC002 : 0x4555;
+    game_mode_set(GAME_MODE_LOADING);
+    if(!scene_flow_load(scene,spawn)) {
+        save_state.day_time=old_time;
+        if(!scene_flow_load(scene,spawn))jo_core_error("Sun song scene recovery load failed");
+    }
+    gameplay_reset();
+    game_mode_set(GAME_MODE_PLAY);
+    return true;
+}
+
+/* Menu open, navigation and the press that closes it all belong to pause.
+ * In particular B must not cancel the song and arrows must not sound notes. */
+static bool step_core_gameplay(const gameplay_input_t *action, bool was_paused)
+{
+    unsigned note;
+    if (was_paused || gameplay_is_paused()) return false;
+    oot_core_frame(action);
+    note = oot_core_ocarina_note();
+    if (note) action_audio_ocarina(note - 1);
+    return finish_ocarina_song();
 }
 
 static bool finish_boss_warp(void)
@@ -1035,7 +1077,8 @@ static void __attribute__((optimize("Os"))) file_select_tick(void)
             return;
         }
         level_select_move(menu_dy,menu_dx);
-        if(menu_page)level_select_toggle_max_gear();
+        if(menu_page<0)level_select_toggle_max_gear();
+        if(menu_page>0)level_select_toggle_era();
         menu_step=menu_dx=menu_dy=menu_page=0;c_assign=c_use=0;
         interact_pending=cancel_pending=pause_pending=false;
         if(pick.cancel){level_select.visible=false;game_mode_set(GAME_MODE_TITLE);player_input_reset();player_input_set_dialogue(false);music_play(NA_BGM_TITLE);}
@@ -1644,7 +1687,7 @@ void demo_update(void)
     if (input.menu_page) menu_page = input.menu_page;
     if (gameplay_is_paused() && input.c_pressed >= PLAYER_C_DOWN)
         c_assign = input.c_pressed - PLAYER_C_DOWN + 1;
-    if (!gameplay_blocks_world() && input.c_pressed >= PLAYER_C_DOWN)
+    if ((!gameplay_blocks_world() || (oot_core_ocarina_state() & 2u)) && input.c_pressed >= PLAYER_C_DOWN)
         c_use = input.c_pressed - PLAYER_C_DOWN + 1;
     shield_held = input.shield_held;
     target_held = input.target_held;
@@ -1820,6 +1863,7 @@ void demo_update(void)
             {
                 gameplay_input_t action = {0};
                 bool blocked_before = gameplay_blocks_world();
+                bool paused_before = gameplay_is_paused();
                 action.room = scene_flow_is_interior() ? 0 : (uint8_t)kokiri_scene_room();
                 action.climbing = link_climb.phase == PLAYER_CLIMB_ON;
                 action.x = demo_link.x;
@@ -1944,7 +1988,11 @@ void demo_update(void)
                     gameplay_step(&action);
                     action.interact = a; action.cancel = b;
                 }
-                oot_core_frame(&action);
+                if (step_core_gameplay(&action, paused_before)) {
+                    interact_pending=cancel_pending=pause_pending=jump_pending=false;
+                    c_assign=c_use=0;menu_step=menu_dx=menu_dy=menu_page=0;
+                    walk=0;break;
+                }
                 story_route_step();
                 tree_mouth_step();
                 if (finish_boss_warp()) { walk=0; jump_pending=false; break; }
@@ -2981,7 +3029,9 @@ void demo_update(void)
          * Skinning is the most expensive thing Link costs, so it runs once per
          * frame at most, and only when the clip frame actually changed. */
         frame_timer_begin(FRAME_PHASE_SKINNING);
-        link_anim_pose(link_anim_clip(), link_anim_frame(), link_anim_fraction());
+        if (oot_core_ocarina_state() & 1u)
+            link_anim_pose(LINK_CLIP_OCARINA_HOLD, (now / 3) % LINK_FRAMES_OCARINA_HOLD, 0);
+        else link_anim_pose(link_anim_clip(), link_anim_frame(), link_anim_fraction());
         {
             static unsigned int trail_tick;
             if (!gameplay_is_paused() && trail_tick != now / 2) {

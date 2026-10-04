@@ -42,6 +42,14 @@
 #define OOT_CAM_PLAYER_ORIGIN   90
 #define OOT_CAM_PLAYER_HEIGHT   44
 
+/* Source Player_GetHeight / Normal1 scale for the selected age. The storage
+** origin remains feet+90 for both ages. Set only while loading a scene. */
+typedef struct {
+    int32_t height, distance_min, distance_max, y_offset;
+} oot_follow_scale_t;
+extern oot_follow_scale_t oot_follow_scale;
+void oot_follow_set_adult(bool adult);
+
 typedef struct
 {
     /* Spherical, about the at-point: OoT stores the camera this way and the

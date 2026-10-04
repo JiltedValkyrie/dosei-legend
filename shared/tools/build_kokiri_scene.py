@@ -82,6 +82,28 @@ def rgba16(value):
             (value >> 1 & 31) * 255 // 31, 255 if value & 1 else 0)
 
 
+def combine_alpha_opaque(w0, w1):
+    """Prove constant-one alpha from the two source combiner cycles.
+
+    Dark intensity texels are not holes when the source selects alpha = 1.
+    Keep the previous texture-alpha approximation for expressions involving
+    texture, shade, primitive or environment alpha; only fold exact constants.
+    """
+    combined = None
+    for a, b, c, d in (((w0 >> 12) & 7, (w1 >> 12) & 7, (w0 >> 9) & 7, (w1 >> 9) & 7),
+                       ((w1 >> 21) & 7, (w1 >> 3) & 7, (w1 >> 18) & 7, w1 & 7)):
+        def value(selector, multiply=False):
+            if selector == 7: return 0
+            if not multiply and selector == 6: return 1
+            if not multiply and selector == 0: return combined
+            return None
+        av, bv, cv, dv = value(a), value(b), value(c, True), value(d)
+        product = 0 if a == b or cv == 0 else (
+            (av - bv) * cv if None not in (av, bv, cv) else None)
+        combined = min(1, max(0, product + dv)) if product is not None and dv is not None else None
+    return combined == 1
+
+
 class DisplayLists:
     def __init__(self, scene, room):
         self.segments = {2: scene, 3: room}
@@ -95,6 +117,7 @@ class DisplayLists:
         self.scale = (1.0, 1.0)
         self.geom = 0
         self.prim = (255, 255, 255, 255)
+        self.alpha_opaque = False
         self.faces = []
         self.textures = {}
         self.opcodes = collections.Counter()
@@ -121,7 +144,7 @@ class DisplayLists:
         if tile.get('tmem') not in self.images:
             raise ValueError(f'No texture loaded at {tile}')
         image = self.images[tile['tmem']]
-        key = (tuple(sorted(tile.items())), image, tuple(self.palette), self.scale)
+        key = (tuple(sorted(tile.items())), image, tuple(self.palette), self.scale, self.alpha_opaque)
         if key in self.textures:
             return self.textures[key]
         address, image_width, image_fmt, image_size = image
@@ -166,7 +189,7 @@ class DisplayLists:
                 color = (v, v, v, v)
             else:
                 raise ValueError(f'Unsupported texture format {fmt}/{size}')
-            colors.append(color)
+            colors.append(color[:3] + (255,) if self.alpha_opaque else color)
         texture = dict(tile, width=width, height=height, colors=colors,
                        address=address, scale=self.scale)
         self.textures[key] = texture
@@ -244,6 +267,8 @@ class DisplayLists:
                 self.scale = ((w1 >> 16) / 65536, (w1 & 65535) / 65536)
             elif op == 0xFA:
                 self.prim = tuple((w1 >> shift) & 255 for shift in (24, 16, 8, 0))
+            elif op == 0xFC:
+                self.alpha_opaque = combine_alpha_opaque(w0, w1)
             elif op == 0xFD:
                 self.image = (w1, (w0 & 4095) + 1, (w0 >> 21) & 7, (w0 >> 19) & 3)
             elif op == 0xF5:
@@ -269,7 +294,7 @@ class DisplayLists:
             elif op == 0xDA:
                 self.matrix(w0, w1)
             elif op in (0x00, 0x03, 0xD8, 0xDB, 0xDC, 0xE2, 0xE3, 0xE6, 0xE7,
-                        0xE8, 0xE9, 0xEE, 0xF7, 0xF8, 0xF9, 0xFB, 0xFC):
+                        0xE8, 0xE9, 0xEE, 0xF7, 0xF8, 0xF9, 0xFB):
                 # Culling bounds, RDP state, fog, lights and combiner.
                 pass
             else:

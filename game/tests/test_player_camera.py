@@ -42,6 +42,7 @@ class TraversalCamera(unittest.TestCase):
     @classmethod
     def tearDownClass(cls): cls.tmp.cleanup()
     def setUp(self):
+        self.lib.oot_follow_set_adult(False)
         self.camera=Camera();self.follow=follow.Follow()
         self.player=follow.Position(0,90,0);self.eye=follow.Position()
         self.yaw=C.c_uint16();self.pitch=C.c_int32()
@@ -86,6 +87,15 @@ class TraversalCamera(unittest.TestCase):
         self.assertEqual(self.follow.pitch,7282)
         self.assertEqual(self.yaw.value,original)
         self.assertGreater(self.eye.y,self.camera.at_y)
+
+    def test_adult_camera_tracks_source_height_in_normal_and_hang(self):
+        self.lib.oot_follow_set_adult(True)
+        for _ in range(180): self.step()
+        self.assertEqual(self.camera.at_y,68-14)
+        self.assertEqual(self.follow.distance,136)
+        for _ in range(1800): self.step(2)
+        self.assertEqual(self.camera.at_y,68-54)
+        self.assertEqual(self.follow.pitch,7282)
     def test_climb_tracks_stationary_facing_and_flattens_near_floor(self):
         self.world(bg.ground())
         self.step()

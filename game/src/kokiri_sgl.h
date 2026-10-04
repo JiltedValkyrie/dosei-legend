@@ -10,6 +10,8 @@
 /** @brief Upload every mesh's textures/CLUTs and bind them to the SGL tables.
  *  @return true on success; on failure jo_core_error() describes the reason. */
 bool            kokiri_scene_load(void);
+/* Replace Link's own model/skin/clip banks at an age transition. */
+bool            kokiri_link_set_age(bool adult);
 
 /* The flat cutscene field's bank number. It is seen end to end, unlike a
 ** forest room, so the loader gives it a far larger draw distance. */

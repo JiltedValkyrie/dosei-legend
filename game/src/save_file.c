@@ -184,7 +184,7 @@ static void     unpack_payload(save_state_t *state, cursor *c, uint16_t version)
     if (version >= 4)
         for (i = 0; i < 3; ++i) {
             unsigned item = get8(c);
-            state->c_items[i] = item <= 3 ? item : 0;
+            state->c_items[i] = item <= 4 || (item >= 0x20 && item < 0x38) ? item : 0;
         }
     if (version >= 5) {
         state->nut_owned = get8(c);
@@ -227,7 +227,8 @@ static void     unpack_payload(save_state_t *state, cursor *c, uint16_t version)
         unsigned n=0,j;
         for(i=0;i<32;++i)for(j=state->skull_flags[i];j;j>>=1)n+=j&1;
         if(n<state->source_tokens)n=state->source_tokens;
-        if(state->tunic>2 || (state->tunic==1 && n<1) || (state->tunic==2 && n<5))state->tunic=0;
+        if(state->tunic>2 || (state->tunic==1 && n<1 && !(state->source_equipment&0x400)) ||
+            (state->tunic==2 && n<5 && !(state->source_equipment&0x200)))state->tunic=0;
     }
     state->dungeon_items[0]=(state->deku_dungeon_items&3)<<1;
 }
