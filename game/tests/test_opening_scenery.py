@@ -59,6 +59,7 @@ class TextCueBoundary(unittest.TestCase):
         fade_function = source[source.index('static void update_fade('):
                                source.index('static void apply_camera(')]
         harness = '''#include "message.h"
+#include "song_ids.h"
 typedef int music_bank_t;
 static music_bank_t fake_bank;
 static int busy, starts;
@@ -66,9 +67,11 @@ static const music_bank_t *bank_for_cutscene(unsigned int id) { return &fake_ban
 static const music_bank_t *music_current(void) { return 0; }
 static int music_busy(void) { return busy; }
 static void music_silence(int n) {}
-static void music_fade_to(const music_bank_t *b, int n) { ++starts; }
+static bool music_fade_to(const music_bank_t *b, int n) { ++starts; return true; }
+static const music_bank_t *music_song_bank(oot_song_t song) { return &fake_bank; }
+static void music_once(const music_bank_t *b, const music_bank_t *next) {}
 #define CUTSCENE_FADE_FRAMES 10
-static struct { unsigned short frame; unsigned char text_cursor, music_cursor;
+static struct { unsigned short frame; unsigned char id, text_cursor, music_cursor;
                 short text_hold_end; unsigned char fade_alpha, fade_colour; } state;
 ''' + function + fade_function + '''
 int fade_at(int frame) {

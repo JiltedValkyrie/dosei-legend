@@ -28,8 +28,39 @@ core_sprite_rows[] = {
 #define CORE_SPRITE_ROWS (sizeof core_sprite_rows / sizeof core_sprite_rows[0])
 #define CORE_SPRITE_SLOTS 8
 #define CORE_SPRITE_HEAP_PERCENT 85   /* leave heap for the rest of the scene */
-static unsigned char *core_sprite[CORE_SPRITE_ROWS];   /* G<oid><nn>.SPR, cart heap */
-static npc_sprite_inst_t core_sprite_inst[CORE_SPRITE_SLOTS];
+#define CORE_MESHES_MAX 40
+typedef struct {
+    unsigned char *sprite[CORE_SPRITE_ROWS]; /* sheets remain on the cart heap */
+    unsigned char tried[CORE_SPRITE_ROWS];
+    npc_sprite_inst_t inst[CORE_SPRITE_SLOTS];
+    unsigned int reserved;
+    oot_core_sprite_stats_t stats;
+    actor_mesh_t *mesh[CORE_MESHES_MAX];
+    OotCoreMeshKey mesh_key[CORE_MESHES_MAX];
+    unsigned char mesh_ready[CORE_MESHES_MAX];
+    unsigned int mesh_count;
+} core_draw_state_t;
+#if defined(__sh__)
+typedef char core_draw_low_fits[sizeof(core_draw_state_t) <= RAM_LOW_OOTDRAW_BYTES ? 1 : -1];
+#define CORE_DRAW ((core_draw_state_t *)RAM_LOW(RAM_LOW_OOTDRAW_OFFSET))
+#else
+static core_draw_state_t core_draw_storage;
+#define CORE_DRAW (&core_draw_storage)
+#endif
+#define core_sprite (CORE_DRAW->sprite)
+#define core_sprite_tried (CORE_DRAW->tried)
+#define core_sprite_inst (CORE_DRAW->inst)
+#define core_sprite_reserved (CORE_DRAW->reserved)
+#define sprite_stats (CORE_DRAW->stats)
+#define core_mesh (CORE_DRAW->mesh)
+#define core_mesh_key (CORE_DRAW->mesh_key)
+#define core_mesh_ready (CORE_DRAW->mesh_ready)
+#define core_mesh_count (CORE_DRAW->mesh_count)
+
+static void core_draw_init(void)
+{
+    memset(CORE_DRAW, 0, sizeof *CORE_DRAW);
+}
 
 
 #define ENTRY ((const OotCoreEntry *)OOT_CORE_LOAD_ADDR)
@@ -56,10 +87,13 @@ static unsigned char host_give_item(unsigned char item)
     case 0x8C: give = SAVE_ITEM_DEKU_NUTS_5; break;     /* ITEM_DEKU_NUTS_5 */
     case 0x8D: give = SAVE_ITEM_DEKU_NUTS_10; break;    /* ITEM_DEKU_NUTS_10 */
     case 0x58: give = SAVE_ITEM_SEEDS_5; break;         /* ITEM_DEKU_SEEDS (+5) */
+    case 0x14: give = SAVE_ITEM_BOTTLE_EMPTY; break;
+    case 0x1A: give = SAVE_ITEM_BOTTLE_MILK_FULL; break; /* Talon's first bottle */
+    case 0x82: give = SAVE_ITEM_MILK; break;            /* cow/Talon refill */
     default: return item; /* not in the C save yet: not given */
     }
     if (!save_item_give(give)) return item;
-    gameplay.rupees = (uint8_t)save_state.rupees; /* HUD counter */
+    gameplay.rupees = save_state.rupees; /* HUD counter */
     return 0xFF;
 }
 
@@ -74,8 +108,9 @@ static int host_health_change(short amount)
 static void host_rupees_change(short amount)
 {
     int r = (int)save_state.rupees + amount;
-    save_state.rupees = (uint16_t)(r < 0 ? 0 : r > 99 ? 99 : r); /* child wallet */
-    gameplay.rupees = (uint8_t)save_state.rupees;
+    unsigned int cap = save_wallet_capacity();
+    save_state.rupees = (uint16_t)(r < 0 ? 0 : (unsigned int)r > cap ? cap : (unsigned int)r);
+    gameplay.rupees = save_state.rupees;
 }
 
 static const OotCoreHost host = { host_sfx, host_give_item, host_health_change,
@@ -112,6 +147,7 @@ static int load_carve(const char *name, unsigned int offset, unsigned int bytes)
 
 bool oot_core_boot(void)
 {
+    core_draw_init(); /* Low RAM retains arbitrary bytes across boots. */
     /* Boot progress on row 20: a hang leaves the last marker on screen. */
     jo_printf(0, 20, "oc 1 load ");
     loaded = load_carve("OOTCORE.BIN", RAM_CART_OOTCORE_OFFSET, RAM_CART_OOTCORE_BYTES);
@@ -162,14 +198,18 @@ static void mirror_save(void)
         /* Static: the blob keeps the pointer and copies flags back after update. */
         static OotCoreSave mirror;
         unsigned int save_scene = scene_flow_entry()->save_scene;
-        mirror.link_age = 1;   /* LINK_AGE_CHILD: the C game has no adult yet */
-        mirror.night = 0;      /* C game has no day/night clock yet */
-        mirror.day_time = 0x8000; /* noon */
+        mirror.link_age = save_state.link_age;
+        mirror.day_time = save_state.day_time;
+        /* Play_Init: night outside 06:30..18:00, exact source boundaries. */
+        mirror.night = mirror.day_time > 0xC000 || mirror.day_time < 0x4555;
+        mirror.cutscene_index = save_state.cutscene_index;
         mirror.event_chk_inf = save_state.event_chk_inf;
         mirror.item_get_inf = save_state.item_get_inf;
         mirror.inf_table = save_state.inf_table;
         mirror.scene_flags = save_scene < SAVE_SCENE_COUNT
-            ? (unsigned long *)&save_state.scene[save_scene] : 0;
+            ? (unsigned long *)&save_state.scene[save_scene]
+            : scene_flow_entry()->oot_scene < SAVE_SOURCE_SCENE_COUNT
+                ? (unsigned long *)&save_state.generic_scene[scene_flow_entry()->oot_scene] : 0;
         mirror.health = save_state.health;
         mirror.health_capacity = save_state.health_capacity;
         mirror.rupees = save_state.rupees;
@@ -179,6 +219,27 @@ static void mirror_save(void)
         mirror.nut_ammo = save_state.nut_ammo;
         mirror.slingshot_owned = save_state.slingshot;
         mirror.seed_ammo = save_state.ammo_seeds;
+        mirror.owned_sword = save_state.owned_sword;
+        mirror.owned_shield = save_state.owned_shield;
+        mirror.equip_sword = save_state.equip_sword;
+        mirror.equip_shield = save_state.equip_shield;
+        mirror.fairy_ocarina = save_state.fairy_ocarina;
+        mirror.stick_upgrade = save_state.stick_upgrade;
+        mirror.nut_upgrade = save_state.nut_upgrade;
+        mirror.deku_dungeon_items = save_state.deku_dungeon_items;
+        mirror.skull_tokens = (unsigned short)save_skull_count();
+        if (mirror.skull_tokens < save_state.source_tokens) mirror.skull_tokens = save_state.source_tokens;
+        mirror.quest_items = (unsigned int *)&save_state.quest_items;
+        mirror.dungeon_items = save_state.dungeon_items;
+        mirror.dungeon_keys = (signed char *)save_state.dungeon_keys;
+        mirror.bottle_items = save_state.bottle_items;
+        mirror.inventory_items = save_state.source_items;
+        mirror.inventory_ammo = save_state.source_ammo;
+        mirror.inventory_equipment = save_state.source_equipment;
+        mirror.inventory_upgrades = save_state.source_upgrades;
+        mirror.magic_level = save_state.source_magic_level;
+        mirror.magic = save_state.source_magic;
+        mirror.double_defense = save_state.source_double_defense;
         memcpy(mirror.player_name, "Link    ", 8); /* no file name in the C save */
         mirror.generic_scene = save_scene >= SAVE_SCENE_COUNT;
         ENTRY->set_save(&mirror);
@@ -228,11 +289,81 @@ static bool load_scene_blob(unsigned int scene)
 }
 
 /* ---- Phase 2 draw shim: prebuilt meshes for the decomp's draw items ---- */
-#define CORE_MESHES_MAX 40
-static actor_mesh_t *core_mesh[CORE_MESHES_MAX];
-static OotCoreMeshKey core_mesh_key[CORE_MESHES_MAX];
-static unsigned char core_mesh_ready[CORE_MESHES_MAX];
-static unsigned int core_mesh_count;
+
+static void sprites_reset(void)
+{
+    unsigned int r;
+    for (r = 0; r < CORE_SPRITE_ROWS; ++r) {
+        if (core_sprite[r]) jo_free(core_sprite[r]);
+        core_sprite[r] = 0;
+        core_sprite_tried[r] = 0;
+    }
+    core_sprite_reserved = 0;
+    memset(&sprite_stats, 0, sizeof sprite_stats);
+}
+
+/* Reconcile after an actual actor step, including later same-room spawns.
+ * Existing sheets stay owned until room teardown. Each unavailable file is
+ * attempted once per room, so an absent bake never creates a per-frame CD loop. */
+static bool sprites_refresh(void)
+{
+    static const char hex[] = "0123456789ABCDEF";
+    const OotCoreNpcView *v;
+    int n = ENTRY->npc_view(&v), k;
+    unsigned int r, pass, count = 0;
+    bool changed = false;
+    for (pass = 0; pass < 2; ++pass)
+    for (r = 0; r < CORE_SPRITE_ROWS; ++r) {
+        char file[] = "G00000.SPR";
+        int length = 0;
+        jo_file probe;
+        if (core_sprite[r] || core_sprite_tried[r]) continue;
+        for (k = 0; k < n; ++k)
+            if (v[k].object == core_sprite_rows[r].object &&
+                (pass || core_sprite_rows[r].anim == (v[k].anim & 0xFFFFFFu))) break;
+        if (k == n) continue;
+        core_sprite_tried[r] = 1;
+        file[1] = hex[(core_sprite_rows[r].object >> 8) & 15];
+        file[2] = hex[(core_sprite_rows[r].object >> 4) & 15];
+        file[3] = hex[core_sprite_rows[r].object & 15];
+        file[4] = hex[core_sprite_rows[r].file >> 4];
+        file[5] = hex[core_sprite_rows[r].file & 15];
+        if (GFS_NameToId((Sint8 *)file) < 0 || !jo_fs_open(&probe, file)) continue;
+        length = probe.size;
+        jo_fs_close(&probe);
+        if (length < 0x34) continue;
+        /* Jo appends a NUL after the file, even for aligned SPR packets. */
+        core_sprite[r] = (unsigned char *)jo_malloc((unsigned int)length + 1u);
+        if (core_sprite[r] && jo_memory_usage_percent() > CORE_SPRITE_HEAP_PERCENT) {
+            jo_free(core_sprite[r]); core_sprite[r] = 0;
+        }
+        if (core_sprite[r] &&
+            (!jo_fs_read_file_ptr(file, core_sprite[r], &length) ||
+             !npc_sprite_valid(core_sprite[r], (unsigned int)length))) {
+            jo_free(core_sprite[r]); core_sprite[r] = 0;
+        }
+        if (core_sprite[r]) changed = true;
+    }
+    sprite_stats.actors = sprite_stats.missing = sprite_stats.fallback = 0;
+    for (k = 0; k < n; ++k) {
+        unsigned int found = 0, exact = 0;
+        if (!v[k].object) continue; /* native C-owned views have no sprite package */
+        ++sprite_stats.actors;
+        for (r = 0; r < CORE_SPRITE_ROWS; ++r)
+            if (core_sprite[r] && core_sprite_rows[r].object == v[k].object &&
+                (!v[k].limbs || core_sprite_rows[r].limbs + 1u == v[k].limbs)) {
+                found = 1;
+                if (core_sprite_rows[r].anim == (v[k].anim & 0xFFFFFFu)) exact = 1;
+            }
+        if (found) { ++count; if (!exact) ++sprite_stats.fallback; }
+        else ++sprite_stats.missing;
+    }
+    if (count > CORE_SPRITE_SLOTS) count = CORE_SPRITE_SLOTS;
+    /* Retain room capacity when an actor disappears; camera visibility and
+     * temporary deaths never reset the shared bank. */
+    if (count > core_sprite_reserved) { core_sprite_reserved = count; changed = true; }
+    return changed;
+}
 
 static void load_meshes(void)
 {
@@ -259,51 +390,8 @@ static void load_meshes(void)
         core_mesh_ready[core_mesh_count] = 0;
         core_mesh_count++;
     }
-#ifdef CORE_SPRITES
-    {   /* Sheets of the objects the spawned generic NPCs use (the scene's
-        ** object list names every layer: child + adult Lon Lon overflowed
-        ** the cart heap). Scene change = CD time. A sheet that does not fit
-        ** under the heap guard is skipped: that NPC is not drawn. */
-        static const char hex[] = "0123456789ABCDEF";
-        const OotCoreNpcView *v;
-        int n = ENTRY->npc_view(&v), k;
-        unsigned int r, pass;
-        for (r = 0; r < CORE_SPRITE_ROWS; ++r) {
-            if (core_sprite[r]) jo_free(core_sprite[r]);
-            core_sprite[r] = 0;
-        }
-        /* Keep one usable sheet for each current actor before optional clips
-         * spend the cart heap. A later unavailable pose uses that sheet. */
-        for (pass = 0; pass < 2; ++pass)
-        for (r = 0; r < CORE_SPRITE_ROWS; ++r) {
-            char file[] = "G00000.SPR";
-            int length = 0;
-            jo_file probe;
-            if (core_sprite[r]) continue;
-            for (k = 0; k < n; ++k)
-                if (v[k].object == core_sprite_rows[r].object &&
-                    (pass || core_sprite_rows[r].anim == (v[k].anim & 0xFFFFFFu))) break;
-            if (k == n) continue;
-            file[1] = hex[(core_sprite_rows[r].object >> 8) & 15];
-            file[2] = hex[(core_sprite_rows[r].object >> 4) & 15];
-            file[3] = hex[core_sprite_rows[r].object & 15];
-            file[4] = hex[core_sprite_rows[r].file >> 4]; file[5] = hex[core_sprite_rows[r].file & 15];
-            if (GFS_NameToId((Sint8 *)file) < 0 || !jo_fs_open(&probe, file)) continue;
-            length = probe.size;
-            jo_fs_close(&probe);
-            if (length < 0x34) continue;
-            /* Jo appends a NUL. SPR1 files are four-byte aligned, so allocating
-             * only length would overwrite the next heap block's header. */
-            core_sprite[r] = (unsigned char *)jo_malloc((unsigned int)length + 1u);
-            if (core_sprite[r] && jo_memory_usage_percent() > CORE_SPRITE_HEAP_PERCENT) {
-                jo_free(core_sprite[r]); core_sprite[r] = 0;
-            }
-            if (core_sprite[r] && !jo_fs_read_file_ptr(file, core_sprite[r], &length)) {
-                jo_free(core_sprite[r]); core_sprite[r] = 0;
-            }
-        }
-    }   /* no skinned models: the sprites replace them */
-#endif
+    sprites_reset();
+    sprites_refresh();
     npc_draw_reupload();
 }
 
@@ -317,22 +405,18 @@ void oot_core_meshes_upload(void)
 #ifdef CORE_SPRITES
     {   /* slots sized for the scene's biggest cel; draw rebinds per sheet */
         const unsigned char *big = 0;
-        const OotCoreNpcView *v;
-        int n = playing ? ENTRY->npc_view(&v) : 0, k;
-        unsigned int r, best = 0, count = 0;
+        unsigned int r, best = 0;
+        sprite_stats.slots = 0;
         for (r = 0; r < CORE_SPRITE_ROWS; ++r) {
             const unsigned char *s = core_sprite[r];
             unsigned int bytes = s ? (unsigned int)(s[4] << 8 | s[5]) * (unsigned int)(s[6] << 8 | s[7]) : 0;
             if (bytes > best) { best = bytes; big = s; }
         }
-        for (k = 0; k < n; ++k)
-            for (r = 0; r < CORE_SPRITE_ROWS; ++r)
-                if (core_sprite[r] && core_sprite_rows[r].object == v[k].object) {
-                    ++count; break;
-                }
-        for (i = 0; i < CORE_SPRITE_SLOTS; ++i)
-            if (i >= count || !big || !npc_sprite_upload(big, &core_sprite_inst[i]))
+        for (i = 0; i < CORE_SPRITE_SLOTS; ++i) {
+            if (!playing || i >= core_sprite_reserved || !big || !npc_sprite_upload(big, &core_sprite_inst[i]))
                 core_sprite_inst[i].slot = NPC_SPRITE_SLOT_NONE;   /* bank full: not drawn */
+            else ++sprite_stats.slots;
+        }
     }
 #endif
 }
@@ -356,7 +440,8 @@ static void sprites_draw(void)
                 if (chosen == CORE_SPRITE_ROWS) chosen = r;
                 if (core_sprite_rows[r].anim == (v[k].anim & 0xFFFFFFu)) { chosen = r; break; }
             }
-        if (chosen < CORE_SPRITE_ROWS)
+        if (chosen < CORE_SPRITE_ROWS &&
+            npc_sprite_visible(core_sprite[chosen], v[k].x, v[k].y, v[k].z))
             npc_sprite_draw(core_sprite[chosen], &core_sprite_inst[used++], v[k].frame,
                             v[k].x, v[k].y, v[k].z, v[k].yaw);
     }
@@ -399,6 +484,7 @@ void oot_core_frame(const gameplay_input_t *in)
     if (!loaded) return;
     if (scene != play_scene) {
         playing = false;
+        sprites_reset();
         play_scene = scene;
         meshes_room = -1;
         if (!load_scene_blob(scene)) return;
@@ -440,7 +526,7 @@ void oot_core_frame(const gameplay_input_t *in)
         if (meshes_room != (int)kokiri_bank_room()) {
             meshes_room = (int)kokiri_bank_room();
             load_meshes();
-        }
+        } else if (sprites_refresh()) npc_draw_reupload();
         {
             int dx, dz;   /* decomp actors pushing the player (En_Ko blockers) */
             ENTRY->player_push(&dx, &dz);
@@ -458,6 +544,16 @@ int oot_core_npcs(const OotCoreNpcView **out) { return playing ? ENTRY->npc_view
 int oot_core_prop(short id, int x, int z) { return playing ? ENTRY->prop_query(id, x, z) : -1; }
 const char *oot_core_debug_text(void) { return playing ? ENTRY->debug_text() : ""; }
 const char *oot_core_debug_text2(void) { return playing ? ENTRY->debug_text2() : ""; }
+const oot_core_sprite_stats_t *oot_core_sprite_stats(void) { return &sprite_stats; }
+int oot_core_door_action(unsigned int kind, unsigned int flag, int front_side, bool commit)
+{
+    return playing ? ENTRY->door_action(kind, flag, front_side, commit) : 0xFF00;
+}
+unsigned int oot_core_scene_layer(void) { return playing ? ENTRY->scene_layer() : 0; }
+int oot_core_transition_request(bool consume)
+{
+    return playing ? ENTRY->transition_request(consume) : -1;
+}
 
 /* The decomp text box on the VDP2 text layer, in the C dialogue rows.
 ** VDP2 keeps text, so rows are reprinted only when the view changes and

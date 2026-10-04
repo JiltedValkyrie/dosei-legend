@@ -10,23 +10,29 @@
 #define U16(s, o) ((unsigned int)((s)[o] << 8 | (s)[(o) + 1]))
 #define CELS(s) (0x34u + ((U16(s, 0x0C) * 2u + 3u) & ~3u))
 
+int npc_sprite_valid(const unsigned char *s, unsigned int length)
+{
+    unsigned int w, h, poses, ticks, base, i;
+    if (!s || length < 0x34 || s[0]!='S' || s[1]!='P' || s[2]!='R' || s[3]!='1') return 0;
+    w=U16(s,4); h=U16(s,6); poses=U16(s,10); ticks=U16(s,12);
+    if (!w || w>256 || (w&7) || !h || h>255 || !poses || poses>256 ||
+        !ticks || U16(s,8)!=5 || !U16(s,16)) return 0;
+    base=CELS(s);
+    if (base + w*h/2*poses*5 != length) return 0;
+    for (i=0;i<ticks;++i) if (U16(s,0x34+i*2)>=poses) return 0;
+    return 1;
+}
+
 unsigned char *npc_sprite_load(const char *name)
 {
     int length = 0;
     unsigned char *s = (unsigned char *)jo_fs_read_file(name, &length);
-    unsigned int w, h, poses, ticks, base, i;
     if (!s) return 0;
-    if (length < 0x34 || s[0]!='S' || s[1]!='P' || s[2]!='R' || s[3]!='1') goto bad;
-    w=U16(s,4); h=U16(s,6); poses=U16(s,10); ticks=U16(s,12);
-    if (!w || w>256 || (w&7) || !h || h>255 || !poses || poses>256 ||
-        !ticks || U16(s,8)!=5 || !U16(s,16)) goto bad;
-    base=CELS(s);
-    if (base + w*h/2*poses*5 != (unsigned int)length) goto bad;
-    for (i=0;i<ticks;++i) if (U16(s,0x34+i*2)>=poses) goto bad;
+    if (!npc_sprite_valid(s, (unsigned int)length)) {
+        jo_free(s);
+        return 0;
+    }
     return s;
-bad:
-    jo_free(s);
-    return 0;
 }
 
 int npc_sprite_upload(const unsigned char *spr, npc_sprite_inst_t *inst)
@@ -72,12 +78,17 @@ int npc_sprite_in_view(int x, int y, int z, unsigned int radius)
     return right * distance <= limit && up * distance <= limit;
 }
 
+int npc_sprite_visible(const unsigned char *spr, int x, int y, int z)
+{
+    unsigned int radius = (U16(spr, 4) + U16(spr, 6)) * U16(spr, 0x10) / 512 + 8;
+    return npc_sprite_in_view(x, y + (int16_t)U16(spr, 0x0E) / 16, z, radius);
+}
+
 void npc_sprite_draw(const unsigned char *spr, npc_sprite_inst_t *inst, unsigned int frame,
                      int x, int y, int z, uint16_t yaw)
 {
-    unsigned int radius = (U16(spr, 4) + U16(spr, 6)) * U16(spr, 0x10) / 512 + 8;
     if (inst->slot == NPC_SPRITE_SLOT_NONE ||
-        !npc_sprite_in_view(x, y + (int16_t)U16(spr, 0x0E) / 16, z, radius)) return;
+        !npc_sprite_visible(spr, x, y, z)) return;
     unsigned int bytes = U16(spr, 4) * U16(spr, 6) / 2;
     /* phi: camera seen from the actor's frame, 0 = in front (bake view()).
     ** Sign confirmed in Kronos 2026-10-03. */

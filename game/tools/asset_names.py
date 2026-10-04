@@ -4,6 +4,16 @@ Mirrors `src/asset_names.h`. Keeps names 8.3 while allowing up to 36
 scenes and 36 rooms (ydan 12 rooms, spot10 10 rooms).
 """
 LIMIT = 36
+STORY_BANK_BASE = 1024
+STORY_BANK_NAVI = 1024
+STORY_BANK_FIELD = 1025
+STORY_BANK_PANORAMA = 1026
+STORY_BANK_EMERALD1 = 1027
+STORY_BANK_EMPTY = 1028
+STORY_BANK_GERUDO = 1029
+STORY_BANK_MOUNTAIN = 1030
+STORY_BANK_EMERALD7 = 1031
+STORY_BANK_EMERALD9 = 1032
 
 
 def digit(value):
@@ -14,6 +24,8 @@ def digit(value):
 
 def scene_stem(scene):
     """S<s> below 36, else Z<s1><s0> (src/asset_names.h asset_scene_name)."""
+    if STORY_BANK_BASE <= scene < STORY_BANK_BASE + LIMIT:
+        return 'C' + digit(scene - STORY_BANK_BASE)
     if scene < LIMIT:
         return 'S' + digit(scene)
     if scene >= LIMIT * LIMIT:

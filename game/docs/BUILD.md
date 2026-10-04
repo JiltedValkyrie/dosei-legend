@@ -211,6 +211,37 @@ sudo apt-get install -y python3-pil genisoimage   # Pillow + mkisofs
     current build log's .bss boundary against the binary's `__bend` before
     attributing symbol/helper changes to a fix.
 
+45. **Story banks must not reuse playable scene IDs.** Former opening IDs 2-4
+    and emerald IDs 20/21/23/25/26/28 collided with all-scene registration; the
+    final story emitters overwrote real dungeon/market room banks. Virtual banks
+    now use IDs 1024+ and separate `C<base36>` names. Stage `C*R*.MSH/.TEX` and
+    Navi `C0R*.MAP` along with ordinary S/Z banks. Full asset rebuild required;
+    quick builds retain corrupted old banks. `build_room_scene` checks unique
+    output paths and emitted headers after all emitters run. Runtime scene IDs
+    need 16 bits, and story draw behavior requires explicit virtual predicates.
+    During migration, remove only retired S2 rooms 0-9 MSH/TEX/MAP, S3 room 0
+    MSH/TEX, and S4 rooms 0/2/3/4/5/6 MSH/TEX from generated and staged folders.
+    Preserve their RGB backdrops and every real scene 20-28 bank. These stale
+    files are unreachable but otherwise persist through the broad copy globs.
+
+46. **Expanded saves consume static work RAM.** Save v11 pushed the combined
+    world build 784 bytes beyond SGL's fixed base. Target save state now uses
+    a bounded 4 KiB carve at low-RAM offset 0x27800 (retired directory space),
+    initialized by `save_new_game()` before boot scene/actor setup. Save writes
+    and file previews each also outgrew SGL's 1 KiB master stack: they now have
+    separate 4 KiB carves at 0x28800 and 0x29800. Separate scratch supports a
+    preview during a write without corrupting the write or live state. Host
+    builds retain ordinary globals/locals. Low RAM is not boot-cleared; never
+    remove initialization or reuse these carves. Guard tests poison surrounding
+    RAM and exercise initialization, test gear, reset and overlapping save I/O.
+    Keep heap sizes and the build's SGL boundary rejection unchanged.
+    The final world link still exceeded the boundary by 80 B until oot-core
+    draw-cache ownership moved into its own checked 4 KiB carve at 0x2A800.
+    Clear it once before core boot, before any cleanup reads pointer slots.
+    Final .bss end is 0x06083D70 (656 B spare); this small margin must not be
+    treated as room for new static actor tables. Matched Clean disassembly
+    shows 12 B save-summary and 72 B save-write frames after these changes.
+
 ## Playtest package
 
 Mednafen development saves: disc rebuilds can change its save hash. The launcher

@@ -64,9 +64,9 @@ void kokiri_hit_filter(unsigned level){hit_filter=level<=32?level:0;}
 #endif
 #define FIELD_FAR 9000
 static int forest_far_current = FOREST_FAR_DEFAULT;
-static unsigned char forest_scene;
+static unsigned short forest_scene;
 #define FOREST_FAR (forest_far_current)
-#define FOREST_FOG_END (forest_scene == 2 ? 1310 : FOREST_FAR)
+#define FOREST_FOG_END (forest_scene == STORY_BANK_NAVI ? 1310 : FOREST_FAR)
 #define FOREST_FOG_START (FOREST_FOG_END / 2)
 /* Low RAM is not zeroed at boot: depths are written before each prep reads
  * them; mesh flags and fog sentinels are filled on every bank load. */
@@ -557,8 +557,8 @@ bool __attribute__((optimize("Os"))) kokiri_opening_cache_load(void)
     opening_pixel_pool = jo_fs_read_file_ptr("NAVIPOOL.TEX", 0, &opening_pixel_pool_bytes);
     if (!opening_pixel_pool) return false;
     for (i = 0; i < 10; ++i) {
-        char pixels[] = "S2R0.MAP";
-        pixels[3] = asset_name_digit(i);
+        char pixels[12];
+        if(!asset_scene_name(pixels,STORY_BANK_NAVI,(int)i,"MAP"))return false;
         /* Keep the shared pixel pool and tiny maps resident. Ten meshes cost
          * 737 KB alongside oot-core; each room's mesh can instead use the
          * existing whole-file scratch read at its shot boundary. */
@@ -1019,7 +1019,7 @@ static bool __attribute__((optimize("Os"))) field_stream_load(unsigned int scene
     field_apply();
     forest_room = (int)room;
     requested_room = (int)room;
-    forest_scene = (unsigned char)scene;
+    forest_scene = (unsigned short)scene;
     forest_far_current = (int)field_head->far;
     actor_vram_base = vram_used;
     actor_sprite_base = sprite_next;
@@ -1089,7 +1089,7 @@ static bool __attribute__((optimize("Os"))) room_load_bank(unsigned int scene, u
         header[5] > KOKIRI_OBJECT_COUNT || header[6] > MESH_LOD_MAX ||
         (header[6] && !ram_cart_fixed(RAM_CART_MESH_LOD_OFFSET, RAM_CART_MESH_LOD_BYTES)) ||
         (unsigned int)mesh_bytes != expected ||
-        (scene == 2 && room < 10 && opening_cache[room].pixels &&
+        (scene == STORY_BANK_NAVI && room < 10 && opening_cache[room].pixels &&
          (unsigned int)opening_cache[room].pixel_bytes != header[3]*4)) {
         return false;
     }
@@ -1133,7 +1133,7 @@ static bool __attribute__((optimize("Os"))) room_load_bank(unsigned int scene, u
     if (header[3] &&
         !mesh_load(pixel_name,header[4],kokiri_tiles,header[3],
                    (const unsigned short (*)[16])kokiri_cluts,&kokiri_pdata,header[2],
-                   scene == 2 && room < 10 ? opening_cache[room].pixels : 0))
+                   scene == STORY_BANK_NAVI && room < 10 ? opening_cache[room].pixels : 0))
         return false;
     forest_vertex_count = kokiri_pdata.nbPoint = header[1];
     forest_polygon_count = kokiri_pdata.nbPolygon = header[2];
@@ -1144,9 +1144,9 @@ static bool __attribute__((optimize("Os"))) room_load_bank(unsigned int scene, u
     forest_prepared = false;
     forest_room = (int)room;
     requested_room = (int)room;
-    forest_scene = (unsigned char)scene;
+    forest_scene = (unsigned short)scene;
     forest_far_current = scene == KOKIRI_FIELD_SCENE ? FIELD_FAR :
-                         (scene == 2 || scene>=20 ? 2620 : FOREST_FAR_DEFAULT);
+                         (scene >= STORY_BANK_BASE && scene < STORY_BANK_BASE+ASSET_ID_LIMIT ? 2620 : FOREST_FAR_DEFAULT);
     actor_vram_base = vram_used;
     actor_sprite_base = sprite_next;
     ++actor_bank_generation;
@@ -1254,7 +1254,7 @@ bool kokiri_scene_update(void)
     ** Link is not walking anywhere during a cutscene, so there is nothing to
     ** stream for. */
     if (cutscene_is_playing()) { room_gameplay = false; return true; }
-    if (!demo_link_active || demo_title_is_visible() || backdrop_active || forest_scene == 4) { room_gameplay = false; return true; }
+    if (!demo_link_active || demo_title_is_visible() || backdrop_active || forest_scene == STORY_BANK_PANORAMA) { room_gameplay = false; return true; }
     if (!room_gameplay) { target = forest_room; room_gameplay = true; }
     dungeon_doors_constrain(&demo_link.x,&demo_link.z,demo_link.y-DEMO_LINK_EYE_HEIGHT);
     for (i=0;i<KOKIRI_PORTAL_COUNT;++i) {
@@ -1264,10 +1264,14 @@ bool kokiri_scene_update(void)
         int dy = demo_link.y-DEMO_LINK_EYE_HEIGHT-p->y;
         int side, depth, portal_side;
         if (p->scene != forest_scene) continue;
+        if (p->layers && (oot_core_scene_layer()>=32 || !(p->layers&(1u<<oot_core_scene_layer())))) continue;
+        if (p->front<0 || p->back<0 || p->front==p->back) continue;
         if (forest_room != p->front && forest_room != p->back) continue;
         kokiri_camera_sincos(p->yaw,&sine,&cosine);
-        side = (int)(((int64_t)dx*cosine-(int64_t)dz*sine)>>16);
-        depth = (int)(((int64_t)dx*sine+(int64_t)dz*cosine)>>16);
+        if(dx< -65535 || dx>65535 || dz< -65535 || dz>65535) continue;
+        sine/=256;cosine/=256;
+        side = (dx*cosine-dz*sine)/256;
+        depth = (dx*sine+dz*cosine)/256;
         /* Original invisible tunnel volume; the central 100-unit band keeps
          * tiny movements from repeatedly swapping CD banks. */
         portal_side = p->kind>=8 ?
@@ -1442,7 +1446,7 @@ void                kokiri_scene_draw(void)
     unsigned int i, j, visible = forest_polygon_count;
     int32_t sine, cosine;
     frame_timer_begin(FRAME_PHASE_PREP);
-    if (forest_scene == 4) {
+    if (forest_scene == STORY_BANK_PANORAMA) {
         /* Original pre-rendered house panorama, centred on the eye just as
          * Skybox_Draw does. Large radius sorts the art behind Link/Navi. */
         kokiri_rejected = 0;
@@ -1583,7 +1587,7 @@ void                kokiri_scene_draw(void)
         {
             ATTR *attr = &kokiri_pdata.attbl[i];
             unsigned int tile = attr->texno - forest_sprite_base;
-            if (forest_scene == 2 && (forest_mesh[i] & 4)) {
+            if (forest_scene == STORY_BANK_NAVI && (forest_mesh[i] & 4)) {
                 const unsigned short *v = kokiri_pdata.pltbl[i].Vertices;
                 int low_x = 32767, high_x = -32768;
                 int low_z = 32767, high_z = -32768;
@@ -2256,10 +2260,15 @@ static void rupee_hud_sprite(unsigned int sprite, int x, int width)
 
 void kokiri_rupee_hud_draw(void)
 {
+    unsigned int x = 42;
     if (gameplay_is_talking()) return; /* dialogue owns the lower screen */
     rupee_hud_sprite(rupee_sprite[0], 26, 16);
-    rupee_hud_sprite(digit_sprite[gameplay.rupees / 10], 42, 8);
-    rupee_hud_sprite(digit_sprite[gameplay.rupees % 10], 50, 8);
+    if (gameplay.rupees >= 100) {
+        rupee_hud_sprite(digit_sprite[(gameplay.rupees / 100) % 10], x, 8);
+        x += 8;
+    }
+    rupee_hud_sprite(digit_sprite[(gameplay.rupees / 10) % 10], x, 8);
+    rupee_hud_sprite(digit_sprite[gameplay.rupees % 10], x + 8, 8);
 }
 
 void                kokiri_grass_draw(void)

@@ -59,7 +59,8 @@ class ResidentBudgetTests(unittest.TestCase):
             with self.subTest(bank=path.name):
                 _, _, _, tiles, pixels, _, _, _ = struct.unpack('>8I', path.read_bytes()[:32])
                 # Field uses the larger cutscene command reservation.
-                base = ((3750 * 32 + 8192 + 255) & ~255) if path.name.startswith('S3R') else budget.TEXTURE_BASE
+                from asset_names import scene_stem, STORY_BANK_FIELD
+                base = ((3750 * 32 + 8192 + 255) & ~255) if path.name.startswith(scene_stem(STORY_BANK_FIELD)+'R') else budget.TEXTURE_BASE
                 self.assertLessEqual(resident + budget.bank_bytes(pixels, tiles), budget.VDP1_END - base)
                 if path.name.startswith('S1R'):
                     self.assertLessEqual(resident + budget.bank_bytes(pixels, tiles),

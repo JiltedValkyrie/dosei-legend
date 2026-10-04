@@ -18,13 +18,13 @@ def emit(oot,rom_dir,out,head,actor,forest,normal):
         (out/asset_names.room_asset(bank,0,'TEX')).write_bytes(pixels)
         rows.append(dict(scene=bank,id=0,vertices=len(vertices),polygons=len(faces),tiles=len(tiles),pixel_bytes=len(pixels),objects=len(bounds)))
     # hiral_demo intentionally has no room geometry; its actors and sky own the shot.
-    pack(21,[],[],collections.OrderedDict(),[])
-    for bank,prefix in ((23,'spot09'),(25,'spot16')):
+    pack(asset_names.STORY_BANK_EMPTY,[],[],collections.OrderedDict(),[])
+    for bank,prefix in ((asset_names.STORY_BANK_GERUDO,'spot09'),(asset_names.STORY_BANK_MOUNTAIN,'spot16')):
         folder=out/('story-'+prefix)
         _,v,f,t=hybrid.convert(oot,head,actor,folder,rom_dir=rom_dir,prefix=prefix,
             room=prefix+'_room_0',layout={},base_tile_limit=32,source_tessellation=True)
         pack(bank,v,f,t,json.loads((folder/'texture_manifest.json').read_text())['faces'])
-    for part,bank in ((1,20),(7,26),(9,28)):
+    for part,bank in ((1,asset_names.STORY_BANK_EMERALD1),(7,asset_names.STORY_BANK_EMERALD7),(9,asset_names.STORY_BANK_EMERALD9)):
         entry=next(e for e in cs.CUTSCENES if e['key']=='EMERALD%d'%part)
         v,f,t=opening.forest_bank(forest,cs.read_cutscene(entry)['track'])
         records=[dict(object=0,indices=x['idx']) for x in f]

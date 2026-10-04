@@ -57,6 +57,7 @@ void OotCore_ProfileReset(void);
 int OotCore_MeshList(const OotCoreMeshKey** out);
 s32 OotCore_IsGenericDraw(s16 id);
 static u8 sGenericScene;
+static const OotCoreSave* sHostSave;
 extern s16 gOotCoreCamYaw;
 static void oot_core_set_camera(short yaw) {
     gOotCoreCamYaw = yaw;
@@ -189,6 +190,18 @@ static unsigned int oot_core_play_bytes(void) {
            ALIGN16(OotCore_GfxBytes());
 }
 
+static void seed_scene_save(int scene_id) {
+    if (sHostSave == NULL || sHostSave->scene_flags == NULL ||
+        (u32)scene_id >= ARRAY_COUNT(gSaveContext.save.info.sceneFlags)) return;
+    /* Actor_InitContext reads this table before the first actor init. Updating
+     * only actorCtx later lets cleared chests/locks respawn on scene entry. */
+    SavedSceneFlags* flags = &gSaveContext.save.info.sceneFlags[scene_id];
+    flags->chest = sHostSave->scene_flags[0];
+    flags->swch = sHostSave->scene_flags[1];
+    flags->clear = sHostSave->scene_flags[2];
+    flags->collect = sHostSave->scene_flags[3];
+}
+
 static int oot_core_play_init(void* block, unsigned int bytes, int scene_id, const void* scene, int room,
                               short x, short y, short z, short yaw) {
     u8* mem = (u8*)(((uintptr_t)block + 15u) & ~(uintptr_t)15u);
@@ -260,6 +273,7 @@ static int oot_core_play_init(void* block, unsigned int bytes, int scene_id, con
     sPlayerEntry.rot.z = 0;
     sPlayerEntry.params = 0;
     play->playerEntry = &sPlayerEntry;
+    seed_scene_save(scene_id);
     Actor_InitContext(play, &play->actorCtx, play->playerEntry);
     load_room_actors(play, room);
 
@@ -341,9 +355,8 @@ static void oot_core_set_sword(int active, const int* base, const int* tip) {
     }
 }
 
-/* The C save owns these until z_sram/z_parameter are imported. Child
- * Link, no magic, no bomb bag or bow (M3 scope). */
-static const OotCoreSave* sHostSave;
+/* The C save owns the supported inventory until z_sram/z_parameter are
+ * imported. Unsupported items remain absent, rather than implied by an era. */
 
 /* Flags back to the C save after an update (set_save copied them in). */
 static void save_copy_out(PlayState* play) {
@@ -368,6 +381,13 @@ static void save_copy_out(PlayState* play) {
         in->scene_flags[2] = play->actorCtx.flags.clear;
         in->scene_flags[3] = play->actorCtx.flags.collect;
     }
+    if (in->quest_items) *in->quest_items = gSaveContext.save.info.inventory.questItems;
+    /* The legacy C dungeon code owns entry zero's map/compass. Other dungeon
+     * state and consumed keys belong to the source actors/door transactions. */
+    for (i = 1; i < 20 && in->dungeon_items; i++)
+        in->dungeon_items[i] = gSaveContext.save.info.inventory.dungeonItems[i];
+    for (i = 0; i < 19 && in->dungeon_keys; i++)
+        in->dungeon_keys[i] = gSaveContext.save.info.inventory.dungeonKeys[i];
 }
 
 static void oot_core_set_save(const OotCoreSave* in) {
@@ -382,6 +402,7 @@ static void oot_core_set_save(const OotCoreSave* in) {
     gSaveContext.save.linkAge = in->link_age;
     gSaveContext.save.nightFlag = in->night;
     gSaveContext.save.dayTime = in->day_time;
+    gSaveContext.save.cutsceneIndex = in->cutscene_index;
     for (i = 0; i < OOT_CORE_EVENTCHKINF_WORDS && in->event_chk_inf; i++) {
         gSaveContext.save.info.eventChkInf[i] = in->event_chk_inf[i];
     }
@@ -412,11 +433,18 @@ static void oot_core_set_save(const OotCoreSave* in) {
     pd->health = in->health;
     pd->healthCapacity = in->health_capacity;
     pd->rupees = in->rupees;
-    pd->magicLevel = 0;
-    pd->magic = 0;
+    pd->magicLevel = in->magic_level;
+    pd->magic = in->magic;
+    pd->isMagicAcquired = in->magic_level != 0;
+    pd->isDoubleMagicAcquired = in->magic_level >= 2;
+    pd->isDoubleDefenseAcquired = in->double_defense != 0;
+    pd->bgsFlag = (in->inventory_equipment & 4) != 0;
+    inv->defenseHearts = in->double_defense ? 20 : 0;
     for (i = 0; i < ARRAY_COUNT(inv->items); i++) {
-        inv->items[i] = ITEM_NONE;
+        inv->items[i] = in->inventory_items ? in->inventory_items[i] : ITEM_NONE;
     }
+    for (i = 0; i < ARRAY_COUNT(inv->ammo); i++)
+        inv->ammo[i] = in->inventory_ammo ? in->inventory_ammo[i] : 0;
     if (in->stick_owned) {
         inv->items[SLOT_DEKU_STICK] = ITEM_DEKU_STICK;
     }
@@ -426,11 +454,33 @@ static void oot_core_set_save(const OotCoreSave* in) {
     if (in->slingshot_owned) {
         inv->items[SLOT_SLINGSHOT] = ITEM_SLINGSHOT;
     }
+    if (in->fairy_ocarina && inv->items[SLOT_OCARINA] != ITEM_OCARINA_OF_TIME)
+        inv->items[SLOT_OCARINA] = ITEM_OCARINA_FAIRY;
+    for (i = 0; i < 4 && in->bottle_items; i++)
+        inv->items[SLOT_BOTTLE_1 + i] = in->bottle_items[i];
+    /* z_inventory: equipped nibbles are values; inventory nibbles are bits.
+     * C tunic colours are cosmetic, not Goron/Zora equipment grants. */
+    inv->equipment = 0x1100 | in->inventory_equipment;
+    if (in->owned_sword >= 1 && in->owned_sword <= 3)
+        inv->equipment |= 1u << (in->owned_sword - 1);
+    if (in->owned_shield >= 1 && in->owned_shield <= 3)
+        inv->equipment |= 1u << (in->owned_shield + 3);
+    gSaveContext.save.info.equips.equipment = 0x1100 |
+        (in->equip_sword & 3) | ((in->equip_shield & 3) << 4);
+    inv->questItems = in->quest_items ? *in->quest_items : 0;
+    inv->gsTokens = in->skull_tokens;
+    inv->upgrades = (in->inventory_upgrades & ~0x007e0000u) |
+        ((u32)(in->stick_upgrade & 3) << 17) | ((u32)(in->nut_upgrade & 3) << 20);
+    if (in->slingshot_owned && !(inv->upgrades & 0x0001c000u)) inv->upgrades |= 1u << 14;
+    for (i = 0; i < ARRAY_COUNT(inv->dungeonItems); i++)
+        inv->dungeonItems[i] = in->dungeon_items ? in->dungeon_items[i] : 0;
+    /* Legacy C packs compass/map at bits 0/1; source uses bits 1/2. */
+    inv->dungeonItems[0] = (in->deku_dungeon_items & 3) << 1;
+    for (i = 0; i < ARRAY_COUNT(inv->dungeonKeys); i++)
+        inv->dungeonKeys[i] = in->dungeon_keys ? in->dungeon_keys[i] : -1;
     inv->ammo[SLOT_DEKU_STICK] = in->stick_ammo;
     inv->ammo[SLOT_DEKU_NUT] = in->nut_ammo;
     inv->ammo[SLOT_SLINGSHOT] = in->seed_ammo;
-    inv->ammo[SLOT_BOMB] = 0;
-    inv->ammo[SLOT_BOW] = 0;
 }
 
 /* Room_RequestNewRoom + Room_ProcessRoomRequest (actor list) +
@@ -578,6 +628,77 @@ static int oot_core_actor_view(int category, OotCoreActorView* out, int max) {
     return n;
 }
 
+/* Shared source door policy. En_Door_SetupType/Idle and
+ * DoorShutter_SetupDoor/Idle; rendering and the opening clock stay host-side.
+ * Boss encounter bars/block actors (types 4/6) remain encounter-owned. */
+static int oot_core_door_action(unsigned int kind, unsigned int data, int front_side, unsigned int commit) {
+    PlayState* play = gOotCorePlay;
+    unsigned int flag = data & 63u;
+    int key = 0, boss = 0;
+    int dungeon;
+    if (play == NULL) return 0xFF00;
+    dungeon = play->sceneId;
+    /* Scene IDs 0..9 are the ten source dungeons; boss scenes 17..24 map
+     * back to their dungeon. Ganon's boss room inherits the tower key slot. */
+    if (dungeon >= SCENE_DEKU_TREE_BOSS && dungeon <= SCENE_SHADOW_TEMPLE_BOSS)
+        dungeon -= SCENE_DEKU_TREE_BOSS;
+    if (play->sceneId == SCENE_GANONS_TOWER || play->sceneId == SCENE_GANONDORF_BOSS)
+        dungeon = SCENE_GANONS_TOWER;
+    if (kind >= 24 && kind < 32) {
+        unsigned int type = kind - 24;
+        if (type == 6) {
+            /* Strict source window: 18:00 < dayTime < 21:00. */
+            type = gSaveContext.save.dayTime > 0xC000 && gSaveContext.save.dayTime < 0xE000 ? 3 : 5;
+        }
+        if (type == 5) {
+            if (flag != 0x29 || GET_EVENTCHKINF(EVENTCHKINF_TALON_RETURNED_FROM_CASTLE))
+                return 0x200 + flag;
+        }
+        key = type == 1;
+    } else if (kind >= 8 && kind < 24) {
+        unsigned int type = kind - 8;
+        if (type == 4 || type == 6 || type == 8 || type == 9 || type == 10 || type > 11)
+            return 0xFF00;
+        if (front_side && type != 11) type = type == 7 ? 1 : type == 5 ? 3 : 0;
+        if (type == 1 && !Flags_GetClear(play, play->roomCtx.curRoom.num)) {
+            if (!Flags_GetTempClear(play, play->roomCtx.curRoom.num)) return 0xFF00;
+            /* DoorShutter_WaitClear promotes the last enemy's temporary flag. */
+            Flags_SetClear(play, play->roomCtx.curRoom.num);
+            save_copy_out(play);
+        }
+        if ((type == 2 || type == 7) && !Flags_GetSwitch(play, flag)) return 0xFF00;
+        if (type == 3) return 0xFF00;
+        key = type == 11;
+        boss = type == 5;
+    } else return 0xFF00;
+    if ((key || boss) && !Flags_GetSwitch(play, flag)) {
+        if (dungeon < 0 || dungeon >= (int)ARRAY_COUNT(gSaveContext.save.info.inventory.dungeonKeys))
+            return boss ? 0x204 : 0x203;
+        if (boss) {
+            if (!(gSaveContext.save.info.inventory.dungeonItems[dungeon] & 1u)) return 0x204;
+        } else if (gSaveContext.save.info.inventory.dungeonKeys[dungeon] <= 0) return 0x203;
+        if (commit) {
+            if (key) --gSaveContext.save.info.inventory.dungeonKeys[dungeon];
+            Flags_SetSwitch(play, flag);
+            save_copy_out(play);
+        }
+    }
+    return 0;
+}
+
+static unsigned int oot_core_current_layer(void) {
+    return gOotCorePlay ? (unsigned int)gSaveContext.sceneLayer : 0;
+}
+
+static int oot_core_transition_request(unsigned int consume) {
+    PlayState* play = gOotCorePlay;
+    int entrance;
+    if (!play || play->transitionTrigger != TRANS_TRIGGER_START) return -1;
+    entrance = play->nextEntranceIndex;
+    if (consume) play->transitionTrigger = TRANS_TRIGGER_OFF;
+    return entrance;
+}
+
 /* First bytes of OOTCORE.BIN (oot-core.ld KEEPs .oot_entry at the load address). */
 extern "C" const OotCoreEntry oot_core_entry __attribute__((section(".oot_entry"), used)) = {
     OOT_CORE_MAGIC,
@@ -611,4 +732,7 @@ extern "C" const OotCoreEntry oot_core_entry __attribute__((section(".oot_entry"
     oot_core_actor_count,
     oot_core_actor_view,
     oot_core_set_flags,
+    oot_core_door_action,
+    oot_core_current_layer,
+    oot_core_transition_request,
 };

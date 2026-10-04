@@ -12,7 +12,9 @@ const char *save_scene_name(unsigned scene)
     return scene<SAVE_SCENE_COUNT?names[scene]:"UNKNOWN AREA";
 }
 
+#if !defined(__sh__)
 save_state_t    save_state;
+#endif
 static uint32_t temporary_switches[SAVE_SCENE_COUNT];
 bool save_skull_collected(unsigned group,unsigned mask) {
     return group<32 && (save_state.skull_flags[group]&(mask&255))!=0;
@@ -23,7 +25,7 @@ bool save_collect_skull(unsigned group,unsigned mask) {
 }
 unsigned save_skull_count(void) {
     unsigned i,n=0;for(i=0;i<32;++i){unsigned b=save_state.skull_flags[i];while(b){n+=b&1;b>>=1;}}
-    return n;
+    return n<save_state.source_tokens?save_state.source_tokens:n;
 }
 bool save_tunic_unlocked(unsigned tunic) {
     return tunic==0 || (tunic==1 && save_skull_count()>=1) ||
@@ -265,6 +267,10 @@ void            save_resume_remap(void)
      * file-select load must not begin another death cycle. */
     if (save_state.health < SAVE_NEW_HEALTH_CAPACITY)
         save_state.health = SAVE_NEW_HEALTH_CAPACITY;
+    /* Generic scenes use original SceneId to survive scene registration
+     * changes. Full source dungeon/boss respawn remapping remains separate. */
+    if (save_state.scene_id >= SAVE_SCENE_COUNT &&
+        save_state.source_scene < SAVE_SOURCE_SCENE_COUNT) return;
     if (save_state.scene_id == SAVE_SCENE_DEKU_TREE ||
         save_state.scene_id == SAVE_SCENE_DEKU_TREE_BOSS) {
         save_state.scene_id = SAVE_SCENE_DEKU_TREE;
@@ -277,6 +283,8 @@ void            save_resume_remap(void)
 
 void            save_damage(unsigned int units)
 {
+    /* Health_ChangeBy halves a negative amount with arithmetic shift. */
+    if (save_state.source_double_defense) units = (units >> 1) + (units & 1);
     if (units >= save_state.health)
         save_state.health = 0;
     else
@@ -296,6 +304,16 @@ void            save_heal(unsigned int units)
 
 static const uint8_t    stick_capacity[4] = { 0, 10, 20, 30 };
 static const uint8_t    nut_capacity[4] = { 0, 20, 30, 40 };
+unsigned save_wallet_capacity(void)
+{
+    static const uint16_t cap[4]={99,200,500,500};
+    return cap[(save_state.source_upgrades>>12)&3];
+}
+unsigned save_seed_capacity(void)
+{
+    static const uint8_t cap[4]={30,30,40,50};
+    return cap[(save_state.source_upgrades>>14)&3];
+}
 
 static void             ammo_add(uint8_t *owned, uint8_t *ammo, uint8_t *upgrade,
                                  const uint8_t capacity[4], unsigned int count,
@@ -324,13 +342,50 @@ static void             ammo_add(uint8_t *owned, uint8_t *ammo, uint8_t *upgrade
 void            save_cheat_refill(void)
 {
     save_state.health = save_state.health_capacity;
-    save_state.rupees = SAVE_WALLET_CAPACITY;
+    save_state.rupees = save_wallet_capacity();
     if (save_state.stick_owned)
         save_state.stick_ammo = stick_capacity[save_state.stick_upgrade & 3];
     if (save_state.nut_owned)
         save_state.nut_ammo = nut_capacity[save_state.nut_upgrade & 3];
     if (save_state.slingshot)
-        save_state.ammo_seeds = 30;
+        save_state.ammo_seeds = save_seed_capacity();
+}
+
+void save_test_max_gear(void)
+{
+    unsigned i;
+    /* Source inventory slots, using upgraded ocarina/longshot. Bottle/trade
+     * slots are mutually exclusive: four bottles and final trade/mask variants.
+     * C actions still only implement their existing usable-item subset. */
+    static const uint8_t items[24]={0,1,2,3,4,5,6,8,9,11,12,13,14,15,16,17,18,19,
+        0x14,0x15,0x16,0x17,0x37,0x2b};
+    static const uint8_t ammo[16]={30,40,40,50,1,1,50,1,50,1,1,1,1,1,10,1};
+    for(i=0;i<24;++i)save_state.source_items[i]=items[i];
+    for(i=0;i<16;++i)save_state.source_ammo[i]=ammo[i];
+    save_state.source_equipment=0x7777;
+    save_state.source_upgrades=0x0036e4db; /* z_inventory source maxima */
+    save_state.source_magic_level=2;save_state.source_magic=0x60;
+    save_state.source_double_defense=1;save_state.source_tokens=100;
+    /* All stones/medallions/songs/agony/card/token bits; no heart-piece count
+     * at twenty hearts and no story completion event/inf-table changes. */
+    save_state.quest_items=0x00ffffff;
+    save_item_give(SAVE_ITEM_SWORD_KOKIRI);
+    save_item_give(SAVE_ITEM_SHIELD_DEKU);
+    save_item_give(SAVE_ITEM_SLINGSHOT);
+    save_set_equip(EQUIP_TYPE_SWORD,EQUIP_VALUE_SWORD_KOKIRI);
+    save_set_equip(EQUIP_TYPE_SHIELD,EQUIP_VALUE_SHIELD_DEKU);
+    save_state.stick_owned=save_state.nut_owned=1;
+    save_state.stick_upgrade=save_state.nut_upgrade=3;
+    save_state.fairy_ocarina=1;
+    save_state.health_capacity=20*SAVE_HEART_UNIT;
+    for(i=0;i<4;++i)save_state.bottle_items[i]=items[18+i];
+    save_state.deku_dungeon_items=3;
+    save_state.dungeon_items[0]=6; /* legacy compass/map to source bit layout */
+    for(i=1;i<SAVE_DUNGEON_ITEMS_COUNT;++i)save_state.dungeon_items[i]=7;
+    /* z_sram's debug inventory uses eight keys per slot; this is a useful
+     * test quantity, not a new gameplay key cap. Door use still consumes one. */
+    for(i=0;i<SAVE_DUNGEON_KEYS_COUNT;++i)save_state.dungeon_keys[i]=8;
+    save_cheat_refill();
 }
 
 bool            save_item_give(save_item_t item)
@@ -346,7 +401,7 @@ bool            save_item_give(save_item_t item)
         return true;
     case SAVE_ITEM_SLINGSHOT:
         save_state.slingshot = 1;
-        save_state.ammo_seeds = 30;
+        save_state.ammo_seeds = save_seed_capacity();
         return true;
     case SAVE_ITEM_DEKU_MAP:
         save_state.deku_dungeon_items |= 2;
@@ -358,13 +413,13 @@ bool            save_item_give(save_item_t item)
     case SAVE_ITEM_RUPEE_BLUE:
     case SAVE_ITEM_RUPEE_RED:
         total = save_state.rupees + rupee[item - SAVE_ITEM_RUPEE_GREEN];
-        save_state.rupees = (uint16_t)(total > SAVE_WALLET_CAPACITY ?
-                                       SAVE_WALLET_CAPACITY : total);
+        save_state.rupees = (uint16_t)(total > save_wallet_capacity() ?
+                                       save_wallet_capacity() : total);
         return true;
     case SAVE_ITEM_SEEDS_5:
         if (!save_state.slingshot) return false;
         total = save_state.ammo_seeds + 5;
-        save_state.ammo_seeds = (uint8_t)(total > 30 ? 30 : total);
+        save_state.ammo_seeds = (uint8_t)(total > save_seed_capacity() ? save_seed_capacity() : total);
         return true;
     case SAVE_ITEM_RECOVERY_HEART:
         save_heal(SAVE_HEART_UNIT);     /* Health_ChangeBy(play, 0x10) */
@@ -392,6 +447,17 @@ bool            save_item_give(save_item_t item)
     case SAVE_ITEM_SHIELD_DEKU:
         save_give_equip(EQUIP_TYPE_SHIELD, EQUIP_VALUE_SHIELD_DEKU);
         return true;
+    case SAVE_ITEM_BOTTLE_EMPTY:
+    case SAVE_ITEM_BOTTLE_MILK_FULL:
+    case SAVE_ITEM_MILK:
+        /* z_parameter Item_Give: milk refill consumes an empty bottle;
+         * Talon's first reward adds a new bottle in an unowned slot. */
+        for(total=0;total<4;++total)
+            if(save_state.bottle_items[total]==(item==SAVE_ITEM_MILK?0x14:0xff)) {
+                save_state.bottle_items[total]=item==SAVE_ITEM_BOTTLE_EMPTY?0x14:0x1a;
+                return true;
+            }
+        return false;
     default:
         return false;
     }
@@ -474,6 +540,24 @@ bool            save_is_dead(void)
 
 /* ---- lifecycle --------------------------------------------------------- */
 
+void save_world_defaults(save_state_t *state)
+{
+    unsigned i;
+    for(i=0;i<SAVE_SOURCE_SCENE_COUNT;++i)
+        state->generic_scene[i]=(save_scene_flags_t){0};
+    for(i=0;i<SAVE_DUNGEON_ITEMS_COUNT;++i)state->dungeon_items[i]=0;
+    for(i=0;i<SAVE_DUNGEON_KEYS_COUNT;++i)state->dungeon_keys[i]=-1;
+    state->link_age=1;
+    state->day_time=0x8000;
+    state->cutscene_index=0;
+    for(i=0;i<4;++i)state->bottle_items[i]=0xff;
+    state->source_scene=0xff;state->source_entrance=0xffff;
+    for(i=0;i<24;++i)state->source_items[i]=0xff;
+    for(i=0;i<16;++i)state->source_ammo[i]=0;
+    state->source_equipment=0;state->source_upgrades=0;
+    state->source_magic_level=state->source_magic=state->source_double_defense=state->source_tokens=0;
+}
+
 void            save_new_game(void)
 {
     unsigned int scene;
@@ -519,6 +603,7 @@ void            save_new_game(void)
     ** new-game path agree about where a file starts. */
     save_state.scene_id = SAVE_SCENE_LINKS_HOUSE;
     save_state.entrance = 0;
+    save_world_defaults(&save_state);
 }
 
 /*

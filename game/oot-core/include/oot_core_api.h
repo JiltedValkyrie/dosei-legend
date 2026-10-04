@@ -17,7 +17,7 @@
 #include "oot_core_host.h"
 
 #define OOT_CORE_MAGIC 0x4F4F5443u /* 'OOTC' */
-#define OOT_CORE_VERSION 16u
+#define OOT_CORE_VERSION 17u
 /* set_flags bits. NPC_SPRITES: generic NPCs are host sprites (NPC views carry
  * object/anim/frame; their Actor_Draw is skipped, no limb matrices). */
 #define OOT_CORE_FLAG_NPC_SPRITES 1u
@@ -131,6 +131,18 @@ typedef struct OotCoreSave {
     /* Not one of the slice scenes: the decomp also spawns (and the Phase 2
      * shim draws) the generic-draw actors, which C owns in slice scenes. */
     unsigned char generic_scene;
+    unsigned char owned_sword, owned_shield, equip_sword, equip_shield;
+    unsigned char fairy_ocarina, stick_upgrade, nut_upgrade, deku_dungeon_items;
+    unsigned short skull_tokens, cutscene_index;
+    unsigned int* quest_items;       /* source QUEST_* bits, copied both ways */
+    unsigned char* dungeon_items;    /* [20]; legacy C owns Deku entry zero */
+    signed char* dungeon_keys;       /* [19]; -1 means no keys collected */
+    const unsigned char* bottle_items; /* [4] source ItemId; C Item_Give owns */
+    const unsigned char* inventory_items; /* [24], source ItemId */
+    const unsigned char* inventory_ammo; /* [16], source slot capacities */
+    unsigned short inventory_equipment;
+    unsigned int inventory_upgrades;
+    unsigned char magic_level,magic,double_defense;
 } OotCoreSave;
 
 typedef struct OotCoreEntry {
@@ -203,6 +215,12 @@ typedef struct OotCoreEntry {
     int (*actor_view)(int category, OotCoreActorView* out, int max);
     /* OOT_CORE_FLAG_* (v16). Call after load; default 0. */
     void (*set_flags)(unsigned int flags);
+    /* Shared En_Door/Door_Shutter gate. 0 permitted, positive refusal text.
+     * commit applies the source key/switch change only after opening starts. */
+    int (*door_action)(unsigned int kind, unsigned int flag, int front_side, unsigned int commit);
+    unsigned int (*scene_layer)(void);
+    /* Actor/script-owned transition request; -1 absent. Consume after handling. */
+    int (*transition_request)(unsigned int consume);
 } OotCoreEntry;
 
 #endif

@@ -26,7 +26,8 @@
 #include "gohma.h"
 #include "tree_mouth.h"
 #include "oot_core_host.h"
-static actor_mesh_t *door,*web,*tree_mouth;
+#include "kokiri_camera.h"
+static actor_mesh_t *door,*handle_door,*web,*tree_mouth;
 static actor_mesh_t *torches[3];
 static actor_mesh_t *walls[5];
 static actor_mesh_t *puzzles[14];
@@ -55,6 +56,7 @@ void world_props_draw_free(void)
     actor_mesh_free(rock);actor_mesh_free(pot);actor_mesh_free(chest);
     actor_mesh_free(bush);actor_mesh_free(gossip);
     actor_mesh_free(door);door=0;actor_mesh_free(web);web=0;
+    actor_mesh_free(handle_door);handle_door=0;
     /* Shutter state survives adjacent room asset reloads. */
     dungeon_webs_reset();
     dungeon_torches_reset();
@@ -97,6 +99,14 @@ bool world_props_draw_load(unsigned int scene)
     }
     if((scene==SAVE_SCENE_DEKU_TREE || scene==SAVE_SCENE_DEKU_TREE_BOSS) &&
        !(door=actor_mesh_load_static("DTDOOR.BIN"))) return false;
+    for(i=0;i<KOKIRI_PORTAL_COUNT;++i) {
+        const kokiri_portal *p=&kokiri_portals[i];
+        if(scene_entries[p->scene].save_scene==scene && p->kind>=24 && p->kind<32) {
+            handle_door=actor_mesh_load_static("ENDOOR.BIN");
+            if(!handle_door)return false;
+            break;
+        }
+    }
     if(scene==SAVE_SCENE_DEKU_TREE && !(web=actor_mesh_load_static("DTWEB.BIN"))) return false;
     if(scene==SAVE_SCENE_DEKU_TREE) for(i=0;i<3;++i) {
         char file[]="DTTORCH0.BIN";file[7]='0'+i;
@@ -143,7 +153,7 @@ bool world_props_draw_upload(void)
     for(i=0;i<3;++i)if(torches[i] && (dungeon_torches_room_models(kokiri_scene_room())&(1u<<i)) && !actor_mesh_upload(torches[i]))return false;
     for(i=0;i<5;++i)if(walls[i] && (dungeon_walls_room_mask(kokiri_scene_room())&(1u<<i)) && !actor_mesh_upload(walls[i]))return false;
     for(i=0;i<14;++i)if(puzzles[i] && (dungeon_puzzles_models(kokiri_scene_room())&(1u<<i)) && !actor_mesh_upload(puzzles[i]))return false;
-    return (!web || actor_mesh_upload(web)) && (!door || actor_mesh_upload(door)) && (!rock || actor_mesh_upload(rock)) && (!pot || actor_mesh_upload(pot)) &&
+    return (!web || actor_mesh_upload(web)) && (!door || actor_mesh_upload(door)) && (!handle_door || actor_mesh_upload(handle_door)) && (!rock || actor_mesh_upload(rock)) && (!pot || actor_mesh_upload(pot)) &&
            (!chest || actor_mesh_upload(chest)) && (!bush || actor_mesh_upload(bush)) &&
            (!gossip || actor_mesh_upload(gossip));
 }
@@ -298,9 +308,23 @@ void world_props_draw(unsigned int tick)
     }
     for(i=0;door && i<KOKIRI_PORTAL_COUNT;++i) {
         const kokiri_portal *p=&kokiri_portals[i];
-        if(p->scene!=scene_flow_scene() || p->kind<8 ||
+        if(p->scene!=scene_flow_scene() || p->kind<8 || p->kind>=24 || !dungeon_door_active(i) ||
            (p->front!=kokiri_scene_room() && p->back!=kokiri_scene_room())) continue;
         actor_mesh_draw_static(door,p->x,p->y+dungeon_door_height(i),p->z,p->yaw);
+    }
+    for(i=0;handle_door && i<KOKIRI_PORTAL_COUNT;++i) {
+        const kokiri_portal *p=&kokiri_portals[i];
+        int32_t sn,cs;int open,hinge;
+        if(p->kind<24 || p->kind>=32 || !dungeon_door_active(i))continue;
+        open=(int)dungeon_door_height(i)*0x4000/120;
+        kokiri_camera_sincos(p->yaw,&sn,&cs);
+        /* Source idle skeleton offsets its leaf -2700 at scale .01.
+         * Double-door actors additionally shift their centres by 30 units. */
+        hinge=(p->flag&64) ? 57 : 27;
+        actor_mesh_draw_static(handle_door,p->x-hinge*(cs/256)/256,p->y,
+                               p->z+hinge*(sn/256)/256,(uint16_t)(p->yaw-open));
+        if(p->flag&64)actor_mesh_draw_static(handle_door,p->x+hinge*(cs/256)/256,p->y,
+                                            p->z-hinge*(sn/256)/256,(uint16_t)(p->yaw+0x8000+open));
     }
     for(i=0;chest && i<KOKIRI_CHEST_COUNT;++i) {
         const kokiri_chest_t *c=&kokiri_chests[i];

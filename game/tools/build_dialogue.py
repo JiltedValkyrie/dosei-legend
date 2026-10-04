@@ -543,7 +543,7 @@ def main():
 
     messages = load_messages(args.oot)
     # Explicit demo boundary, not an invented OoT dialogue line.
-    messages[0xFF00]=dict(body='"More adventures lie beyond this demo." BOX_BREAK "You can keep exploring Hyrule Field, or return to the forest."')
+    messages[0xFF00]=dict(body='"This route is not available yet."')
 
     # Flatten to the runtime tables. Conditions and rules are pooled the same
     # way pages and lines already are.

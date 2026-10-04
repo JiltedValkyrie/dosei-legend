@@ -23,12 +23,15 @@ bool emerald_story_load(unsigned p)
     emerald_story_free();part=p;
     if(p==2) {
         ganon=npc_sprite_load("GANON.SPR");horse=npc_sprite_load("HGANON.SPR");
-        return ganon && horse;
+        if(!ganon || !horse)goto failed;
     }
-    if(p>=3 && p<=8){body=actor_mesh_load_static("GODBODY.BIN");aura=actor_mesh_load_static("GODAURA.BIN");if(!body || !aura)return false;}
-    if(p==8){triforce=actor_mesh_load_static("TRIFORCE.BIN");return triforce!=0;}
-    if(p==9){jewel=actor_mesh_load_static("EMERALD.BIN");return jewel!=0;}
+    if(p>=3 && p<=8){body=actor_mesh_load_static("GODBODY.BIN");aura=actor_mesh_load_static("GODAURA.BIN");if(!body || !aura)goto failed;}
+    if(p==8){triforce=actor_mesh_load_static("TRIFORCE.BIN");if(!triforce)goto failed;}
+    if(p==9){jewel=actor_mesh_load_static("EMERALD.BIN");if(!jewel)goto failed;}
     return true;
+failed:
+    emerald_story_free();
+    return false;
 }
 static bool upload(actor_mesh_t *mesh,unsigned bit)
 {

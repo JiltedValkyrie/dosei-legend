@@ -179,10 +179,12 @@ static void PlayerProxy_Destroy(Actor* thisx, PlayState* play) {
 }
 
 /* Player's get-item handling (func_8083E5A8) for the drops En_Item00 offers
- * with Actor_OfferGetItemNearby. APPROXIMATE: given at once, no hold-up
- * animation or first-get text; itemId from z_player sGetItemTable. */
+ * with Actor_OfferGetItemNearby, and Ranch milk rewards. APPROXIMATE: given
+ * at once without Link's hold-up animation. Ranch rewards retain the source
+ * textbox/parent handshake; itemId/textId come from z_player sGetItemTable. */
 static void PlayerProxy_GetItem(Player* this, PlayState* play) {
     u8 item;
+    u16 textId = 0;
 
     if (this->getItemId == GI_NONE || this->interactRangeActor == NULL) {
         return;
@@ -197,6 +199,14 @@ static void PlayerProxy_GetItem(Player* this, PlayState* play) {
         case GI_DEKU_SEEDS_5:
             item = ITEM_DEKU_SEEDS;
             break;
+        case GI_BOTTLE_MILK_FULL:
+            item = ITEM_BOTTLE_MILK_FULL;
+            textId = 0x98; /* z_player.c sGetItemTable */
+            break;
+        case GI_MILK:
+            item = ITEM_MILK;
+            textId = 0x98;
+            break;
         default:
             item = ITEM_NONE; /* not in the C save yet */
             break;
@@ -205,6 +215,13 @@ static void PlayerProxy_GetItem(Player* this, PlayState* play) {
         this->interactRangeActor->parent = &this->actor;
         Audio_PlaySfxGeneral(NA_SE_SY_GET_ITEM, &gSfxDefaultPos, 4, &gSfxDefaultFreqAndVolScale,
                              &gSfxDefaultFreqAndVolScale, &gSfxDefaultReverb);
+        if (textId) {
+            /* Talon/cow action code waits for the reward textbox to close
+             * after observing Actor_HasParent; a silent grant strands it. */
+            this->actor.flags |= ACTOR_FLAG_TALK;
+            this->stateFlags1 |= PLAYER_STATE1_TALKING | PLAYER_STATE1_29;
+            Message_StartTextbox(play, textId, this->interactRangeActor);
+        }
     }
     this->getItemId = GI_NONE;
     this->interactRangeActor = NULL;
@@ -226,7 +243,9 @@ static void PlayerProxy_UpdateTalk(Player* this, PlayState* play) {
             this->stateFlags1 &= ~(PLAYER_STATE1_TALKING | PLAYER_STATE1_29);
             this->focusActor = NULL;
         }
-    } else if (this->talkActor != NULL && CHECK_BTN_ALL(input->press.button, BTN_A)) {
+    } else if (this->talkActor != NULL &&
+               (CHECK_BTN_ALL(input->press.button, BTN_A) ||
+                (this->talkActor->flags & ACTOR_FLAG_TALK_OFFER_AUTO_ACCEPTED))) {
         Actor* actor = this->talkActor;
 
         actor->flags |= ACTOR_FLAG_TALK;

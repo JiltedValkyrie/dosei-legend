@@ -23,7 +23,7 @@ typedef struct { struct { int nbPoint,nbPolygon; } pdata; } cutscene_actor_t;
 typedef struct { int slot; } npc_sprite_inst_t;
 static const char *ACTOR_FILES[8]={"GANON.SPR","ZELDA.SPR","IMPA.SPR","HZELDA.SPR","HGANON.SPR","BRIDGE.BIN","CHAINS.BIN","GATEFIRE.BIN"};
 static cutscene_actor_t actors[8];
-static unsigned char sheets[5],*actor_sprites[5];
+static unsigned char sheets[5],live[5],*actor_sprites[5];
 static npc_sprite_inst_t actor_sprite_inst[5];
 static bool actors_ready;
 static unsigned resident_mask,resident_generation,generation=1;
@@ -31,14 +31,21 @@ static unsigned reads,mesh_reads,resets,uploads,frees,errors;
 static int hidden,fail;
 static void asset_loading(const char *name) {}
 static unsigned char *npc_sprite_load(const char *name) {
-    assert(strstr(name,".SPR")); return &sheets[reads++%5];
+    unsigned i=reads++%5;
+    assert(strstr(name,".SPR") && !live[i]); live[i]=1; return &sheets[i];
 }
 static bool load_actor(cutscene_actor_t *actor,const char *name,bool animated) {
     assert(!animated && strstr(name,".BIN")); ++mesh_reads;
     actor->pdata.nbPoint=4; actor->pdata.nbPolygon=32; return true;
 }
 static void free_actor(cutscene_actor_t *actor) {}
-static void jo_free(void *p) { assert(p); ++frees; }
+static void jo_free(void *p) {
+    assert(p);
+    for(unsigned i=0;i<5;++i)if(p==&sheets[i]) {
+        assert(live[i]);live[i]=0;++frees;return;
+    }
+    assert(0);
+}
 static bool cutscene_hides_scene(void) { return hidden; }
 static unsigned kokiri_actor_bank_generation(void) { return generation; }
 static void kokiri_cutscene_tiles_reset(void) { ++resets; }

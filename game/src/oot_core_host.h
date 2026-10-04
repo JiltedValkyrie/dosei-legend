@@ -7,6 +7,9 @@
 ** Built only with OOT_CORE=1; the calls compile to nothing otherwise.
 */
 #include <stdbool.h>
+typedef struct {
+    unsigned int actors, missing, fallback, slots;
+} oot_core_sprite_stats_t;
 
 #ifdef DOSEI_OOT_CORE
 #include "oot_core_api.h"
@@ -28,6 +31,10 @@ bool oot_core_message_box(void);
 int oot_core_prop(short id, int x, int z);
 const char *oot_core_debug_text(void);
 const char *oot_core_debug_text2(void);
+const oot_core_sprite_stats_t *oot_core_sprite_stats(void);
+int oot_core_door_action(unsigned int kind, unsigned int flag, int front_side, bool commit);
+unsigned int oot_core_scene_layer(void);
+int oot_core_transition_request(bool consume);
 /* Phase 2 draw shim meshes: upload after a bank reset, draw the items. */
 void oot_core_meshes_upload(void);
 void oot_core_meshes_draw(void);
@@ -57,6 +64,10 @@ static inline bool oot_core_owns_kokiri_npcs(void) { return false; }
 static inline unsigned int oot_core_talk(void) { return 0; }
 static inline unsigned int oot_core_update_us(void) { return 0; }
 static inline bool oot_core_message_box(void) { return false; }
+static inline int oot_core_door_action(unsigned int kind, unsigned int flag, int front_side, bool commit)
+{ (void)kind; (void)flag; (void)front_side; (void)commit; return 0xFF00; }
+static inline unsigned int oot_core_scene_layer(void) { return 0; }
+static inline int oot_core_transition_request(bool consume) { (void)consume; return -1; }
 static inline int oot_core_prop(short id, int x, int z) { (void)id; (void)x; (void)z; return -1; }
 #endif
 

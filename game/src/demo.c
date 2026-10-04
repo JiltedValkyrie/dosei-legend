@@ -682,6 +682,8 @@ static void         snap_camera_to_link(void)
  * `scene` is a table index; `spawn` indexes that scene's spawn list. */
 static void __attribute__((optimize("Os"))) place_at_spawn(unsigned int scene, unsigned int spawn)
 {
+    if(save_state.source_scene!=scene_entries[scene].oot_scene)save_state.source_entrance=0xFFFF;
+    save_state.source_scene=scene_entries[scene].oot_scene;
     combat_input_cancel(&combat_input);
     shop_browsing = false;   /* a scene load restores the fixed view */
     const scene_spawn_t *point = scene_flow_spawn(scene, spawn);
@@ -767,37 +769,55 @@ static void __attribute__((optimize("Os"))) interior_camera(void)
 static bool __attribute__((optimize("Os"))) take_door(void)
 {
     int                 index;
-    const scene_door_t *door;
+    int scripted=oot_core_transition_request(false);
+    unsigned target,spawn,keep_music,entrance,variant;
 
     index = scene_flow_door_at(demo_link.x, demo_link.y - DEMO_LINK_EYE_HEIGHT,
                                demo_link.z);
-    if (index < 0)
+    if (index < 0 && scripted < 0)
         return (false);
-    door = &scene_doors[index];
-    if(door->target>=SCENE_COUNT) {
+    if(scripted>=0) {
+        if((unsigned)scripted>=SCENE_ENTRANCE_COUNT) {
+            oot_core_transition_request(true);gameplay_actor_message(0xFF00);return true;
+        }
+        entrance=(unsigned)scripted;
+    } else {
+        entrance=scene_doors[index].entrance;
+    }
+    /* Play_Init indexes each entrance group with the current age/time/setup.
+     * Non-cutscene BGM ownership comes from the group's child-day entry. */
+    variant=entrance+oot_core_scene_layer();
+    target=variant<SCENE_ENTRANCE_COUNT ? scene_entrances[variant].target : SCENE_COUNT;
+    spawn=variant<SCENE_ENTRANCE_COUNT ? scene_entrances[variant].spawn : 0;
+    keep_music=entrance<SCENE_ENTRANCE_COUNT ? scene_entrances[entrance].keep_music : 0;
+    if(oot_core_scene_layer()>=4 && variant<SCENE_ENTRANCE_COUNT)keep_music=scene_entrances[variant].keep_music;
+    if(target>=SCENE_COUNT || spawn>=scene_entries[target].spawns) {
+        if(scripted>=0)oot_core_transition_request(true);
         int32_t s,c;kokiri_camera_sincos(demo_link_yaw,&s,&c);
         kokiri_collision_move(&demo_link,-s*120/65536,0,-c*120/65536);
         gameplay_actor_message(0xFF00);
         return true;
     }
     game_mode_set(GAME_MODE_LOADING);
-    if (!scene_flow_load(door->target, door->spawn)) {
+    if (!scene_flow_load(target, spawn)) {
         /* Disc read failed: stay where we are, and go back to playing there
          * rather than leaving the mode stuck mid-load. */
         game_mode_set(GAME_MODE_PLAY);
         return (false);
     }
+    if(scripted>=0)oot_core_transition_request(true);
     /* Record where the player now is, so a save made here reloads here. */
     save_state.scene_id = (uint8_t)scene_flow_entry()->save_scene;
-    save_state.entrance = (uint8_t)door->spawn;
-    scene_music();
-    place_at_spawn(door->target, door->spawn);
+    save_state.entrance = (uint8_t)spawn;
+    if(!keep_music)scene_music();
+    place_at_spawn(target, spawn);
+    save_state.source_entrance=(uint16_t)(scripted>=0 ? scripted : scene_doors[index].entrance);
     /* Per-scene state goes; the save (gear, rupees, quest flags) does not. */
     gameplay_reset();
     if (scene_flow_is_interior())
         interior_camera();
     game_mode_set(GAME_MODE_PLAY);
-    story_route_arrive(door->spawn);
+    story_route_arrive(spawn);
     return (true);
 }
 
@@ -1015,6 +1035,7 @@ static void __attribute__((optimize("Os"))) file_select_tick(void)
             return;
         }
         level_select_move(menu_dy,menu_dx);
+        if(menu_page)level_select_toggle_max_gear();
         menu_step=menu_dx=menu_dy=menu_page=0;c_assign=c_use=0;
         interact_pending=cancel_pending=pause_pending=false;
         if(pick.cancel){level_select.visible=false;game_mode_set(GAME_MODE_TITLE);player_input_reset();player_input_set_dialogue(false);music_play(NA_BGM_TITLE);}

@@ -6,6 +6,9 @@
 #include <jo/jo.h>
 #include "save_device.h"
 #include "ui_preferences.h"
+#if defined(__sh__)
+typedef char save_write_low_fits[SAVE_FILE_BYTES <= RAM_LOW_SAVE_IO_BYTES ? 1 : -1];
+#endif
 
 #define DEVICE      JoInternalMemoryBackup
 
@@ -67,7 +70,13 @@ const char *save_device_error(void)
 
 bool                save_device_write(unsigned int slot)
 {
+#if defined(__sh__)
+    /* BIOS backup writes finish before returning; summary decode has its own
+     * carve and can never overwrite this buffer or the live save. */
+    uint8_t *block=(uint8_t *)RAM_LOW(RAM_LOW_SAVE_IO_OFFSET);
+#else
     uint8_t     block[SAVE_FILE_BYTES];
+#endif
 
     if (!device_ready || slot >= SAVE_FILE_SLOTS)
         return (false);

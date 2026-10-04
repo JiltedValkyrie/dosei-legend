@@ -23,7 +23,8 @@ class SaveDevice(unittest.TestCase):
 #include <string.h>
 #define JoInternalMemoryBackup 0
 static int bios_status, mount_ok=1, exists, read_ok=1, write_ok=1, writes, decoded;
-static unsigned char contents[512];
+static unsigned char contents[4096];
+static unsigned content_bytes;
 static int save_backup_status(void) { return bios_status; }
 static bool jo_backup_mount(int d) { assert(d==0); return mount_ok; }
 static bool jo_backup_file_exists(int d,const char *s) {
@@ -31,12 +32,12 @@ static bool jo_backup_file_exists(int d,const char *s) {
 }
 static void *jo_backup_load_file_contents(int d,const char *s,unsigned *n) {
     assert(d==0); if (!read_ok) return 0;
-    *n=348; void *p=malloc(*n); memcpy(p,contents,*n); return p;
+    *n=content_bytes; void *p=malloc(*n); memcpy(p,contents,*n); return p;
 }
 static bool jo_backup_save_file_contents(int d,char *s,char *c,void *p,unsigned n) {
     assert(d==0); ++writes;
     if (!write_ok) return false;
-    memcpy(contents,p,n); exists=1; return true;
+    assert(n<=sizeof(contents));memcpy(contents,p,n);content_bytes=n; exists=1; return true;
 }
 static bool jo_backup_delete_file(int d,const char *s) { return true; }
 static int jo_backup_get_free_block_count(int d) { return 20; }

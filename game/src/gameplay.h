@@ -103,7 +103,6 @@ enum { GP_SFX_SCRUB_UP, GP_SFX_SCRUB_DOWN, GP_SFX_SCRUB_THROW, GP_SFX_SCRUB_WALK
 #define GP_NAVI_HINT_TO     3000
 #define GP_NAVI_READ        3001
 #define GP_NAVI_TIMER_MAX   25800   /* nutsball broke (NA_SE_EN_OCTAROCK_ROCK) */
-#define GP_WALLET_CAPACITY  99
 #define GP_DROP_DELAY      15
 
 /* Inventory slots, in menu order. These index the slot table, not the GP_*
@@ -291,7 +290,7 @@ typedef struct
 
 typedef struct
 {
-    uint8_t     rupees;
+    uint16_t    rupees;
     uint16_t    rupee_taken;
     uint8_t     grass_rupee[16], grass_age[16];
     uint32_t    drop_rng;

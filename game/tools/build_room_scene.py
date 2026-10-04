@@ -10,39 +10,65 @@ import asset_names
 from build_sgl_scene import floor_uses_far_sort
 
 
-def transitions(oot, rom_dir=None, prefix='spot04', room_count=None, strict=True):
-    """En_Holl tunnels and supported source-gated Door_Shutter transitions.
+def transition_layers(scene):
+    """Every source scene header, including null-header fallback layers."""
+    from build_actor_manifest import header, alt_headers, layer_header
+    main = header(scene, 0, 2)
+    count = max(4, len(alt_headers(scene, main, 2)) + 1)
+    for layer in range(count):
+        base, _ = layer_header(scene, main, 2, layer)
+        yield layer, header(scene, base, 2)
 
-    Distinct from the scene-to-scene doors in build_scene_table.py: these swap
-    a room bank without leaving the scene. A scene with no room transitions --
-    any single-room interior -- has none, which is not an error.
+
+def transition_rows(scene):
+    for layer, commands in transition_layers(scene):
+        for cmd, count, address in commands:
+            if cmd != 0x0e:
+                continue
+            start = address & 0xffffff
+            for index in range(count):
+                values = struct.unpack_from('>4b5hH', scene, start + index * 16)
+                row = dict(zip(('front', 'front_camera', 'back', 'back_camera',
+                                'actor', 'x', 'y', 'z', 'yaw', 'params'), values))
+                yield dict(row, layer=layer, index=index)
+
+
+def transition_kind(actor, params):
+    if actor == 9:                 # En_Door, types in bits 7..9
+        return 24 + ((params >> 7) & 7)
+    if actor == 46:                # Door_Shutter, types in bits 6..9
+        return 8 + ((params >> 6) & 15)
+    if actor == 35:                # En_Holl
+        return (params >> 6) & 7
+    return 255                    # retained as blocked, never a free portal
+
+
+def transitions(oot, rom_dir=None, prefix='spot04', room_count=None, strict=True,
+                all_layers=False):
+    """Shared tunnels, handle doors and shutters, with original gate data.
+
+    Unsupported actor/type records remain closed kind 255 in generic imports;
+    the world-route audit names them. No unsupported doorway becomes a tunnel.
+    Main-only remains available for existing source/collision checks.
     """
     scene = hybrid.source.extract(oot, rom_dir, prefix=prefix)[prefix + '_scene']
-    for offset in range(0, 0x400, 8):
-        command = scene[offset:offset+8]
-        if command[0] == 0x14:
-            break
-        if command[0] == 0x0e:
-            start = int.from_bytes(command[4:], 'big') & 0xffffff
-            result = []
-            for i in range(command[1]):
-                front,_,back,_,actor,x,y,z,yaw,params = struct.unpack_from('>4b5hH',scene,start+i*16)
-                if room_count is not None and not (0 <= front < room_count and 0 <= back < room_count):
-                    continue  # bank not registered yet; never request a missing room
-                kind = (params >> 6) & 7
-                if actor == 46 and ((params >> 6) & 15) in (0, 1, 2, 7):
-                    kind = 8 + ((params >> 6) & 15)
-                elif actor != 35 or kind not in (0, 2, 4, 6):
-                    if not strict:
-                        # All-scenes import: En_Door etc. not wired; the
-                        # room is reachable from the level select only.
-                        print('transition skipped: %s actor %d params %04X' % (prefix, actor, params))
-                        continue
-                    raise ValueError('Unsupported authored room transition: %s actor %d params %04X' %
-                                     (prefix, actor, params))
-                result.append(dict(front=front,back=back,x=x,y=y,z=z,yaw=yaw,kind=kind,flag=params&63))
-            return result
-    return []
+    result = {}
+    for row in transition_rows(scene):
+        if not all_layers and row['layer']:
+            continue
+        front, back, actor, params = (row[k] for k in ('front', 'back', 'actor', 'params'))
+        if room_count is not None and not all(-1 <= side < room_count for side in (front, back)):
+            continue  # audit records missing banks; runtime must not load them
+        kind = transition_kind(actor, params)
+        if kind == 255 and strict:
+            raise ValueError('Unsupported authored transition: %s actor %d params %04X' %
+                             (prefix, actor, params))
+        keys = ('front', 'back', 'x', 'y', 'z', 'yaw')
+        key = tuple(row[k] for k in keys) + (kind, params & 127)
+        if key not in result:
+            result[key] = dict(zip(keys, key), kind=kind, flag=params & (127 if actor == 9 else 63), layers=0)
+        result[key]['layers'] |= 1 << row['layer']
+    return list(result.values())
 
 
 # Runtime record: short cx,cy,cz; ushort radius, lod0_dist, cull_dist;
@@ -161,15 +187,15 @@ def emit_rooms(args, head, actor, normal):
             room_actor=dict(tiles=list(actor['tiles'])+[t for m in models for t in m['tiles']],
                 polygons=actor['polygons']+max(m['polygons'] for m in models),
                 vertices=actor['vertices']+max(m['vertices'] for m in models))
+        scene_portals = transitions(args.oot, args.rom_dir, prefix=prefix, room_count=entry['rooms'],
+                                    strict=not entry.get('generic'), all_layers=True)
+        for portal in scene_portals:
+            portals.append(dict(portal, scene=scene_id))
         if entry['shape'] != 'mesh':
             # A prerendered-backdrop interior (ROOM_SHAPE_TYPE_IMAGE) has no
             # display-list geometry to convert, so it gets no VDP1 bank. Its
             # backdrop is staged by build_scene_backdrops.py instead.
             continue
-        scene_portals = transitions(args.oot, args.rom_dir, prefix=prefix, room_count=entry['rooms'],
-                                    strict=not entry.get('generic'))
-        for portal in scene_portals:
-            portals.append(dict(portal, scene=scene_id))
         for room_id in range(entry['rooms']):
             room = '%s_room_%d' % (prefix, room_id)
             if entry.get('generic'):
@@ -248,6 +274,23 @@ def emit_rooms(args, head, actor, normal):
     from build_emerald_story import emit as emit_emerald
     sized.extend(emit_emerald(args.oot,args.rom_dir,out,head,actor,forest_rooms,normal))
 
+    # Story banks used to overwrite real generic scenes 20/21/23/25/26/28.
+    # Check identities AND final headers after every emitter has run; a valid
+    # individual bake is not evidence that its destination survived staging.
+    bank_names = set()
+    for row in sized:
+        filename = asset_names.room_asset(row['scene'],row['id'],'MSH')
+        if filename in bank_names:
+            raise ValueError('Duplicate gameplay/story bank destination: '+filename)
+        bank_names.add(filename)
+        if row.get('streamed'):
+            continue
+        with (out/filename).open('rb') as stream:
+            actual = struct.unpack('>6I',stream.read(24))[1:]
+        expected = tuple(row[k] for k in ('vertices','polygons','tiles','pixel_bytes','objects'))
+        if actual != expected:
+            raise ValueError('Room bank overwritten after bake: %s %s != %s' % (filename,actual,expected))
+
     maximum = lambda key: max(r[key] for r in sized)
     definitions = dict(VERTEX_COUNT=maximum('vertices'),
                        POLYGON_COUNT=maximum('polygons'),
@@ -265,7 +308,7 @@ def emit_rooms(args, head, actor, normal):
                'typedef struct { int minimum[3],maximum[3]; } kokiri_object;',
                '/* An En_Holl tunnel between two rooms of ONE scene. `scene` is',
                '   which scene it belongs to; a portal never crosses scenes. */',
-               'typedef struct { short front,back,x,y,z,yaw; unsigned char scene,kind,flag; } kokiri_portal;',
+               'typedef struct { short front,back,x,y,z,yaw; unsigned char scene,kind,flag; unsigned int layers; } kokiri_portal;',
                'extern PDATA kokiri_pdata;',
                'extern kokiri_tile *kokiri_tiles;',
                'extern unsigned short (*kokiri_cluts)[16];',
@@ -297,8 +340,8 @@ def emit_rooms(args, head, actor, normal):
             '    kokiri_pdata.attbl = attributes; return true;',
             '}',
             'const kokiri_portal kokiri_portals[KOKIRI_PORTAL_COUNT] = {']
-    code += ['    {%d,%d,%d,%d,%d,%d,%d,%d,%d},'
-             % tuple(p[k] for k in ('front','back','x','y','z','yaw','scene','kind','flag'))
+    code += ['    {%d,%d,%d,%d,%d,%d,%d,%d,%d,%du},'
+             % tuple(p[k] for k in ('front','back','x','y','z','yaw','scene','kind','flag','layers'))
              for p in portals]
     if not portals:
         code += ['    {0,0,0,0,0,0,0,0},']

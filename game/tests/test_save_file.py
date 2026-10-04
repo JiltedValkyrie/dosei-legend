@@ -19,11 +19,11 @@ import unittest
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 GCC = pathlib.Path('C:/msys64/mingw64/bin/gcc.exe')
 
-SAVE_FILE_PAYLOAD_BYTES = 338
+SAVE_FILE_PAYLOAD_BYTES = 2423
 SAVE_FILE_V4_PAYLOAD_BYTES = 298
 SAVE_FILE_V2_PAYLOAD_BYTES = 290
 SAVE_FILE_BYTES = 8 + SAVE_FILE_PAYLOAD_BYTES + 2
-SAVE_FILE_VERSION = 10
+SAVE_FILE_VERSION = 11
 
 SAVE_FILE_OK = 0
 SAVE_FILE_EMPTY = 1
@@ -111,6 +111,45 @@ class SaveFile(unittest.TestCase):
         self.assertEqual(self.lib.sf_tunic(),2)
         self.assertEqual(self.lib.sf_ocarina(),1)
         self.assertFalse(self.lib.sf_tunic_equip(3))
+
+    def test_world_flags_keys_time_and_bottles_survive_reload(self):
+        self.lib.sf_set_world()
+        block = self.pack()
+        self.lib.save_new_game()
+        self.assertTrue(self.lib.sf_world_defaults())
+        self.assertEqual(self.unpack(block), SAVE_FILE_OK)
+        self.assertTrue(self.lib.sf_world_matches())
+
+    def test_max_tokens_unlock_cosmetics_and_survive_save_without_collecting_skulls(self):
+        self.lib.save_test_max_gear()
+        self.assertEqual(self.lib.save_skull_count(),100)
+        self.assertTrue(self.lib.sf_tunic_equip(2))
+        self.assertEqual(self.lib.save_skull_collected(0,1),0)
+        block=self.pack()
+        self.lib.save_new_game()
+        self.assertEqual(self.lib.save_skull_count(),0)
+        self.assertEqual(self.unpack(block),SAVE_FILE_OK)
+        self.assertEqual(self.lib.save_skull_count(),100)
+        self.assertEqual(self.lib.sf_tunic(),2)
+        self.assertEqual(self.lib.save_skull_collected(0,1),0)
+
+    def test_all_older_versions_initialize_world_extension(self):
+        sizes = {2:290, 3:295, 4:298, 5:301, 6:301, 7:302, 8:304, 9:336, 10:338}
+        self.lib.sf_ocarina_give()
+        current = self.pack()
+        for version, size in sizes.items():
+            with self.subTest(version=version):
+                block = current[:8 + size]
+                block[5] = version
+                checksum = self.lib.sf_checksum(bytes(block[8:]), size)
+                block += bytes((checksum >> 8, checksum & 255))
+                self.lib.sf_set_world()
+                self.assertEqual(self.unpack(block), SAVE_FILE_OK)
+                self.assertTrue(self.lib.sf_world_defaults())
+                self.assertEqual(self.lib.sf_ocarina(), int(version == 10))
+
+    def test_bottle_reward_adds_bottle_but_milk_requires_empty_bottle(self):
+        self.assertTrue(self.lib.sf_check_bottle_rewards())
 
     def test_v9_migration_preserves_tokens_without_equipping_new_tunic(self):
         self.lib.sf_skull_set(0,31)

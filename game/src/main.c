@@ -218,6 +218,7 @@ static void __attribute__((optimize("Os"))) diagnostic_overlay(void)
             if (!visible) {
                 jo_printf(0, 2, "                                        ");
                 jo_printf(0, 3, "                                        ");
+                jo_printf(0, 4, "                                        ");
             }
         }
         if (visible) {
@@ -234,6 +235,13 @@ static void __attribute__((optimize("Os"))) diagnostic_overlay(void)
                       frame_timer_cost(FRAME_PHASE_SCENE) / 1000,
                       frame_timer_cost(FRAME_PHASE_LINK) / 1000,
                       oot_core_update_us() / 1000);
+#ifdef DOSEI_OOT_CORE
+            {
+                const oot_core_sprite_stats_t *s = oot_core_sprite_stats();
+                jo_printf(0, 4, "NPC %u MISS %u POSE %u SLOT %u       ",
+                          s->actors, s->missing, s->fallback, s->slots);
+            }
+#endif
         }
     }
 }
@@ -1417,7 +1425,8 @@ static void __attribute__((optimize("Os"))) file_select_screen(void)
         jo_printf(4,FS_ROW+2,"AREA: %-24s",scene_name(level_select.scene));
         jo_printf(4,FS_ROW+4,"ROOM: %u / %u",level_select.room,scene_entries[level_select.scene].rooms-1);
         jo_printf(4,FS_ROW+6,"UP/DOWN: AREA  LEFT/RIGHT: ROOM");
-        jo_printf(4,FS_ROW+8,"A: ENTER  B: TITLE");
+        jo_printf(4,FS_ROW+8,"ALL ITEMS + MAX STATS: %-3s",level_select.max_gear?"YES":"NO");
+        jo_printf(4,FS_ROW+9,"L/R: TOGGLE  A: ENTER  B: TITLE");
         jo_printf(4,FS_ROW+10,"SWORD, SHIELD, C ITEMS READY");
         jo_printf(4,FS_ROW+11,"TEST RUN - NO SAVE SLOT");
         if(level_select.failed)jo_printf(4,FS_ROW+12,"ROOM ENTRY UNAVAILABLE");
@@ -1511,6 +1520,8 @@ void __attribute__((optimize("Os"))) jo_main(void)
     core_low_init();
     fs_low_init();
     sprites_low_init();
+    /* Low RAM is not boot-cleared. Initialize before any scene/actor reads. */
+    save_new_game();
     jo_core_init(JO_COLOR_Black);
     frame_timer_init();
 #ifdef DOSEI_HIRES

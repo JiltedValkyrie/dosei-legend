@@ -42,9 +42,9 @@ static unsigned burn;
 bool player_items_stick(void) {return true;}
 unsigned player_items_burning(void) {return burn;}
 void player_items_ignite(void) {burn=315;}
-typedef struct {short front,back,x,y,z,yaw;unsigned char scene,kind,flag;} kokiri_portal;
+typedef struct {short front,back,x,y,z,yaw;unsigned char scene,kind,flag;unsigned int layers;} kokiri_portal;
 #define KOKIRI_PORTAL_COUNT 1
-static kokiri_portal kokiri_portals[1]={{0,1,0,0,0,0,7,9,3}};
+static kokiri_portal kokiri_portals[1]={{0,1,0,0,0,0,7,9,3,15}};
 static unsigned loaded_scene=7;
 unsigned scene_flow_scene(void) {return loaded_scene;}
 void set_loaded_scene(unsigned scene) {loaded_scene=scene;}

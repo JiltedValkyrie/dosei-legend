@@ -33,10 +33,10 @@ import asset_names
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 
-# Scene 3 is the dream's Hyrule Field. It has no scene_table entry: it is
+# The dream's Hyrule Field has a dedicated virtual story bank. It has no scene_table entry: it is
 # never walked into, only flown over, so the cutscene asks for the bank by
 # number and nothing else can reach it.
-FLAT_SCENE_ID = 3
+FLAT_SCENE_ID = asset_names.STORY_BANK_FIELD
 
 # ATTR.atrb bits 3..5 select the colour mode; the textured path uses CL16Look
 # for its 4bpp tiles. A flat polygon takes its colour straight from colno as a

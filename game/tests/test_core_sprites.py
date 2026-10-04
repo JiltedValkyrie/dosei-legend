@@ -14,6 +14,47 @@ API = (ROOT / 'oot-core/include/oot_core_api.h').as_posix()
 class CoreSprites(unittest.TestCase):
     run_c = graphics.GraphicsBackend.run_c
 
+    def test_low_ram_draw_cache_boot_then_repeated_cleanup(self):
+        source = HOST.read_text()
+        storage = source[source.index('#define CORE_MESHES_MAX'):
+                         source.index('#define ENTRY')]
+        self.run_c(r'''
+#include <stdint.h>
+#include <string.h>
+#include <assert.h>
+''' + '#include "' + API + '"\n'
+            + '#include "' + (ROOT / 'src/npc_sprite.h').as_posix() + '"\n'
+            + '#include "' + (ROOT / 'src/oot_core_host.h').as_posix() + '"\n'
+            + '#include "' + (ROOT / 'src/ram_low.h').as_posix() + '"\n' + r'''
+static unsigned int low[RAM_LOW_BYTES / sizeof(unsigned int)];
+#undef RAM_LOW
+#define RAM_LOW(offset) ((void *)((unsigned char *)low + (offset)))
+#define __sh__ 1
+#define CORE_SPRITE_ROWS 128
+#define CORE_SPRITE_SLOTS 8
+typedef int actor_mesh_t;
+static unsigned frees;
+static void jo_free(void *p) { assert(p); ++frees; }
+''' + storage + function(HOST, 'static void sprites_reset(') + r'''
+int main(void) {
+    unsigned i;
+    unsigned char *bytes = (unsigned char *)low;
+    memset(low, 0xa5, sizeof(low));
+    core_draw_init();
+    for (i = 0; i < sizeof *CORE_DRAW; ++i)
+        assert(bytes[RAM_LOW_OOTDRAW_OFFSET + i] == 0);
+    sprites_reset(); assert(!frees);
+    core_sprite[0] = bytes;
+    core_sprite_tried[0] = 1;
+    sprites_reset(); sprites_reset();
+    assert(frees == 1 && !core_sprite[0] && !core_sprite_tried[0]);
+    for (i = 0; i < RAM_LOW_OOTDRAW_OFFSET; ++i) assert(bytes[i] == 0xa5);
+    for (i = RAM_LOW_OOTDRAW_OFFSET + sizeof *CORE_DRAW; i < sizeof(low); ++i)
+        assert(bytes[i] == 0xa5);
+    return 0;
+}
+''')
+
     def test_cull_rejects_hidden_sprites_without_wide_math(self):
         self.run_c(r'''
 #include <stdint.h>
@@ -104,6 +145,9 @@ static bool gameplay_sword_active(void) { return false; }
 static unsigned frame_timer_ticks(void) { return 10; }
 static unsigned frame_timer_ticks_to_us(unsigned t) { return t; }
 static void load_meshes(void) { assert(spawns); ++loads; }
+static void sprites_reset(void) {}
+static bool sprites_refresh(void) { return false; }
+static void npc_draw_reupload(void) {}
 static int init(void *a,unsigned b,int c,const void *d,int r,short x,short y,short z,short yaw) {
     spawns=0; return 1;
 }
@@ -156,6 +200,9 @@ typedef struct { const unsigned char *sheet; unsigned short slot,colno,shown; } 
 static const struct { unsigned short object; unsigned char limbs; unsigned anim,file; }
     core_sprite_rows[2]={{0xc0,19,0x1234,4},{0xe0,18,0x4567,5}};
 static unsigned char *core_sprite[2];
+static unsigned char core_sprite_tried[2];
+static unsigned core_sprite_reserved;
+static struct { unsigned actors,missing,fallback,slots; } sprite_stats;
 static npc_sprite_inst_t core_sprite_inst[8];
 static actor_mesh_t *core_mesh[1],*core_skin[1];
 static OotCoreMeshKey core_mesh_key[1];
@@ -165,6 +212,7 @@ static bool playing=true;
 static OotCoreNpcView views[3];
 static int count;
 static unsigned reads,alloc_bytes,reuploads,uploads,draws;
+static unsigned opens,fail_file,fail_alloc,fail_read,invalid_packet,live;
 static struct { int x,z; } demo_camera;
 static int mesh_list(const OotCoreMeshKey **p) { return 0; }
 static int npc_view(const OotCoreNpcView **p) { *p=views; return count; }
@@ -176,25 +224,30 @@ static actor_mesh_t *actor_mesh_load_static(const char *s) { return 0; }
 static int actor_mesh_upload(actor_mesh_t *m) { return 1; }
 static void npc_draw_reupload(void) { ++reuploads; }
 static int GFS_NameToId(Sint8 *s) { return 1; }
-static int jo_fs_open(jo_file *p,const char *s) { p->size=64; return 1; }
+static int jo_fs_open(jo_file *p,const char *s) { ++opens; p->size=64; return !fail_file; }
 static void jo_fs_close(jo_file *p) {}
-static void jo_free(void *p) { free(p); }
-static void *jo_malloc(unsigned n) { alloc_bytes=n; return malloc(n); }
+static void jo_free(void *p) { assert(p && live); --live; free(p); }
+static void *jo_malloc(unsigned n) { alloc_bytes=n; if(fail_alloc)return 0; ++live; return malloc(n); }
 static unsigned jo_memory_usage_percent(void) { return 50; }
 static void *jo_fs_read_file_ptr(const char *s,void *p,int *n) {
     /* Jo's documented NUL write must fit; old length-only allocation fails. */
-    assert(alloc_bytes>=65); assert(!strcmp(s,"G0C004.SPR"));
+    assert(alloc_bytes>=65);
+    assert(!strcmp(s,"G0C004.SPR") || !strcmp(s,"G0E005.SPR"));
     memset(p,0,65); ((unsigned char*)p)[5]=48; ((unsigned char*)p)[7]=56;
-    *n=64; ++reads; return p;
+    *n=64; ++reads; return fail_read ? 0 : p;
 }
+static int npc_sprite_valid(const unsigned char *s,unsigned n) { return !invalid_packet; }
 static int npc_sprite_upload(const unsigned char *s,npc_sprite_inst_t *p) {
     p->slot=uploads++; return 1;
 }
+static int npc_sprite_visible(const unsigned char *s,int x,int y,int z) { return z>=0; }
 static void npc_sprite_draw(const unsigned char *s,npc_sprite_inst_t *p,unsigned f,
                            int x,int y,int z,uint16_t yaw) {
     assert(p->slot==0 && s==core_sprite[0]); ++draws;
 }
-''' + function(HOST, 'static void load_meshes(')
+''' + function(HOST, 'static void sprites_reset(')
+            + function(HOST, 'static bool sprites_refresh(')
+            + function(HOST, 'static void load_meshes(')
             + function(HOST, 'void oot_core_meshes_upload(')
             + function(HOST, 'static void sprites_draw(') + r'''
 int main(void) {
@@ -209,7 +262,56 @@ int main(void) {
     views[0].limbs=0; sprites_draw(); assert(draws==2); /* clock-only Malon: no skeleton header read */
     views[0].limbs=20; views[0].anim=0x06009999;
     sprites_draw(); assert(draws==3); /* missing pose keeps a compatible sprite visible */
-    count=0; load_meshes(); assert(!core_sprite[0] && reads==1);
+    views[1]=views[0]; views[0].z=-100; count=2;
+    sprites_draw(); assert(draws==4); /* hidden actor cannot consume visible actor's slot */
+    views[0].z=0; count=1;
+    assert(!sprites_refresh() && sprite_stats.fallback==1);
+    /* Later same-room spawns discover a new object without freeing old sheets. */
+    unsigned char *original=core_sprite[0];
+    views[1]=views[0]; views[1].object=0xe0; views[1].limbs=19;
+    views[1].anim=0x06004567; count=2;
+    assert(sprites_refresh() && reads==2 && core_sprite[0]==original && live==2);
+    uploads=0; oot_core_meshes_upload(); assert(uploads==2 && sprite_stats.slots==2);
+    assert(!sprites_refresh() && reads==2 && sprite_stats.actors==2 && !sprite_stats.missing);
+    /* More instances of an existing object need slots, never new CD reads. */
+    views[2]=views[1]; count=3;
+    assert(sprites_refresh() && reads==2);
+    count=1; assert(!sprites_refresh()); /* disappearance preserves capacity */
+    count=0; load_meshes(); assert(!core_sprite[0] && !live && reads==2);
+    /* Each unavailable file is attempted once per room; next room retries. */
+    count=1; fail_file=1; unsigned before=opens;
+    assert(!sprites_refresh() && sprite_stats.missing==1 && opens==before+1);
+    assert(!sprites_refresh() && opens==before+1);
+    sprites_reset(); fail_file=0; fail_alloc=1;
+    assert(!sprites_refresh() && !live && sprite_stats.missing==1);
+    sprites_reset(); fail_alloc=0; fail_read=1;
+    assert(!sprites_refresh() && !live);
+    sprites_reset(); fail_read=0; invalid_packet=1;
+    assert(!sprites_refresh() && !live);
+    sprites_reset(); invalid_packet=0;
+    assert(sprites_refresh() && live==1);
+    sprites_reset(); sprites_reset(); assert(!live);
+    return 0;
+}
+''')
+
+    def test_sprite_packets_validate_before_generic_upload(self):
+        self.run_c(r'''
+#include <assert.h>
+#include <string.h>
+#define U16(s,o) ((unsigned)((s)[o]<<8 | (s)[(o)+1]))
+#define CELS(s) (0x34u + ((U16(s,0x0c)*2u+3u)&~3u))
+''' + function(ROOT / 'src/npc_sprite.c', 'int npc_sprite_valid(') + r'''
+int main(void) {
+    unsigned char sheet[76]={0};
+    memcpy(sheet,"SPR1",4); sheet[5]=8; sheet[7]=1; sheet[9]=5;
+    sheet[11]=1; sheet[13]=1; sheet[17]=1;
+    assert(npc_sprite_valid(sheet,sizeof sheet));
+    assert(!npc_sprite_valid(0,76) && !npc_sprite_valid(sheet,75));
+    sheet[0]='X'; assert(!npc_sprite_valid(sheet,76)); sheet[0]='S';
+    sheet[0x35]=1; assert(!npc_sprite_valid(sheet,76)); sheet[0x35]=0;
+    sheet[5]=7; assert(!npc_sprite_valid(sheet,76)); sheet[5]=8;
+    sheet[12]=0xff; sheet[13]=0xff; assert(!npc_sprite_valid(sheet,76));
     return 0;
 }
 ''')

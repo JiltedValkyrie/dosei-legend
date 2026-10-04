@@ -1067,7 +1067,7 @@ static bool __attribute__((optimize("Os"))) update_chest(const gameplay_input_t 
             gameplay.events2|=GP2_EVENT_ITEM_FANFARE;
         else gameplay.world_sfx|=1u<<GP_SFX_BOX_ITEM;
         save_set_treasure(c->scene, CHEST_FLAG(c));
-        gameplay.rupees = (uint8_t)save_state.rupees;
+        gameplay.rupees = save_state.rupees;
         if (reward == 0x27) gameplay.owned |= GP_SWORD;
         gameplay.chest_prompt = -1;
         gameplay.get_item_age = 0;
@@ -1325,7 +1325,7 @@ bool                gameplay_grass_cut(unsigned int index)
            (gameplay.grass_cut & (1u << index)) != 0;
 }
 
-/* Session-only wallet and collectible flags. Child wallet: z_inventory.c. */
+/* Wallet capacity comes from the saved source upgrade (z_inventory.c). */
 bool gameplay_rupee_taken(unsigned int index)
 {
     return index < KOKIRI_RUPEE_COUNT && (gameplay.rupee_taken & (1u << index));
@@ -1345,7 +1345,7 @@ static void grant_rupee(unsigned int value)
     save_state.rupees = gameplay.rupees;
     save_item_give(value >= 20 ? SAVE_ITEM_RUPEE_RED :
                    value >= 5 ? SAVE_ITEM_RUPEE_BLUE : SAVE_ITEM_RUPEE_GREEN);
-    gameplay.rupees = (uint8_t)save_state.rupees;
+    gameplay.rupees = save_state.rupees;
     gameplay.events |= GP_EVENT_RUPEE;
 }
 
@@ -1379,7 +1379,7 @@ static void collect_rupees(const gameplay_input_t *in)
 }
 
 /* Gear, rupees and one-off pickups live in the SAVE. gameplay_t holds them as
-** GP_* bits and a small wallet only because the per-step actions read them
+** GP_* bits and a wallet cache only because the per-step actions read them
 ** constantly and a bitmask is cheaper than four accessor calls.
 **
 ** The save is the owner; these two functions keep the cache agreeing with it.
@@ -1406,6 +1406,7 @@ static void __attribute__((optimize("Os"))) sync_gear_to_save(void)
 static void __attribute__((optimize("Os"))) sync_gear_from_save(void)
 {
     unsigned int    i;
+    unsigned int    wallet_capacity = save_wallet_capacity();
 
     gameplay.owned = 0;
     gameplay.equipped = 0;
@@ -1417,8 +1418,8 @@ static void __attribute__((optimize("Os"))) sync_gear_from_save(void)
         gameplay.equipped |= GP_SWORD;
     if (save_cur_equip_value(EQUIP_TYPE_SHIELD) == EQUIP_VALUE_SHIELD_DEKU)
         gameplay.equipped |= GP_SHIELD;
-    gameplay.rupees = (uint8_t)(save_state.rupees > GP_WALLET_CAPACITY
-                                ? GP_WALLET_CAPACITY : save_state.rupees);
+    gameplay.rupees = (uint16_t)(save_state.rupees > wallet_capacity
+                                ? wallet_capacity : save_state.rupees);
     /* The retired ground-pickup ITEMGETINF bits are left as they are and not
     ** read: gear earned that way stays in the equipment words above, and they
     ** are never reinterpreted as chest or shop flags. */
@@ -2602,7 +2603,7 @@ static void __attribute__((optimize("Os"))) shop_buy(void)
         gameplay.events |= GP_EVENT_DENIED;
         return;
     }
-    gameplay.rupees = (uint8_t)save_state.rupees;
+    gameplay.rupees = save_state.rupees;
     if (shop_stock[slot].item == SAVE_ITEM_SHIELD_DEKU)
         gameplay.owned |= GP_SHIELD;
     if (shop_stock[slot].item == SAVE_ITEM_RECOVERY_HEART)

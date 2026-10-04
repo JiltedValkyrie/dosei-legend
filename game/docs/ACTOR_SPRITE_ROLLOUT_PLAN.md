@@ -1,6 +1,6 @@
 # All-scene NPC and enemy sprite rollout
 
-Updated 2026-10-03. Branch: oot-core. Owner: current implementing agent;
+Updated 2026-10-04. Branch: oot-core, integrating into main. Owner: current implementing agent;
 human owns emulator/hardware acceptance. This plan covers the entire game,
 including scenes and actors not yet imported. It is not a completion claim.
 
@@ -27,18 +27,52 @@ render time. Approximation is explicitly allowed; no new 64-bit runtime math.
 
 ## Current evidence and gaps
 
+The sprite/CPU/save/cleanup baseline is now commit 9d384cd; the continuation
+below is recorded in this checkpoint, with commit/push and main integration
+authorized on 2026-10-04. 400 distinct host checks pass. Full assets and the final
+C-only WSL Clean relink pass; usual image rebuilt, .bss end 0x06083D70 / 656 B
+spare. Save/write/preview/draw-cache low-RAM carves fix the integration overflow.
+Story banks use IDs 1024+ and C-prefixed files; real room banks no longer collide.
+Staging/budget checks pass; prior build figures below are historical. Human
+runtime acceptance and complete actor coverage remain open.
+
 Latest human test reports six repeated null-free errors at startup/zone changes,
 one Ranch NPC visible and generic doors unusable. Cleanup guards are now fixed
 in all three sprite teardown paths; stubs detect NULL frees. Eleven focused
 host checks pass, including 256 allocation combinations and repeated cleanup.
-Clean rebuild passes (`build/null-free-fix-build.log`), .bss margin 8,736 B.
+Baseline Clean rebuild passed (`build/null-free-fix-build.log`), .bss margin 8,736 B.
 Runtime acceptance pending. Full doors and NPC/dialogue execution order is in
 [NEXT_CHAT_WORLD_COMPLETION.md](NEXT_CHAT_WORLD_COMPLETION.md).
 
-Implemented in the shared source and Clean target-built (runtime pending):
+Current continuation also tests actual failed loads/retries and double frees.
+A versioned [source coverage ledger](ACTOR_COVERAGE.json) enumerates 429 profiles,
+110 source scenes, 836 room layers/parameters and transitive static spawn candidates.
+Indirect spawns and boss dependencies remain explicit. No scene is marked ready:
+static extraction is not proof of story-branch or runtime coverage. Ranch source
+conditions explain why a fresh child daytime exterior can contain only Ingo;
+normal gameplay horses are missing. Adult daytime Malon uses En_Ma3, not the
+imported En_Ma2. Offline horse Skin sprites do not implement runtime actors;
+importing their current Fx action code would add forbidden wide arithmetic.
+There are 41 offline gameplay-horse clips, including young/normal/Epona/Ingo and
+Gerudo-saddle variants: 910,945 B total sheet storage including allocator
+terminators and a largest live cel plus CLUT of 1,472 B. These packages are not
+staged; no horse gameplay or per-scene simultaneous population budget is complete.
+Thirty-five source destinations also still lack registered scene assets.
+
+Host sprite discovery includes later same-room spawns without reloading existing
+sheets or retrying absent files every step. Packets are validated before upload;
+L+R diagnostics show imported views, missing sheets, fallback poses and allocated
+slots. Dynamic preloading, eight-slot/16-view limits and full scene actor/effect
+budget closure remain open. Save v11 and its mirror retain source scene flags,
+keys, equipment, quest items, bottles and era/time. The player bridge honors
+automatic talk offers and milk reward/textbox parent handshakes. Talon's timer/
+carry minigame, ocarina/song interactions and other unsupported rewards remain
+open. Combined target/human verification is tracked in the game plan.
+
+Prior checkpoint implementation, Clean target-built then (runtime pending):
 C Kokiri NPCs, shopkeeper and Saria greeting use SPR; generic Ingo, child
 and adult Malon, Talon, Cucco and cow use sprite clocks and compact object
-metadata. New batch also converts nightmare riders/horses, Saria bridge clips,
+metadata. That checkpoint also converts nightmare riders/horses, Saria bridge clips,
 owl and creation-story Ganon/horse. Fairy wings/glow are baked together into
 32x32 textured cels. Generic animation lookup now resolves linked object symbols
 instead of original ROM offsets. Room-generation slots replace visibility-driven
@@ -52,15 +86,16 @@ for actors plus 32 KiB spare; actual room textures including palettes now
 295,776 B. Timing shares and resulting runtime VRAM/FPS are not yet measured.
 
 Ranch gameplay horses (`En_Horse`, `En_Horse_Normal`, `En_Horse_Link_Child`) are
-not imported. Baking nightmare horses does not implement those actors. Most
+not imported. Neither nightmare horses nor the 41 new offline gameplay clips
+implement those actors. Most
 NPC/enemy types and their alternate states are not covered. Existing non-boss C enemies
 and any remaining non-boss character-shaped story models are migration debt.
 Existing boss mesh/hitbox pipelines remain intentionally exempt.
 Do not label the whole game sprite-only based on this batch.
 
-## Coverage ledger to build first
+## Coverage ledger: generated inventory, review still required
 
-Create a versioned manifest keyed by actor ID, object, visual variant, semantic
+Extend the generated manifest keyed by actor ID, object, visual variant, semantic
 clip, and source revision. Record gameplay owner, bake recipe, sprite package,
 timing/events, collider/attachment recipe, resource costs, dependencies and
 status. Keep code-implemented, host-tested, target-built and human-accepted as
@@ -149,7 +184,7 @@ Do not claim FPS from bytes saved or a successful compiler run.
 
 | Wave | Work | Required exit evidence |
 | --- | --- | --- |
-| 0, active | Finish Ranch keys/reservation, compact NPC data, fairy/cutscene mesh removal; build coverage ledger and resource reports | Current host tests + usual Clean target; human Ranch/forest/opening checks remain separate |
+| 0, active | Retain implemented Ranch keys/reservation, compact NPC data and fairy/cutscene mesh removal; review generated coverage ledger and complete scene resource reports/integration repairs | Current host tests + usual Clean target; human Ranch/forest/opening checks remain separate |
 | 1 | Import Ranch gameplay horses and all current scene NPC variants; audit child/adult Malon/Ingo/Talon, Cuccos/cows, interiors and night layers | Every reachable Ranch actor/state renders, talks/interacts and survives save/re-entry; populated VRAM/CPU/VDP1 measurements |
 | 2 | Convert currently playable forest/Tree/Field non-boss enemies; retain attacks, projectiles, stun, death/rewards/drops; leave bosses and complex gameplay hitboxes intact | Combat/drop regressions and human encounters; no non-exempt character mesh or pose payload in ready scenes |
 | 3 | Remaining child-era overworld/towns/interiors and child dungeons, shops/minigames, companions and cutscene duplicates | Per-scene coverage matrix, spawn-chain closure, resource gates and runtime acceptance |

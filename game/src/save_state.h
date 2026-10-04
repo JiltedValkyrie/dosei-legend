@@ -23,10 +23,9 @@
 **   src/code/z_actor.c:707  -- Flags_GetTreasure / SetTreasure
 **   src/code/z_sram.c:100   -- Sram_InitNewSave
 **
-** What is NOT modelled, and stays labelled as missing rather than faked: the
-** full 124-scene SavedSceneFlags table (we index a small scene set instead),
-** adult equips, dungeon keys, the Triforce/medallion fields, and everything
-** after the Kokiri Emerald.
+** The original slice ids remain stable. Other scenes persist flags by original
+** SceneId in a separate table. Full inventory/adult equipment and source
+** respawn/horse data remain unimplemented; storage is not gameplay coverage.
 */
 
 /* ---- flag spaces ---------------------------------------------------------
@@ -112,6 +111,9 @@
 #define SAVE_SCENE_SARIAS_HOUSE     9   /* kokiri_home5 */
 #define SAVE_SCENE_HYRULE_FIELD     10  /* spot00       */
 #define SAVE_SCENE_COUNT            11
+#define SAVE_SOURCE_SCENE_COUNT     124
+#define SAVE_DUNGEON_ITEMS_COUNT    20
+#define SAVE_DUNGEON_KEYS_COUNT     19
 const char *save_scene_name(unsigned scene);
 
 /* Per-scene flag words, mirroring SavedSceneFlags (include/save.h:96).
@@ -168,9 +170,30 @@ typedef struct
     uint8_t             skull_flags[32]; /* original GET_GS_FLAGS group/mask */
     uint8_t             tunic; /* cosmetic: 0 green, 1 blue, 2 red */
     uint8_t             fairy_ocarina;
+    /* v11: original SceneId keys, never compact scene-table positions. The
+     * eleven slice scenes above still use scene[] and their existing ids. */
+    save_scene_flags_t  generic_scene[SAVE_SOURCE_SCENE_COUNT];
+    uint8_t             dungeon_items[SAVE_DUNGEON_ITEMS_COUNT];
+    int8_t              dungeon_keys[SAVE_DUNGEON_KEYS_COUNT];
+    uint8_t             link_age;          /* source: 0 adult, 1 child */
+    uint16_t            day_time;          /* source: 0x10000 per day */
+    uint16_t            cutscene_index;    /* >= 0xfff0 selects a source layer */
+    uint8_t             bottle_items[4];   /* source ItemId; 0xff = unowned */
+    uint8_t             source_scene;      /* original SceneId; 0xff = legacy */
+    uint16_t            source_entrance;   /* original EntranceIndex or 0xffff */
+    uint8_t             source_items[24],source_ammo[16];
+    uint16_t            source_equipment; /* owned source equipment bitmask */
+    uint32_t            source_upgrades;
+    uint8_t             source_magic_level,source_magic,source_double_defense,source_tokens;
 }                       save_state_t;
 
+#if defined(__sh__)
+#include "ram_low.h"
+typedef char save_state_low_fits[sizeof(save_state_t) <= RAM_LOW_SAVE_BYTES ? 1 : -1];
+#define save_state (*(save_state_t *)RAM_LOW(RAM_LOW_SAVE_OFFSET))
+#else
 extern save_state_t     save_state;
+#endif
 bool save_skull_collected(unsigned group,unsigned mask);
 bool save_collect_skull(unsigned group,unsigned mask);
 unsigned save_skull_count(void);
@@ -192,6 +215,9 @@ typedef enum
     SAVE_ITEM_DEKU_MAP,
     SAVE_ITEM_DEKU_COMPASS,
     SAVE_ITEM_HEART_CONTAINER,
+    SAVE_ITEM_BOTTLE_EMPTY,
+    SAVE_ITEM_BOTTLE_MILK_FULL, /* bottle reward: requires an unowned slot */
+    SAVE_ITEM_MILK,            /* refill: requires an existing empty bottle */
     SAVE_ITEM_COUNT
 }                       save_item_t;
 
@@ -267,10 +293,16 @@ void            save_damage(unsigned int units);
 void            save_resume_remap(void);
 void            save_heal(unsigned int units);
 void            save_cheat_refill(void);    /* playtest: hearts + consumables to max */
+/* Level Select opt-in: source inventory/quest gear and capped stats; no events. */
+void            save_test_max_gear(void);
+unsigned        save_wallet_capacity(void);
+unsigned        save_seed_capacity(void);
 bool            save_is_dead(void);
 
 /* ---- lifecycle -------------------------------------------------------- */
 /* Fresh file: three hearts, no items, no flags. Mirrors Sram_InitNewSave. */
 void            save_new_game(void);
+/* Initialize only the v11 extension, also used when migrating older saves. */
+void            save_world_defaults(save_state_t *state);
 
 #endif

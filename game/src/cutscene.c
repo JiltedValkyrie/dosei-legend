@@ -91,18 +91,18 @@ static int scene_for_cutscene(unsigned int scene)
 /*
 ** The dream rides across Hyrule Field, which is a bank of its own.
 **
-** SPOT00 has no scene_table entry: it is never walked into, only flown over,
-** so the cutscene asks for the bank by number. It is flat shaded -- every
+** This presentation bank is distinct from playable SPOT00 and its stable
+** scene_table entry. It is flat shaded -- every
 ** face carries its own colour and there are no tiles at all -- so it costs
 ** nothing of the VDP1 texture area that the streamed forest fills, which is
 ** what makes a second environment affordable during the opening.
 **
 ** Built by tools/build_flat_scene.py from levels/hyrule/assets/static.
 */
-#define CUTSCENE_FIELD_BANK 3
+#define CUTSCENE_FIELD_BANK STORY_BANK_FIELD
 
 /*
-** Navi's flight uses S2R0..9, built from the ordinary streamed room meshes.
+** Navi's flight uses C0R0..9, built from the ordinary streamed room meshes.
 ** Each bank covers 100 camera frames, keeping the room textures that can
 ** enter fog range and flat fog-coloured geometry beyond it. Source trees
 ** and huts therefore survive shots that look across a gameplay room portal.
@@ -234,7 +234,9 @@ bool cutscene_start(unsigned int id)
     asset_loading("CUTSCENE SCENE");
     game_mode_set(GAME_MODE_LOADING);
     if(id>=CUTSCENE_EMERALD1 && id<=CUTSCENE_EMERALD9) {
-        static const unsigned char banks[]={20,21,21,23,23,25,26,21,28};
+        static const unsigned short banks[]={STORY_BANK_EMERALD1,STORY_BANK_EMPTY,STORY_BANK_EMPTY,
+            STORY_BANK_GERUDO,STORY_BANK_GERUDO,STORY_BANK_MOUNTAIN,STORY_BANK_EMERALD7,
+            STORY_BANK_EMPTY,STORY_BANK_EMERALD9};
         cutscene_actors_free();
         state.scene_loaded=kokiri_scene_load_bank(banks[id-CUTSCENE_EMERALD1],0);
         if(!state.scene_loaded || !emerald_story_load(id-CUTSCENE_EMERALD1+1))return false;
@@ -248,13 +250,13 @@ bool cutscene_start(unsigned int id)
     } else if (cs->scene == CUTSCENE_SCENE_SPOT04) {
         cutscene_actors_free();
         if (!kokiri_opening_cache_load()) return false;
-        state.scene_loaded = kokiri_scene_load_bank(2, 0);
+        state.scene_loaded = kokiri_scene_load_bank(STORY_BANK_NAVI, 0);
         if (state.scene_loaded && id == CUTSCENE_NAVI_FLY)
             state.scene_loaded = npc_draw_load_navi();
     } else if (cs->scene == CUTSCENE_SCENE_LINK_HOME) {
         cutscene_actors_free();
         /* Moving house cameras use SKYBOX_HOUSE_LINK, not the fixed JPEG. */
-        state.scene_loaded = kokiri_scene_load_bank(4, 0);
+        state.scene_loaded = kokiri_scene_load_bank(STORY_BANK_PANORAMA, 0);
     } else {
         cutscene_actors_free();
         int scene = scene_for_cutscene(cs->scene);
@@ -640,7 +642,7 @@ bool cutscene_step(bool confirm)
         /* Wait for the previous VDP1 draw before replacing its textures. */
         if (!vdp1_wait_for_draw_end()) return true;
         state.scenery_bank = (unsigned char)(state.frame / 100);
-        state.scene_loaded = kokiri_scene_load_bank(2, state.scenery_bank);
+        state.scene_loaded = kokiri_scene_load_bank(STORY_BANK_NAVI, state.scenery_bank);
     }
     if (state.frame < cs->frames)
         apply_camera(&state.track[state.frame]);

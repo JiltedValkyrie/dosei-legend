@@ -2,14 +2,17 @@
 import pathlib
 import struct
 import unittest
+import sys
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
+sys.path.insert(0,str(ROOT/'tools'))
+from asset_names import room_asset, STORY_BANK_PANORAMA
 
 class InteriorViews(unittest.TestCase):
     def test_five_house_banks_have_source_face_counts_and_texture_budget(self):
         for scene, sides in [(0, 4), (3, 4), (4, 3), (5, 3), (6, 3)]:
-            mesh = (ROOT / f'build/cd/S4R{scene}.MSH').read_bytes()
-            pixels = (ROOT / f'build/cd/S4R{scene}.TEX').read_bytes()
+            mesh = (ROOT / 'build/cd' / room_asset(STORY_BANK_PANORAMA,scene,'MSH')).read_bytes()
+            pixels = (ROOT / 'build/cd' / room_asset(STORY_BANK_PANORAMA,scene,'TEX')).read_bytes()
             magic, vertices, faces, tiles, size, objects, _, _ = struct.unpack_from('>8I', mesh)
             self.assertEqual(magic, 0x4b524d31)
             self.assertEqual((vertices, faces, tiles), (sides*128, sides*32, sides*32))

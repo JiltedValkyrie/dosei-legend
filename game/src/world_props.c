@@ -123,7 +123,7 @@ void world_props_step(const gameplay_input_t *in)
                          (a->params==13 && !save_state.stick_owned);
             if (!item_drop_give(a->params)) continue;
             if (a->data[2]) save_set_collectible(a->scene,(unsigned)a->data[2]);
-            gameplay.rupees=(uint8_t)save_state.rupees;
+            gameplay.rupees=save_state.rupees;
             if(a->params<=2)gameplay.events|=GP_EVENT_RUPEE;
             else gameplay.events2|=a->params==3?GP2_EVENT_HP_RECOVER:GP2_EVENT_GET_ITEM;
             unsigned item=a->params;

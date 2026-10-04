@@ -4,6 +4,7 @@ import re
 import struct
 
 import vdp1_budget as budget
+import asset_names
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -141,11 +142,12 @@ def check(root=ROOT):
     # but only draw the currently selected Saria pose / visible source actors.
     stories=[(8,5,['NPC19','NPC20','NPC21','NPC22'],['NPC20']),
              (10,0,['OWLPERCH','OWLFLY'],['OWLFLY']),
-             (20,0,[],[]),(21,0,['GODBODY','GODAURA','TRIFORCE'],['GODBODY']*3+['GODAURA']*3+['TRIFORCE']),
-             (23,0,['GODBODY','GODAURA'],['GODBODY']*3+['GODAURA']*3),
-             (25,0,['GODBODY','GODAURA'],['GODBODY']*3+['GODAURA']*3),
-             (26,0,['GODBODY','GODAURA'],['GODBODY']*3+['GODAURA']*3),
-             (28,0,['EMERALD'],['EMERALD'])]
+             (asset_names.STORY_BANK_EMERALD1,0,[],[]),
+             (asset_names.STORY_BANK_EMPTY,0,['GODBODY','GODAURA','TRIFORCE'],['GODBODY']*3+['GODAURA']*3+['TRIFORCE']),
+             (asset_names.STORY_BANK_GERUDO,0,['GODBODY','GODAURA'],['GODBODY']*3+['GODAURA']*3),
+             (asset_names.STORY_BANK_MOUNTAIN,0,['GODBODY','GODAURA'],['GODBODY']*3+['GODAURA']*3),
+             (asset_names.STORY_BANK_EMERALD7,0,['GODBODY','GODAURA'],['GODBODY']*3+['GODAURA']*3),
+             (asset_names.STORY_BANK_EMERALD9,0,['EMERALD'],['EMERALD'])]
     from asset_names import room_asset
     for scene,room,loaded,drawn in stories:
         path=cd/room_asset(scene,room,'MSH')

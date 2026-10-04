@@ -1,21 +1,62 @@
 # Plan: bulk decomp pipeline ("oot-core" on Saturn)
 
-## Current handoff (2026-10-03)
+## Current handoff (2026-10-04)
+
+Baseline sprite/CPU/save/cleanup work is committed as 9d384cd. This continuation
+is recorded in this checkpoint. Commit/push and main integration are authorized;
+preserve the prior main as oot-vslice-demo. Historical checkpoint sections
+below retain their original evidence and do not describe the current image.
+
+400 distinct host checks pass. Full WSL asset regeneration and the final
+C-only Clean relink pass (`world-completion-build.log`, `world-completion-link.log`).
+Usual game-clean.cue/.iso rebuilt; .bss ends 0x06083D70, 656 B below SGL.
+Save state, write/preview scratch and draw-cache ownership use checked low-RAM
+carves; boot initializes persistent state/cache before use. Virtual story banks
+use IDs 1024+ and C-prefixed files, with no real-room overwrite. Staging and
+budget checks pass; retired aliases removed. Runtime acceptance remains open.
 
 **Latest runtime report:** repeated `dosei_allocator_free(): Null pointer` at
 startup/zone changes, about six dismissals; one Ranch NPC visible; generic doors
 still unwired. Confirmed source regression: story_route_free directly frees six
 optional sprite pointers without guards. SDK rejects NULL; host stubs incorrectly
-accepted it. Now repaired in story_route_free, emerald_story_free and
+accepted it. The baseline repaired story_route_free, emerald_story_free and
 cutscene_actors_free: guard optional pointers, then clear ownership. Eleven
 focused host checks pass, including 256 allocation combinations and repeated
 cleanup. WSL Clean rebuild passes (`build/null-free-fix-build.log`); usual image,
-.bss end 0x06081DE0 / 8,736 B spare. Runtime confirmation pending.
-`build_room_scene.transitions` explicitly skips unsupported
-generic doors. Follow [NEXT_CHAT_WORLD_COMPLETION.md](NEXT_CHAT_WORLD_COMPLETION.md):
-P0 cleanup repaired (runtime pending), P1 full door/entrance connectivity, P2 all NPCs/animals and actual
-source-driven dialogue across maps/eras/layers/triggers. Prior build success
-does not supersede these human failures.
+.bss end 0x06081DE0 / 8,736 B spare for that prior build. Runtime confirmation pending.
+Current continuation additionally rolls actual failed story/emerald loads back;
+NULL/double-free stubs test partial loads, repeated cleanup and retry. Generic
+handle doors/shutters now retain source gates and layers, with shared scripted
+entrance forwarding. Unsupported routes remain blocked and named in
+[WORLD_ROUTE_AUDIT.json](WORLD_ROUTE_AUDIT.json); 75 scenes have registered assets,
+35 source destinations still lack them, and full connectivity is unfinished.
+Save v11 preserves v2-v10 and adds source-scene flags, keys/items, bottles,
+era/time and stable source resume identifiers. The mirror seeds saved scene flags
+before actor initialization and restores equipment/quest/ocarina predicates.
+Automatic talk and milk reward/textbox handshakes are bridged; source minigame,
+ocarina and full inventory behavior remain incomplete.
+
+Later same-room NPC spawns now discover sheets without repeating failed reads.
+Packets are validated, hidden sprites do not consume visible slots, and reused
+native NPC views clear old generic sprite identities. Existing L+R overlay shows
+generic actor/missing-sheet/fallback-pose/slot counts. Dynamic preloading and full
+resource closure and eight-slot/16-view limits remain open.
+[ACTOR_COVERAGE.json](ACTOR_COVERAGE.json) records 429 profiles/110 scenes and
+836 room layers; no scene ready. Forty-one offline horse clips are baked,
+but gameplay horses remain unimported because their Fx actions add wide runtime
+math and their anchors/mount logic need work. Packages total 910,945 B including
+allocator terminators; largest live cel plus CLUT is 1,472 B. They are not staged.
+Current Clean target verification passes; horse gameplay remains unfinished.
+Follow [NEXT_CHAT_WORLD_COMPLETION.md](NEXT_CHAT_WORLD_COMPLETION.md).
+Prior build success does not supersede the human failures.
+
+Latest user addition: Level Select ALL ITEMS + MAX STATS, default No, L/R
+toggle, applies on confirmed test entry only. All source quest bits include
+the three stones/Emerald, medallions and songs; source inventory/owned gear,
+20 hearts, capped ammo/magic/upgrades, 500 rupees, tokens and dungeon test keys
+are included. No new story completion flags. Mutually exclusive slots use
+upgraded/final variants; native C item actions beyond the current subset remain
+unfinished. Save v11 now 2,433 bytes; three-digit wallet cache/HUD repaired.
 
 Current permanent rule: all NPCs, animals, fairies and non-boss enemies use baked
 sprites. Bosses explicitly exempt for now: preserve their models and complex
@@ -23,7 +64,7 @@ damage/puzzle hitboxes. Link remains separate. See
 [ACTOR_SPRITE_ROLLOUT_PLAN.md](ACTOR_SPRITE_ROLLOUT_PLAN.md) for all scenes,
 child/adult eras, layers, triggers, spawn chains and verification gates.
 
-Latest uncommitted batch is implemented and Clean target-built:
+Prior sprite checkpoint (now 9d384cd) was implemented and Clean target-built:
 
 - Ranch sprite lookup used ROM offsets against relinked compact objects. New
   `generic_sprites.json` names clips; make resolves `generic_sprites.h` from the
@@ -49,9 +90,11 @@ Latest uncommitted batch is implemented and Clean target-built:
   disassembly uses 32-bit instructions/helpers. No emulator launched; appearance,
   save/reload, conversations and measured FPS remain human-unaccepted.
 
-Next: keep the ready-scene gates, build the full coverage ledger, import Ranch
-gameplay horses (still absent), implement deferred dynamic same-room sprite
-discovery, and convert remaining non-boss actors. Existing core wide math,
+Next: finish combined target/staging checks, review the generated coverage
+ledger and close source conditions/resources, then import Ranch gameplay horses
+through bounded 32-bit actions/anchors and convert remaining non-boss actors.
+Same-room discovery is implemented; preloading complete reachable trigger sets
+and eliminating capacity-driven omissions remain open. Existing core wide math,
 scene vertex work and prop matrix reconstruction remain CPU migration work.
 The old N64-address bug and missing actor reservation are proven code defects;
 the user-reported full performance problem is not claimed resolved.
@@ -62,12 +105,12 @@ Latest human: sprite NPCs must do no skeleton/head work, fairy flyby still used
 models, and saving fails in Mednafen. Palette repair is human-accepted; overall
 CPU/VDP1 performance and the new sprite/save fixes still need runtime acceptance.
 Human requested commit/push before sprite/CPU changes: completed as **11312ec**
-on origin/oot-core. The subsequent Ranch/CPU changes below remain uncommitted.
+on origin/oot-core. The subsequent Ranch/CPU changes below are now in 9d384cd.
 Keep batched work and no intermediate human-test asks. Decomp retains the Saturn backend.
 
 ### Sprite-only NPC and Mednafen save batch (2026-10-03)
 
-Implemented, uncommitted:
+Historical implementation, now included in 9d384cd:
 
 - `npc_draw.c`: removed C NPC models/skins, joint matrices, head/torso tracking,
   Saria greeting model exception, and missing-sheet 3D fallback. Fairy flyby
@@ -83,7 +126,7 @@ Implemented, uncommitted:
   Morph delays and joint-driven root stagger are intentionally omitted under
   the human's approximation rule. Malon can use object/clip sheet lookup without
   reading a skeleton to obtain a limb count. Sprite mode also applies to Debug
-  source; only Clean has been target-built. The later current batch converts nightmare riders/owl; Ranch gameplay horses
+  source; only Clean has been target-built. The later baseline converts nightmare riders/owl; Ranch gameplay horses
   remain unimported.
 - Corrected sprite slot failure sentinel: the VDP1 allocator returns 32-bit
   UINT_MAX, but sprite instances store 16-bit slots. Compare the narrowed field
@@ -146,7 +189,7 @@ The matching `build/game-clean.elf` heading routine at 0x0601dd2c uses 32-bit
 range checks/shifts and one slAtan call. Its old six software-double calls are
 gone; __floatsidf/__muldf3/__fixdfsi are absent from this entire Clean image.
 Other legacy wide arithmetic remains, including main __divdi3 and core Fx.
-No emulator run or measured FPS gain. Changes remain uncommitted.
+No emulator run or measured FPS gain. This heading change is now in 9d384cd.
 
 Requested scope: review oot-core and its Saturn CPU/VDP1 backends, then propose
 refactors. The review below records the pre-implementation evidence; current
@@ -315,7 +358,8 @@ different measure. No FPS improvement or CPU/VDP1 dominance is established yet.
   so the old length-only allocation could overwrite the next heap header).
   Generic VRAM reserves only spawned instances, up to eight, instead of eight
   largest cels even for one Ingo. No forced spawns/story-flag bypasses; horses
-  still require the unimplemented actor import and Skin baker.
+  at that checkpoint still required actor import and a Skin baker. The current
+  continuation has offline Skin packages; runtime horse import remains open.
 - CPU: skipped unused C head/torso tracking for sprite NPCs; retained Saria's
   3D greeting. Moved room/Link PMOD normalization into mesh_load, removing the
   every-draw scan over those attribute tables. Native/transient callers keep
@@ -331,8 +375,9 @@ different measure. No FPS improvement or CPU/VDP1 dominance is established yet.
   build passes: log build/mednafen-ranch-cpu-build.log, .bss 0x06083fa0 (96 B margin).
   First attempt exceeded the boundary by 256 B; Os on cold clip/scroll loading
   recovered space without reducing heap or SGL budgets. Usual image rebuilt.
-  New Ranch/CPU runtime acceptance pending. Later same-room spawns of previously
-  absent objects still need dynamic sheet discovery.
+  Ranch/CPU runtime acceptance remains pending. Later same-room discovery was
+  absent at this checkpoint; the current continuation implements it, while
+  trigger preloading and complete resource budgets remain unfinished.
 
 ### Accepted palette/CD checkpoint
 
@@ -573,7 +618,7 @@ UNCOMMITTED (sprite NPCs, human loves them, Kronos PASS Kokiri; Lon Lon OOM fix 
 - tools/build_npc_sprites.py (new): bakes NPC00-15.SPR (C NPCs) and --generic-only G*.SPR +
   build/oot-core/generic_sprites.h (decomp NPCs). tools/build_npc_models.py build(full=True).
 - src/npc_sprite.c/.h (new, Clean only via makefile CLEAN_TEST): shared sprite draw.
-- src/npc_draw.c: C NPC sprites, draw range 1500. Current batch also converts Saria greeting and fairy flyby.
+- src/npc_draw.c: C NPC sprites, draw range 1500. The later 9d384cd baseline also converts Saria greeting and fairy flyby.
 - src/oot_core_host.c: decomp NPC sprites (Clean): sheets for spawned NPC objects only,
   85% heap guard, 8 slots; set_flags(OOT_CORE_FLAG_NPC_SPRITES).
 - Blob API v16 (oot_core_api.h/.cpp, oot_core_views.cpp, oot_core_draw.cpp): set_flags,
@@ -646,7 +691,7 @@ looks a little odd (option: bake a 2nd pitch row). Sprite draw range 1500 (was 1
   1.57 MB total; host loads only the current scene's objects into the cart heap.
 - src/npc_sprite.c: shared draw. One VDP1 slot per drawn instance; rewritten only on
   pose/direction change; a slot rebinds size+CLUT when its sheet changes.
-- npc_draw.c: every placement + shopkeeper as sprite; current batch removes the
+- npc_draw.c: every placement + shopkeeper as sprite; the later 9d384cd baseline removes the
   former Saria greeting 3D exception. Focus = fixed height. No head/torso turns.
 - Blob API v16: OOT_CORE_FLAG_NPC_SPRITES (set_flags): generic NPC Actor_Draw skipped
   (the 12.8 ms Lon Lon draw), NPC view carries object/limbs/anim/frame. Host: 8 slots
@@ -801,7 +846,7 @@ the mesh is marked unloaded (no motion) instead of a fatal error.
 
 **Build:** `./build.sh --clean --quick OOT_CORE=1` (WSL) passes; game-clean.cue rebuilt.
 **Ownership:** Claude edited only the files named above + config.example.ini/README.md.
-Other uncommitted work in the tree (build.sh, makefile, oot-core/*, npc_draw.c,
+Other work that was uncommitted at this historical checkpoint (build.sh, makefile, oot-core/*, npc_draw.c,
 oot_core_host.c, npc_sprite.*, build_npc_*.py, BUILD.md) is NOT Claude's this session:
 leave it alone. Nothing committed.
 

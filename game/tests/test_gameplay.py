@@ -10,6 +10,7 @@ import pathlib
 import subprocess
 import tempfile
 import unittest
+from test_save_file import SAVE_FILE_BYTES
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 GCC = pathlib.Path('C:/msys64/mingw64/bin/gcc.exe')
@@ -178,9 +179,9 @@ class Gameplay(unittest.TestCase):
             self.assertTrue(g.gameplay_chest_opened(i))
             if reward == 5: self.assertEqual(g.gp_item_ammo(2), expected)
             else: self.assertTrue(g.gp_dungeon_items() & expected)
-            block = ctypes.create_string_buffer(348)
+            block = ctypes.create_string_buffer(SAVE_FILE_BYTES)
             g.gp_save_pack(block); g.save_new_game()
-            self.assertEqual(g.gp_save_unpack(block,348), 0)
+            self.assertEqual(g.gp_save_unpack(block,SAVE_FILE_BYTES), 0)
             if reward != 5: self.assertTrue(g.gp_dungeon_items() & expected)
 
     @classmethod
@@ -336,6 +337,32 @@ class Gameplay(unittest.TestCase):
         self.lib.gp_wallet(98)
         self.step(x,y,z)
         self.assertEqual(self.lib.gp_rupees(),99)
+
+    def test_giant_wallet_survives_pickups_scene_reset_and_save_reload(self):
+        self.lib.save_test_max_gear()
+        self.lib.gameplay_reset()
+        self.lib.gp_saria_greeting_cancel()
+        self.assertEqual(self.lib.gp_rupees(), 500)
+        # The gameplay cache used to narrow 500 to uint8 and cap reloads at99.
+        self.lib.gp_wallet(300)
+        x,y,z,value,room = self.rupee(0)
+        self.lib.gp_room(room)
+        self.step(x,y,z)
+        self.assertEqual(self.lib.gp_rupees(), 300 + value)
+        self.lib.gameplay_reset()
+        self.lib.gp_saria_greeting_cancel()
+        self.assertEqual(self.lib.gp_rupees(), 300 + value)
+        self.lib.gp_wallet(499)
+        x,y,z,value,room = self.rupee(4)
+        self.lib.gp_room(room)
+        self.step(x,y,z)
+        self.assertEqual(self.lib.gp_rupees(), 500)
+        packet = (ctypes.c_ubyte * SAVE_FILE_BYTES)()
+        self.lib.gp_save_pack(packet)
+        self.lib.save_new_game()
+        self.assertEqual(self.lib.gp_save_unpack(packet, SAVE_FILE_BYTES), 0)
+        self.lib.gameplay_reset()
+        self.assertEqual(self.lib.gp_rupees(), 500)
 
     def spawn_grass_rupee(self):
         # Force source slot 0/1 by choosing a seed whose second xorshift hits
@@ -1535,7 +1562,6 @@ class Gameplay(unittest.TestCase):
         menu's SAVE does, wipe everything as returning to the title and loading
         a file would, then read the block back and re-enter the scene.
         """
-        SAVE_FILE_BYTES = 348  # v10: 8 + 338 + 2
         for index in range(2):
             x, y, z, _ = self.pickup(index)
             self.step(x, y, z)
@@ -2255,7 +2281,6 @@ class Gameplay(unittest.TestCase):
         self.assertEqual(self.lib.gp_shop_state(), 0)
 
     def test_shop_purchase_survives_save_and_reload(self):
-        SAVE_FILE_BYTES = 348  # v9
         self.shop(45)
         self.to_choice()
         self.shop_step(interact=1)

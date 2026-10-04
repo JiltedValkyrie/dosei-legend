@@ -230,6 +230,11 @@ int OotCore_NpcView(const OotCoreNpcView** out) {
         if (actor->update == NULL) {
             continue;
         }
+        /* Rows outlive actors and scenes. Native Kokiri views do not carry a
+         * generic sheet key; clear a previous Ranch occupant's metadata. */
+        v->object = 0;
+        v->limbs = 0;
+        v->anim = 0;
         if (actor->id == ACTOR_EN_KO) {
             EnKo* ko = (EnKo*)actor;
             info = &ko->interactInfo;

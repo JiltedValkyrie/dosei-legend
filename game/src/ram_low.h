@@ -39,7 +39,19 @@
 /* MUSICTRG.BIN is ~90 KB (2026-10-02); the carve shrank to grow the CD directory. */
 #define RAM_LOW_MUSICTRG_OFFSET     0x59500u
 #define RAM_LOW_MUSICTRG_BYTES      0x18000u
-/* Old 0x27800..0x2B800 directory carve is reserved, now unused. */
+/* Persistent save state uses the start of the retired directory carve.
+ * Explicitly initialized before boot scene setup; never assumes zeroed RAM. */
+#define RAM_LOW_SAVE_OFFSET         0x27800u
+#define RAM_LOW_SAVE_BYTES          0x1000u
+/* Separate synchronous save-write and summary decode workspaces. Neither
+ * buffer belongs on SGL's 1 KiB master stack; live save data stays separate. */
+#define RAM_LOW_SAVE_IO_OFFSET       0x28800u
+#define RAM_LOW_SAVE_IO_BYTES        0x1000u
+#define RAM_LOW_SAVE_SUMMARY_OFFSET  0x29800u
+#define RAM_LOW_SAVE_SUMMARY_BYTES   0x1000u
+/* oot-core draw-cache ownership; explicitly cleared once before core boot. */
+#define RAM_LOW_OOTDRAW_OFFSET       0x2A800u
+#define RAM_LOW_OOTDRAW_BYTES        0x1000u
 #define RAM_LOW_FS_DIRECTORY_OFFSET 0x49500u
 #define RAM_LOW_FS_DIRECTORY_BYTES  0x10000u
 #define RAM_LOW_GOMA_OFFSET         0x2B800u
@@ -94,6 +106,14 @@ typedef char ram_low_ordered[RAM_LOW_EQUIP_POLY_OFFSET + RAM_LOW_EQUIP_POLY_BYTE
                              RAM_LOW_ROOM_BOUNDS_OFFSET + RAM_LOW_ROOM_BOUNDS_BYTES
                              <= RAM_LOW_SPRITES_OFFSET &&
                              RAM_LOW_SPRITES_OFFSET + RAM_LOW_SPRITES_BYTES
+                             <= RAM_LOW_SAVE_OFFSET &&
+                             RAM_LOW_SAVE_OFFSET + RAM_LOW_SAVE_BYTES
+                             <= RAM_LOW_SAVE_IO_OFFSET &&
+                             RAM_LOW_SAVE_IO_OFFSET + RAM_LOW_SAVE_IO_BYTES
+                             <= RAM_LOW_SAVE_SUMMARY_OFFSET &&
+                             RAM_LOW_SAVE_SUMMARY_OFFSET + RAM_LOW_SAVE_SUMMARY_BYTES
+                             <= RAM_LOW_OOTDRAW_OFFSET &&
+                             RAM_LOW_OOTDRAW_OFFSET + RAM_LOW_OOTDRAW_BYTES
                              <= RAM_LOW_GOMA_OFFSET &&
                              RAM_LOW_GOMA_OFFSET + RAM_LOW_GOMA_BYTES
                              <= RAM_LOW_QUADS_OFFSET &&

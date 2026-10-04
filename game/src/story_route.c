@@ -37,18 +37,22 @@ void story_route_free(void)
 bool story_route_load(unsigned scene)
 {
     unsigned i;
+    story_route_free();
     if(scene==SAVE_SCENE_LOST_WOODS && !save_get_event_chk_inf(EVENTCHKINF_FAIRY_OCARINA_RECEIVED)) {
         static const char *const files[]={"NPC19.SPR","NPC20.SPR","NPC21.SPR","NPC22.SPR"};
-        for(i=0;i<4;++i)if(!(saria[i]=npc_sprite_load(files[i])))return false;
+        for(i=0;i<4;++i)if(!(saria[i]=npc_sprite_load(files[i])))goto failed;
     }
     if(scene==SAVE_SCENE_HYRULE_FIELD && !save_get_switch(scene,12)) {
         owl[0]=npc_sprite_load("OWLPERCH.SPR");
         owl[1]=npc_sprite_load("OWLFLY.SPR");
-        if(!owl[0] || !owl[1])return false;
+        if(!owl[0] || !owl[1])goto failed;
         owl_x=4284*256;owl_y=182*256;owl_z=7877*256;owl_yaw=0;owl_speed=owl_vy=0;
         owl_phase=1;
     }
     return true;
+failed:
+    story_route_free();
+    return false;
 }
 void story_route_arrive(unsigned spawn)
 {

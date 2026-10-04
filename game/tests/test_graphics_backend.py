@@ -6,8 +6,11 @@ import struct
 import subprocess
 import tempfile
 import unittest
+import sys
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0,str(ROOT/'tools'))
+from asset_names import room_asset, STORY_BANK_PANORAMA
 GCC = shutil.which('gcc') or 'C:/msys64/mingw64/bin/gcc.exe'
 
 
@@ -41,10 +44,10 @@ class GraphicsBackend(unittest.TestCase):
                             str(p / 'test.c'), '-o', str(exe)], check=True, env=env)
             subprocess.run([str(exe)], check=True, env=env)
 
-    @unittest.skipUnless((ROOT / 'build/cd/S4R0.MSH').exists(), 'baked house required')
+    @unittest.skipUnless((ROOT / 'build/cd' / room_asset(STORY_BANK_PANORAMA,0,'MSH')).exists(), 'baked house required')
     def test_house_fade_preserves_dark_detail(self):
-        mesh = (ROOT / 'build/cd/S4R0.MSH').read_bytes()
-        pixels = (ROOT / 'build/cd/S4R0.TEX').read_bytes()
+        mesh = (ROOT / 'build/cd' / room_asset(STORY_BANK_PANORAMA,0,'MSH')).read_bytes()
+        pixels = (ROOT / 'build/cd' / room_asset(STORY_BANK_PANORAMA,0,'TEX')).read_bytes()
         header = struct.unpack_from('>8I', mesh)
         tiles = 32 + header[1] * 12 + header[2] * 32
         old_black = blended_black = total = 0

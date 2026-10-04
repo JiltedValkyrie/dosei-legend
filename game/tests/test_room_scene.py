@@ -70,8 +70,15 @@ class GeneratedRoomsTests(unittest.TestCase):
         meta = json.loads((gen/'rooms_manifest.json').read_text())
         coverage = []
         for room in meta['rooms']:
+            if room.get('streamed'):
+                self.assertTrue((gen/asset_names.room_asset(room['scene'],room['id'],'STM')).is_file())
+                self.assertTrue((gen/'field_stream_report.json').is_file())
+                continue  # Field pieces/capacity have their own stream regression.
             stem = 'S%dR%d' % (room['scene'], room['id'])
-            detail = json.loads((gen/(stem.lower()+'/texture_manifest.json')).read_text())
+            detail_path = gen/(stem.lower()+'/texture_manifest.json')
+            if not room['budget']:  # generic banks are copied from the all-scenes bake
+                detail_path = ROOT/'build/all-scenes'/('%s_room_%d'%(room['prefix'],room['id']))/'texture_manifest.json'
+            detail = json.loads(detail_path.read_text())
             if room['prefix'] == 'spot04':
                 coverage.append({s for f in detail['faces'] for s in f['source']})
             blob = (gen/asset_names.room_asset(room['scene'],room['id'],'MSH')).read_bytes()
@@ -81,7 +88,7 @@ class GeneratedRoomsTests(unittest.TestCase):
             self.assertEqual(nb,(gen/asset_names.room_asset(room['scene'],room['id'],'TEX')).stat().st_size)
             self.assertLessEqual(np+517,2600)
             self.assertLessEqual(nv+309,2500)
-            self.assertLessEqual(sum(p['bytes'] for p in room['budget'])+512,detail['vram_limit'])
+            self.assertLessEqual(sum(p['bytes'] for p in detail['budget'])+512,detail['vram_limit'])
             for i in range(np):
                 indices = struct.unpack_from('>4H',blob,32+nv*12+i*20+12)
                 self.assertLess(max(indices),nv)

@@ -5,6 +5,7 @@
 #ifndef __KOKIRI_SGL_H__
 # define __KOKIRI_SGL_H__
 #include <stdint.h>
+#include "asset_names.h"
 
 /** @brief Upload every mesh's textures/CLUTs and bind them to the SGL tables.
  *  @return true on success; on failure jo_core_error() describes the reason. */
@@ -12,7 +13,7 @@ bool            kokiri_scene_load(void);
 
 /* The flat cutscene field's bank number. It is seen end to end, unlike a
 ** forest room, so the loader gives it a far larger draw distance. */
-#define KOKIRI_FIELD_SCENE 3
+#define KOKIRI_FIELD_SCENE STORY_BANK_FIELD
 
 /* Load one (scene, room) VDP1 geometry bank: S<scene>R<room>.MSH/.TEX. */
 bool            kokiri_scene_load_bank(unsigned int scene, unsigned int room);

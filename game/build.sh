@@ -189,7 +189,7 @@ if [ "${STREAM_ROOMS:-1}" = 1 ]; then
     # have banks; OoT interiors are prerendered backdrops and have none.
     # Hyrule Field streams from one KRM2 file; drop its retired KRM1 bank.
     rm -f "$here/build/cd/SAR0.MSH" "$here/build/cd/SAR0.TEX"
-    for bank in "$here"/build/generated/S*R*.MSH "$here"/build/generated/S*R*.TEX "$here"/build/generated/Z*R*.MSH "$here"/build/generated/Z*R*.TEX "$here"/build/generated/S*R*.STM "$here"/build/generated/S2R*.MAP "$here"/build/generated/NAVIPOOL.TEX; do
+    for bank in "$here"/build/generated/S*R*.MSH "$here"/build/generated/S*R*.TEX "$here"/build/generated/Z*R*.MSH "$here"/build/generated/Z*R*.TEX "$here"/build/generated/C*R*.MSH "$here"/build/generated/C*R*.TEX "$here"/build/generated/S*R*.STM "$here"/build/generated/C0R*.MAP "$here"/build/generated/NAVIPOOL.TEX; do
         [ -e "$bank" ] && cp "$bank" "$here/build/cd/"
     done
 else

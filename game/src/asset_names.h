@@ -6,6 +6,18 @@
 ** "S0R0.MSH" style 8.3 names reach 36 scenes x 36 rooms. Mirrors
 ** tools/asset_names.py. */
 #define ASSET_ID_LIMIT 36u
+/* Virtual story banks have their own C* filename namespace. Never assign
+ * one a gameplay scene/save ID: those are stable byte-sized table indices. */
+#define STORY_BANK_BASE 1024u
+#define STORY_BANK_NAVI 1024u
+#define STORY_BANK_FIELD 1025u
+#define STORY_BANK_PANORAMA 1026u
+#define STORY_BANK_EMERALD1 1027u
+#define STORY_BANK_EMPTY 1028u
+#define STORY_BANK_GERUDO 1029u
+#define STORY_BANK_MOUNTAIN 1030u
+#define STORY_BANK_EMERALD7 1031u
+#define STORY_BANK_EMERALD9 1032u
 
 static inline char asset_name_digit(unsigned int value)
 {
@@ -21,7 +33,10 @@ static inline bool asset_scene_name(char *out, unsigned int scene, int room, con
 {
     char *p = out;
     if (scene >= ASSET_SCENE_LIMIT || room >= (int)ASSET_ID_LIMIT) return false;
-    if (scene < ASSET_ID_LIMIT) { *p++ = 'S'; *p++ = asset_name_digit(scene); }
+    if (scene >= STORY_BANK_BASE && scene < STORY_BANK_BASE + ASSET_ID_LIMIT) {
+        *p++ = 'C'; *p++ = asset_name_digit(scene - STORY_BANK_BASE);
+    }
+    else if (scene < ASSET_ID_LIMIT) { *p++ = 'S'; *p++ = asset_name_digit(scene); }
     else {
         *p++ = 'Z';
         *p++ = asset_name_digit(scene / ASSET_ID_LIMIT);

@@ -112,7 +112,7 @@ def main():
 
     args.cd.mkdir(parents=True, exist_ok=True)
     args.out.mkdir(parents=True, exist_ok=True)
-    # z_vr_box.c: the five toggle-view houses. Bank 4 is the existing
+    # z_vr_box.c: the five toggle-view houses. The dedicated panorama bank
     # panorama renderer; room identifies the gameplay interior, not collision.
     from build_opening_banks import house_panorama
     from build_room_scene import pack_room
@@ -129,7 +129,7 @@ def main():
         if bank_bytes(len(pixels), len(tiles)) > 140000:
             raise ValueError('Interior panorama exceeds reserved texture budget')
         for ext, blob in [('MSH', mesh), ('TEX', pixels)]:
-            (args.cd / asset_names.room_asset(4, index, ext)).write_bytes(blob)
+            (args.cd / asset_names.room_asset(asset_names.STORY_BANK_PANORAMA, index, ext)).write_bytes(blob)
     staged = 0
     for index, entry in enumerate(SCENES):
         if entry['shape'] != 'image':
