@@ -1,7 +1,8 @@
 """Small resident OoT action bank: real samples, reduced single-layer SFX.
 
 Rupee pickup includes its source three-note synthetic layer plus sample bed.
-Other effects use one layer; full N64 sequencing/reverb remain absent. Child attack voice rotates through the four source EFFECT entries.
+Other effects use one layer; full N64 sequencing/reverb remain absent. Age-specific attack voices rotate through four source EFFECT entries.
+ADULTACT.PCM shares the child bank layout; long adult tails use bounded slots.
 Offline resampling only; signed PCM8 at 11025 Hz, voices/fairy at 5512.5 Hz.
 """
 import argparse
@@ -384,6 +385,61 @@ def rupee_melody(oot):
                      sha256=hashlib.sha256(pcm).hexdigest())
 
 
+
+def adult_action_bank(seq, font, source, bank, records):
+    """Same resident layout, actual adult recordings; bounded one-shots.
+
+    Keep the shared bank size and area budgets unchanged. Long adult tails are
+    bounded to the existing event slot, with a short fade, not pitch-shifted.
+    """
+    choices = {
+        **{'voice%d' % i: ('ARRAY_616D', i) for i in range(4)},
+        'jump': ('ARRAY_62E8', 0),
+        **{'climb%d' % i: ('ARRAY_61E6', i) for i in range(2)},
+        **{'hurt%d' % i: ('ARRAY_61FB', i) for i in range(3)},
+        'fall_l0': ('ARRAY_623E', 0), 'land_hurt0': ('ARRAY_631C', 0),
+    }
+    adult = bytearray(bank)
+    evidence = []
+    for record in records:
+        name = record['name']
+        if name not in choices and name != 'down':
+            continue
+        rate = record['rate']
+        if name == 'down':
+            label = 'LAYER_6263'
+            # Source transpose 1 selects effect bank 64; BF1/B1/C2 = 13/14/15.
+            parts = ((77, 87 / 96), (78, 97 / 96), (79, 71 / 96))
+        else:
+            label, take = choices[name]
+            block = seq.split('.array ' + label + '\n', 1)[1].split('\n.', 1)[0]
+            effect = int(re.findall(r'SF0_EFFECT_(\d+)', block)[take])
+            parts = ((effect, record['length'] / rate),)
+        pcm = b''
+        samples = []
+        for effect, seconds in parts:
+            sample = font.find('.//Effect[@Name="EFFECT_%d"]' % effect).attrib['Sample']
+            path = source / ('samples/SampleBank_0/Sample%03d.wav' % int(sample.rsplit('_', 1)[1]))
+            if not path.is_file():
+                path = path.with_suffix('.half.wav')
+            data, source_rate, unity = decode(path)
+            part = render_path(data, source_rate, unity, [(unity, unity, seconds, 1.)], rate)
+            pcm += part + bytes(max(0, round(seconds * rate) - len(part)))
+            samples.append(sample)
+        length = record['length']
+        clipped = max(0, len(pcm) - length)
+        pcm = bytearray(pcm[:length])
+        if clipped:
+            for i in range(min(32, len(pcm))):
+                value = pcm[-1-i]
+                pcm[-1-i] = round((value - 256 if value > 127 else value) * i / 32) & 255
+        pcm.extend(bytes(length - len(pcm)))
+        start = record['offset']
+        adult[start:start+length] = pcm
+        evidence.append(dict(name=name, source=label, samples=samples, offset=start,
+                             length=length, bounded_tail_bytes=clipped))
+    return adult, evidence
+
 def build(oot, source, out):
     seq = (oot / 'assets/audio/sequences/seq_0.prg.seq').read_text()
     font = ET.parse(source / 'soundfonts/Soundfont_0.xml')
@@ -615,6 +671,8 @@ def build(oot, source, out):
         raise ValueError('Action bank exceeds reserved sound RAM')
     out.mkdir(parents=True, exist_ok=True)
     (out/'ACTIONS.PCM').write_bytes(bank)
+    adult_bank, adult_records = adult_action_bank(seq, font, source, bank, records)
+    (out/'ADULTACT.PCM').write_bytes(adult_bank)
     for file_name, blob, _ in area_banks:
         if file_name:
             (out/file_name).write_bytes(blob)
@@ -659,7 +717,7 @@ def build(oot, source, out):
                                                      for n, (o, l) in t.items()])
                  for f, b, t in area_banks]
     (out/'action_audio.json').write_text(json.dumps(dict(base=BASE, bytes=len(bank), rate=RATE,
-        limitations=__doc__, samples=records, rupee_melody=melody,
+        limitations=__doc__, samples=records, adult_samples=adult_records, rupee_melody=melody,
         area_base=area_base, area_limit=area_limit, area_banks=area_json), indent=2)+'\n')
     worst = max(len(b) for _, b, _ in area_banks)
     print('Action audio: core %d samples, %d bytes; area slot %d bytes, largest bank %d, '

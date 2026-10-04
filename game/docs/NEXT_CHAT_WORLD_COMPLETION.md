@@ -1,5 +1,37 @@
 # Next chat: populated-room regressions, connected world and full actor coverage
 
+Latest follow-up (2026-10-04): shadows are now twelve-sided circular disks,
+not diamonds. Adult Link uses ADULTACT.PCM with original adult attack, jump,
+climb, hurt, fall, landing and death recordings (13 replacements). Scene-age
+changes and return from opening audio select the correct bank; a failed load
+stays silent and is retryable. Non-voice bytes, resident offsets, playback rates
+and sound-RAM/area budgets are unchanged. Adult tails are bounded to the shared
+event slots with a short fade; exact original sequencing remains approximate.
+The adult PCM was regenerated/staged through WSL. Final ELF boundary passes at
+0x06083FF0 (16 B spare); final usual Clean image is blocked by Kronos's open ISO.
+Host checks this follow-up: 22 action audio, 1 age-bank lifecycle, 1 shadow,
+6 sprite, 3 collision-index and 28 collision cases pass (61 total).
+
+NPC complaint remains active, not resolved: only six generic actor types are
+imported. Fixed a separate residency defect: eagerly loading unused animation
+sheets for one object could crowd out later characters. Keep one compatible
+sheet per object/skeleton; later poses use the existing approximate fallback.
+Regression covers extra same-object clips and later different-object spawns.
+Most town actor profiles, complete dialogue/rewards and the reported inability
+to talk still require work. No universal talk fix or full population claim.
+Asked human which maps/NPCs and era; no answer yet. Preserve source conditions.
+
+
+2026-10-04 follow-up: Song of Time now makes Child Link adult via a scene reload
+at the saved entrance (not a toggle back); failed loading restores Child age.
+Level Select explicitly labels its existing R toggle ADULT LINK: NO/YES.
+Shared ground-shadow helper covers sprite NPCs/animals/cutscene cast, Link and
+native fairies with one untextured dithered quad. No-floor/offscreen/high-flight
+cases skip submission. Legacy mesh enemy/boss shadows remain outside this pass.
+41 focused host checks pass; final image evidence is in DEMO_PLAN.md.
+Human runtime appearance/FPS checks pending; no emulator launch or new commit.
+
+
 2026-10-04, main carries the oot-core checkpoint. Preserve shared work. This handoff records
 partial implementation and remaining work, not world/runtime acceptance. Read AGENTS.md,
 CLAUDE.md, DOSEI-LEGEND-BIBLE.md, DEMO_PLAN.md, OOT_CORE_PIPELINE_PLAN.md and

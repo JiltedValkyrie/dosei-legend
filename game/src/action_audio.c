@@ -9,6 +9,7 @@
 #include "action_audio_data.h"
 #include "opening_audio_data.h"
 #include "gameplay.h"
+#include "save_state.h"
 #include "player_items.h"
 #include "karebaba.h"
 #include "game_over.h"
@@ -20,6 +21,7 @@ static bool opening_bank;
 static unsigned int area_bank;          /* SFX bank index, 0 = none */
 static bool area_ready;
 static unsigned int voice;
+static unsigned char action_age = 1;
 static volatile bool rupee_active;
 static volatile unsigned int rupee_clock, rupee_note;
 static unsigned int sound_refresh;
@@ -92,6 +94,10 @@ static bool load_area(void)
 bool action_audio_set_area(unsigned int bank)
 {
     if (bank >= SFX_BANK_COUNT) return false;
+    if (!opening_bank && (action_age != save_state.link_age || !ready)) {
+        if (!load_pcm(save_state.link_age ? "ACTIONS.PCM" : "ADULTACT.PCM", ACTION_PCM_BYTES)) return false;
+        action_age = save_state.link_age;
+    }
     if (bank == area_bank && (area_ready || opening_bank)) return true;
     area_bank = bank;
     return load_area();
@@ -103,10 +109,11 @@ bool action_audio_set_opening(bool opening)
     rupee_active = false;
     navi_flying = false;
     for (i = 24; i < 32; ++i) { SLOT(i,12) = 255; SLOT(i,0) = 0x1000; }
-    if (opening == opening_bank && ready) return true;
-    if (!load_pcm(opening ? "OPENING.PCM" : "ACTIONS.PCM",
+    if (opening == opening_bank && ready && (opening || action_age == save_state.link_age)) return true;
+    if (!load_pcm(opening ? "OPENING.PCM" : (save_state.link_age ? "ACTIONS.PCM" : "ADULTACT.PCM"),
                   opening ? OPENING_PCM_BYTES : ACTION_PCM_BYTES)) return false;
     opening_bank = opening;
+    if (!opening) action_age = save_state.link_age;
     return opening || load_area();
 }
 

@@ -1,5 +1,57 @@
 # Current game plan (historical filename)
 
+Latest follow-up (2026-10-04): shadows are now twelve-sided circular disks,
+not diamonds. Adult Link uses ADULTACT.PCM with original adult attack, jump,
+climb, hurt, fall, landing and death recordings (13 replacements). Scene-age
+changes and return from opening audio select the correct bank; a failed load
+stays silent and is retryable. Non-voice bytes, resident offsets, playback rates
+and sound-RAM/area budgets are unchanged. Adult tails are bounded to the shared
+event slots with a short fade; exact original sequencing remains approximate.
+The adult PCM was regenerated/staged through WSL. Final ELF boundary passes at
+0x06083FF0 (16 B spare); final usual Clean image is blocked by Kronos's open ISO.
+Host checks this follow-up: 22 action audio, 1 age-bank lifecycle, 1 shadow,
+6 sprite, 3 collision-index and 28 collision cases pass (61 total).
+
+NPC complaint remains active, not resolved: only six generic actor types are
+imported. Fixed a separate residency defect: eagerly loading unused animation
+sheets for one object could crowd out later characters. Keep one compatible
+sheet per object/skeleton; later poses use the existing approximate fallback.
+Regression covers extra same-object clips and later different-object spawns.
+Most town actor profiles, complete dialogue/rewards and the reported inability
+to talk still require work. No universal talk fix or full population claim.
+Asked human which maps/NPCs and era; no answer yet. Preserve source conditions.
+
+
+Character ground shadows (2026-10-04): shared sprite draw adds one black VDP1
+mesh-dither circular disk for visible NPCs, animals and sprite cutscene characters.
+Link and native fairies use the same helper. Static geometry persists through
+SGL submission; matrices place each instance on the indexed collision floor.
+Offscreen/missing-floor/over-512-unit-high shadows are skipped; radius is capped
+at 64 and shrinks with height. No heap, texture tiles, skeletons or new wide math.
+Budget addition is twelve transformed vertices and five polygon/commands per visible
+character, plus one indexed floor query; scenery and actors still share existing
+SGL rejection accounting and limits. Flat circular disks approximate slopes;
+legacy mesh enemies/boss shadows are not converted by this NPC/character pass.
+The prior diamond-shadow Clean image passed before this correction. Current
+round-shadow/adult-audio ELF links with .bss end 0x06083FF0 (16 B spare).
+Cold collision loading/index construction and fog setup use size optimization;
+heap and actor limits unchanged. Final ISO refresh is blocked by running Kronos
+holding game-clean.iso; do not overwrite a mounted image. Logs:
+build/round-shadow-link.log and build/round-shadow-boundary.log.
+Human visual/FPS acceptance remains pending; no emulator launched.
+
+
+Song of Time shortcut (human request, 2026-10-04): completing the known song as
+Child Link now changes him to Adult Link and reloads the current scene at its
+saved entrance, refreshing actors, model, camera and music. Already-adult play
+leaves age unchanged. Failed loading restores child age and the source scene;
+equipment changes only after successful loading. This requested shortcut is
+separate from unfinished source Temple sword time travel. Level Select explicitly
+shows **ADULT LINK: NO/YES**, default No; R toggles before confirmed entry.
+Host Ocarina/Level Select batches pass 15 tests. WSL Clean rebuild passes;
+.bss ends 0x06083FE0 (32 bytes below SGL). Human runtime checks pending.
+
+
 Updated 2026-10-04. Active branch: main (oot-core decomp pipeline). Goal: the full OoT decomp on Saturn,
 using imported original game logic with Saturn graphics/audio/file backends.
 This is not a new standalone demo or a rewrite of OoT gameplay.

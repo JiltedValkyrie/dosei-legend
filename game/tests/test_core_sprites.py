@@ -201,7 +201,7 @@ int main(void) {
 #include <string.h>
 ''' + '#include "' + API + '"\n' + r'''
 #define CORE_SPRITES 1
-#define CORE_SPRITE_ROWS 2
+#define CORE_SPRITE_ROWS 3
 #define CORE_SPRITE_SLOTS 8
 #define CORE_SPRITE_HEAP_PERCENT 85
 #define CORE_MESHES_MAX 1
@@ -212,9 +212,9 @@ typedef int actor_mesh_t;
 typedef struct { unsigned size; } jo_file;
 typedef struct { const unsigned char *sheet; unsigned short slot,colno,shown; } npc_sprite_inst_t;
 static const struct { unsigned short object; unsigned char limbs; unsigned anim,file; }
-    core_sprite_rows[2]={{0xc0,19,0x1234,4},{0xe0,18,0x4567,5}};
-static unsigned char *core_sprite[2];
-static unsigned char core_sprite_tried[2];
+    core_sprite_rows[3]={{0xc0,19,0x1234,4},{0xe0,18,0x4567,5},{0xc0,19,0x9999,6}};
+static unsigned char *core_sprite[3];
+static unsigned char core_sprite_tried[3];
 static unsigned core_sprite_reserved;
 static struct { unsigned actors,missing,fallback,slots; } sprite_stats;
 static npc_sprite_inst_t core_sprite_inst[8];
@@ -246,7 +246,7 @@ static unsigned jo_memory_usage_percent(void) { return 50; }
 static void *jo_fs_read_file_ptr(const char *s,void *p,int *n) {
     /* Jo's documented NUL write must fit; old length-only allocation fails. */
     assert(alloc_bytes>=65);
-    assert(!strcmp(s,"G0C004.SPR") || !strcmp(s,"G0E005.SPR"));
+    assert(!strcmp(s,"G0C004.SPR") || !strcmp(s,"G0E005.SPR") || !strcmp(s,"G0C006.SPR"));
     memset(p,0,65); ((unsigned char*)p)[5]=48; ((unsigned char*)p)[7]=56;
     *n=64; ++reads; return fail_read ? 0 : p;
 }
@@ -279,7 +279,7 @@ int main(void) {
     views[1]=views[0]; views[0].z=-100; count=2;
     sprites_draw(); assert(draws==4); /* hidden actor cannot consume visible actor's slot */
     views[0].z=0; count=1;
-    assert(!sprites_refresh() && sprite_stats.fallback==1);
+    assert(!sprites_refresh() && sprite_stats.fallback==1 && !core_sprite[2]);
     /* Later same-room spawns discover a new object without freeing old sheets. */
     unsigned char *original=core_sprite[0];
     views[1]=views[0]; views[1].object=0xe0; views[1].limbs=19;
@@ -294,8 +294,8 @@ int main(void) {
     count=0; load_meshes(); assert(!core_sprite[0] && !live && reads==2);
     /* Each unavailable file is attempted once per room; next room retries. */
     count=1; fail_file=1; unsigned before=opens;
-    assert(!sprites_refresh() && sprite_stats.missing==1 && opens==before+1);
-    assert(!sprites_refresh() && opens==before+1);
+    assert(!sprites_refresh() && sprite_stats.missing==1 && opens==before+2);
+    assert(!sprites_refresh() && opens==before+2);
     sprites_reset(); fail_file=0; fail_alloc=1;
     assert(!sprites_refresh() && !live && sprite_stats.missing==1);
     sprites_reset(); fail_alloc=0; fail_read=1;

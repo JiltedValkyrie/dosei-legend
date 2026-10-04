@@ -90,7 +90,7 @@ static void         cutscene_fade(void);
 ** transient work-RAM copy; only the cart copy stays. */
 typedef char dialogue_text_fits[DIALOGUE_TEXT_BYTES <= RAM_CART_DIALOGUE_BYTES ? 1 : -1];
 typedef char cutscene_text_fits[CUTSCENE_TEXT_BYTES <= RAM_CART_CUTTEXT_BYTES ? 1 : -1];
-static bool     table_file_load(const char *name, void *destination, unsigned int bytes,
+static bool __attribute__((optimize("Os"))) table_file_load(const char *name, void *destination, unsigned int bytes,
                                bool (*bind)(const uint8_t *, uint32_t))
 {
     uint8_t    *carve = (uint8_t *)destination;
@@ -124,7 +124,7 @@ static bool text_file_load(const char *name, unsigned int offset, unsigned int b
     return table_file_load(name, ram_cart_fixed(offset, bytes), bytes, bind);
 }
 typedef char minimap_file_fits[MINIMAP_FILE_BYTES <= RAM_CART_MINIMAP_BYTES ? 1 : -1];
-static bool     dialogue_text_load(void)
+static bool __attribute__((optimize("Os"))) dialogue_text_load(void)
 {
     return (text_file_load("DIALOG.TXT", RAM_CART_DIALOGUE_OFFSET,
                            RAM_CART_DIALOGUE_BYTES, dialogue_text_bind) &&
@@ -1419,8 +1419,8 @@ static void __attribute__((optimize("Os"))) file_select_screen(void)
         jo_printf(4,FS_ROW+4,"ROOM: %u / %u",level_select.room,scene_entries[level_select.scene].rooms-1);
         jo_printf(4,FS_ROW+6,"UP/DOWN: AREA  LEFT/RIGHT: ROOM");
         jo_printf(4,FS_ROW+8,"ALL ITEMS + MAX STATS: %-3s",level_select.max_gear?"YES":"NO");
-        jo_printf(4,FS_ROW+9,"ERA: %-5s",level_select.adult?"ADULT":"CHILD");
-        jo_printf(4,FS_ROW+10,"L: ITEMS  R: ERA  A: ENTER B: BACK");
+        jo_printf(4,FS_ROW+9,"ADULT LINK: %-3s",level_select.adult?"YES":"NO");
+        jo_printf(4,FS_ROW+10,"L: ITEMS R: ADULT A: ENTER B: BACK");
         jo_printf(4,FS_ROW+11,"TEST RUN - NO SAVE SLOT");
         if(level_select.failed)jo_printf(4,FS_ROW+12,"ROOM ENTRY UNAVAILABLE");
         was_open=true;return;

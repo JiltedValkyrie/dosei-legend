@@ -318,6 +318,13 @@ static bool sprites_refresh(void)
         int length = 0;
         jo_file probe;
         if (core_sprite[r] || core_sprite_tried[r]) continue;
+        /* One compatible sheet per object/skeleton, not every animation in
+         * its library. Unused Ingo clips must not crowd later NPCs out. */
+        unsigned int resident;
+        for(resident=0;resident<CORE_SPRITE_ROWS;++resident)
+            if(core_sprite[resident] && core_sprite_rows[resident].object==core_sprite_rows[r].object &&
+               core_sprite_rows[resident].limbs==core_sprite_rows[r].limbs)break;
+        if(resident<CORE_SPRITE_ROWS)continue;
         for (k = 0; k < n; ++k)
             if (v[k].object == core_sprite_rows[r].object &&
                 (pass || core_sprite_rows[r].anim == (v[k].anim & 0xFFFFFFu))) break;

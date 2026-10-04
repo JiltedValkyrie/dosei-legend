@@ -160,6 +160,8 @@ void kokiri_cutscene_tiles_reset(void);
 unsigned int kokiri_actor_bank_generation(void);
 void kokiri_actor_tiles_reset(void);
 void kokiri_hit_filter(unsigned level);
+/* Dithered ground contact marker: no textures or character meshes. */
+void kokiri_actor_shadow(int x, int y, int z, unsigned radius);
 #endif /* !__KOKIRI_SGL_H__ */
 
 /*

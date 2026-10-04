@@ -203,6 +203,7 @@ for rider in GANON ZELDA IMPA HZELDA HGANON OWLPERCH OWLFLY; do
 done
 rm -f "$here"/build/cd/NPC*.BIN "$here"/build/cd/NPC*.ANM "$here"/build/cd/NPC*.TRK "$here"/build/cd/NPC*.SKN
 cp "$here/build/generated/ACTIONS.PCM" "$here/build/cd/ACTIONS.PCM"
+cp "$here/build/generated/ADULTACT.PCM" "$here/build/cd/ADULTACT.PCM"
 cp "$here/build/generated/OPENING.PCM" "$here/build/cd/OPENING.PCM"
 cp "$here"/build/generated/SFX*.PCM "$here/build/cd/"
 cp "$here/../shared/assets/audio/title/TITLE_PCM.RAW" "$here/build/cd/TITLE.PCM"

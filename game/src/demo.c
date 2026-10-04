@@ -861,10 +861,27 @@ static void __attribute__((optimize("Os"))) scene_music(void)
 /* z_parameter's Sun's Song day/night result, with a full layer reload.
  * Saturn skips accelerated sky time; retain Link's position and camera.
  * Dungeon freezing and interiors' source room-type rules remain pending. */
-static bool finish_ocarina_song(void)
+static bool __attribute__((optimize("Os"))) finish_ocarina_song(void)
 {
     unsigned song=oot_core_ocarina_song();
     unsigned scene,spawn,old_time;
+    /* Requested shortcut: Song of Time makes Child Link adult. Reload at the
+     * saved entrance so collision, actor layer and the new model agree. */
+    if(song==11 && save_state.link_age) {
+        scene=scene_flow_scene();spawn=save_state.entrance;
+        save_state.link_age=0;
+        game_mode_set(GAME_MODE_LOADING);
+        if(!scene_flow_load(scene,spawn)) {
+            save_state.link_age=1;
+            if(!scene_flow_load(scene,spawn))jo_core_error("Time song scene recovery load failed");
+        } else save_set_link_age(0);
+        place_at_spawn(scene,spawn);
+        gameplay_reset();
+        if(scene_flow_is_interior())interior_camera();
+        scene_music();
+        game_mode_set(GAME_MODE_PLAY);
+        return true;
+    }
     if(song!=10 || !oot_core_ocarina_sun_allowed())return false;
     scene=scene_flow_scene();spawn=save_state.entrance;old_time=save_state.day_time;
     save_state.day_time=old_time>=0x4555 && old_time<=0xC001 ? 0xC002 : 0x4555;

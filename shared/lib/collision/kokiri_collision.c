@@ -81,7 +81,7 @@ void kokiri_collision_init(const collision_triangle_t *data, uint32_t count)
         bg_scene_set(&mesh);
 }
 
-void bg_scene_set(const bg_mesh_t *mesh)
+void __attribute__((optimize("Os"))) bg_scene_set(const bg_mesh_t *mesh)
 {
         scene_mesh = *mesh;
         water_override_mask = 0;
@@ -103,7 +103,7 @@ static uint32_t grid_cell(int32_t value, int32_t origin, int32_t step)
         return (uint32_t)cell;
 }
 
-bool kokiri_collision_index(void *buffer, uint32_t bytes)
+bool __attribute__((optimize("Os"))) kokiri_collision_index(void *buffer, uint32_t bytes)
 {
         const uint32_t cells = GRID_DIM * GRID_DIM;
         int32_t min_x, max_x, min_z, max_z;
@@ -1139,7 +1139,7 @@ typedef struct {
         uint32_t o_tris, o_info, o_surf, o_water, o_cam, o_vec, file_end;
 } kbg2_layout_t;
 
-static bool kbg2_layout(const uint8_t *file, uint32_t length, kbg2_layout_t *l)
+static bool __attribute__((optimize("Os"))) kbg2_layout(const uint8_t *file, uint32_t length, kbg2_layout_t *l)
 {
         if (!file || length < 16 || file[0] != 'K' || file[1] != 'B' ||
             file[2] != 'G' || file[3] != '2') return false;
@@ -1177,7 +1177,7 @@ uint32_t bg_mesh_bytes(const uint8_t *file, uint32_t length)
         return native_bytes(&l, &a, &b, &c, &d, &e);
 }
 
-bool bg_mesh_decode(const uint8_t *file, uint32_t length, void *dest,
+bool __attribute__((optimize("Os"))) bg_mesh_decode(const uint8_t *file, uint32_t length, void *dest,
         uint32_t dest_bytes, bg_mesh_t *mesh)
 {
         kbg2_layout_t l;
@@ -1278,7 +1278,7 @@ static void dyna_snapshot(dyna_slot_t *d)
         d->prev_scale_q16 = d->scale_q16;
 }
 
-void bg_dyna_init(void *buffer, uint32_t bytes)
+void __attribute__((optimize("Os"))) bg_dyna_init(void *buffer, uint32_t bytes)
 {
         dyna_world = (collision_triangle_t *)buffer;
         dyna_capacity = buffer ? bytes / sizeof(collision_triangle_t) : 0;

@@ -1,5 +1,24 @@
 # All-scene NPC and enemy sprite rollout
 
+Character ground shadows (2026-10-04): shared sprite draw adds one black VDP1
+mesh-dither circular disk for visible NPCs, animals and sprite cutscene characters.
+Link and native fairies use the same helper. Static geometry persists through
+SGL submission; matrices place each instance on the indexed collision floor.
+Offscreen/missing-floor/over-512-unit-high shadows are skipped; radius is capped
+at 64 and shrinks with height. No heap, texture tiles, skeletons or new wide math.
+Budget addition is twelve transformed vertices and five polygon/commands per visible
+character, plus one indexed floor query; scenery and actors still share existing
+SGL rejection accounting and limits. Flat circular disks approximate slopes;
+legacy mesh enemies/boss shadows are not converted by this NPC/character pass.
+The prior diamond-shadow Clean image passed before this correction. Current
+round-shadow/adult-audio ELF links with .bss end 0x06083FF0 (16 B spare).
+Cold collision loading/index construction and fog setup use size optimization;
+heap and actor limits unchanged. Final ISO refresh is blocked by running Kronos
+holding game-clean.iso; do not overwrite a mounted image. Logs:
+build/round-shadow-link.log and build/round-shadow-boundary.log.
+Human visual/FPS acceptance remains pending; no emulator launched.
+
+
 Updated 2026-10-04. Active branch: main (oot-core pipeline). Owner: current implementing agent;
 human owns emulator/hardware acceptance. This plan covers the entire game,
 including scenes and actors not yet imported. It is not a completion claim.

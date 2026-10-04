@@ -145,7 +145,7 @@ const scene_spawn_t *scene_flow_spawn(unsigned int scene, unsigned int spawn)
 }
 
 /* Read one scene's collision file into the shared buffer. */
-static bool     collision_load(unsigned int scene)
+static bool __attribute__((optimize("Os"))) collision_load(unsigned int scene)
 {
     char        name[12];
     void       *data;
@@ -197,7 +197,7 @@ static bool     collision_load(unsigned int scene)
     return (true);
 }
 
-bool            scene_flow_load(unsigned int scene, unsigned int spawn)
+bool __attribute__((optimize("Os"))) scene_flow_load(unsigned int scene, unsigned int spawn)
 {
     const scene_entry_t *entry;
 

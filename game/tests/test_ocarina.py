@@ -157,7 +157,7 @@ int main(void) {
         self.run_c(r'''
 #include <assert.h>
 #include <stdbool.h>
-static struct { unsigned day_time,entrance; } save_state;
+static struct { unsigned day_time,entrance,link_age; } save_state;
 static unsigned song,allowed=1,reloads,resets,failures,mode;
 #define GAME_MODE_LOADING 1
 #define GAME_MODE_PLAY 2
@@ -167,8 +167,13 @@ static unsigned scene_flow_scene(void) { return 4; }
 static void game_mode_set(unsigned m) { mode=m; }
 static bool scene_flow_load(unsigned scene,unsigned spawn) { ++reloads;assert(scene==4 && spawn==2);if(failures){--failures;return false;}return true; }
 static void gameplay_reset(void) { ++resets; }
+static void save_set_link_age(unsigned age) { save_state.link_age=age; }
+static void place_at_spawn(unsigned scene,unsigned spawn) { assert(scene==4 && spawn==2); }
+static bool scene_flow_is_interior(void) { return false; }
+static void interior_camera(void) { assert(0); }
+static void scene_music(void) {}
 static void jo_core_error(const char *message) { assert(!message); }
-''' + graphics.function(ROOT/'src/demo.c','static bool finish_ocarina_song(') + r'''
+''' + graphics.function(ROOT/'src/demo.c','static bool __attribute__((optimize("Os"))) finish_ocarina_song(') + r'''
 int main(void) {
     save_state.entrance=2;save_state.day_time=0x8000;song=10;
     assert(finish_ocarina_song() && save_state.day_time==0xc002 && reloads==1 && resets==1 && mode==2);
@@ -176,6 +181,11 @@ int main(void) {
     song=10;allowed=0;assert(!finish_ocarina_song() && reloads==2);
     allowed=1;song=10;failures=1;assert(finish_ocarina_song() && save_state.day_time==0x4555 && reloads==4);
     song=11;assert(!finish_ocarina_song() && reloads==4);
+    save_state.link_age=1;song=11;
+    assert(finish_ocarina_song() && !save_state.link_age && reloads==5);
+    song=11;assert(!finish_ocarina_song() && reloads==5);
+    save_state.link_age=1;song=11;failures=1;
+    assert(finish_ocarina_song() && save_state.link_age==1 && reloads==7);
     return 0;
 }
 ''')

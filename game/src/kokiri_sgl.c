@@ -24,6 +24,7 @@
 #include "frame_timer.h"
 
 #include "kokiri_scene.h"
+#include "kokiri_collision.h"
 #include "scene_table.h"
 #include "room_portal.h"
 #include "link_scene.h"
@@ -152,7 +153,7 @@ static unsigned int prepared_visible;
 #define fog_channel ((unsigned char (*)[17][32])RAM_LOW(RAM_LOW_FOG_CHANNEL_OFFSET))
 typedef char fog_channel_fits[2*17*32 <= RAM_LOW_FOG_CHANNEL_BYTES ? 1 : -1];
 
-static void forest_fog_init(void)
+static void __attribute__((optimize("Os"))) forest_fog_init(void)
 {
     unsigned int amount, channel;
     for (amount = 0; amount <= 16; ++amount)
@@ -427,7 +428,7 @@ static bool __attribute__((optimize("Os"))) sprite_load_rect(const char *file, u
 
 /* A resident 8-bit (colour bank) texture from memory: the minimap markers.
 ** Same budget and bookkeeping as sprite_load_rect, so relocation moves it. */
-bool                kokiri_resident_sprite_8bit(const unsigned char *pixels,
+bool __attribute__((optimize("Os"))) kokiri_resident_sprite_8bit(const unsigned char *pixels,
                                                 unsigned int width, unsigned int height,
                                                 unsigned int *slot)
 {
@@ -605,7 +606,7 @@ static bool room_read(jo_file *file, void *target, unsigned int bytes,
 ** ROOM_SHAPE_TYPE_NORMAL scene has banks at all -- OoT's interiors are
 ** prerendered backdrops with no geometry, so they have none. */
 static bool __attribute__((optimize("Os"))) room_load_bank(unsigned int scene, unsigned int room);
-static void relocate_resident(unsigned int next_base);
+static void __attribute__((optimize("Os"))) relocate_resident(unsigned int next_base);
 static void field_stream_free(void);
 
 /* True while a prerendered interior's backdrop is on screen. The geometry
@@ -694,7 +695,7 @@ static void invalidate_equipped(void);
 /* The nightmare needs more VDP1 commands than a forest frame. Move the
  * resident textures above that command region before loading its actor bank.
  * Gameplay restores its own compact layout, keeping every forest tile. */
-static void relocate_resident(unsigned int next_base)
+static void __attribute__((optimize("Os"))) relocate_resident(unsigned int next_base)
 {
     volatile unsigned short *vram = (volatile unsigned short *)JO_VDP1_VRAM;
     int delta = (int)next_base - (int)texture_base;
@@ -1844,8 +1845,40 @@ prepared:
     kokiri_pdata.nbPolygon = forest_polygon_count;
 }
 
+/* A twelve-sided circular contact disk per visible character. SGL queues pointers,
+ * so all instances share immutable geometry and use independent matrices.
+ * Ground lookup uses the existing spatial index, not a whole-scene scan. */
+void __attribute__((optimize("Os"))) kokiri_actor_shadow(int x, int y, int z, unsigned radius)
+{
+    static POINT points[12]={{0,0,-65536},{32768,0,-56756},{56756,0,-32768},{65536,0,0},{56756,0,32768},{32768,0,56756},{0,0,65536},{-32768,0,56756},{-56756,0,32768},{-65536,0,0},{-56756,0,-32768},{-32768,0,-56756}};
+    static POLYGON faces[5]={{{0,-65536,0},{0,1,2,3}},{{0,-65536,0},{0,3,4,5}},{{0,-65536,0},{0,5,6,7}},{{0,-65536,0},{0,7,8,9}},{{0,-65536,0},{0,9,10,11}}};
+#define SHADOW_ATTR ATTRIBUTE(Dual_Plane,SORT_CEN,0,C_RGB(0,0,0), \
+        No_Gouraud,MESHon | ECdis | SPdis,sprPolygon,UseNearClip)
+    static ATTR attrs[5]={SHADOW_ATTR,SHADOW_ATTR,SHADOW_ATTR,SHADOW_ATTR,SHADOW_ATTR};
+#undef SHADOW_ATTR
+    static PDATA data={points,12,faces,5,attrs};
+    bg_vec_t origin;
+    int floor,height;
+    if(!radius || !npc_sprite_in_view(x,y,z,radius))return;
+    origin=(bg_vec_t){x,y+8,z};
+    floor=bg_floor(&origin,0,0);
+    if(floor==BG_Y_MIN || floor>y+8)return;
+    height=y-floor;
+    if(height>512)return;
+    if(height<0)height=0;
+    if(radius>64)radius=64;
+    radius=radius*(1024-(unsigned)height)/1024;
+    if(!radius)return;
+    slPushMatrix();
+    slTranslate(x*65536,-(floor+2)*65536,z*65536);
+    slScale(radius*65536,65536,radius*65536);
+    submit(&data,8u);
+    slPopMatrix();
+}
+
 void                kokiri_link_draw(int x, int y, int z, int yaw)
 {
+    kokiri_actor_shadow(x,y,z,18);
 #ifdef DOSEI_ACTOR_ORDER_PROBE
     actor_order_prepare(x, y, z, yaw);
 #endif
@@ -1988,6 +2021,7 @@ static void         fairy_draw(int x, int y, int z, unsigned int tick,
                                unsigned int phase, const unsigned int *glow,
                                unsigned int colour)
 {
+    kokiri_actor_shadow(x,y,z,6);
     FIXED pos[5];
     SPR_ATTR attr = SPR_ATTRIBUTE(0, No_Palet, No_Gouraud, ECdis,
                                   sprNoflip | FUNC_Sprite);

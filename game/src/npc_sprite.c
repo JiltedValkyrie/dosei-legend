@@ -90,6 +90,7 @@ void npc_sprite_draw(const unsigned char *spr, npc_sprite_inst_t *inst, unsigned
     if (inst->slot == NPC_SPRITE_SLOT_NONE ||
         !npc_sprite_visible(spr, x, y, z)) return;
     unsigned int bytes = U16(spr, 4) * U16(spr, 6) / 2;
+    kokiri_actor_shadow(x,y,z,U16(spr,4)*U16(spr,0x10)/1024+4);
     /* phi: camera seen from the actor's frame, 0 = in front (bake view()).
     ** Sign confirmed in Kronos 2026-10-03. */
     uint16_t phi = (uint16_t)(yaw - gameplay_facing(demo_camera.x - x, demo_camera.z - z));

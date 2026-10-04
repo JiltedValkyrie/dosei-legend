@@ -14,6 +14,23 @@ GCC = Path('C:/msys64/mingw64/bin/gcc.exe')
 
 
 class AudioBank(unittest.TestCase):
+    def test_adult_bank_replaces_only_link_recordings_with_same_ram_layout(self):
+        manifest = json.loads((GEN/'action_audio.json').read_text())
+        child = (GEN/'ACTIONS.PCM').read_bytes()
+        adult = (GEN/'ADULTACT.PCM').read_bytes()
+        self.assertEqual(len(adult), len(child))
+        replaced = {r['name']: r for r in manifest['adult_samples']}
+        self.assertEqual(len(replaced), 13)
+        for record in manifest['samples']:
+            start, length = record['offset'], record['length']
+            self.assertEqual(adult[start+length:start+length+4], bytes(4))
+            if record['name'] in replaced:
+                self.assertNotEqual(adult[start:start+length], child[start:start+length])
+            else:
+                self.assertEqual(adult[start:start+length], child[start:start+length])
+        self.assertEqual(replaced['voice0']['source'], 'ARRAY_616D')
+        self.assertEqual(replaced['down']['source'], 'LAYER_6263')
+
     def test_navi_uses_effect_bank_transpose_instead_of_link_voices(self):
         samples = {s['name']: s for s in json.loads((GEN/'action_audio.json').read_text())['samples']}
         # seqplayer.c: (layer transposition << 6) + semitone. CHAN_6520
@@ -95,6 +112,7 @@ typedef struct { unsigned int size; } jo_file;
 static unsigned short regs[32][16];
 #define SLOT(s,o) regs[s][(o)/2]
 static bool busy;
+static struct { unsigned char link_age; } save_state = {1};
 gameplay_t gameplay;   /* wall_material for the wall-hit pitch */
 #define JO_VDP2_TVSTAT 0
 static bool jo_core_add_vblank_callback(void (*cb)(void)) { return true; }
