@@ -1,3 +1,4 @@
+#pragma GCC optimize("Os") /* actor/state logic, not draw loops: size over speed (work RAM) */
 /* Boss_Goma combat state machine, source 20 Hz timings. Geometry-derived
  * spheres come from GOHMAPOS.BIN; world rotation matches the rendered pose.
  * Boss rewards are owned by the separate heart/warp progression flow. */

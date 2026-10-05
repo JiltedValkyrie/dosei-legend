@@ -1,3 +1,4 @@
+#pragma GCC optimize("Os") /* cold menu/save/script code: size over speed (work RAM) */
 /*
 ** Backup-RAM access for the three save slots. Split rationale and the reason
 ** internal memory is used rather than the cartridge are in save_device.h.

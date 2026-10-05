@@ -1,3 +1,4 @@
+#pragma GCC optimize("Os") /* small logic: size over speed (work RAM) */
 /* z_player.c: Handler_5, 8084B78C/8084B898/8084B9E4. Source roots are visual;
  * a dynamic block's motion carries the hands, never duplicate root movement. */
 #include "player_push.h"

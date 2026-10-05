@@ -1,3 +1,4 @@
+#pragma GCC optimize("Os") /* actor/state logic, not draw loops: size over speed (work RAM) */
 /* Z-target attention: see attention.h. z_actor.c Attention_* in integers. */
 #include "attention.h"
 #include "gameplay.h"           /* gameplay_facing */

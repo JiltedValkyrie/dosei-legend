@@ -1,3 +1,4 @@
+#pragma GCC optimize("Os") /* state logic, not draw loops: size over speed (work RAM) */
 #include "push_block.h"
 #include "kokiri_camera.h"
 

@@ -423,22 +423,15 @@ static void     pose_skeleton(const int16_t *root, const int16_t *rotations)
 ** so a posed frame sits exactly where the baked bind pose did. Y is negated
 ** last, matching the baked POINT convention.
 */
-static void     skin_vertices(void)
+/* Shared by Link and his adult gear meshes (kokiri_sgl.c): pose `count`
+** limb-local vertices by their owning limb into SGL POINTs. */
+void link_anim_skin(const uint8_t *owners, const link_vec3_t *locals, unsigned int count, POINT *out)
 {
     unsigned int    i;
 
-    unsigned int    count = skin_first_person ? LINK_SKIN_VERTICES : LINK_BASE_VERTICES;
-    const uint8_t *owners = link_vertex_limb;
-    const link_vec3_t *locals = link_vertex_local;
-    if(link_age_model) {
-        count=link_age_model->vertices;
-        owners=(const uint8_t *)(link_age_model+1);
-        locals=(const link_vec3_t *)(owners+((count+3u)&~3u));
-    }
-
     for (i = 0; i < count; ++i)
     {
-        const limb_matrix_t *m = &limb_matrices[owners[i]];
+        const limb_matrix_t *m = &limb_matrices[owners[i] < LINK_LIMB_COUNT ? owners[i] : 0];
         const link_vec3_t   *local = &locals[i];
         int32_t             posed[3];
         unsigned int        axis;
@@ -452,13 +445,23 @@ static void     skin_vertices(void)
         /* Integer model * Q16 scale is ALREADY fixed world position. Keep its
          * fraction: shifting down and back up collapses small face triangles
          * and makes silhouettes jump by a whole world unit while animating. */
-        link_points[i][X] = posed[0] * LINK_ANIM_SCALE_Q16
-                           + INTEGER_FIXED(link_anim_shift(0));
-        link_points[i][Y] = -(posed[1] * LINK_ANIM_SCALE_Q16
-                            + INTEGER_FIXED(link_anim_shift(1)));
-        link_points[i][Z] = posed[2] * LINK_ANIM_SCALE_Q16
-                           + INTEGER_FIXED(link_anim_shift(2));
+        out[i][X] = posed[0] * LINK_ANIM_SCALE_Q16 + INTEGER_FIXED(link_anim_shift(0));
+        out[i][Y] = -(posed[1] * LINK_ANIM_SCALE_Q16 + INTEGER_FIXED(link_anim_shift(1)));
+        out[i][Z] = posed[2] * LINK_ANIM_SCALE_Q16 + INTEGER_FIXED(link_anim_shift(2));
     }
+}
+
+static void     skin_vertices(void)
+{
+    unsigned int    count = skin_first_person ? LINK_SKIN_VERTICES : LINK_BASE_VERTICES;
+    const uint8_t *owners = link_vertex_limb;
+    const link_vec3_t *locals = link_vertex_local;
+    if(link_age_model) {
+        count=link_age_model->vertices;
+        owners=(const uint8_t *)(link_age_model+1);
+        locals=(const link_vec3_t *)(owners+((count+3u)&~3u));
+    }
+    link_anim_skin(owners, locals, count, link_points);
 }
 
 void            link_anim_pose(unsigned int clip, unsigned int frame,
@@ -576,6 +579,14 @@ void link_anim_focus(int32_t out[3])
     out[0] += INTEGER_FIXED(link_anim_shift(0));
     out[1] += INTEGER_FIXED(link_anim_shift(1));
     out[2] += INTEGER_FIXED(link_anim_shift(2));
+}
+
+void link_anim_limb(unsigned int limb, int32_t out[3])
+{
+    const limb_matrix_t *m = &limb_matrices[limb < 21 ? limb : 0];
+    unsigned int axis;
+    for (axis = 0; axis < 3; ++axis)
+        out[axis] = m->origin[axis] * LINK_ANIM_SCALE_Q16 + INTEGER_FIXED(link_anim_shift(axis));
 }
 
 /* OoT PLAYER_LIMB_L_HAND is 0x10; imported limb indices start at zero.

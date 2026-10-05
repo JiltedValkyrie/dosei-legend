@@ -84,6 +84,7 @@ static void jo_3d_rotate_matrix_y(int y) {}
         cls.adult_groups = [struct.unpack_from('>2H', skin, 40 + i * 4) for i in range(9)]
         mask_start = 244 + ((cls.adult_vertices + 3) & ~3) + cls.adult_vertices * 6
         cls.adult_tunics = skin[mask_start:]
+        assert any(cls.adult_tunics), "adult tunic mask empty: tunic colours cannot apply"
         wrapper = ('static const uint16_t adult_groups[9][2]={' +
                    ','.join('{%d,%d}' % pair for pair in cls.adult_groups) + '};\n' +
                    'static const unsigned char adult_tunics[]={' +

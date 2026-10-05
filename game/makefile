@@ -89,7 +89,9 @@ JO_MAX_FS_BACKGROUND_JOBS = 2
 # by 16 bytes. Keep ~2 KB clear; jo_malloc spills into the cart zones.
 # 2026-10-03: 47 KB (was 44 KB, peak hit the cap; still 1.47x the known ~32 KB demand) to
 # give the decomp glue static RAM; overflow goes to the cart zones.
-JO_GLOBAL_MEMORY_SIZE_FOR_MALLOC ?= 48128
+# 2026-10-04: 8 KB of it moved to a low-RAM zone (ram_low.h RAM_LOW_HEAP,
+# added in ram_cart_claim_second_bank); total malloc capacity unchanged.
+JO_GLOBAL_MEMORY_SIZE_FOR_MALLOC ?= 39936
 
 SRCS = src/main.c src/ram_cart.c src/game_mode.c src/message.c src/cutscene.c src/cutscene_actor.c src/save_state.c src/item_drop.c src/world_props.c src/world_signs.c src/world_props_draw.c src/actor_sys.c src/attention.c src/karebaba.c src/karebaba_draw.c src/game_over.c src/collide.c src/save_file.c src/save_device.c src/ui_preferences.c src/file_select.c src/scene_flow.c src/kokiri_sgl.c ../shared/lib/music/music.c src/music_banks.c src/demo.c src/navi.c src/player_input.c src/gameplay.c src/dialogue_text.c src/text_pool.c src/minimap.c src/health_hud.c src/pause_windows.c src/pause_window_state.c src/cdda.c src/music_songs.c src/action_audio.c src/demo_camera.c src/demo_collision.c src/demo_follow.c src/link_anim.c src/link_anim_state.c src/player_air.c src/player_bg.c src/player_climb.c src/player_crawl.c src/frame_timer.c build/generated/kokiri_scene.c build/generated/kokiri_textures.c build/generated/link_scene.c build/generated/link_textures.c build/generated/link_clips.c build/generated/scene_table.c build/generated/kokiri_actors.c build/generated/kokiri_dialogue.c build/generated/cutscenes.c
 override ASSETS_DIR = ./build/cd
@@ -167,10 +169,8 @@ $(OBJDIR)/kokiri_sgl.o: src/scene_actor_order.h src/actor_order.h src/sgl_order_
 # cancel the inherited suffix rule so it can never fire on an SDK source.
 SRCS += src/push_block.c src/player_push.c src/player_lift.c src/player_slope.c src/player_water.c src/player_camera.c src/npc_draw.c
 SRCS += src/npc_pose.c src/interior_mask.c src/music_area.c
-# NPC sprite impostors: Clean only until Debug has static RAM for them (plan).
-ifeq ($(CLEAN_TEST),1)
+# NPC sprite impostors (both variants since the 2026-10-04 RAM moves).
 SRCS += src/npc_sprite.c
-endif
 SRCS += src/player_items.c src/dungeon_doors.c src/dungeon_webs.c src/dungeon_torches.c src/dungeon_puzzles.c
 SRCS += src/skulltula.c src/wall_skull.c src/dekubaba.c
 SRCS += src/hintnuts.c
@@ -227,7 +227,8 @@ OOT_CORE_SRCS = $(OOT_CORE_DECOMP_SRCS) \
 	oot-core/src/oot_core_api.cpp oot-core/src/bridge_tables.cpp oot-core/src/bridge_libc.cpp \
 	oot-core/src/bridge_play.cpp oot-core/src/bridge_assets.cpp oot-core/src/bridge_player.cpp \
 	oot-core/src/bridge_message.cpp oot-core/src/oot_core_views.cpp \
-	oot-core/src/oot_core_draw.cpp build/oot-core/keep_ph.cpp oot-core/src/bridge_npc.cpp
+	oot-core/src/oot_core_draw.cpp build/oot-core/keep_ph.cpp oot-core/src/bridge_npc.cpp \
+	oot-core/src/bridge_items.cpp
 OOT_CORE_OBJS = $(patsubst %.cpp,$(OOT_CORE_OBJDIR)/%.o,$(notdir $(OOT_CORE_SRCS)))
 _CCFLAGS += -DDOSEI_OOT_CORE -DOOT_CORE_LOAD_ADDR=$(OOT_CORE_LOAD_ADDR)u \
 	-DOOT_SCENECOL_ADDR=$(OOT_SCENECOL_ADDR)u -Ioot-core/include

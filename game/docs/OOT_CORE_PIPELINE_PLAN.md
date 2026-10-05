@@ -1,5 +1,23 @@
 # Plan: bulk decomp pipeline ("oot-core" on Saturn)
 
+Latest (2026-10-04, tools): Link's C-button tools now run the real decomp
+actors En_Arrow, En_Bom, En_Bom_Chu, En_Boom and Arms_Hook (importer SOURCES;
+API v19 `tool`/`tool_view`; oot-core/src/bridge_items.cpp plays z_player's
+spawn/release/carry/hookshot side). Bow + fire/ice/light arrows, bombs (carry,
+C/A throw), Bombchu, boomerang (child), hookshot/longshot (pulls Link via the
+source velocity) are wired in C (gameplay.c dispatch, first-person aim for
+bow/hook/boomerang, ammo + magic 4/4/8 spent on spawn). C enemies take the tools'
+source dmgFlags through C AT mirrors. Pause equips Biggoron (DMG_SLASH_GIANT,
+no shield), Mirror Shield, Kokiri/Iron/Hover boots (save v12 adds `boots`;
+iron sinks/walks underwater, hover holds ~19 source frames). Visuals: 13
+ITM*.SPR sheets from tools/build_item_sprites.py (pitch bands as poses,
+explosion 8 frames); Biggoron/Mirror/boots are sprites at Link's hand/foot
+joints, replacing the hand mesh. Clean target built: .bss 112 B below SGL (Os
+on cold/state files paid ~6 KB); blob end 0x027EEB40. Not runtime-tested.
+Open: mirror light reflection, hammer, lens, spells, beans, bottles' new
+contents, bow/hookshot held in hand (first-person hides Link), chain is one
+repeated link, explosion is a billboard, boomerang spin not baked.
+
 Latest follow-up (2026-10-04): shadows are now twelve-sided circular disks,
 not diamonds. Adult Link uses ADULTACT.PCM with original adult attack, jump,
 climb, hurt, fall, landing and death recordings (13 replacements). Scene-age
@@ -104,8 +122,8 @@ Child/Adult (default Child). Applies on confirmed test entry only. All source qu
 the three stones/Emerald, medallions and songs; source inventory/owned gear,
 20 hearts, capped ammo/magic/upgrades, 500 rupees, tokens and dungeon test keys
 are included. No new story completion flags. Mutually exclusive slots use
-upgraded/final variants; native C item actions beyond the current subset remain
-unfinished. Save v11 now 2,433 bytes; three-digit wallet cache/HUD repaired.
+upgraded/final variants; tools are wired (see top); hammer, lens, spells, beans
+remain unfinished. Save v12 now 2,434 bytes (boots); three-digit wallet cache/HUD repaired.
 
 Current permanent rule: all NPCs, animals, fairies and non-boss enemies use baked
 sprites. Bosses explicitly exempt for now: preserve their models and complex

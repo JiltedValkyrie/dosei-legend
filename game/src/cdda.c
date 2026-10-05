@@ -1,3 +1,4 @@
+#pragma GCC optimize("Os") /* small cold code: size over speed (work RAM) */
 #ifdef __GNUC__
 #pragma GCC optimize ("Os")
 #endif

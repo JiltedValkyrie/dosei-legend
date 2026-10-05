@@ -28,7 +28,7 @@ RECIPES = (
     ('ACTOR_EN_HORSE', 'En_Horse', 'object_hni', 'ingo', 0.01),
     ('ACTOR_EN_HORSE', 'En_Horse', 'object_hni', 'gerudo_saddle', 0.01),
 )
-MAX_HEIGHT = 40
+MAX_HEIGHT = 56  # Epona is a hero sprite: ~1.4x linear (2026-10-04)
 MAX_POSES = 4
 
 

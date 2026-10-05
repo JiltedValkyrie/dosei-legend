@@ -1,3 +1,4 @@
+#pragma GCC optimize("Os") /* state logic, not draw loops: size over speed (work RAM) */
 /*
 ** Bank definitions. Both generated score headers declare the same sample and
 ** trigger layouts, which is what lets the player point straight at their

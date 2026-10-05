@@ -1,3 +1,4 @@
+#pragma GCC optimize("Os") /* small logic: size over speed (work RAM) */
 /* Source: z_en_item00.c Item_DropCollectibleRandom/func_8001F404.
  * This slice is child Link, no bombs/bow/magic yet. No inventory means those
  * drops are suppressed by the original, not replaced with rupees. */

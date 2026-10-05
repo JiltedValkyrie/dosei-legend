@@ -1,3 +1,4 @@
+#pragma GCC optimize("Os") /* small logic: size over speed (work RAM) */
 /* ObjSyokudai_Update: native torch params/timers and stick-tip interaction.
  * No collectible drops in the source actor. 20 Hz timers on 30 Hz steps. */
 #include "dungeon_torches.h"

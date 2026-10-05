@@ -1,3 +1,4 @@
+#pragma GCC optimize("Os") /* cold menu/save/script code: size over speed (work RAM) */
 #pragma GCC optimize ("Os") /* Cold HUD/text updates; preserve high RAM. */
 /*
 ** Cutscene message player. Contract in message.h.

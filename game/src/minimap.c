@@ -1,3 +1,4 @@
+#pragma GCC optimize("Os") /* per-step logic, small: size over speed (work RAM) */
 #pragma GCC optimize ("Os") /* Cold HUD/text updates; preserve high RAM. */
 #include <jo/jo.h>
 #include "minimap.h"

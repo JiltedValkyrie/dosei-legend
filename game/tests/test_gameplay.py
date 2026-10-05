@@ -139,7 +139,7 @@ class Gameplay(unittest.TestCase):
         self.assertEqual(g.player_items_burning(), 215)
         for _ in range(215): g.player_items_step()
         self.assertEqual(g.gp_stick_ammo(), 2)
-        self.assertFalse(g.player_items_stick())
+        self.assertFalse(g.player_items_stick() & 0xff)  # C bool: low byte only
         g.player_items_use(1, 0, 0, 0, 0, 0); g.player_items_ignite()
         g.player_items_putaway()
         for _ in range(320): g.player_items_step()

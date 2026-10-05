@@ -1,3 +1,4 @@
+#pragma GCC optimize("Os") /* state logic, not draw loops: size over speed (work RAM) */
 /* Source Obj_Switch, Bg_Ydan_Hasi, Bg_Ydan_Maruta, Obj_Lift.
  * Native placements; all four source actors have no collectible drops.
  * Source timers run at 20 Hz; positions are integer/Q8 world units. */

@@ -7,6 +7,7 @@
 ** Built only with OOT_CORE=1; the calls compile to nothing otherwise.
 */
 #include <stdbool.h>
+#include <stdint.h>
 typedef struct {
     unsigned int actors, missing, fallback, slots;
 } oot_core_sprite_stats_t;
@@ -41,6 +42,13 @@ unsigned int oot_core_ocarina_note(void); /* 0 none, 1 A, 2 down, 3 right, 4 lef
 unsigned int oot_core_ocarina_song(void); /* completed source song + 1; consume */
 bool oot_core_ocarina_sun_allowed(void);
 void oot_core_scene_restart(void); /* after a successful full scene reload */
+/* Link's C-button tools on the decomp actors (bridge_items.cpp). Slot is the
+** inventory slot; false = refused (no ammo/magic, one already out, no play). */
+bool oot_core_tool_use(unsigned int slot, const int32_t origin[3], uint16_t yaw, int16_t pitch);
+bool oot_core_tool_holding(void);   /* bomb/Bombchu over Link's head */
+bool oot_core_tool_throw(void);
+bool oot_core_tool_pull(int32_t step_q8[3]); /* hookshot flight this step */
+void oot_core_tool_register(void);  /* C contact AT mirrors of live tools */
 /* Phase 2 draw shim meshes: upload after a bank reset, draw the items. */
 void oot_core_meshes_upload(void);
 void oot_core_meshes_draw(void);
@@ -75,6 +83,12 @@ static inline int oot_core_door_action(unsigned int kind, unsigned int flag, int
 static inline unsigned int oot_core_scene_layer(void) { return 0; }
 static inline int oot_core_transition_request(bool consume) { (void)consume; return -1; }
 static inline bool oot_core_ocarina_start(void) { return false; }
+static inline bool oot_core_tool_use(unsigned int slot, const int32_t origin[3], uint16_t yaw, int16_t pitch)
+{ (void)slot; (void)origin; (void)yaw; (void)pitch; return false; }
+static inline bool oot_core_tool_holding(void) { return false; }
+static inline bool oot_core_tool_throw(void) { return false; }
+static inline bool oot_core_tool_pull(int32_t step_q8[3]) { (void)step_q8; return false; }
+static inline void oot_core_tool_register(void) {}
 static inline unsigned int oot_core_ocarina_state(void) { return 0; }
 static inline unsigned int oot_core_ocarina_note(void) { return 0; }
 static inline unsigned int oot_core_ocarina_song(void) { return 0; }

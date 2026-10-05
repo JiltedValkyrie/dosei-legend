@@ -126,6 +126,10 @@ that quest items are required too: all stones (including Kokiri Emerald), songs,
 medallions and other quest bits are granted, plus source inventory/equipment,
 20 hearts, capped ammunition/magic, 500 rupees and eight source-debug small keys.
 Upgraded items/final trade variants occupy the source's mutually exclusive slots.
+Adult entry now defaults C to bow/bombs/hookshot when owned. Tools act through the
+decomp actors with ITM*.SPR sprites; equipment page equips Biggoron, Mirror and
+Iron/Hover boots (code + host tests + Clean target build; human runtime test pending).
+Still denied: hammer, lens, magic spells, beans.
 No extra story completion flags are set. C actions for unimplemented weapons
 remain unfinished despite their source inventory ownership. The existing fresh
 test-run/no-backup-slot behavior remains; toggling alone never changes the save.

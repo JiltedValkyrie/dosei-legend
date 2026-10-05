@@ -1,3 +1,4 @@
+#pragma GCC optimize("Os") /* cold menu/save/script code: size over speed (work RAM) */
 /* Full RGB pause pages on scaling NBG0. NBG1 keeps the frozen room backdrop.
  * Font/HUD are restored exactly on exit; no VDP1 textures or commands. */
 #include <jo/jo.h>
@@ -298,7 +299,7 @@ bool pause_windows_update(void)
     int key=page*32+variant;
     int cursor=s->save_prompt ? s->save_choice : s->cursor[s->page];
     int stamp=cursor+(gameplay.equipped<<8)+(s->system_confirm<<16)+(save_state.tunic<<12);
-    if (page==PAUSE_EQUIPMENT) stamp^=(save_state.equip_sword<<20)|(save_state.equip_shield<<24);
+    if (page==PAUSE_EQUIPMENT) stamp^=(save_state.equip_sword<<20)|(save_state.equip_shield<<24)|(save_state.boots<<28);
     unsigned now=demo_clock(),t;
     if (page==PAUSE_ITEMS) stamp=cursor | (save_state.c_items[0]<<5) | (save_state.c_items[1]<<11) | (save_state.c_items[2]<<17);
     if (failed) return false;
@@ -337,6 +338,7 @@ bool pause_windows_update(void)
             if (save_state.equip_sword>=1 && save_state.equip_sword<=3) frame(141+save_state.equip_sword*32,63,29,0x83FF);
             if (save_state.equip_shield>=1 && save_state.equip_shield<=3) frame(141+save_state.equip_shield*32,95,29,0x83FF);
             frame(save_state.tunic==1?237:save_state.tunic==2?205:173,127,29,0x83FF);
+            frame(173+save_state.boots*32,159,29,0x83FF);
             frame(columns[cursor%4],62+(cursor/4)*32,31,0xFF50);
         } else if (page==PAUSE_SAVE) frame(cursor ? 168 : 100,118,47,0xFF50);
         else if (page==PAUSE_QUEST && cursor<24 && icons) {

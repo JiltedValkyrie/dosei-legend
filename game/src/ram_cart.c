@@ -1,3 +1,4 @@
+#pragma GCC optimize("Os") /* actor/state logic, not draw loops: size over speed (work RAM) */
 /*
 ** 4 MB RAM expansion cart detection and second-bank registration.
 ** Contract and rationale are in ram_cart.h.
@@ -5,6 +6,7 @@
 
 #include <jo/jo.h>
 #include "ram_cart.h"
+#include "ram_low.h"
 
 /* Compile-time layout guard: every fixed carve in address order, no
 ** overlap, all inside RAM_CART_FIXED_BYTES. Add new carves here. */
@@ -73,6 +75,8 @@ bool            ram_cart_claim_second_bank(void)
     ** addressable by the time we get here; only the zone is missing. */
     jo_add_memory_zone((unsigned char *)RAM_CART_BANK2_ADDRESS,
                        RAM_CART_BANK2_BYTES - RAM_CART_FIXED_BYTES);
+    /* The 8 KB taken from Jo's static pool to fit work RAM (ram_low.h). */
+    jo_add_memory_zone((unsigned char *)RAM_LOW(RAM_LOW_HEAP_OFFSET), RAM_LOW_HEAP_BYTES);
     second_bank_claimed = true;
     return (true);
 }

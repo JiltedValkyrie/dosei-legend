@@ -82,6 +82,7 @@ cp "$here/disc/ABS.TXT" "$here/disc/BIB.TXT" "$here/disc/CPY.TXT" "$here/build/c
 "$python" "$here/tools/build_sgl_area.py" --source "$sgl_source" --max-polygons "${SGL_MAX_POLYGONS:-3750}" --max-vertices 3200
 "$python" "$here/tools/build_link_model.py" --flat --animate --oot "$oot" --rom-dir "$roms"
 "$python" "$here/tools/build_adult_link.py" --oot "$oot" --rom-dir "$roms"
+"$python" "$here/tools/build_link_gear.py" --oot "$oot" --rom-dir "$roms"   # adult hero gear meshes
 quad_args=()
 if [ -n "${QUAD_OBJ:-}" ]; then
     quad_args=(--quad-obj "$QUAD_OBJ")
@@ -240,6 +241,8 @@ if [ "$oot_core" = 1 ]; then
     # Sprite sheets + symbol manifest; make resolves keys after object linking.
     rm -f "$here"/build/cd/G?????.SPR
     "$python" "$here/tools/build_npc_sprites.py" --oot "$oot" --rom-dir "$roms" --generic-only --out "$here/build/cd"
+    # Link's tools (arrows, bombs, Bombchu, boomerang, hookshot, held gear, boots).
+    "$python" "$here/tools/build_item_sprites.py" --oot "$oot" --rom-dir "$roms" --out "$here/build/cd"
 else
     rm -f "$here/build/cd/OOTCORE.BIN"
 fi

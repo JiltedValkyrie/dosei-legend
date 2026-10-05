@@ -1,3 +1,4 @@
+#pragma GCC optimize("Os") /* small logic: size over speed (work RAM) */
 #include "field_music.h"
 #include "music_banks.h"
 #include "field_phrases.h"

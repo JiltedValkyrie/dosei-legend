@@ -1,3 +1,4 @@
+#pragma GCC optimize("Os") /* per-step logic, small: size over speed (work RAM) */
 #include "player_slope.h"
 #include "kokiri_camera.h"
 

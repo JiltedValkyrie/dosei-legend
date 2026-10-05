@@ -385,6 +385,7 @@ void OotCore_ProfiledUpdate(Actor* actor, PlayState* play) {
 /* "oc t<talk> m<msgMode> x<textId> n<npcs> c<AT>/<AC>/<OC>" for the debug panel,
  * then (second line) phase times in 0.1 ms: collision, actors, message, draw,
  * and the nearest NPC: distance, talk distance, actor flags low byte. */
+int OotCore_ToolDebug(char* out);
 const char* OotCore_DebugText2(void) {
     static char sText[64];
     static const char hex[] = "0123456789ABCDEF";
@@ -422,6 +423,10 @@ const char* OotCore_DebugText2(void) {
         PUT_DEC(gOotCorePhaseUs[i] / 100);
         *p++ = i < 3 ? '/' : ' ';
     }
+    /* Live tools replace the profile (bridge_items.cpp OotCore_ToolDebug). */
+    if (OotCore_ToolDebug(p)) {
+        while (*p != 0) p++;
+    } else
     /* Top 3 actor ids by update time: id(hex) x count = 0.1 ms. */
     {
         s32 used[3] = { -1, -1, -1 }, r, best;

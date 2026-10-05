@@ -44,6 +44,7 @@ void __attribute__((optimize("Os"))) save_set_link_age(unsigned age)
     save_state.owned_sword = save_state.equip_sword = age ? EQUIP_VALUE_SWORD_KOKIRI : EQUIP_VALUE_SWORD_MASTER;
     save_state.owned_shield = save_state.equip_shield = age ? EQUIP_VALUE_SHIELD_DEKU : EQUIP_VALUE_SHIELD_HYLIAN;
     save_state.source_equipment |= age ? 0x11 : 0x22;
+    if (age) save_state.boots = SAVE_BOOTS_KOKIRI; /* Iron/Hover: AGE_REQ_ADULT */
     for (i=0;i<3;++i)
         if (!save_inventory_slot_usable(save_c_item_inventory_slot(save_state.c_items[i])))
             save_state.c_items[i] = 0;
@@ -292,6 +293,24 @@ void            save_set_equip(unsigned int equip_type, unsigned int value)
         save_state.equip_sword = (uint8_t)value;
     else if (equip_type == EQUIP_TYPE_SHIELD)
         save_state.equip_shield = (uint8_t)value;
+}
+
+bool            save_equip_source(unsigned int equip_type, unsigned int value)
+{
+    /* z_kaleido_scope.c gEquipAgeReqs rows sword/shield/boots, values 1..3:
+    ** 0 adult, 1 child, 9 either. Child Hylian stays refused: the child
+    ** model has no Hylian Shield presentation. */
+    static const uint8_t age[3][3] = { {1,0,0}, {1,0,0}, {9,0,0} };
+    unsigned row = equip_type == EQUIP_TYPE_BOOTS ? 2 : equip_type;
+    unsigned bit = (row == 2 ? 12 : row * 4) + value - 1;
+    /* Sram_InitNewSave owns Kokiri Boots from the start. */
+    if (row > 2 || value < 1 || value > 3 ||
+        (!(save_state.source_equipment & (1u << bit)) && bit != 12) ||
+        (age[row][value - 1] != 9 && age[row][value - 1] != save_state.link_age))
+        return false;
+    if (row == 2) save_state.boots = (uint8_t)(value - 1);
+    else { save_give_equip(equip_type, value); save_set_equip(equip_type, value); }
+    return true;
 }
 
 bool            save_mido_demands_met(void)
@@ -631,7 +650,7 @@ void            save_new_game(void)
     save_state.equip_sword = 0;
     save_state.equip_shield = 0;
     save_state.slingshot = 0;
-    save_state.tunic = save_state.fairy_ocarina = 0;
+    save_state.tunic = save_state.fairy_ocarina = save_state.boots = 0;
     save_state.ammo_seeds = 0;
     save_state.deku_dungeon_items = 0;
     save_state.deku_visited_rooms = 0;

@@ -1,3 +1,4 @@
+#pragma GCC optimize("Os") /* actor/state logic, not draw loops: size over speed (work RAM) */
 /* En_Dekubaba normal variant, original three-section stem and damage/drop
  * rules. No random replacement for the source nut or pruned stick reward. */
 #ifdef __GNUC__

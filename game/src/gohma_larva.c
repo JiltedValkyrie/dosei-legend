@@ -1,3 +1,4 @@
+#pragma GCC optimize("Os") /* actor/state logic, not draw loops: size over speed (work RAM) */
 /* En_Goma eggs and larvae. Eggs break without a drop. Hatched larvae use
  * source random table 3, including the same inventory/health filtering. */
 #ifdef __GNUC__

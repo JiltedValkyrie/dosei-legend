@@ -1,3 +1,4 @@
+#pragma GCC optimize("Os") /* state logic, not draw loops: size over speed (work RAM) */
 /* En_Hintnuts and its En_Nutsball projectiles. Source puzzle params 1,2,3
  * correspond to the spoken spatial order 2,3,1. Leaving spawns ITEM00_HEART;
  * reflected balls themselves never drop items. All actor timing is 20 Hz. */

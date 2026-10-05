@@ -117,3 +117,59 @@ routes from the bogus lighting values (for example 0xFFBE/0xEA7C).
 The previous commit/branch migration is local. Remote publication/deletions
 remain blocked by the earlier automatic approval review requiring explicit
 approval of the GitHub destination; this regression task did not retry that push.
+
+## Adult tools follow-up (2026-10-04)
+
+Report: adult Link with ALL ITEMS could not use swords/shields/boots/arrows/
+boomerang/mirror/bomb/bombchu/hookshot. Cause: C dispatch only knew stick,
+slingshot, nut and ocarina; adult entry cleared the C buttons; pause denied
+Biggoron/Mirror/boots; no boots state. Base sword/shield code read fine; no
+static adult sword/shield defect found -- needs runtime confirmation.
+
+Changes: decomp tool actors in the blob (bridge_items.cpp, API v19), C dispatch
+by inventory slot with ammo/magic, first-person aim for bow/hookshot/boomerang,
+bomb carry + C/A throw, hookshot flight moves C Link by Arms_Hook velocity, C AT
+mirrors for C enemies, Biggoron (Giant flags, two-handed), Mirror, boots (save
+v12; iron walks underwater, hover floats briefly), adult C defaults
+bow/bombs/hookshot. Visuals: ITM*.SPR sprites (tools/build_item_sprites.py).
+
+Limits: mirror light-ray reflection not wired; bow/hookshot body not drawn (FP
+hides Link); chain is repeated link sprites; explosion billboard; no camera
+quake; boomerang spin unbaked; hookshot ignores C-only targets (only decomp
+hookable polys/actors). Hammer, lens, spells, beans still deny.
+
+Verified: host suites (gameplay 206, save/pause/sprite/item sprites, 302 total
+in focused run) pass; Clean OOT_CORE target built (.bss 112 B spare, blob end
+0x027EEB40, no soft-float in tool objects). Not runtime-tested; human test due.
+
+## Follow-up 2 (2026-10-04): hero gear, sheathing, tunics, tools
+
+- Sword/shield sheathe (z_player DO_ACTION_PUTAWAY): scenes start sheathed;
+  a swing or guard draws them; an unclaimed A while standing puts them away
+  after the 20-frame putAwayCooldownTimer (30 steps). Crawl/climb/swim/hang/
+  carry stow them. Gear on back uses the source sword+shield-on-back lists.
+- Adult hero gear is real 3D: tools/build_link_gear.py bakes Master/Biggoron
+  hands, Hylian/Mirror hands, back variants (incl. shield-only) and
+  Iron/Hover boot pairs from object_link_boy. Swords/shields keep 8x8 per-face
+  textures; hands and boots are flat colour polygons (boot artwork cost ~200
+  tiles per room). Gear uploads after every actor, so it never starves one. Skinned by the same limb matrices (link_anim_skin), submitted in
+  Link's matrix; tiles upload into each room's actor bank (adult only), and a
+  full bank falls back to Link's flat variants. ITM*.SPR held-gear sprites
+  retired. Child gear unchanged (flat, per the character rule).
+- Tunics: adult tunic mask was empty (builder matched the child prim); now
+  prim (30,105,27) with a build guard. Colours = sTunicColors Goron/Zora.
+- Hookshot: Link's object slot registered so Arms_Hook can spawn.
+- Bomb/Bombchu carry use the pot lift states (lift pose, throw clip); A or the
+  C button throws. Debug row 16 shows `T<item>:<ok> a<arrow timer> h<hook>
+  c<chu timer><F floor|-><speed><H held|R released>` while tools are live.
+- Sprites: anchors nearer than the SGL near cut slide out and rescale (cutscene
+  close-ups), projected height capped ~900 px; NPC sprites animate half rate
+  past 500 units and freeze past 1200 (direction still updates).
+- Work RAM: 8 KB of Jo's static malloc pool moved to low RAM 0xF8000 (same
+  total heap). Clean .bss 6272 B spare.
+
+Open: arrows/Bombchu need the debug row from a runtime test; Ingo talk at the
+Ranch gate needs rows 16-17 (`o<n>w<why>`); Mirror Shield light reflection
+needs light-ray actors; metal shine (Gouraud highlight) not done; the scene
+budget tools do not yet count gear in the actor reserve (next full rebake);
+tests/test_equipment_draw.py harness predates the shadow/gear code.

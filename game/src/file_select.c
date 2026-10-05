@@ -1,3 +1,4 @@
+#pragma GCC optimize("Os") /* cold menu/save/script code: size over speed (work RAM) */
 /*
 ** File select screen logic. Contract and what is deliberately absent are in
 ** file_select.h.

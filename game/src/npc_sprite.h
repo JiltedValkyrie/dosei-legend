@@ -24,6 +24,8 @@ int  npc_sprite_focus_y(const unsigned char *spr);
 /* Conservative sphere/frustum rejection before cel uploads or facing math. */
 int npc_sprite_in_view(int x, int y, int z, unsigned int radius);
 unsigned char *npc_sprite_load(const char *name);
+/* Nonzero: npc_sprite_draw skips the ground shadow (held/flying tools). */
+extern unsigned char npc_sprite_shadow_off;
 int npc_sprite_valid(const unsigned char *sheet, unsigned int bytes);
 int npc_sprite_visible(const unsigned char *sheet, int x, int y, int z);
 

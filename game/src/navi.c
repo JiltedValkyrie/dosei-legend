@@ -1,3 +1,4 @@
+#pragma GCC optimize("Os") /* actor/state logic, not draw loops: size over speed (work RAM) */
 /* Navi, Link's companion fairy. Idle-follow behaviour from ovl_En_Elf. */
 #include "navi.h"
 #include "kokiri_camera.h"

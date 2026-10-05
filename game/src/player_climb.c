@@ -1,3 +1,4 @@
+#pragma GCC optimize("Os") /* state logic, not draw loops: size over speed (work RAM) */
 /*
 ** Ladder and vine climbing. Contract in player_climb.h.
 **

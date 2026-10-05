@@ -1,3 +1,4 @@
+#pragma GCC optimize("Os") /* actor/state logic, not draw loops: size over speed (work RAM) */
 /* Source actors: EnIshi, ObjTsubo, EnItem00. Runtime objects live in the
  * existing cart actor pool. Original placements/params come from the ROM. */
 #include "world_props.h"

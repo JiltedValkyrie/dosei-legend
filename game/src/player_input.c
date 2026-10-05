@@ -1,3 +1,4 @@
+#pragma GCC optimize("Os") /* per-step logic, small: size over speed (work RAM) */
 /*
 ** Saturn pad -> OoT control mapping. See player_input.h for the layout and the
 ** approved requirements; game/docs/OPUS_HANDOFF.md holds the directive itself.

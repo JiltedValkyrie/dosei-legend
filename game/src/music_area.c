@@ -1,3 +1,4 @@
+#pragma GCC optimize("Os") /* small logic: size over speed (work RAM) */
 #include <jo/jo.h>
 #include "music.h"
 #include "music_area.h"

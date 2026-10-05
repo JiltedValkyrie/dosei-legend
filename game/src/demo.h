@@ -62,4 +62,6 @@ bool demo_lift_throw_ready(void);
 bool demo_push_prompt(void);
 bool demo_slingshot_aiming(void);
 bool demo_target_marker(int32_t *x, int32_t *y, bool *locked, unsigned *kind);
+/* Sword and shield in hand (drawn) rather than on Link's back. */
+bool demo_sword_out(void);
 #endif

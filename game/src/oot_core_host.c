@@ -16,6 +16,9 @@
 #include "oot_scene_blob.h"
 #include "actor_mesh.h"
 #include "npc_draw.h"
+#include "collide.h"
+#include "player_items.h"
+#include <stdlib.h>
 #include <string.h>
 /* Generic decomp NPCs as baked sprites (tools/build_npc_sprites.py --generic,
 ** blob OOT_CORE_FLAG_NPC_SPRITES): no Actor_Draw, no limb matrices. */
@@ -29,6 +32,14 @@ core_sprite_rows[] = {
 #define CORE_SPRITE_SLOTS 8
 #define CORE_SPRITE_HEAP_PERCENT 85   /* leave heap for the rest of the scene */
 #define CORE_MESHES_MAX 40
+/* Decomp actor ids (actor_table.h) of Link's tools. */
+#define ACTOR_EN_BOM     0x0010
+#define ACTOR_EN_ARROW   0x0016
+#define ACTOR_EN_BOOM    0x0032
+#define ACTOR_ARMS_HOOK  0x0066
+#define ACTOR_EN_BOM_CHU 0x00DA
+enum { TOOL_ARW, TOOL_BOM, TOOL_CHU, TOOL_BOO, TOOL_HKT, TOOL_HKC, TOOL_BGS, TOOL_MIR,
+       TOOL_IRB, TOOL_HOB, TOOL_EXP, TOOL_COUNT };
 typedef struct {
     unsigned char *sprite[CORE_SPRITE_ROWS]; /* sheets remain on the cart heap */
     unsigned char tried[CORE_SPRITE_ROWS];
@@ -39,6 +50,13 @@ typedef struct {
     OotCoreMeshKey mesh_key[CORE_MESHES_MAX];
     unsigned char mesh_ready[CORE_MESHES_MAX];
     unsigned int mesh_count;
+    /* Link's tools: sheets by TOOL_*, one VDP1 slot each, C contact mirrors. */
+    unsigned char *tool_sheet[TOOL_COUNT];
+    unsigned char tool_tried[TOOL_COUNT];
+    npc_sprite_inst_t tool_inst[TOOL_COUNT];
+    collider_t tool_at[OOT_CORE_TOOL_VIEWS_MAX];
+    int tool_pull[6];
+    unsigned int tool_bits;
 } core_draw_state_t;
 #if defined(__sh__)
 typedef char core_draw_low_fits[sizeof(core_draw_state_t) <= RAM_LOW_OOTDRAW_BYTES ? 1 : -1];
@@ -240,6 +258,7 @@ static void mirror_save(void)
         mirror.magic_level = save_state.source_magic_level;
         mirror.magic = save_state.source_magic;
         mirror.double_defense = save_state.source_double_defense;
+        mirror.boots = save_state.boots;
         memcpy(mirror.player_name, "Link    ", 8); /* no file name in the C save */
         mirror.generic_scene = save_scene >= SAVE_SCENE_COUNT;
         ENTRY->set_save(&mirror);
@@ -372,6 +391,153 @@ static bool sprites_refresh(void)
     return changed;
 }
 
+/* ---- Link's tools: decomp item actors (bridge_items.cpp), baked ITM*.SPR ----
+** Sheets load for owned, age-usable tools when a room's assets load and stay
+** until the scene changes; a missing or unaffordable sheet only hides that
+** tool (the actor still plays). Pitch sheets keep 5 elevation bands as poses
+** (tools/build_item_sprites.py). */
+static void tools_free(void)
+{
+    unsigned int i;
+    for (i = 0; i < TOOL_COUNT; ++i) {
+        if (CORE_DRAW->tool_sheet[i]) jo_free(CORE_DRAW->tool_sheet[i]);
+        CORE_DRAW->tool_sheet[i] = 0;
+        CORE_DRAW->tool_tried[i] = 0;
+    }
+    CORE_DRAW->tool_bits = 0;
+}
+
+static void tools_load(void)
+{
+    static const char names[TOOL_COUNT][11] = { "ITMARW.SPR", "ITMBOM.SPR", "ITMCHU.SPR", "ITMBOO.SPR",
+        "ITMHKT.SPR", "ITMHKC.SPR", "ITMBGS.SPR", "ITMMIR.SPR", "ITMIRB.SPR", "ITMHOB.SPR", "ITMEXP.SPR" };
+    bool adult = !save_state.link_age;
+    unsigned int i;
+    bool bomb = save_inventory_item(2) != 0xff, chu = save_inventory_item(8) != 0xff;
+    bool hook = adult && save_inventory_item(9) != 0xff;
+    bool need[TOOL_COUNT] = {
+        adult && save_inventory_item(3) != 0xff, bomb, chu, !adult && save_inventory_item(12) != 0xff,
+        hook, hook, false, false, false, false, bomb || chu }; /* held gear is Link's mesh */
+    for (i = 0; i < TOOL_COUNT; ++i) {
+        unsigned char **sheet = &CORE_DRAW->tool_sheet[i];
+        if (!need[i] || *sheet || CORE_DRAW->tool_tried[i] || GFS_NameToId((Sint8 *)names[i]) < 0) continue;
+        CORE_DRAW->tool_tried[i] = 1;
+        *sheet = npc_sprite_load(names[i]);
+        if (*sheet && jo_memory_usage_percent() > CORE_SPRITE_HEAP_PERCENT) { jo_free(*sheet); *sheet = 0; }
+    }
+}
+
+static unsigned int pitch_band(int pitch)
+{
+    int band = (pitch + 0x5000) / 0x2000;
+    return band < 0 ? 0 : band > 4 ? 4 : (unsigned int)band;
+}
+
+static void __attribute__((noinline)) tool_put(unsigned int t, unsigned int frame, int x, int y, int z, uint16_t yaw)
+{
+    if (CORE_DRAW->tool_sheet[t])
+        npc_sprite_draw(CORE_DRAW->tool_sheet[t], &CORE_DRAW->tool_inst[t], frame, x, y, z, yaw);
+}
+
+static void tools_draw(void)
+{
+    const OotCoreToolView *v;
+    int n = playing ? ENTRY->tool_view(&v) : 0, i;
+    int32_t a[3], b[3];
+    npc_sprite_shadow_off = 1;
+    for (i = 0; i < n; ++i) {
+        unsigned int band = pitch_band(v[i].pitch);
+        switch (v[i].id) {
+        case ACTOR_EN_ARROW: tool_put(TOOL_ARW, band, v[i].x, v[i].y, v[i].z, v[i].yaw); break;
+        case ACTOR_EN_BOM:
+            if (v[i].params) tool_put(TOOL_EXP, demo_world_clock() / 2, v[i].x, v[i].y, v[i].z, 0);
+            else { npc_sprite_shadow_off = v[i].held; tool_put(TOOL_BOM, 0, v[i].x, v[i].y, v[i].z, v[i].yaw);
+                   npc_sprite_shadow_off = 1; }
+            break;
+        case ACTOR_EN_BOM_CHU: tool_put(TOOL_CHU, 0, v[i].x, v[i].y, v[i].z, v[i].yaw); break;
+        case ACTOR_EN_BOOM: tool_put(TOOL_BOO, 2, v[i].x, v[i].y, v[i].z, (uint16_t)(demo_world_clock() * 0x2000u)); break;
+        case ACTOR_ARMS_HOOK: {
+            int k, steps;
+            tool_put(TOOL_HKT, band, v[i].x, v[i].y, v[i].z, v[i].yaw);
+            if (!gameplay_link_point(18, a)) break;
+            /* Chain: one baked link every 8 units from the hand, at most 24. */
+            steps = (abs(v[i].x - a[0]) + abs(v[i].y - a[1]) + abs(v[i].z - a[2])) / 8;
+            if (steps > 24) steps = 24;
+            for (k = 1; k < steps; ++k)
+                tool_put(TOOL_HKC, band, a[0] + (v[i].x - a[0]) * k / steps, a[1] + (v[i].y - a[1]) * k / steps,
+                         a[2] + (v[i].z - a[2]) * k / steps, v[i].yaw);
+            break;
+        }
+        default: break;
+        }
+    }
+    npc_sprite_shadow_off = 0;
+}
+
+/* C enemies and props take the decomp tools' hits through the C contact
+ * pass: one AT cylinder per live tool, with the tool's source dmgFlags. */
+void oot_core_tool_register(void)
+{
+    const OotCoreToolView *v;
+    int n = playing ? ENTRY->tool_view(&v) : 0, i;
+    for (i = 0; i < n; ++i) {
+        collider_t *c = &CORE_DRAW->tool_at[i];
+        int r = v[i].radius ? v[i].radius : 6;
+        if (!v[i].dmg || v[i].held) continue;
+        memset(c, 0, sizeof *c);
+        c->shape = COLSHAPE_CYLINDER;
+        c->x = v[i].x; c->y = v[i].y - r; c->z = v[i].z;
+        c->radius = (int16_t)r; c->height = (int16_t)(2 * r);
+        c->at_type = AT_TYPE_PLAYER;
+        c->at_dmg = v[i].dmg;
+        c->at_damage = v[i].id == ACTOR_EN_BOM ? 4 : 2;
+        c->ac_flags = COL_OUTSIDE_ACTOR;
+        c->tag = (uint16_t)(0x7200 + i);
+        c->attack_id = (uint16_t)(0x7200 + v[i].id);
+        collide_set_at(c);
+    }
+}
+
+/* C-button tool use by inventory slot. Ammo and magic (sMagicArrowCosts
+ * 4/4/8) are C save state and are spent only when the actor spawned. */
+bool oot_core_tool_use(unsigned int slot, const int32_t origin[3], uint16_t yaw, int16_t pitch)
+{
+    unsigned int item = save_inventory_item(slot), ammo = slot, cost = 0;
+    int io[6];
+    if (!playing || item == 0xff || CORE_DRAW->tool_bits & OOT_CORE_TOOL_HOLDING) return false;
+    if (slot == 4 || slot == 10 || slot == 16) {
+        ammo = 3;
+        cost = slot == 16 ? 8 : 4;
+        if (save_state.source_magic < cost) return false;
+    }
+    if ((ammo == 2 || ammo == 3 || ammo == 8) && !save_state.source_ammo[ammo]) return false;
+    io[0] = (int)item; io[1] = origin[0]; io[2] = origin[1]; io[3] = origin[2];
+    io[4] = yaw; io[5] = pitch;
+    if (!ENTRY->tool(OOT_CORE_TOOL_USE, io)) return false;
+    if (ammo == 2 || ammo == 3 || ammo == 8) --save_state.source_ammo[ammo];
+    save_state.source_magic = (uint8_t)(save_state.source_magic - cost);
+    if (ammo == 2 || ammo == 8) CORE_DRAW->tool_bits |= OOT_CORE_TOOL_HOLDING;
+    return true;
+}
+
+bool oot_core_tool_holding(void) { return playing && (CORE_DRAW->tool_bits & OOT_CORE_TOOL_HOLDING); }
+
+bool oot_core_tool_throw(void)
+{
+    if (!oot_core_tool_holding()) return false;
+    CORE_DRAW->tool_bits &= ~OOT_CORE_TOOL_HOLDING;
+    return ENTRY->tool(OOT_CORE_TOOL_THROW, CORE_DRAW->tool_pull) != 0;
+}
+
+/* Arms_Hook pulling Link: this 30 Hz step's share of the 20 Hz velocity, Q8. */
+bool oot_core_tool_pull(int32_t step_q8[3])
+{
+    unsigned int k;
+    if (!playing || !(CORE_DRAW->tool_bits & OOT_CORE_TOOL_PULLING)) return false;
+    for (k = 0; k < 3; ++k) step_q8[k] = CORE_DRAW->tool_pull[k] * 2 / 3;
+    return true;
+}
+
 static void load_meshes(void)
 {
     static const char hex[] = "0123456789ABCDEF";
@@ -399,6 +565,7 @@ static void load_meshes(void)
     }
     sprites_reset();
     sprites_refresh();
+    tools_load();
     npc_draw_reupload();
 }
 
@@ -424,6 +591,10 @@ void oot_core_meshes_upload(void)
                 core_sprite_inst[i].slot = NPC_SPRITE_SLOT_NONE;   /* bank full: not drawn */
             else ++sprite_stats.slots;
         }
+        for (i = 0; i < TOOL_COUNT; ++i)
+            if (!playing || !CORE_DRAW->tool_sheet[i] ||
+                !npc_sprite_upload(CORE_DRAW->tool_sheet[i], &CORE_DRAW->tool_inst[i]))
+                CORE_DRAW->tool_inst[i].slot = NPC_SPRITE_SLOT_NONE;
     }
 #endif
 }
@@ -459,6 +630,7 @@ static void sprites_draw(void)
 void oot_core_meshes_draw(void)
 {
     sprites_draw();
+    tools_draw();
     const OotCoreDrawItem *items;
     int n = playing ? ENTRY->draw_items(&items) : 0, i;
     unsigned int m;
@@ -502,6 +674,7 @@ void oot_core_frame(const gameplay_input_t *in)
     if (scene != play_scene) {
         playing = false;
         sprites_reset();
+        tools_free();
         play_scene = scene;
         meshes_room = -1;
         if (!load_scene_blob(scene)) return;
@@ -538,7 +711,12 @@ void oot_core_frame(const gameplay_input_t *in)
     if (step_phase >= 3) {
         step_phase -= 3;
         unsigned int t0 = frame_timer_ticks();
+        {
+            int32_t hand[3];
+            if (gameplay_link_point(18, hand)) ENTRY->tool(OOT_CORE_TOOL_HAND, (int *)hand);
+        }
         ENTRY->update();
+        CORE_DRAW->tool_bits = (unsigned int)ENTRY->tool(OOT_CORE_TOOL_STATE, CORE_DRAW->tool_pull);
         update_us = frame_timer_ticks_to_us(frame_timer_ticks() - t0);
         if (meshes_room != room) {
             meshes_room = room;

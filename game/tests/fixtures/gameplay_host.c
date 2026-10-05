@@ -185,6 +185,11 @@ bool gameplay_blade_points(int32_t base[3], int32_t tip[3])
     for (k = 0; k < 3; ++k) { base[k] = test_blade[0][k]; tip[k] = test_blade[1][k]; }
     return true;
 }
+bool gameplay_link_point(unsigned int limb, int32_t out[3])
+{
+    (void)limb; (void)out;
+    return false;
+}
 bool gameplay_blade_wall(const int32_t from[3], const int32_t to[3], unsigned int *material)
 {
     (void)from; (void)to; *material = 0;

@@ -1,3 +1,4 @@
+#pragma GCC optimize("Os") /* actor/state logic, not draw loops: size over speed (work RAM) */
 /* Fixed actor pool. See actor_sys.h. Integer only, platform free. */
 #include "actor_sys.h"
 #include "save_state.h"

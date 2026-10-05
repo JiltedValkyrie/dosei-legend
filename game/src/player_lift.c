@@ -1,3 +1,4 @@
+#pragma GCC optimize("Os") /* per-step logic, small: size over speed (work RAM) */
 /* z_player.c: 80846050 attach at frame 4, 80846408 failed bush lift,
  * 80846578 throw at frame 3, 808464B0 put down at frame 4. */
 #include "player_lift.h"

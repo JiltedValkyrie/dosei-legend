@@ -1,3 +1,4 @@
+#pragma GCC optimize("Os") /* state logic, not draw loops: size over speed (work RAM) */
 /* En_Sw / En_Si. Normal wall spiders: damage table 14, random drop table 3.
  * Gold variants spawn a persistent token, never a random collectible. */
 #ifdef __GNUC__

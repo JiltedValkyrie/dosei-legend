@@ -25,7 +25,8 @@ class CoreSprites(unittest.TestCase):
 ''' + '#include "' + API + '"\n'
             + '#include "' + (ROOT / 'src/npc_sprite.h').as_posix() + '"\n'
             + '#include "' + (ROOT / 'src/oot_core_host.h').as_posix() + '"\n'
-            + '#include "' + (ROOT / 'src/ram_low.h').as_posix() + '"\n' + r'''
+            + '#include "' + (ROOT / 'src/ram_low.h').as_posix() + '"\n'
+            + '#include "' + (ROOT / 'src/collide.h').as_posix() + '"\n' + r'''
 static unsigned int low[RAM_LOW_BYTES / sizeof(unsigned int)];
 #undef RAM_LOW
 #define RAM_LOW(offset) ((void *)((unsigned char *)low + (offset)))
@@ -62,7 +63,7 @@ int main(void) {
 #include <math.h>
 static struct { int x,y,z; } demo_camera;
 static uint16_t demo_yaw,demo_pitch;
-static int distance=277, calls;
+static int distance=277, calls, last_depth;
 static int demo_screen_distance(void) { return distance; }
 static void kokiri_camera_sincos(uint16_t angle,int32_t *s,int32_t *c) {
     *s=(int32_t)(sin(angle*6.283185307179586/65536)*65536);
@@ -162,8 +163,13 @@ static void set_room(int r) { source_room=r; }
 static void sword(int active,const int *base,const int *tip) {}
 static void update(void) { ++updates; spawns=1; }
 static void push(int *x,int *z) { *x=*z=0; }
+static int tool(unsigned c,int *io) { return 0; }
+static void tools_free(void) {}
+static bool gameplay_link_point(unsigned l,int32_t *o) { return false; }
+static struct { unsigned tool_bits; int tool_pull[6]; } core_draw;
+#define CORE_DRAW (&core_draw)
 static OotCoreEntry api={.play_init=init,.set_objects=objects,.set_flags=flags,
-    .set_camera=camera,.set_room=set_room,.set_sword=sword,.update=update,.player_push=push};
+    .set_camera=camera,.set_room=set_room,.set_sword=sword,.update=update,.player_push=push,.tool=tool};
 #define ENTRY (&api)
 ''' + function(HOST, 'void oot_core_frame(') + r'''
 int main(void) {
@@ -223,6 +229,10 @@ static OotCoreMeshKey core_mesh_key[1];
 static unsigned char core_mesh_ready[1],core_skin_ready[1];
 static unsigned core_mesh_count,core_skin_count;
 static bool playing=true;
+#define TOOL_COUNT 1
+static struct { unsigned char *tool_sheet[1]; npc_sprite_inst_t tool_inst[1]; } core_draw;
+#define CORE_DRAW (&core_draw)
+static void tools_load(void) {}
 static OotCoreNpcView views[3];
 static int count;
 static unsigned reads,alloc_bytes,reuploads,uploads,draws;

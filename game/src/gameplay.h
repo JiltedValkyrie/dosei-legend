@@ -458,6 +458,15 @@ bool                gameplay_grass_cut(unsigned int index);
 ** EntityLineTest1 walls, entity-ignored polys skipped, floor type 6 not
 ** counted), *material = SurfaceType material. */
 bool                gameplay_blade_points(int32_t base[3], int32_t tip[3]);
+/* World point of one posed Link limb (link_anim_limb index); 32-bit. */
+bool                gameplay_link_point(unsigned int limb, int32_t out[3]);
+/* C actions aimed in first person like the slingshot: bow and magic
+** arrows (slots 3/4/10/16), hookshot (9), boomerang (12). */
+static inline bool  gameplay_item_aimable(unsigned int action)
+{
+    return action == 0x23 || action == 0x24 || action == 0x2A || action == 0x30 ||
+           action == 0x29 || action == 0x2C;
+}
 bool                gameplay_blade_wall(const int32_t from[3], const int32_t to[3],
                                         unsigned int *material);
 /* Nutsball move (Actor_MoveXZGravity + UpdateBgCheckInfo 10/13/13): moves

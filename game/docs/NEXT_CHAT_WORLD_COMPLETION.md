@@ -190,7 +190,9 @@ Dynamic sets still need preloading and budgeting before triggers; eight-slot/
 16-view caps remain debt. NPC save predicates now include equipment, quest
 items, ocarina, bottles and era/time. Automatic talk and milk reward parent/
 textbox handshakes are implemented. Source inventory ownership now includes the
-full test loadout, but usable item actions, minigame timers/carrying, songs and
+full test loadout; bow/arrows, bombs, Bombchu, boomerang, hookshot, Biggoron,
+Mirror and boots now act (decomp tool actors, 2026-10-04). Hammer, lens, spells,
+beans, minigame timers/carrying, songs and
 many source dialogue branches remain open.
 
 Execute ACTOR_SPRITE_ROLLOUT_PLAN.md with a versioned coverage ledger across
@@ -217,9 +219,9 @@ Child. Yes grants source inventory slots
 500 rupees, 100 source tokens, dungeon items and eight source-debug keys. No
 extra eventChkInf/story completion bits. The source has mutually exclusive
 bottle/trade/upgrade slots; they are not simultaneous independent item actions.
-Unimplemented C item controls remain open. Toggle/navigation never grants;
+Hammer, lens, Din/Farore/Nayru and beans remain unimplemented (deny). Toggle/navigation never grants;
 confirmed entry retains the existing fresh test file/no backup slot behavior.
-Save v11 is 2,433 bytes and still migrates v2-v10. Wallet cache/HUD support 500
+Save v12 is 2,434 bytes (boots) and still migrates v2-v11. Wallet cache/HUD support 500
 without uint8 truncation or out-of-bounds digit access.
 
 - NPCs, animals, fairies and non-boss enemies use baked sprites unless explicitly

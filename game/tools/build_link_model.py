@@ -210,7 +210,8 @@ class LimbLists(FlexVertexOwners, scene_tool.DisplayLists):
         self.faces.append(dict(vertices=vertices, vertex_limbs=owners,
                                texture=self.texture(), lighting=bool(self.geom & 0x20000),
                                prim=self.prim, transparent=transparent, cull=bool(self.geom & 0x400),
-                               texture_segment=(self.image[0] >> 24) if self.image else None))
+                               texture_segment=(self.image[0] >> 24) if self.image else None,
+                               image=self.image[0] if self.image else None))
 
 
 def collect_faces(data, keep, placed):
@@ -502,6 +503,7 @@ def write_model(faces, out_path, skinned=False, character=True):
             # Original import sizes: eye/mouth 16, other head materials 8.
             # Apply the character reduction once, after choosing that baseline.
             size = 8 if face.get('limb') == HEAD_LIMB and face.get('texture_segment') not in FACE_SEGMENTS else 16
+            size = face.get('tile_size', size)
             if character:
                 tile, width, height = character_textures.bake_character_tile(face, size, scene_tool.bake)
             else:

@@ -162,6 +162,9 @@ void kokiri_actor_tiles_reset(void);
 void kokiri_hit_filter(unsigned level);
 /* Dithered ground contact marker: no textures or character meshes. */
 void kokiri_actor_shadow(int x, int y, int z, unsigned radius);
+/* Adult hero gear tiles into the actor bank after a bank reset; false =
+** not enough room (Link falls back to his flat hand/back variants). */
+bool kokiri_link_gear_upload(void);
 #endif /* !__KOKIRI_SGL_H__ */
 
 /*

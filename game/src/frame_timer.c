@@ -1,3 +1,4 @@
+#pragma GCC optimize("Os") /* small cold code: size over speed (work RAM) */
 #include <jo/jo.h>
 #include "frame_timer.h"
 

@@ -1,3 +1,4 @@
+#pragma GCC optimize("Os") /* small cold code: size over speed (work RAM) */
 /* Interior occlusion masks. Contract and source basis in interior_mask.h
  * and tools/build_interior_masks.py. Data lives in the jo_malloc heap (the
  * cart zone: one room's tiles exceed the work-RAM arena); VRAM tiles go into

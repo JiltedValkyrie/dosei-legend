@@ -1,3 +1,4 @@
+#pragma GCC optimize("Os") /* per-step logic, small: size over speed (work RAM) */
 /* Bg_Ydan_Sp floor webs. Original collision/model/placements, source 750-unit
  * fall threshold and central radius 80. No collectible drop in this actor.
  * Edge-pinned vertex deformation and particles remain presentation follow-ups. */

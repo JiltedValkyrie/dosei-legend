@@ -1,3 +1,4 @@
+#pragma GCC optimize("Os") /* state logic, not draw loops: size over speed (work RAM) */
 /* EnKanban: authored text, source attack-to-piece masks, no item drops.
  * Signs stay outside the actor pool; detached pieces use temporary slots.
  * Fragment motion is a reduced ballistic path; water/ocarina repair are M4/M7. */

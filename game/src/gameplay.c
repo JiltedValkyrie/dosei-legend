@@ -1668,6 +1668,16 @@ static void         update_target(const gameplay_input_t *in)
 /* The meleeWeaponQuads from the posed blade: capsules along this step's
 ** blade and along the sweep of its tip and midpoint since the last step.
 ** All three share the attack id and tag, so a victim still takes one hit. */
+/* Adult blade flags: Master, or the Biggoron (Giant's) set when equipped. */
+static uint32_t     era_damage(uint32_t flags)
+{
+    bool jump = flags == DMG_JUMP_KOKIRI;
+    if (save_state.link_age) return flags;
+    if (save_state.equip_sword == EQUIP_VALUE_SWORD_BIGGORON)
+        return jump ? DMG_JUMP_GIANT : DMG_SLASH_GIANT;
+    return jump ? DMG_JUMP_MASTER : DMG_SLASH_MASTER;
+}
+
 static bool         register_blade_quads(void)
 {
     int32_t base[3], tip[3], mid[3];
@@ -1688,7 +1698,7 @@ static bool         register_blade_quads(void)
         c->radius = GP_BLADE_RADIUS;
         c->at_type = AT_TYPE_PLAYER;
         c->at_dmg = player_attack_damage_flags(gameplay.attack_id);
-        if (!save_state.link_age) c->at_dmg = c->at_dmg == DMG_JUMP_KOKIRI ? DMG_JUMP_MASTER : DMG_SLASH_MASTER;
+        c->at_dmg = era_damage(c->at_dmg);
         if (player_items_stick()) c->at_dmg = DMG_DEKU_STICK;
         if (!c->at_dmg) c->at_dmg = DMG_SLASH_KOKIRI;
         c->ac_flags = COL_OUTSIDE_ACTOR;        /* Link owns it: AC_HARD bounces */
@@ -1721,7 +1731,7 @@ static void         register_blade(const gameplay_input_t *in)
                   gameplay.attack_id == ATTACK_BIG_SPIN) ? 32768 : 16384;
     blade->at_type = AT_TYPE_PLAYER;
     blade->at_dmg = player_attack_damage_flags(gameplay.attack_id);
-    if (!save_state.link_age) blade->at_dmg = blade->at_dmg == DMG_JUMP_KOKIRI ? DMG_JUMP_MASTER : DMG_SLASH_MASTER;
+    blade->at_dmg = era_damage(blade->at_dmg);
     if (player_items_stick()) blade->at_dmg = DMG_DEKU_STICK;
     if (!blade->at_dmg) blade->at_dmg = DMG_SLASH_KOKIRI;
     blade->attack_id = gameplay.swing_count ? gameplay.swing_count : 1;
@@ -1834,6 +1844,7 @@ static void         run_contacts(const gameplay_input_t *in)
         register_boulder(in);
     register_nut();
     player_items_register();
+    oot_core_tool_register();
     dungeon_puzzles_register();
     skulltula_register();
     wall_skull_register();
@@ -2345,24 +2356,29 @@ static void __attribute__((optimize("Os"))) update_menu(const gameplay_input_t *
     case PAUSE_EQUIP_SWORD:
     case PAUSE_EQUIP_SHIELD:
     case PAUSE_EQUIP_MASTER:
-    case PAUSE_EQUIP_HYLIAN: {
-        bool adult = result == PAUSE_EQUIP_MASTER || result == PAUSE_EQUIP_HYLIAN;
-        bool sword = result == PAUSE_EQUIP_SWORD || result == PAUSE_EQUIP_MASTER;
-        unsigned value = adult ? 2 : 1;
+    case PAUSE_EQUIP_HYLIAN:
+    case PAUSE_EQUIP_BIGGORON:
+    case PAUSE_EQUIP_MIRROR: {
+        bool sword = result == PAUSE_EQUIP_SWORD || result == PAUSE_EQUIP_MASTER ||
+                     result == PAUSE_EQUIP_BIGGORON;
+        unsigned value = result == PAUSE_EQUIP_SWORD || result == PAUSE_EQUIP_SHIELD ? 1 :
+                         result >= PAUSE_EQUIP_BIGGORON ? 3 : 2;
         unsigned type = sword ? EQUIP_TYPE_SWORD : EQUIP_TYPE_SHIELD;
-        unsigned bit = 1u << ((sword ? 0 : 4) + value - 1);
-        /* Renderer supports the selected era's basic equipment. Giant sword,
-         * Mirror Shield and child Hylian presentation remain unimplemented. */
-        if (adult == !!save_state.link_age ||
-            (!(save_state.source_equipment & bit) && save_all_equip_value(type) != value)) {
+        /* Legacy saves own the starting gear without a source bit. */
+        if (save_all_equip_value(type) == value)
+            save_state.source_equipment |= 1u << ((sword ? 0 : 4) + value - 1);
+        if (!save_equip_source(type, value)) {
             gameplay.events |= GP_EVENT_DENIED;
             break;
         }
-        save_give_equip(type,value);save_set_equip(type,value);
         gameplay.equipped |= sword ? GP_SWORD : GP_SHIELD;
         gameplay.events |= GP_EVENT_EQUIP;
         break;
     }
+    case PAUSE_BOOTS_KOKIRI: case PAUSE_BOOTS_IRON: case PAUSE_BOOTS_HOVER:
+        gameplay.events |= save_equip_source(EQUIP_TYPE_BOOTS, result - PAUSE_BOOTS_KOKIRI + 1)
+            ? GP_EVENT_EQUIP : GP_EVENT_DENIED;
+        break;
     case PAUSE_DENY: gameplay.events |= GP_EVENT_DENIED; break;
     default: break;
     }
@@ -3189,7 +3205,11 @@ void                gameplay_step(const gameplay_input_t *in)
     }
     (void)drop_random(); /* vary outcomes with play timing, even before a cut */
     player_items_step();
-    if (in->c_use && in->c_use <= 3 && in->grounded &&
+    /* Player_ThrowActor (func_8084409C): a held bomb/Bombchu leaves on the
+     * next C or A press instead of starting another item. */
+    if (oot_core_tool_holding() && (in->c_use || in->interact) && !gameplay.attack_phase) {
+        oot_core_tool_throw();
+    } else if (in->c_use && in->c_use <= 3 && in->grounded &&
         !world_props_carrying() && !gameplay.attack_phase && !in->shield) {
         unsigned item = save_state.c_items[in->c_use - 1];
         if (!save_inventory_slot_usable(save_c_item_inventory_slot(item))) {
@@ -3204,7 +3224,8 @@ void                gameplay_step(const gameplay_input_t *in)
         uint16_t yaw = in->yaw;
         int16_t pitch = in->item_pitch;
         actor_t *target = actor_resolve(gameplay.target);
-        if (item == PLAYER_ITEM_SEED && in->target_held && target) {
+        bool aimed = item == PLAYER_ITEM_SEED || gameplay_item_aimable(item);
+        if (aimed && in->target_held && target) {
             int32_t focus[3], dx, dz, distance;
             attention_focus(target, focus);
             dx = focus[0]-in->x; dz = focus[2]-in->z;
@@ -3212,7 +3233,14 @@ void                gameplay_step(const gameplay_input_t *in)
             yaw = gameplay_facing(dx,dz);
             pitch = (int16_t)gameplay_facing(focus[1]-(in->y+35),distance>12?distance-12:1);
         }
-        if (!(in->item_from_eye && item == PLAYER_ITEM_SEED ?
+        if (item >= 0x20) {
+            /* Decomp tools (bridge_items.cpp): from the eye when aiming,
+             * else from the right hand (PLAYER_LIMB_R_HAND). */
+            int32_t hand[3] = { in->x, in->y + 35, in->z };
+            if (!in->item_from_eye) gameplay_link_point(18, hand);
+            if (!oot_core_tool_use(item - 0x20, in->item_from_eye ? in->item_eye : hand, yaw, pitch))
+                gameplay.events |= GP_EVENT_DENIED;
+        } else if (!(in->item_from_eye && item == PLAYER_ITEM_SEED ?
                 player_items_use_from(item, in->item_eye, yaw, pitch) :
                 player_items_use(item, in->x, in->y, in->z, yaw, pitch)))
             gameplay.events |= GP_EVENT_DENIED;

@@ -58,6 +58,11 @@ int OotCore_DrawItems(const OotCoreDrawItem** out);
 const char* OotCore_DebugText2(void);
 int OotCore_SkinList(const unsigned short** out);
 void OotCore_ProfileReset(void);
+/* bridge_items.cpp */
+void OotCore_ToolStep(PlayState* play);
+void OotCore_ToolReset(void);
+int OotCore_ToolCommand(unsigned int command, int* io);
+int OotCore_ToolView(const OotCoreToolView** out);
 int OotCore_MeshList(const OotCoreMeshKey** out);
 s32 OotCore_IsGenericDraw(s16 id);
 static u8 sGenericScene;
@@ -242,6 +247,7 @@ static int oot_core_play_init(void* block, unsigned int bytes, int scene_id, con
     Regs_InitData(play);
     Message_Init(play);
     OotCore_OcarinaReset();
+    OotCore_ToolReset();
     OotCore_OcarinaScene(play);
     Matrix_Init(&play->state); /* Play_Init: sys_matrix stack (draws, some updates) */
     CollisionCheck_InitContext(play, &play->colChkCtx);
@@ -305,6 +311,14 @@ static void oot_core_set_objects(const void* const* objects, unsigned int count)
         }
         objectCtx->slots[objectCtx->numEntries].id = sScene->objects[i];
         objectCtx->slots[objectCtx->numEntries].segment = (void*)objects[i];
+        objectCtx->numEntries++;
+    }
+    /* Player's object is always resident in OoT (Arms_Hook's profile names
+     * it). C draws Link and the tools, so the slot only has to exist. */
+    if (Object_GetSlot(objectCtx, OBJECT_LINK_BOY) < 0 && objectCtx->numEntries < ARRAY_COUNT(objectCtx->slots)) {
+        static u64 sLinkObjectStub[1];
+        objectCtx->slots[objectCtx->numEntries].id = OBJECT_LINK_BOY;
+        objectCtx->slots[objectCtx->numEntries].segment = sLinkObjectStub;
         objectCtx->numEntries++;
     }
 }
@@ -471,7 +485,7 @@ static void oot_core_set_save(const OotCoreSave* in) {
         inv->equipment |= 1u << (in->owned_sword - 1);
     if (in->owned_shield >= 1 && in->owned_shield <= 3)
         inv->equipment |= 1u << (in->owned_shield + 3);
-    gSaveContext.save.info.equips.equipment = 0x1100 |
+    gSaveContext.save.info.equips.equipment = 0x0100 | (((in->boots > 2 ? 0 : in->boots) + 1) << 12) |
         (in->equip_sword & 3) | ((in->equip_shield & 3) << 4);
     inv->questItems = in->quest_items ? *in->quest_items : 0;
     inv->gsTokens = in->skull_tokens;
@@ -574,6 +588,7 @@ static void oot_core_update(void) {
     OotCore_ProfileReset();
     OotCore_CullActors(play);
     Actor_UpdateAll(play, &play->actorCtx);
+    OotCore_ToolStep(play);
     Effect_UpdateAll(play);
     EffectSs_UpdateAll(play);
     gOotCorePhaseUs[1] = Phase_Us(t0);
@@ -591,6 +606,15 @@ static void oot_core_update(void) {
     save_copy_out(play);
     play->gameplayFrames++;
     play->state.frames++;
+}
+
+/* The C press that fired a tool must not reach the actor this step:
+ * Arms_Hook retracts on any A/B/R/C press while it flies. */
+static int oot_core_tool(unsigned int command, int* io) {
+    int result = OotCore_ToolCommand(command, io);
+    if (command == OOT_CORE_TOOL_USE && result)
+        sHostInput.press.button = 0;
+    return result;
 }
 
 static void oot_core_draw(void) {
@@ -743,4 +767,6 @@ extern "C" const OotCoreEntry oot_core_entry __attribute__((section(".oot_entry"
     oot_core_current_layer,
     oot_core_transition_request,
     OotCore_Ocarina,
+    oot_core_tool,
+    OotCore_ToolView,
 };

@@ -82,6 +82,13 @@ SOURCES = [
     'src/overlays/actors/ovl_En_Wonder_Talk2/z_en_wonder_talk2.c',
     'src/overlays/actors/ovl_Obj_Mure2/z_obj_mure2.c',
     'src/overlays/actors/ovl_En_Kanban/z_en_kanban.c',
+    # Link's C-button tools (bridge_items.cpp plays Player's side; the host
+    # draws baked ITM*.SPR sprites, so no tool draw function runs).
+    'src/overlays/actors/ovl_En_Arrow/z_en_arrow.c',
+    'src/overlays/actors/ovl_En_Bom/z_en_bom.c',
+    'src/overlays/actors/ovl_En_Bom_Chu/z_en_bom_chu.c',
+    'src/overlays/actors/ovl_En_Boom/z_en_boom.c',
+    'src/overlays/actors/ovl_Arms_Hook/z_arms_hook.c',
 ]
 COL_HEADER = re.compile(r'^CollisionHeader (\w+)_Col = \{$', re.M)
 COL_ARRAY = re.compile(r'^\w+ (\w+)\[\] = \{\n#include "[^"]+"\n\};\n', re.M)
@@ -571,12 +578,33 @@ MACRO_REWRITES = {
         ('s32 Actor_OfferTalkExchange(Actor* actor, PlayState* play, f32 xzRange, f32 yRange, u32 exchangeItemId) {',
          'extern u32 gOotCoreTalkCalls, gOotCoreTalkWhy;\n'
          's32 Actor_OfferTalkExchange(Actor* actor, PlayState* play, f32 xzRange, f32 yRange, u32 exchangeItemId) {'),
+        # Npc_UpdateTalking's on-screen test needs play->viewProjectionMtxF,
+        # which the C camera never supplies (all decomp NPCs read offscreen
+        # and never offered talk). Use the C camera yaw instead.
+        ('''    Actor_GetScreenPos(play, actor, &x, &y);
+    if ((x < 0) || (x > SCREEN_WIDTH) || (y < 0) || (y > SCREEN_HEIGHT)) {
+        // Actor is offscreen
+        return false;
+    }''',
+         '''    (void)x; (void)y;
+    if (!OotCore_ActorInCameraView(play, actor)) {
+        return false; /* oot-core: C camera view, not viewProjectionMtxF */
+    }'''),
+        ('s32 Npc_UpdateTalking(PlayState* play, Actor* actor, s16* talkState, f32 interactRange, NpcGetTextIdFunc getTextId,',
+         's32 OotCore_ActorInCameraView(PlayState* play, Actor* actor);\n'
+         's32 Npc_UpdateTalking(PlayState* play, Actor* actor, s16* talkState, f32 interactRange, NpcGetTextIdFunc getTextId,'),
         # Profiling hook (oot_core_views.cpp): time per actor update.
         ('                    actor->update(actor, play);',
          '                    OotCore_ProfiledUpdate(actor, play);'),
         ('void Actor_UpdateAll(PlayState* play, ActorContext* actorCtx) {',
          'void OotCore_ProfiledUpdate(Actor* actor, PlayState* play);\n'
          'void Actor_UpdateAll(PlayState* play, ActorContext* actorCtx) {'),
+    ],
+    # Arrow: baked sprite, so its skeleton keeps only the animation clock.
+    'src/overlays/actors/ovl_En_Arrow/z_en_arrow.c': [
+        ('#include "z_en_arrow.h"', '#include "z_en_arrow.h"\n#include "sprite_actor.h"'),
+        ('SkelAnime_Init(play, &this->skelAnime, &gArrowSkel, &gArrow2_Anim, NULL, NULL, 0);',
+         'OotCore_SpriteInitFlex(play, &this->skelAnime, NULL, &gArrow2_Anim, NULL, NULL, 0); /* oot-core */'),
     ],
     'src/code/z_effect_soft_sprite.c': [
         ('''                 "EffectSoftSprite2_makeEffect(): Not an overlay.\\n"));

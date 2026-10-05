@@ -1,3 +1,4 @@
+#pragma GCC optimize("Os") /* small logic: size over speed (work RAM) */
 #include "pause_window_state.h"
 unsigned pause_window_step(pause_window_state_t *s, int dx, int dy,
                                          int turn, bool back, bool confirm, unsigned owned)
@@ -73,6 +74,9 @@ unsigned pause_window_step(pause_window_state_t *s, int dx, int dy,
         if (s->cursor[s->page] == 2 && (owned & 1)) return PAUSE_EQUIP_MASTER;
         if (s->cursor[s->page] == 5 && (owned & 2)) return PAUSE_EQUIP_SHIELD;
         if (s->cursor[s->page] == 6 && (owned & 2)) return PAUSE_EQUIP_HYLIAN;
+        if (s->cursor[s->page] == 3 && (owned & 1)) return PAUSE_EQUIP_BIGGORON;
+        if (s->cursor[s->page] == 7 && (owned & 2)) return PAUSE_EQUIP_MIRROR;
+        if (s->cursor[s->page] >= 13) return PAUSE_BOOTS_KOKIRI + s->cursor[s->page] - 13;
     }
     return PAUSE_DENY;
 }

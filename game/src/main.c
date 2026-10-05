@@ -1152,7 +1152,17 @@ static void __attribute__((optimize("Os"))) viewer_hud(void)
 {
 #ifdef DOSEI_CLEAN_TEST
     /* Player-test disc: no debug text, even if L+R is pressed.
-     * Keep JO_DEBUG safety checks and initialization unchanged. */
+     * Keep JO_DEBUG safety checks and initialization unchanged.
+     * TEMPORARY (2026-10-04 tool bring-up): one bottom line while a decomp
+     * tool is live or was just used (bridge_items.cpp OotCore_ToolDebug). */
+#ifdef DOSEI_OOT_CORE
+    {
+        static bool shown;
+        const char *t = oot_core_debug_text2();
+        if (t[0] == 'T') { jo_printf(0, JO_TV_HEIGHT / 8 - 2, "%-39.39s", t); shown = true; }
+        else if (shown) { jo_printf(0, JO_TV_HEIGHT / 8 - 2, "%39s", ""); shown = false; }
+    }
+#endif
     return;
 #endif
 #if defined(DOSEI_PERF_PROBE) && DOSEI_PERF_PROBE == 3

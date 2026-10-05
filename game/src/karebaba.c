@@ -1,3 +1,4 @@
+#pragma GCC optimize("Os") /* actor/state logic, not draw loops: size over speed (work RAM) */
 /* En_Karebaba: see karebaba.h. Source: ovl_En_Karebaba/z_en_karebaba.c. */
 #include "karebaba.h"
 #include "gameplay.h"           /* gameplay_sincos, gameplay_facing */

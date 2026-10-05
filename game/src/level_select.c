@@ -33,4 +33,10 @@ void __attribute__((optimize("Os"))) level_select_prepare(void)
     save_state.scene_id=scene_entries[level_select.scene].save_scene;save_state.entrance=0;
     if(level_select.max_gear)save_test_max_gear();
     save_set_link_age(level_select.adult ? 0 : 1);
+    if(level_select.adult) {
+        /* Adult C defaults: bow, bombs, hookshot -- only when owned/usable. */
+        static const uint8_t slots[3]={3,2,9};
+        unsigned i,action;
+        for(i=0;i<3;++i)if((action=save_c_item_for_slot(slots[i]))!=0)save_state.c_items[i]=(uint8_t)action;
+    }
 }

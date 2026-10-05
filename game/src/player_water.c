@@ -1,3 +1,4 @@
+#pragma GCC optimize("Os") /* per-step logic, small: size over speed (work RAM) */
 #include "player_water.h"
 #include "kokiri_camera.h"
 #include "link_anim_state.h"

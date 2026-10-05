@@ -1,3 +1,4 @@
+#pragma GCC optimize("Os") /* small logic: size over speed (work RAM) */
 /* En_Arrow (seed / thrown nut) and En_M_Fire1. No random drops: neither
  * source actor owns any. World coordinates +Y up; Q8 velocity, 20 Hz source
  * updates sampled at the game's fixed 30 Hz. */
@@ -101,9 +102,10 @@ static bool use(unsigned item, int32_t x, int32_t y, int32_t z,
         s->p[2] = z + ((cy * 12) >> 16);
     }
     memcpy(s->previous, s->p, sizeof(s->p));
-    s->velocity[0] = (int32_t)((int64_t)sy * cp * (80 * 256) >> 32);
+    /* Q16 trig products in 32 bits (Q12 x Q12 >> 8 = Q16), then 80 units. */
+    s->velocity[0] = (((sy >> 4) * (cp >> 4)) >> 8) * 80 >> 8;
     s->velocity[1] = (sp * (80 * 256)) >> 16;
-    s->velocity[2] = (int32_t)((int64_t)cy * cp * (80 * 256) >> 32);
+    s->velocity[2] = (((cy >> 4) * (cp >> 4)) >> 8) * 80 >> 8;
     s->item = item;
     s->timer = 15;
     s->collider.shape = COLSHAPE_CAPSULE;

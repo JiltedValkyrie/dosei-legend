@@ -1,3 +1,4 @@
+#pragma GCC optimize("Os") /* state logic, not draw loops: size over speed (work RAM) */
 /* Door_Shutter: original side-dependent clear/switch rules. No actor drops.
  * One resident room swaps beyond the raised door plane. Camera/Link opening
  * choreography remains a presentation follow-up, not an unlocked-door bypass. */

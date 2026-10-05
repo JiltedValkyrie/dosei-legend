@@ -1,3 +1,4 @@
+#pragma GCC optimize("Os") /* state logic, not draw loops: size over speed (work RAM) */
 /* Bg_Treemouth: source meeting/choice flags, moving mouth and collision.
  * Original actor has no item drop. Original opening travels 1/100 per 20 Hz tick. */
 #pragma GCC optimize ("Os")

@@ -1,3 +1,4 @@
+#pragma GCC optimize("Os") /* cold menu/save/script code: size over speed (work RAM) */
 #pragma GCC optimize ("Os") /* Cold 20 Hz script player; preserve high-RAM headroom. */
 #include <jo/jo.h>
 #include "asset_loading.h"

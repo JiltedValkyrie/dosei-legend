@@ -1,3 +1,4 @@
+#pragma GCC optimize("Os") /* cold menu/save/script code: size over speed (work RAM) */
 /* Compile the SDK allocator in this translation unit without modifying the
  * shared SDK or its snapshot. Calls from every other SDK/game unit enter the
  * wrappers below, so boot and temporary load peaks are included. */

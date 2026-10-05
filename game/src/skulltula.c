@@ -1,3 +1,4 @@
+#pragma GCC optimize("Os") /* actor/state logic, not draw loops: size over speed (work RAM) */
 /* En_St hanging Skulltulas. US 1.2 damage table 2 and random drop table 14.
  * Native 20 Hz timers, Q8 vertical motion, source front/back hit masks. */
 #ifdef __GNUC__

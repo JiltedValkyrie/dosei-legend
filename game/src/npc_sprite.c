@@ -48,12 +48,14 @@ int npc_sprite_upload(const unsigned char *spr, npc_sprite_inst_t *inst)
 
 int npc_sprite_focus_y(const unsigned char *spr) { return (int16_t)U16(spr, 0x12); }
 
+static int last_depth; /* view depth of the last in_view point */
 int npc_sprite_in_view(int x, int y, int z, unsigned int radius)
 {
     static int32_t sy, cy, sp, cp;
     static uint16_t yaw, pitch;
     static int valid;
     int h, right, depth, up, limit, distance = demo_screen_distance();
+    last_depth = 32767;
     x -= demo_camera.x; y -= demo_camera.y; z -= demo_camera.z;
     /* Keep every intermediate in signed 32-bit. Large/unusual views are left
      * to SGL instead of risking a false rejection or a wide-math fallback. */
@@ -70,6 +72,7 @@ int npc_sprite_in_view(int x, int y, int z, unsigned int radius)
     right = (-x * cy + z * sy) / 256;
     depth = (h * cp + y * sp) / 256;
     up = (y * cp - h * sp) / 256;
+    last_depth = depth;
     if (depth + (int)radius <= 0) return 0;
     /* 200 covers the 320x240 screen's half diagonal, including camera roll. */
     limit = depth * 200 + (int)radius * (distance + 400);
@@ -84,18 +87,26 @@ int npc_sprite_visible(const unsigned char *spr, int x, int y, int z)
     return npc_sprite_in_view(x, y + (int16_t)U16(spr, 0x0E) / 16, z, radius);
 }
 
+unsigned char npc_sprite_shadow_off;
 void npc_sprite_draw(const unsigned char *spr, npc_sprite_inst_t *inst, unsigned int frame,
                      int x, int y, int z, uint16_t yaw)
 {
     if (inst->slot == NPC_SPRITE_SLOT_NONE ||
         !npc_sprite_visible(spr, x, y, z)) return;
     unsigned int bytes = U16(spr, 4) * U16(spr, 6) / 2;
-    kokiri_actor_shadow(x,y,z,U16(spr,4)*U16(spr,0x10)/1024+4);
+    if (!npc_sprite_shadow_off) kokiri_actor_shadow(x,y,z,U16(spr,4)*U16(spr,0x10)/1024+4);
     /* phi: camera seen from the actor's frame, 0 = in front (bake view()).
     ** Sign confirmed in Kronos 2026-10-03. */
     uint16_t phi = (uint16_t)(yaw - gameplay_facing(demo_camera.x - x, demo_camera.z - z));
     unsigned int d8 = ((phi + 0x1000u) >> 13) & 7, dir = d8 <= 4 ? d8 : 8 - d8;
-    unsigned int pose = U16(spr, 0x34 + (frame % U16(spr, 0x0C)) * 2);
+    unsigned int pose;
+    /* Distance LOD: full rate near, half rate past 500 units, pose frozen past
+     * 1200 (only the view direction updates). Fewer cel copies from the cart.
+     * Tools (shadow off) keep exact frames: theirs encode pitch bands. */
+    if (!npc_sprite_shadow_off && last_depth > 500) frame &= ~1u;
+    pose = U16(spr, 0x34 + (frame % U16(spr, 0x0C)) * 2);
+    if (!npc_sprite_shadow_off && last_depth > 1200 && inst->sheet == spr && inst->shown != 0xFFFF)
+        pose = inst->shown / U16(spr, 8);
     unsigned int cel = pose * U16(spr, 8) + dir;
     FIXED pos[5];
     /* SGL sprHflip is broken (PDATA16 typo): bit 4 is the H flip. */
@@ -120,10 +131,30 @@ void npc_sprite_draw(const unsigned char *spr, npc_sprite_inst_t *inst, unsigned
         for (k = 0; k < bytes / 4; ++k) to[k] = from[k];
         inst->shown = (uint16_t)cel;
     }
-    pos[0] = x * 65536;
-    pos[1] = -(y * 65536 + (int16_t)U16(spr, 0x0E) * 4096);
-    pos[2] = z * 65536;
-    pos[3] = pos[4] = (FIXED)U16(spr, 0x10) * 256;
+    {
+        /* SGL drops a sprite whose single anchor is nearer than the screen
+         * distance >> ZDSP level 3; narrow cutscene shots move that cut out.
+         * Slide a near anchor out along the view ray to just past the cut and
+         * grow the scale so it keeps its size; then cap the projected height
+         * (~900 px) so a huge close sprite cannot wrap VDP1 coordinates. */
+        int dist = demo_screen_distance(), near = dist / 8 + 6, depth = last_depth;
+        int32_t cx = demo_camera.x, cy = demo_camera.y, cz = demo_camera.z;
+        int32_t ay = y + (int16_t)U16(spr, 0x0E) / 16, k = 256, scale = (int32_t)U16(spr, 0x10) * 256, px;
+        if (depth < 4) depth = 4;
+        if (depth < near) {
+            k = near * 256 / depth;
+            x = cx + (x - cx) * k / 256;
+            ay = cy + (ay - cy) * k / 256;
+            z = cz + (z - cz) * k / 256;
+            depth = near;
+        }
+        px = U16(spr, 6) * U16(spr, 0x10) / 256 * k / 256 * dist / depth;
+        if (px > 900) k = k * 900 / px;
+        pos[0] = x * 65536;
+        pos[1] = -ay * 65536;
+        pos[2] = z * 65536;
+        pos[3] = pos[4] = scale / 256 * k;
+    }
     attr.texno = inst->slot;
     attr.colno = inst->colno;
     slPutSprite(pos, &attr, 0);

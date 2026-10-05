@@ -1,3 +1,4 @@
+#pragma GCC optimize("Os") /* per-step logic, small: size over speed (work RAM) */
 /*
 ** Ground departure and the automatic jump. Contract in player_air.h.
 **

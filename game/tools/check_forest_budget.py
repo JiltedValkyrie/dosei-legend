@@ -78,6 +78,16 @@ def check(root=ROOT):
         print('%s: actors included, %d B spare; %d sprite slots' %
               (path.name, budget.VDP1_USER_AREA - used, slots))
     print('Forest actor upper bound: %d B, %d slots' % peak)
+    # Adult hero gear (build_link_gear.py) uploads LAST into the actor bank and
+    # is optional: report whether it fits beside the worst-case actor set.
+    gear_header = root / 'build/generated/link_gear.h'
+    if gear_header.is_file():
+        gear = gear_header.read_text()
+        gear_value = lambda name: int(re.search(r'#\s*define\s+LINK_GEAR_' + name + r'\s+(\d+)', gear)[1])
+        need = budget.bank_bytes(gear_value('PIXEL_BYTES'), gear_value('TILE_COUNT')) + 32
+        left = budget.FOREST_ACTOR_BYTES - peak[0]
+        print('Link gear: %d B, %d slots; %s beside worst-case forest actors (%d B left)' %
+              (need, gear_value('TILE_COUNT'), 'fits' if need <= left else 'FALLS BACK to flat gear', left))
     # World props remain loaded across Tree room streaming. Count all meshes,
     # including off-room walls/torches: draw visibility does not free their tiles.
     names=['CHEST','DTDOOR','DTWEB']

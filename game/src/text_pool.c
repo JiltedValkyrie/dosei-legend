@@ -1,3 +1,4 @@
+#pragma GCC optimize("Os") /* small logic: size over speed (work RAM) */
 #include "text_pool.h"
 
 static unsigned int     be16(const uint8_t *p)

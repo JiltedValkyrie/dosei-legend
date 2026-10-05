@@ -1,3 +1,4 @@
+#pragma GCC optimize("Os") /* actor/state logic, not draw loops: size over speed (work RAM) */
 /* Music owns 0..23, actions 24..30, Navi 31. No CD reads in play. */
 /* Event dispatch / bank setup: size-oriented, outside geometry and mixing loops. */
 #ifdef __GNUC__

@@ -95,6 +95,13 @@
 #define EQUIP_VALUE_SHIELD_DEKU     1
 #define EQUIP_VALUE_SWORD_MASTER    2
 #define EQUIP_VALUE_SHIELD_HYLIAN   2
+#define EQUIP_VALUE_SWORD_BIGGORON  3
+#define EQUIP_VALUE_SHIELD_MIRROR   3
+#define EQUIP_TYPE_BOOTS        3
+/* PLAYER_BOOTS_*: equips value - 1 (Kokiri 0, Iron 1, Hover 2). */
+#define SAVE_BOOTS_KOKIRI       0
+#define SAVE_BOOTS_IRON         1
+#define SAVE_BOOTS_HOVER        2
 
 /* ---- scenes -------------------------------------------------------------
 ** The original carries SavedSceneFlags for all 124 scenes. Our slice visits a
@@ -187,6 +194,7 @@ typedef struct
     uint16_t            source_equipment; /* owned source equipment bitmask */
     uint32_t            source_upgrades;
     uint8_t             source_magic_level,source_magic,source_double_defense,source_tokens;
+    uint8_t             boots;             /* v12: SAVE_BOOTS_* */
 }                       save_state_t;
 
 #if defined(__sh__)
@@ -281,6 +289,9 @@ unsigned int    save_cur_equip_value(unsigned int equip_type);
 unsigned int    save_all_equip_value(unsigned int equip_type);
 void            save_give_equip(unsigned int equip_type, unsigned int value);
 void            save_set_equip(unsigned int equip_type, unsigned int value);
+/* Pause equip of sword/shield/boots value (EQUIP_VALUE_*, boots SAVE_BOOTS_*
+** + 1). Source ownership bit plus gEquipAgeReqs; false leaves state alone. */
+bool            save_equip_source(unsigned int equip_type, unsigned int value);
 
 /* True when Link has the Kokiri Sword AND Deku Shield equipped -- the single
 ** state check that makes Mido stand aside (z_en_md.c:437). Not a counter of

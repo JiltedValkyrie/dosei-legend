@@ -203,10 +203,30 @@ void Rumble_Request(f32 distSq, u8 sourceStrength, u8 duration, u8 decreaseRate)
 
 /* ---- z_camera.c / z_onepointdemo.c: the C camera owns the view ---- */
 #include "one_point_cutscene.h"
+#include "z_lib.h"
 s16 gOotCoreCamYaw; /* set_camera: C camera facing, binary angle */
 
 s16 Camera_GetCamDirYaw(Camera* camera) { /* HOST: C camera direction */
     return gOotCoreCamYaw;
+}
+
+/* Npc_UpdateTalking's on-screen test (importer rewrite of z_actor.c): the C
+ * camera sits ~200 units behind Link looking along gOotCoreCamYaw. Visible =
+ * in front of that eye within ~53 degrees either side. 32-bit integers. */
+s32 OotCore_ActorInCameraView(PlayState* play, Actor* actor) {
+    Player* player = GET_PLAYER(play);
+    s32 fx, fz, vx, vz, ahead, side;
+    if (player == NULL)
+        return true;
+    fx = (s32)(Math_SinS(gOotCoreCamYaw) * 1024.0f);
+    fz = (s32)(Math_CosS(gOotCoreCamYaw) * 1024.0f);
+    vx = (s32)(actor->world.pos.x - player->actor.world.pos.x) + fx * 200 / 1024;
+    vz = (s32)(actor->world.pos.z - player->actor.world.pos.z) + fz * 200 / 1024;
+    ahead = (vx * fx + vz * fz) / 1024;
+    side = (vx * fz - vz * fx) / 1024;
+    if (side < 0)
+        side = -side;
+    return ahead > 0 && side * 3 < ahead * 4;
 }
 s32 OnePointCutscene_Attention(PlayState* play, Actor* actor) { /* STUB: no attention shots */
     return CAM_ID_NONE;

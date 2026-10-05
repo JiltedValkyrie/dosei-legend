@@ -17,7 +17,7 @@
 #include "oot_core_host.h"
 
 #define OOT_CORE_MAGIC 0x4F4F5443u /* 'OOTC' */
-#define OOT_CORE_VERSION 18u
+#define OOT_CORE_VERSION 19u
 /* set_flags bits. NPC_SPRITES: generic NPCs are host sprites (NPC views carry
  * object/anim/frame; their Actor_Draw is skipped, no limb matrices). */
 #define OOT_CORE_FLAG_NPC_SPRITES 1u
@@ -143,7 +143,29 @@ typedef struct OotCoreSave {
     unsigned short inventory_equipment;
     unsigned int inventory_upgrades;
     unsigned char magic_level,magic,double_defense;
+    unsigned char boots; /* PLAYER_BOOTS_KOKIRI/IRON/HOVER (fills old padding) */
 } OotCoreSave;
+
+/* Link's tools on the decomp actors (v19, bridge_items.cpp). io is int[6]. */
+#define OOT_CORE_TOOL_HAND   0 /* io[0..2] C hand point, world units, each step */
+#define OOT_CORE_TOOL_USE    1 /* io[0] ItemId, [1..3] origin, [4] yaw, [5] pitch (+up) */
+#define OOT_CORE_TOOL_THROW  2 /* release the held bomb/Bombchu */
+#define OOT_CORE_TOOL_STATE  3 /* returns OOT_CORE_TOOL_* bits; PULLING sets io[0..2] Q8 velocity */
+#define OOT_CORE_TOOL_CANCEL 4 /* drop held explosive, retract hookshot */
+#define OOT_CORE_TOOL_HOLDING       1u
+#define OOT_CORE_TOOL_HOOK_OUT      2u
+#define OOT_CORE_TOOL_BOOMERANG_OUT 4u
+#define OOT_CORE_TOOL_PULLING       8u
+#define OOT_CORE_TOOL_VIEWS_MAX 8
+typedef struct OotCoreToolView {
+    short id, params;            /* ACTOR_EN_ARROW/BOM/BOM_CHU/BOOM, ARMS_HOOK */
+    int x, y, z;                 /* world.pos */
+    short yaw, pitch;            /* shape.rot.y, pitch +up */
+    unsigned short timer;        /* bomb/chu fuse */
+    unsigned char held, flash;   /* parent is Link; bomb flash 0..140 */
+    int radius;                  /* bomb blast sphere radius, 0 = none */
+    unsigned int dmg;            /* AT dmgFlags (C contacts mirror them) */
+} OotCoreToolView;
 
 typedef struct OotCoreEntry {
     unsigned int magic;
@@ -225,6 +247,8 @@ typedef struct OotCoreEntry {
      * 2 consume sounded note+1, 3 consume completed song+1,
      * 4 whether this scene supports the overworld Sun's Song reload. */
     unsigned int (*ocarina)(unsigned int command);
+    int (*tool)(unsigned int command, int* io);
+    int (*tool_view)(const OotCoreToolView** out);
 } OotCoreEntry;
 
 #endif

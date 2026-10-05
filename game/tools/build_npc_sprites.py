@@ -31,6 +31,7 @@ import build_link_model as link
 DIRS = 5
 TEXEL_MIN = 0.75    # world units per texel (small NPCs)
 MAX_HEIGHT = 64     # texels; bigger NPCs get a coarser texel
+HERO_HEIGHT = 90    # story heroes: ~1.4x linear, 2x pixels (human 2026-10-04)
 MAX_POSES = 8       # per clip, sampled evenly over its ticks (cart budget)
 SUPER = 2           # supersample factor
 GENERIC_POSES = 6   # decomp NPCs: many clips each, so fewer poses and texels
@@ -353,8 +354,10 @@ def main():
         for name in ('GANON', 'ZELDA', 'IMPA', 'HZELDA', 'HGANON', 'OWLPERCH', 'OWLFLY'):
             folder = root / 'build/generated' / ('owl' if name.startswith('OWL') else '')
             faces, poses, order = read_model(folder / (name + '.BIN'), folder / (name + '.ANM'))
+            hero = not name.startswith('OWL')
             write_sprite(faces, poses, order, args.out / (name + '.SPR'),
-                         args.work / (name + '_sprites.png'))
+                         args.work / (name + '_sprites.png'),
+                         layout_of([poses], HERO_HEIGHT) if hero else None)
         return
     for model in [] if args.generic_only else args.model if args.model is not None else list(range(npcs.SHOPKEEPER + 1)) + [19, 20, 21, 22]:
         bake(args.oot, args.rom_dir, args.work, args.out, model)   # C NPCs (not Saria clips)

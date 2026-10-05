@@ -1,3 +1,4 @@
+#pragma GCC optimize("Os") /* cold menu/save/script code: size over speed (work RAM) */
 /*
 ** Save-file serialisation. Format, and why it is packed by hand rather than
 ** blitted, are in save_file.h.
@@ -135,6 +136,7 @@ static void     pack_payload(const save_state_t *state, cursor *c)
     put16(c,state->source_equipment);put32(c,state->source_upgrades);
     put8(c,state->source_magic_level);put8(c,state->source_magic);
     put8(c,state->source_double_defense);put8(c,state->source_tokens);
+    put8(c,state->boots);
 }
 
 static void     unpack_payload(save_state_t *state, cursor *c, uint16_t version)
@@ -223,6 +225,9 @@ static void     unpack_payload(save_state_t *state, cursor *c, uint16_t version)
         state->source_magic_level=get8(c);state->source_magic=get8(c);
         state->source_double_defense=get8(c)!=0;state->source_tokens=get8(c);
     }
+    state->boots=version>=12?get8(c):SAVE_BOOTS_KOKIRI;
+    if(state->boots>2 || !(state->source_equipment&(0x1000u<<state->boots)) ||
+        (state->boots && state->link_age))state->boots=SAVE_BOOTS_KOKIRI;
     {
         unsigned n=0,j;
         for(i=0;i<32;++i)for(j=state->skull_flags[i];j;j>>=1)n+=j&1;
@@ -242,7 +247,8 @@ static unsigned int payload_bytes(uint16_t version)
            version == 7 ? SAVE_FILE_V7_PAYLOAD_BYTES :
            version == 8 ? SAVE_FILE_V8_PAYLOAD_BYTES :
            version == 9 ? SAVE_FILE_V9_PAYLOAD_BYTES :
-           version == 10 ? SAVE_FILE_V10_PAYLOAD_BYTES : SAVE_FILE_PAYLOAD_BYTES;
+           version == 10 ? SAVE_FILE_V10_PAYLOAD_BYTES :
+           version == 11 ? SAVE_FILE_V11_PAYLOAD_BYTES : SAVE_FILE_PAYLOAD_BYTES;
 }
 
 /* ---- public ------------------------------------------------------------ */
@@ -289,7 +295,7 @@ static save_file_status validate(const uint8_t *in, unsigned int bytes)
         return (SAVE_FILE_BAD_MAGIC);
     }
     version = (uint16_t)((in[4] << 8) | in[5]);
-    if (version != SAVE_FILE_VERSION && version != 10 && version != 9 && version != 8 && version != 7 && version != 6 && version != 5 && version != 4 && version != 3 &&
+    if (version != SAVE_FILE_VERSION && version != 11 && version != 10 && version != 9 && version != 8 && version != 7 && version != 6 && version != 5 && version != 4 && version != 3 &&
         version != 2)
         return (SAVE_FILE_BAD_VERSION);
     payload = payload_bytes(version);

@@ -91,9 +91,13 @@ def build(oot, rom_dir, out, cd):
     for point in local:
         skin.extend(struct.pack('>3h', *point))
     mask = bytearray((len(faces) + 7) // 8)
+    # Adult tunic material: prim = sTunicColors Kokiri (30,105,27), not the
+    # child's (80,188,8). An empty mask silently disables tunic colours.
     for i, face in enumerate(faces):
-        if tuple(face.get('prim', ())[:3]) == (80, 188, 8):
+        if tuple(face.get('prim', ())[:3]) == (30, 105, 27):
             mask[i // 8] |= 1 << (i % 8)
+    if not any(mask):
+        raise ValueError('Adult Link source tunic material missing')
     skin.extend(mask)
     struct.pack_into('>8I3hH', skin, 0, 0x4C415331, len(skin), len(positions), len(faces),
                      len(tiles), len(pixels), digest, len(rows), *shift, visible)

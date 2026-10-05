@@ -312,3 +312,12 @@ BIOS. Agents build; the human launches
   OOT=D:/...`) matches SH-2 32-bit long. Grid has small slope errors (<4 units), see plan.
 - Target soft-float check: no `__addsf3/__mulsf3/__divsf3/__fix*/__float*`
   symbols in the oot-core objects.
+
+47. **Work RAM for new features (2026-10-04).** Tools pushed .bss 6 KB past SGL.
+    Recovered with `#pragma GCC optimize("Os")` on cold/state files (menus, save,
+    cutscene script, enemy/actor step, input, water, minimap). Hot renderer and
+    collision files stay -O2. Next growth needs code moved into the oot-core blob.
+48. **ctypes bool tests after -Os.** A C `bool` return read as ctypes int keeps
+    garbage high bits; mask `& 0xff` (test_gameplay stick test).
+49. **Item sprites:** `tools/build_item_sprites.py` (OOT_CORE branch of build.sh)
+    writes 13 ITM*.SPR; pitch-band sheets store elevation as the pose axis.

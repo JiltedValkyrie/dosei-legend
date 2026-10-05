@@ -209,8 +209,11 @@ static bool upload_visible(unsigned int visible, unsigned int generation)
             return false;
         }
 #ifdef DOSEI_OOT_CORE
-        oot_core_meshes_upload();   /* last: never starves the C uploads */
+        oot_core_meshes_upload();   /* never starves the C uploads */
 #endif
+        /* Adult hero gear last: optional, so it can never starve an actor;
+         * a full bank keeps Link's flat hand/back variants for this room. */
+        (void)kokiri_link_gear_upload();
         uploaded = 0;
     }
     return true;

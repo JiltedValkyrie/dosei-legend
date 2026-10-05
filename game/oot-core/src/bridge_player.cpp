@@ -81,9 +81,10 @@ static ColliderQuadInit sMeleeWeaponQuadInit = {
     { { { 0.0f, 0.0f, 0.0f }, { 0.0f, 0.0f, 0.0f }, { 0.0f, 0.0f, 0.0f }, { 0.0f, 0.0f, 0.0f } } },
 };
 
-/* Copy of z_player_lib.c Player_UpdateWeaponInfo (file not imported yet):
+/* z_player_lib.c Player_UpdateWeaponInfo (file not imported yet; also used
+ * by the tool actors, bridge_items.cpp):
  * the quad sweeps last frame's blade line to this frame's. */
-static s32 PlayerProxy_UpdateWeaponInfo(PlayState* play, ColliderQuad* collider, WeaponInfo* weaponInfo,
+u8 Player_UpdateWeaponInfo(PlayState* play, ColliderQuad* collider, WeaponInfo* weaponInfo,
                                         Vec3f* newPosA, Vec3f* newPosB) {
     if (!weaponInfo->active) {
         if (collider != NULL) {
@@ -125,8 +126,17 @@ static void PlayerProxy_UpdateSword(Player* this, PlayState* play) {
         w->active = false; /* func_80832318 */
         return;
     }
-    this->meleeWeaponQuads[0].elem.atDmgInfo.dmgFlags = LINK_IS_ADULT ? DMG_SLASH_MASTER : DMG_SLASH_KOKIRI;
-    this->meleeWeaponQuads[0].elem.atDmgInfo.damage = LINK_IS_ADULT ? 2 : 1;
+    /* func_80837918 sword rows: Kokiri 1, Master 2, Biggoron 4. */
+    if (!LINK_IS_ADULT) {
+        this->meleeWeaponQuads[0].elem.atDmgInfo.dmgFlags = DMG_SLASH_KOKIRI;
+        this->meleeWeaponQuads[0].elem.atDmgInfo.damage = 1;
+    } else if (CUR_EQUIP_VALUE(EQUIP_TYPE_SWORD) == EQUIP_VALUE_SWORD_BIGGORON) {
+        this->meleeWeaponQuads[0].elem.atDmgInfo.dmgFlags = DMG_SLASH_GIANT;
+        this->meleeWeaponQuads[0].elem.atDmgInfo.damage = 4;
+    } else {
+        this->meleeWeaponQuads[0].elem.atDmgInfo.dmgFlags = DMG_SLASH_MASTER;
+        this->meleeWeaponQuads[0].elem.atDmgInfo.damage = 2;
+    }
     this->meleeWeaponQuads[0].elem.atElemFlags = ATELEM_ON | ATELEM_NEAREST;
     if (!w->active) {
         /* Saturn: the real first frame only primes (no AT). The decomp runs
@@ -148,7 +158,7 @@ static void PlayerProxy_UpdateSword(Player* this, PlayState* play) {
         w->active = true;
         return;
     }
-    PlayerProxy_UpdateWeaponInfo(play, &this->meleeWeaponQuads[0], w, &gOotCoreSwordTip, &gOotCoreSwordBase);
+    Player_UpdateWeaponInfo(play, &this->meleeWeaponQuads[0], w, &gOotCoreSwordTip, &gOotCoreSwordBase);
 }
 
 /* Player_GetHeight's age-dependent eye height for actor attention. The real
@@ -161,6 +171,8 @@ static void PlayerProxy_Sync(Actor* thisx) {
     thisx->focus.pos = gOotCorePlayerPos;
     thisx->focus.pos.y = thisx->focus.pos.y + (LINK_IS_ADULT ? 68 : 44);
     thisx->focus.rot.y = gOotCorePlayerYaw;
+    /* Floor switches, currents and actors read the equipped boots. */
+    ((Player*)thisx)->currentBoots = (s8)(CUR_EQUIP_VALUE(EQUIP_TYPE_BOOTS) - 1);
 }
 
 static void PlayerProxy_Init(Actor* thisx, PlayState* play) {

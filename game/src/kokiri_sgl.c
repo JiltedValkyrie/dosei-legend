@@ -31,6 +31,14 @@
 #include "link_clips.h"
 #include "link_age.h"
 #include "adult_link.h"
+#include "link_gear.h"
+#include <string.h>
+/* Adult hero gear (defined beside link_part). */
+static unsigned char *gear_skin, *gear_mesh, *gear_tex, *gear_pixels;
+static unsigned int gear_active, gear_tex_base = 0xFFFFu;
+static bool gear_ready;
+static void gear_free(void);
+static bool gear_load(void);
 #include "kokiri_sgl.h"
 #include "npc_sprite.h"
 #include "minimap.h"
@@ -717,6 +725,7 @@ static void __attribute__((optimize("Os"))) relocate_resident(unsigned int next_
         if ((link_pdata.attbl[i].dir & 7) < 4 &&
             (link_pdata.attbl[i].atrb & 0x38) == CL16Look)
             link_pdata.attbl[i].colno += delta / 8;
+    gear_ready = false; /* gear tiles live in the actor bank: re-uploaded with it */
     texture_base = next_base;
     invalidate_equipped();
 }
@@ -1252,6 +1261,8 @@ bool __attribute__((optimize("Os"))) kokiri_link_set_age(bool adult)
     vram_used=link_vram_start;sprite_next=link_sprite_start;
     ok=link_model_load(adult);
     vram_used=used;sprite_next=next;
+    if (ok && adult) (void)gear_load();
+    else if (ok) gear_free();
     invalidate_equipped();
     return ok;
 }
@@ -1461,11 +1472,130 @@ static unsigned int equipped_count;
 static unsigned int equipped_mask = 255;
 static void invalidate_equipped(void) { equipped_mask = 255; }
 
+/* ---- Adult hero gear (tools/build_link_gear.py) ------------------------
+** Master/Biggoron swords, Hylian/Mirror shields (hand and back) and the
+** Iron/Hover boots are small skinned meshes with their original textures.
+** They replace Link's flat hand/back variants for the adult, are posed by
+** the same limb matrices (link_anim_skin) and are submitted in Link's
+** matrix, so joints, depth and occlusion match his body exactly. */
+enum { GEAR_LEFT_MASTER, GEAR_RIGHT_HYLIAN, GEAR_SHEATH_MASTER, GEAR_SHEATH_HYLIAN, GEAR_LEFT_BGS,
+       GEAR_RIGHT_MIRROR, GEAR_SHEATH_MIRROR, GEAR_BOOTS_IRON, GEAR_BOOTS_HOVER, GEAR_BACK_HYLIAN,
+       GEAR_BACK_MIRROR };
+typedef struct {
+    char magic[4];
+    uint16_t vertices, polygons, tiles, pad;
+    uint32_t pixels;
+    uint16_t group[LINK_GEAR_GROUPS][4];   /* poly first/count, vertex first/count */
+} link_gear_head_t;
+void link_anim_skin(const uint8_t *owners, const link_vec3_t *locals, unsigned int count, POINT *out);
+#define gear_points ((POINT *)RAM_LOW(RAM_LOW_LINK_GEAR_POINTS_OFFSET))
+
+static void gear_free(void)
+{
+    if (gear_skin) jo_free(gear_skin);
+    if (gear_mesh) jo_free(gear_mesh);
+    if (gear_tex) jo_free(gear_tex);
+    if (gear_pixels) jo_free(gear_pixels);
+    gear_skin = gear_mesh = gear_tex = gear_pixels = 0;
+    gear_ready = false;
+    gear_tex_base = 0xFFFFu;
+}
+
+/* After an adult model load: files stay on the cart heap; tiles go into the
+ * room's actor bank on each bank reset (kokiri_link_gear_upload). */
+static bool __attribute__((optimize("Os"))) gear_load(void)
+{
+    unsigned i, j;
+    const link_gear_head_t *h;
+    const POLYGON *poly;
+    const ATTR *attr;
+    int length = 0;
+    gear_free();
+    gear_skin = (unsigned char *)jo_fs_read_file("LGEARSKN.BIN", &length);
+    if (!gear_skin || length != (int)LINK_GEAR_SKIN_BYTES) goto fail;
+    h = (const link_gear_head_t *)gear_skin;
+    if (memcmp(h->magic, "LGR1", 4) || h->vertices != LINK_GEAR_VERTEX_COUNT ||
+        h->polygons != LINK_GEAR_POLYGON_COUNT || h->tiles != LINK_GEAR_TILE_COUNT) goto fail;
+    gear_mesh = (unsigned char *)jo_fs_read_file("LGEARMSH.BIN", &length);
+    if (!gear_mesh || length != (int)LINK_GEAR_MESH_BYTES) goto fail;
+    gear_tex = (unsigned char *)jo_fs_read_file("LGEARTEX.BIN", &length);
+    if (!gear_tex || length != (int)LINK_GEAR_TEX_BYTES) goto fail;
+    gear_pixels = (unsigned char *)jo_fs_read_file("LGEAR.TEX", &length);
+    if (!gear_pixels || length != (int)LINK_GEAR_PIXEL_BYTES) goto fail;
+    poly = (const POLYGON *)gear_mesh;
+    attr = (const ATTR *)(gear_mesh + LINK_GEAR_POLYGON_COUNT * sizeof(POLYGON));
+    for (i = 0; i < LINK_GEAR_GROUPS; ++i) {
+        const uint16_t *g = h->group[i];
+        if (g[0] + g[1] > LINK_GEAR_POLYGON_COUNT || g[2] + g[3] > LINK_GEAR_VERTEX_COUNT) goto fail;
+        for (j = g[0]; j < g[0] + g[1]; ++j)
+            if (poly[j].Vertices[0] >= g[3] || poly[j].Vertices[1] >= g[3] ||
+                poly[j].Vertices[2] >= g[3] || poly[j].Vertices[3] >= g[3] ||
+                ((attr[j].dir & 7) < 4 && attr[j].texno >= LINK_GEAR_TILE_COUNT)) goto fail;
+    }
+    for (i = 0; i < LINK_GEAR_VERTEX_COUNT; ++i)
+        if (gear_skin[sizeof(link_gear_head_t) + i] >= LINK_LIMB_COUNT) goto fail;
+    return true;
+fail:
+    gear_free();
+    return false;
+}
+
+/* From the bank reset (npc_draw.c), before decomp meshes. A full bank only
+ * drops back to Link's flat hand/back variants for this room. */
+bool __attribute__((optimize("Os"))) kokiri_link_gear_upload(void)
+{
+    unsigned bank = ((LINK_GEAR_PIXEL_BYTES + 31u) & ~31u) + LINK_GEAR_TILE_COUNT * 32u + 32u, i;
+    ATTR *attr;
+    PDATA all;
+    gear_ready = false;
+    if (!gear_mesh || vram_used + bank > TEXTURE_CAPACITY || sprite_next + LINK_GEAR_TILE_COUNT > JO_MAX_SPRITE)
+        return gear_mesh == 0;
+    attr = (ATTR *)(gear_mesh + LINK_GEAR_POLYGON_COUNT * sizeof(POLYGON));
+    if (gear_tex_base != 0xFFFFu)   /* mesh_load rebases texno in place */
+        for (i = 0; i < LINK_GEAR_POLYGON_COUNT; ++i)
+            if ((attr[i].dir & 7) < 4) attr[i].texno -= gear_tex_base;
+    gear_tex_base = sprite_next;
+    all.pltbl = (POLYGON *)gear_mesh; all.attbl = attr;
+    all.pntbl = gear_points; all.nbPoint = 0; all.nbPolygon = LINK_GEAR_POLYGON_COUNT;
+    mesh_staged_pixels = gear_pixels;
+    gear_ready = mesh_load("LGEAR.TEX", LINK_GEAR_PIXEL_BYTES, (const kokiri_tile *)gear_tex, LINK_GEAR_TILE_COUNT,
+                           (const unsigned short (*)[16])(gear_tex + LINK_GEAR_TILE_COUNT * sizeof(link_tile)),
+                           &all, LINK_GEAR_POLYGON_COUNT, 0);
+    mesh_staged_pixels = 0;
+    return gear_ready;
+}
+
+/* Skin and submit the active groups (gear_active bits) in Link's matrix. */
+static void gear_draw(void)
+{
+    const link_gear_head_t *h = (const link_gear_head_t *)gear_skin;
+    const uint8_t *owners;
+    const link_vec3_t *locals;
+    unsigned int i, at = 0;
+    if (!gear_ready || !gear_active) return;
+    owners = gear_skin + sizeof(link_gear_head_t);
+    locals = (const link_vec3_t *)(owners + ((LINK_GEAR_VERTEX_COUNT + 3u) & ~3u));
+    for (i = 0; i < LINK_GEAR_GROUPS; ++i) {
+        const uint16_t *g = h->group[i];
+        PDATA part;
+        if (!(gear_active & (1u << i)) || at + g[3] > RAM_LOW_LINK_GEAR_POINTS_BYTES / sizeof(POINT)) continue;
+        link_anim_skin(owners + g[2], locals + g[2], g[3], gear_points + at);
+        part.pntbl = gear_points + at;
+        part.nbPoint = g[3];
+        part.pltbl = (POLYGON *)gear_mesh + g[0];
+        part.attbl = (ATTR *)(gear_mesh + LINK_GEAR_POLYGON_COUNT * sizeof(POLYGON)) + g[0];
+        part.nbPolygon = g[1];
+        submit(&part, 2u);
+        at += g[3];
+    }
+}
+
 static void link_part(unsigned int first, unsigned int count)
 {
     static const ATTR tunics[2]={
-        ATTRIBUTE(Dual_Plane,SORT_CEN|UseNearClip,0,C_RGB(0,0,31),No_Gouraud,ECdis,sprPolygon,No_Option),
-        ATTRIBUTE(Dual_Plane,SORT_CEN|UseNearClip,0,C_RGB(25,0,0),No_Gouraud,ECdis,sprPolygon,No_Option)};
+        /* z_player_lib sTunicColors: Zora {0,60,100}, Goron {100,20,0}. */
+        ATTRIBUTE(Dual_Plane,SORT_CEN|UseNearClip,0,C_RGB(0,7,12),No_Gouraud,ECdis,sprPolygon,No_Option),
+        ATTRIBUTE(Dual_Plane,SORT_CEN|UseNearClip,0,C_RGB(12,2,0),No_Gouraud,ECdis,sprPolygon,No_Option)};
     unsigned int i;
     const unsigned char *tunic_faces=link_tunic_faces;
     if(link_age_model) {
@@ -1906,25 +2036,56 @@ void                kokiri_link_draw(int x, int y, int z, int yaw)
         unsigned visible_gear = player_items_stick() ? gameplay.equipped & ~GP_SWORD : gameplay.equipped;
         bool ocarina = (oot_core_ocarina_state() & 1u) != 0;
         if (ocarina) visible_gear |= 0x10000u;
+        /* Biggoron's blade and the Mirror Shield are sprites (oot_core_host
+         * tools_draw): the hand meshes stay empty instead. */
+        if (!save_state.link_age && save_state.equip_sword == EQUIP_VALUE_SWORD_BIGGORON) visible_gear |= 0x20000u;
+        if (!save_state.link_age && save_state.equip_shield == EQUIP_VALUE_SHIELD_MIRROR) visible_gear |= 0x40000u;
+        /* Player_SetModels: a sheathed sword rides on the back with the shield
+         * (sword+shield-on-back variant) until a swing or guard draws them. */
+        bool stowed = ocarina || !demo_sword_out();
+        bool sword = (visible_gear & GP_SWORD) != 0, shield = (gameplay.equipped & GP_SHIELD) != 0;
+        bool gear = gear_ready;   /* adult hero gear meshes uploaded this room */
+        if (stowed) visible_gear |= 0x80000u;
+        if (gear) visible_gear |= 0x100000u;
+        gear_active = 0;
+        if (gear) {
+            bool bgs = (visible_gear & 0x20000u) != 0, mirror = (visible_gear & 0x40000u) != 0;
+            if (!stowed && sword) gear_active |= 1u << (bgs ? GEAR_LEFT_BGS : GEAR_LEFT_MASTER);
+            if (!stowed && shield) gear_active |= 1u << (mirror ? GEAR_RIGHT_MIRROR : GEAR_RIGHT_HYLIAN);
+            if (stowed && sword)
+                gear_active |= 1u << (!shield ? GEAR_SHEATH_MASTER : mirror ? GEAR_SHEATH_MIRROR : GEAR_SHEATH_HYLIAN);
+            else if (stowed && shield)   /* shield-only loadout: shield + empty sheath */
+                gear_active |= 1u << (mirror ? GEAR_BACK_MIRROR : GEAR_BACK_HYLIAN);
+            if (save_state.boots)
+                gear_active |= 1u << (save_state.boots == SAVE_BOOTS_IRON ? GEAR_BOOTS_IRON : GEAR_BOOTS_HOVER);
+        }
         if (equipped_mask != (visible_gear | (save_state.tunic<<8))) {
             equipped_count = 0;
             link_part(LINK_BODY_FIRST, LINK_BODY_COUNT);
-            if (ocarina) {
+            if (stowed) {
                 link_part(LINK_LEFT_EMPTY_FIRST, LINK_LEFT_EMPTY_COUNT);
-                link_part(LINK_RH_OCARINA_FIRST, LINK_RH_OCARINA_COUNT);
-                if (visible_gear & GP_SWORD) {
-                    if (visible_gear & GP_SHIELD)
+                if (ocarina) link_part(LINK_RH_OCARINA_FIRST, LINK_RH_OCARINA_COUNT);
+                /* No shield-only back variant in the flat model: keep it in hand. */
+                else if (shield && !sword && !gear && !(visible_gear & 0x40000u))
+                    link_part(LINK_RIGHT_SHIELD_FIRST, LINK_RIGHT_SHIELD_COUNT);
+                else link_part(LINK_RIGHT_EMPTY_FIRST, LINK_RIGHT_EMPTY_COUNT);
+                if (sword && !gear) {
+                    if (shield && !(visible_gear & 0x40000u))
                         link_part(LINK_SHEATH_SHIELD_FIRST, LINK_SHEATH_SHIELD_COUNT);
                     else link_part(LINK_SHEATH_SWORD_FIRST, LINK_SHEATH_SWORD_COUNT);
                 }
-            } else if (visible_gear & GP_SWORD) {
-                link_part(LINK_LEFT_SWORD_FIRST, LINK_LEFT_SWORD_COUNT);
-                link_part(LINK_SHEATH_FIRST, LINK_SHEATH_COUNT);
-            } else link_part(LINK_LEFT_EMPTY_FIRST, LINK_LEFT_EMPTY_COUNT);
-            if (!ocarina) {
-                if (gameplay.equipped & GP_SHIELD)
+            } else {
+                /* Gear hand meshes carry the hand itself: no Link hand then. */
+                if (sword) {
+                    if (!gear) {
+                        if (visible_gear & 0x20000u) link_part(LINK_LEFT_EMPTY_FIRST, LINK_LEFT_EMPTY_COUNT);
+                        else link_part(LINK_LEFT_SWORD_FIRST, LINK_LEFT_SWORD_COUNT);
+                    }
+                    link_part(LINK_SHEATH_FIRST, LINK_SHEATH_COUNT);
+                } else link_part(LINK_LEFT_EMPTY_FIRST, LINK_LEFT_EMPTY_COUNT);
+                if (shield && !gear && !(visible_gear & 0x40000u))
                     link_part(LINK_RIGHT_SHIELD_FIRST, LINK_RIGHT_SHIELD_COUNT);
-                else link_part(LINK_RIGHT_EMPTY_FIRST, LINK_RIGHT_EMPTY_COUNT);
+                else if (!shield || !gear) link_part(LINK_RIGHT_EMPTY_FIRST, LINK_RIGHT_EMPTY_COUNT);
             }
             equipped_mask = visible_gear | (save_state.tunic<<8);
         }
@@ -1945,6 +2106,7 @@ void                kokiri_link_draw(int x, int y, int z, int yaw)
                 kokiri_hit_filter(1+(unsigned)((cs+65536)*15/131072));
             }
             submit(&equipped, 2u);
+            gear_draw();
             kokiri_hit_filter(0);
         }
     }
@@ -2637,6 +2799,7 @@ void kokiri_cutscene_tiles_reset(void)
 unsigned int kokiri_actor_bank_generation(void) { return actor_bank_generation; }
 void kokiri_actor_tiles_reset(void)
 {
+    gear_ready = false;   /* its tiles were in this bank; re-uploaded last */
 #ifdef KOKIRI_STREAM_ROOMS
     vram_used = actor_vram_base;
     sprite_next = actor_sprite_base;

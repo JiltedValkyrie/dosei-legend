@@ -72,6 +72,7 @@ camera_position_t demo_link;
 uint16_t demo_link_yaw;
 bool demo_link_active;
 static int32_t link_velocity_y_q8;
+static uint8_t link_hover_steps;
 static int32_t link_fall_remainder_q8;
 /* Height Link last left the ground from (OoT fallStartHeight: set while
  * grounded, NOT raised by a jump), so the drop measured at landing is
@@ -103,6 +104,13 @@ static bool link_hang_walk_off;
 static player_climb_t link_climb;
 static player_push_t link_push;
 static player_lift_t link_lift;
+/* Bomb/Bombchu over Link's head (decomp tool actor): the carry pose and the
+ * throw clip come from the same lift states as pots. */
+static bool lift_bomb, bomb_throw;
+/* Sword/shield in hand (z_player heldItemAction >= SWORD) vs sheathed. */
+static bool link_sword_out;
+static uint8_t putaway_wait;
+bool demo_sword_out(void) { return link_sword_out; }
 static player_slope_t link_slope;
 static player_water_t link_water;
 static player_camera_t link_camera;
@@ -705,6 +713,7 @@ static void __attribute__((optimize("Os"))) place_at_spawn(unsigned int scene, u
     player_bg_reset(&link_bg);
     player_push_cancel(&link_push);
     player_lift_cancel(&link_lift); world_props_drop_carried();
+    link_sword_out = false; /* scenes start with the sword sheathed */
     link_slope=(player_slope_t){0};
     link_crawl.phase = PLAYER_CRAWL_NONE;
     kokiri_collision_actor_set_crawl(false);
@@ -1423,6 +1432,21 @@ bool gameplay_blade_points(int32_t base[3], int32_t tip[3])
     return true;
 }
 
+bool __attribute__((noinline)) gameplay_link_point(unsigned int limb, int32_t out[3])
+{
+    int32_t l[3], sine, cosine;
+    if (!demo_link_active)
+        return false;
+    link_anim_limb(limb, l);
+    kokiri_camera_sincos(demo_link_yaw, &sine, &cosine);
+    /* Q16 x Q16 in 32 bits: 1/16-unit local, 1/4096 trig; ample for a hand. */
+    l[0] >>= 12; l[2] >>= 12; sine >>= 4; cosine >>= 4;
+    out[0] = demo_link.x + ((cosine * l[0] + sine * l[2]) >> 16);
+    out[1] = demo_link.y - DEMO_LINK_EYE_HEIGHT + link_anim_y_offset_q8() / 256 + l[1] / 65536;
+    out[2] = demo_link.z + ((cosine * l[2] - sine * l[0]) >> 16);
+    return true;
+}
+
 /* BgCheck_EntityLineTest1 (walls, one face), not an entity-ignored poly,
  * not floor type 6. Dyna attachment (func_8002F9EC) is not modelled. */
 bool gameplay_blade_wall(const int32_t from[3], const int32_t to[3], unsigned int *material)
@@ -1891,7 +1915,9 @@ void demo_update(void)
                 action.c_up = c_up_pending;
                 action.attack = combat_buttons.pressed && land_combat && !link_water.phase;
                 action.attack_held = combat_buttons.held && land_combat && !link_water.phase;
-                action.shield = shield_held && land_combat && !link_water.phase;
+                /* Biggoron's Sword is two-handed: no shield guard. */
+                action.shield = shield_held && land_combat && !link_water.phase &&
+                                (save_state.link_age || save_state.equip_sword != EQUIP_VALUE_SWORD_BIGGORON);
                 action.target_held = target_held && !link_water.phase;
                 action.interact = interact_pending &&
                                   (!link_water.phase || gameplay_blocks_world());
@@ -1965,8 +1991,9 @@ void demo_update(void)
                     action.item_eye[1] = demo_camera.y;
                     action.item_eye[2] = demo_camera.z;
                 } else if (!item_aim && action.c_use && action.c_use <= 3 &&
-                           save_state.c_items[action.c_use - 1] == 2 &&
-                           save_state.slingshot && save_state.ammo_seeds &&
+                           (save_state.c_items[action.c_use - 1] == 2 ?
+                                save_state.slingshot && save_state.ammo_seeds :
+                                gameplay_item_aimable(save_state.c_items[action.c_use - 1])) &&
                            !gameplay_blocks_world() && action.grounded &&
                            !gameplay.attack_phase && !action.shield && !action.pause &&
                            !view_first_person && !input.look_mode && !action.target_held) {
@@ -1998,8 +2025,14 @@ void demo_update(void)
                 {
                     /* A decomp talk offer or conversation owns A/B: the C
                      * game must not open its own prompt with the same press. */
-                    bool a = action.interact, b = action.cancel;
+                    bool a, b;
                     unsigned int talk = oot_core_talk();
+                    /* Holding a bomb: A or the C button throws it (func_8084409C). */
+                    if (lift_bomb && link_lift.phase == LIFT_HOLD && (action.interact || action.c_use)) {
+                        bomb_throw = true;
+                        action.interact = false; action.c_use = 0; interact_pending = false;
+                    }
+                    a = action.interact; b = action.cancel;
                     if (talk) action.interact = false;
                     if (talk & 1u) action.cancel = false;
                     gameplay_step(&action);
@@ -2117,6 +2150,11 @@ void demo_update(void)
                  * roll, so pressing A at a Kokiri never rolls away from them. */
                 if (world_props_carrying() && !link_lift.phase)
                     player_lift_begin(&link_lift,false,0,false);
+                if (lift_bomb && !link_lift.phase && !oot_core_tool_holding()) lift_bomb = false;
+                if (oot_core_tool_holding() && !link_lift.phase && !world_props_carrying()) {
+                    player_lift_begin(&link_lift,false,0,true);
+                    lift_bomb = true;
+                }
                 roll_pending = interact_pending && !blocked_before &&
                     !gameplay_blocks_world() && !oot_core_talk() &&
                     !(gameplay.events & (GP_EVENT_TALK_OPEN | GP_EVENT_TALK_PAGE |
@@ -2124,6 +2162,24 @@ void demo_update(void)
                                          GP_EVENT_MENU_OPEN | GP_EVENT_MENU_CLOSE |
                                          GP_EVENT_EQUIP | GP_EVENT_SAVE));
                 evade_a_unclaimed = roll_pending;
+                /* DO_ACTION_PUTAWAY: a swing or guard draws the sword; an
+                 * unclaimed A while standing puts it back once the 20-frame
+                 * putAwayCooldownTimer (30 steps) has run. Crawl, climb, swim
+                 * and carrying stow it, as Player_PutAwayHeldItem does. */
+                if (gameplay.attack_phase || gameplay.shielding) link_sword_out = true;
+                {
+                    link_state_t st = link_anim_state();
+                    if (st == LINK_STATE_CRAWL || st == LINK_STATE_CLIMB || st == LINK_STATE_SWIM ||
+                        st == LINK_STATE_HANG || link_lift.phase || link_water.phase)
+                        link_sword_out = false;
+                }
+                if (link_sword_out && !action.moving && !gameplay.attack_phase) {
+                    if (putaway_wait < 30) ++putaway_wait;
+                } else putaway_wait = 0;
+                if (roll_pending && link_sword_out && putaway_wait >= 30) {
+                    link_sword_out = false;
+                    roll_pending = evade_a_unclaimed = false;
+                }
                 action_audio_events(gameplay.events);
                 if (GP_SHOP_BROWSING(gameplay.shop_state) != shop_browsing &&
                     scene_flow_entry()->save_scene == SAVE_SCENE_KOKIRI_SHOP) {
@@ -2250,18 +2306,42 @@ void demo_update(void)
                     demo_link.z=feet.z;
                 }
             }
+            {
+                /* Player_Action_HookshotFly: Arms_Hook's velocity carries Link
+                 * to the hook point; no gravity, walking or water this step. */
+                int32_t pull[3];
+                if (oot_core_tool_pull(pull)) {
+                    if (view_first_person) { view_first_person = false; item_aim = 0; snap_camera_to_link(); }
+                    demo_link.x += pull[0] / 256;
+                    demo_link.y += pull[1] / 256;
+                    demo_link.z += pull[2] / 256;
+                    link_velocity_y_q8 = 0;
+                    link_fall_remainder_q8 = 0;
+                    link_fall_peak_y = demo_link.y;
+                    link_on_ground = false;
+                    jump_pending = roll_pending = false;
+                    gameplay_attack_cancel();
+                    if (scene_flow_is_interior()) interior_camera();
+                    else player_camera_update(&link_camera, &link_follow, PLAYER_CAMERA_NORMAL, &demo_link,
+                                              demo_link_yaw, true, &demo_camera, &demo_yaw, &demo_pitch);
+                    continue;
+                }
+            }
             /* Water owns a full fixed step: no land gravity, auto-jump, roll,
              * or falling animation can run a second time underneath it. */
             {
                 link_state_t st = link_anim_state();
+                /* Iron Boots: Link sinks and walks the bottom instead of swimming. */
+                bool iron = !save_state.link_age && save_state.boots == SAVE_BOOTS_IRON;
                 bool was_water = link_water.phase != PLAYER_WATER_DRY;
-                bool eligible = was_water || st == LINK_STATE_IDLE ||
+                if (iron && was_water) { player_water_reset(&link_water); was_water = false; }
+                bool eligible = !iron && (was_water || st == LINK_STATE_IDLE ||
                     st == LINK_STATE_WALK || st == LINK_STATE_RUN ||
                     st == LINK_STATE_FALL || st == LINK_STATE_JUMP ||
                     st == LINK_STATE_LANDING || st == LINK_STATE_JUMP_LANDING ||
                     st == LINK_STATE_ROLL || st == LINK_STATE_BONK ||
                     st == LINK_STATE_TURN || st == LINK_STATE_SLIDE ||
-                    st == LINK_STATE_SLIDE_END;
+                    st == LINK_STATE_SLIDE_END);
                 if (eligible) {
                     player_water_input_t wi = {0};
                     bg_vec_t feet = {demo_link.x, demo_link.y-DEMO_LINK_EYE_HEIGHT, demo_link.z};
@@ -2620,7 +2700,12 @@ void demo_update(void)
                 if (link_lift.phase && !gameplay_blocks_world()) {
                     int32_t hand[3],tip[3];
                     lift_last_speed_q8 = intent_speed;
-                    player_lift_update(&link_lift,world_props_lift_action(),intent_speed);
+                    player_lift_update(&link_lift,lift_bomb ? bomb_throw : world_props_lift_action(),intent_speed);
+                    bomb_throw = false;
+                    if (lift_bomb && (link_lift.events & LIFT_RELEASE)) { oot_core_tool_throw(); lift_bomb = false; }
+                    else if (lift_bomb && !oot_core_tool_holding() && link_lift.phase != LIFT_THROW) {
+                        player_lift_cancel(&link_lift); lift_bomb = false;   /* exploded in his hands */
+                    }
                     bool have_hand=gameplay_blade_points(hand,tip);
                     world_props_lift_sync(link_lift.events,link_lift.release_speed_q8,
                                          link_lift.release_y_q8,demo_link_yaw,have_hand ? hand : 0);
@@ -2761,6 +2846,14 @@ void demo_update(void)
                      * fall adds -171 (x2/3 of -1.0); the extra -0.2 is -34. */
                     if (gameplay.attack_phase == 6)
                         link_velocity_y_q8 -= 34;
+                    /* Hover Boots: hoverBootsTimer 19 source frames (28 steps)
+                     * of level flight after leaving the ground. */
+                    if (save_state.link_age || save_state.boots != SAVE_BOOTS_HOVER || link_on_ground)
+                        link_hover_steps = 28;
+                    else if (link_hover_steps) {
+                        --link_hover_steps;
+                        if (link_velocity_y_q8 < 0) link_velocity_y_q8 = 0;
+                    }
                     grounded = kokiri_collision_fall(&demo_link, &link_velocity_y_q8,
                                                       &link_fall_remainder_q8);
                 }
