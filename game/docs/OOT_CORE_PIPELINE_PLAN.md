@@ -1,5 +1,26 @@
 # Plan: bulk decomp pipeline ("oot-core" on Saturn)
 
+Current task (2026-10-05): human requested wrapping the local TR experiment
+after saying it looks really good. Runnable checkpoint with all audio, source
+and measurements: `game/build/astra-control/checkpoint-2026-10-05/`.
+The next direction is [FIELD_SQUARE_RETOPO_PLAN.md](FIELD_SQUARE_RETOPO_PLAN.md):
+local regular square ground, existing textures and collision rebaked from the
+same final surface. Plan written; retopology not implemented. Camera collision
+is fixed in main source and the controlled image; no production renderer or
+usual Clean/Debug ISO promotion. Opus's original probe remains intact.
+
+The isolated candidate has a 160-command cap for the same ten P3 children,
+guard projection and boundary refinement. It adds 76800 texture bytes, no slots;
+target margin 1632 B. Eleven identical baseline/candidate poses/input sequences
+were captured in the visible configured Kronos GUI, Adult/All Items. Mapping
+error and major missing-floor cases improve. Remaining small raster gaps and
+the measured ~54% longer 90-step walk prevent calling it a complete performance
+or all-route solution. Current camera host checks: 18 camera + 25 follow pass;
+main Clean ELF links with 6160 B spare, ISO preserved. Existing collision/follow
+wide math remains migration debt. DEMO_PLAN.md holds the current queue;
+TOMB_RAIDER_POLY_NOTES.md retains the evidence and rejected variants.
+BURNING_RANGERS_POLY_NOTES.md: BR static study (small tile faces, no clip/split).
+
 Latest (2026-10-04, tools): Link's C-button tools now run the real decomp
 actors En_Arrow, En_Bom, En_Bom_Chu, En_Boom and Arms_Hook (importer SOURCES;
 API v19 `tool`/`tool_view`; oot-core/src/bridge_items.cpp plays z_player's
@@ -25,8 +46,10 @@ changes and return from opening audio select the correct bank; a failed load
 stays silent and is retryable. Non-voice bytes, resident offsets, playback rates
 and sound-RAM/area budgets are unchanged. Adult tails are bounded to the shared
 event slots with a short fade; exact original sequencing remains approximate.
-The adult PCM was regenerated/staged through WSL. Final ELF boundary passes at
-0x06083FF0 (16 B spare); final usual Clean image is blocked by Kronos's open ISO.
+The adult PCM was regenerated/staged through WSL. That ELF boundary passed at
+0x06083FF0 (16 B spare); the handoff recorded the Clean image refresh blocked
+by Kronos's open ISO. P0 preserved the existing image and its hash; that alone
+does not certify which of these source changes the preserved disc contains.
 Host checks this follow-up: 22 action audio, 1 age-bank lifecycle, 1 shadow,
 6 sprite, 3 collision-index and 28 collision cases pass (61 total).
 
@@ -53,7 +76,7 @@ Final WSL Clean rebuild passes (build/character-shadow-build.log);
 .bss ends 0x06083FE0 (32 bytes below SGL). Human runtime checks pending.
 
 
-## Current handoff (2026-10-04)
+## Prior implementation handoff (2026-10-04)
 
 Active regression batch: complete source inventory/quest display, current-region
 map, Ocarina/song bridge, real Adult Link asset/era path, interior views, door

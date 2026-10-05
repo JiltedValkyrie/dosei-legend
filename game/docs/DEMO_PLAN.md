@@ -1,5 +1,60 @@
 # Current game plan (historical filename)
 
+Current assignment (2026-10-05): human stopped renderer work after positive
+visual feedback ("It look really good") and requested a square-retopology plan.
+[FIELD_SQUARE_RETOPO_PLAN.md](FIELD_SQUARE_RETOPO_PLAN.md) is written; square
+geometry and new collision are not implemented. Next work is a local planar
+square preview and exact bake budget, reusing existing ground textures and
+generating matching collision. Continuous ground and stable texture mapping
+take priority over exact texture fidelity. No distant group expansion.
+
+Current TR candidate is frozen at
+`build/astra-control/checkpoint-2026-10-05/game.cue`, with all audio tracks,
+sources and evidence. Same ten P3 children from four source faces only. It uses
+SGL's sort/DMA queue, guard projection and at most 16 visible leaves per child
+(160 total). Near/guard boundary cells may refine two extra levels; ordinary
+cells keep 1/4/16. This exceeds the earlier two-level proposal in depth, not
+the command cap. Immutable parent-index tiles add 76800 B, no sprite slots;
+total budget 350112/445432 B. WSL target passes with 1632 B below SGL.
+Eleven matched baseline/candidate poses cover both cameras, normal walking,
+jumping and turning in the human-visible configured Kronos. Peak captured
+commands: 628. Mapping error is substantially lower; small raster gaps remain
+possible. A 90-step walk takes 7.265–7.312 s versus 4.735 s baseline, about 54%
+longer. Visual feedback does not approve this cost or establish all-route seams.
+No Clean/Debug image promotion and no production renderer change.
+
+Camera correction is implemented in main source and the isolated build:
+ordinary follow now collides in both modes, preserves age/profile height plus
+pitch rise above sampled ground, and shortens against walls/ceilings. A raised
+eye turns down toward Link. Previously only traversal transitions used the
+collision ray; shortening alone also left the eye almost touching a slope.
+Host tests pass 18 camera and 25 follow cases. Main Clean ELF links with 6160 B
+spare; its ISO is intentionally preserved. Recorded Field turn no longer places
+the camera under the slope. Existing wide math in collision/follow is migration
+debt; the new paths introduce no wide/float helper references.
+
+The isolated control harness boots Field through the existing Level Select path,
+feeds bounded normal pad/physics steps through a 4164-byte low-RAM mailbox,
+and captures SGL's real matrix and command list. Initial repeated walk/jump
+and both-camera matrix checks passed; final matched fixture evidence is under
+`build/astra-control/verification/tr-v10/`. Whole-world determinism is not claimed.
+The source STM remains Opus's four-face P3 patch, with the renderer operating on
+its ten children; standalone P3 had severe swim before the current experiment.
+The old universal near-rejection explanation is not supported by actual SGL
+traces. Backface checks, projected XY limits and camera clearance also matter.
+
+Details/history: [TOMB_RAIDER_POLY_NOTES.md](TOMB_RAIDER_POLY_NOTES.md).
+Burning Rangers static study (2026-10-05, research only, no code change):
+[BURNING_RANGERS_POLY_NOTES.md](BURNING_RANGERS_POLY_NOTES.md). The supplied static study reports mostly 20-unit tile faces, whole-face near
+rejection, and no clip/runtime split. Visual behavior and an all-face depth-ratio
+bound were not established by that study.
+Baseline preserved at `build/baseline-2026-10-05/`, source checkpoint 807d1e0;
+source/image provenance remains distinct from preserved hashes. The preexisting
+`src/player_input.c` analog chord edit is preserved and included in the local
+source checkpoint requested by the human. Runnable build artifacts remain in
+ignored build directories; this checkpoint does not publish or push anything.
+Other unfinished game requirements below remain open.
+
 Latest follow-up (2026-10-04): shadows are now twelve-sided circular disks,
 not diamonds. Adult Link uses ADULTACT.PCM with original adult attack, jump,
 climb, hurt, fall, landing and death recordings (13 replacements). Scene-age
@@ -7,8 +62,10 @@ changes and return from opening audio select the correct bank; a failed load
 stays silent and is retryable. Non-voice bytes, resident offsets, playback rates
 and sound-RAM/area budgets are unchanged. Adult tails are bounded to the shared
 event slots with a short fade; exact original sequencing remains approximate.
-The adult PCM was regenerated/staged through WSL. Final ELF boundary passes at
-0x06083FF0 (16 B spare); final usual Clean image is blocked by Kronos's open ISO.
+The adult PCM was regenerated/staged through WSL. That ELF boundary passed at
+0x06083FF0 (16 B spare); the handoff recorded the Clean image refresh blocked
+by Kronos's open ISO. P0 preserved the existing image and its hash; that alone
+does not certify which of these source changes the preserved disc contains.
 Host checks this follow-up: 22 action audio, 1 age-bank lifecycle, 1 shadow,
 6 sprite, 3 collision-index and 28 collision cases pass (61 total).
 
@@ -35,8 +92,10 @@ legacy mesh enemies/boss shadows are not converted by this NPC/character pass.
 The prior diamond-shadow Clean image passed before this correction. Current
 round-shadow/adult-audio ELF links with .bss end 0x06083FF0 (16 B spare).
 Cold collision loading/index construction and fog setup use size optimization;
-heap and actor limits unchanged. Final ISO refresh is blocked by running Kronos
-holding game-clean.iso; do not overwrite a mounted image. Logs:
+heap and actor limits unchanged. That handoff recorded ISO refresh blocked by
+Kronos holding game-clean.iso; the current diagnostic preserves that image/hash
+without certifying its source provenance.
+Do not overwrite a mounted image. Logs:
 build/round-shadow-link.log and build/round-shadow-boundary.log.
 Human visual/FPS acceptance remains pending; no emulator launched.
 
@@ -52,18 +111,22 @@ Host Ocarina/Level Select batches pass 15 tests. WSL Clean rebuild passes;
 .bss ends 0x06083FE0 (32 bytes below SGL). Human runtime checks pending.
 
 
-Updated 2026-10-04. Active branch: main (oot-core decomp pipeline). Goal: the full OoT decomp on Saturn,
+Updated 2026-10-05. Active branch: main (oot-core decomp pipeline). Goal: the full OoT decomp on Saturn,
 using imported original game logic with Saturn graphics/audio/file backends.
 This is not a new standalone demo or a rewrite of OoT gameplay.
 
 ## Current priority
 
-Latest human report (2026-10-04, after main integration): the capped test save
+Current warp task is wrapped at the saved local TR candidate and camera fix.
+The next implementation scope is the square-retopology plan above, including
+matching collision and existing textures; it has not started. The preceding
+human regression report (2026-10-04, after main integration):
+the capped test save
 still displays only four inventory items and Emerald; world map remains Kokiri,
 Ocarina cannot equip/play, generic interiors lack view switching, doors show
 normal-vector colours, hearts flicker, and populated Ranch/Kakariko Cucco scenes
 slow severely. Graveyard tomb textures also lose dark detail. These are the
-active regression priorities, superseding the earlier null-free report below.
+remaining regression priorities, superseding the earlier null-free report below.
 Implemented work replaces slice-only pause art with all source slot/quest icons and
 scene-area map markers, double-buffers heart tiles, connects source Ocarina
 recognition, repairs scene camera/material extraction, and bounds source actor
@@ -334,11 +397,16 @@ counts and image contents describe those builds, not the current continuation.
 
 ## Next actions / remaining work
 
+0. Complete the local TR-style candidate's matched movement, camera, floor-hole
+   and runtime-cost checks. Source material/palette, original assets and global
+   near remain fixed; ten selected P3 children only. Keep failed candidates out
+   of player images. Warp acceptance and Clean promotion remain pending.
 1. Preserve passing combined regression verification and the usual Clean image,
    heap sizes, actor capacities and SDK error handler. Human still checks all
    inventory/quest pages, Ocarina input, both eras, house views, door/tomb art,
-   steady hearts and populated Ranch/Kakariko frame timings. No agent emulator
-   launch. Capped items remains opt-in on confirmed Level Select entry; L toggles
+   steady hearts and populated Ranch/Kakariko frame timings. Astra's authorized
+   emulator control is scoped to the warp diagnostic. Capped items remains
+   opt-in on confirmed Level Select entry; L toggles
    it, R selects era. Complete the missing source song actors and adult story path.
 2. Finish the source entrance graph. Current route audit separates structural
    reach from traversal acceptance and records every known missing destination,
@@ -367,10 +435,12 @@ counts and image contents describe those builds, not the current continuation.
    and the 20 Hz/input/hit-volume contract. Approximation is allowed; 64-bit
    fallback is not. A storage-width change needs matching collision/units and
    scene/object blob changes. Broad -O2 and relocating the whole blob are not
-   validated solutions. Prior Clean work-RAM margin was 8,736 bytes;
-   no new FPS or CPU-versus-VDP1 conclusion is established.
+   validated solutions. Latest documented Clean ELF margin is 16 bytes;
+   the 8,736-byte margin belongs to an older checkpoint, not available headroom.
+   No new FPS or CPU-versus-VDP1 conclusion is established.
 5. CD house-exit fix still needs verification; Navi room-read
-   pauses and late music cues remain open. No intermediate test requests pending.
+   pauses and late music cues remain open. No CD test is requested now; the
+   separate polygon plan proposes a human movement gate after an authorized P1.
    Same-room NPC sheet discovery is implemented and host-tested. Reachable
    dynamic sets still need preloading and budgeting before triggers; discovery
    may read the CD at spawn. Missing clips/capacity have explicit diagnostics.

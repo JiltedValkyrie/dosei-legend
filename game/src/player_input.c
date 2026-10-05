@@ -243,10 +243,15 @@ void player_input_step(bool in_gameplay, player_input_t *out)
     ** chord must not swallow. Up swaps the camera, Down toggles the panel.
     ** Gated to diagnostic builds; the clean player disc has neither. */
 #ifndef DOSEI_CLEAN_TEST
-    if (!dialogue_open && (held & CAMERA_L) && (held & CAMERA_R) &&
-        (dpad & (CAMERA_UP | CAMERA_DOWN)))
+    /* 3D pad analog mode: the stick also gives the direction (up = small y). */
+    uint16_t chord_dir = dpad & (CAMERA_UP | CAMERA_DOWN);
+    if (analog) {
+        if (axis_y < 64) chord_dir |= CAMERA_UP;
+        else if (axis_y > 192) chord_dir |= CAMERA_DOWN;
+    }
+    if (!dialogue_open && (held & CAMERA_L) && (held & CAMERA_R) && chord_dir)
     {
-        bool swap = (dpad & CAMERA_UP) != 0;
+        bool swap = (chord_dir & CAMERA_UP) != 0;
 
         if (!diagnostics_chord_held)
         {

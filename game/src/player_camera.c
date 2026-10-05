@@ -1,5 +1,6 @@
 #include "player_camera.h"
 #include "kokiri_camera.h"
+#pragma GCC optimize("Os")
 
 static int32_t ease(int32_t from, int32_t to)
 {
@@ -49,7 +50,7 @@ static bool near_climb_end(const camera_position_t *player, uint16_t facing)
     return floor != BG_Y_MIN && floor > feet;
 }
 
-static void clip_eye(const bg_vec_t *at, camera_position_t *eye)
+static void clip_eye(const bg_vec_t *at, camera_position_t *eye, int32_t clearance)
 {
     bg_vec_t end = {eye->x, eye->y, eye->z}, hit;
     bg_hit_t poly;
@@ -59,9 +60,46 @@ static void clip_eye(const bg_vec_t *at, camera_position_t *eye)
         if (n>span) span=n;
         n=dz<0?-dz:dz; if(n>span) span=n;
         if (span<1) span=1;
-        eye->x=hit.x+dx*2/span;
-        eye->y=hit.y+dy*2/span;
-        eye->z=hit.z+dz*2/span;
+        if (clearance>span) clearance=span;
+        eye->x=hit.x+dx*clearance/span;
+        eye->y=hit.y+dy*clearance/span;
+        eye->z=hit.z+dz*clearance/span;
+    }
+}
+
+void player_camera_constrain(const oot_follow_t *follow,
+    const camera_position_t *player, int32_t at_y, camera_position_t *eye,
+    int32_t *pitch)
+{
+    bg_vec_t at={player->x,at_y,player->z};
+    bg_vec_t ray;
+    bg_hit_t ground;
+    int32_t floor, clearance=eye->y-(player->y-OOT_CAM_PLAYER_ORIGIN);
+    int32_t old_y=eye->y;
+    /* Normal1 raises the focus by the selected age's height, then adds the
+     * pitch rise when placing the eye. Collision shortens that same arm;
+     * walls, floors and ceilings must constrain ordinary follow too. */
+    if (!oot_follow_legacy()) {
+        at.x+=follow->aim_q8[0]/256;
+        at.y+=follow->aim_q8[1]/256;
+        at.z+=follow->aim_q8[2]/256;
+    }
+    /* Keep the age/profile height plus pitch rise over the ground beneath the
+     * desired eye. Merely shortening a ray at a slope hit can leave the eye
+     * one unit above the floor, making an entire near cell disappear. */
+    if (clearance<8) clearance=8;
+    ray=(bg_vec_t){eye->x,eye->y+oot_follow_scale.height*2,eye->z};
+    floor=bg_floor(&ray,BG_IGNORE_CAMERA,&ground);
+    if (floor!=BG_Y_MIN && eye->y<floor+clearance) eye->y=floor+clearance;
+    clip_eye(&at,eye,8);
+    if (eye->y>old_y) {
+        int32_t dx=eye->x-at.x,dz=eye->z-at.z,large,small;
+        if(dx<0)dx=-dx;
+        if(dz<0)dz=-dz;
+        large=dx>dz?dx:dz;small=dx>dz?dz:dx;
+        /* Cheap horizontal length; no wide square root. Keep Link framed
+         * when the terrain raises the eye above the requested orbit. */
+        *pitch=-(int16_t)kokiri_camera_facing(eye->y-at.y,large+small*3/8);
     }
 }
 
@@ -106,12 +144,7 @@ void player_camera_update(player_camera_t *camera, oot_follow_t *follow,
     if (camera->at_y == target) camera->returning = false;
     anchor.y += camera->at_y-target;
     oot_follow_update_profile(follow, &anchor, facing, moving, eye, yaw, pitch, &profile);
-    if (transition && !oot_follow_legacy()) {
-        bg_vec_t at = {player->x, camera->at_y, player->z};
-        /* Keep the ray's direction while shortening it. Integer rounding of
-         * the 2-unit clearance is below one unit on each transverse axis. */
-        clip_eye(&at, eye);
-    }
+    player_camera_constrain(follow,player,camera->at_y,eye,pitch);
     camera->mode = mode;
     camera->previous_y = player->y;
 }
@@ -141,5 +174,5 @@ void player_camera_first_person(oot_follow_t *state, const bg_vec_t *focus,
     eye->x -= (sy / 256) * (cp / 256) * 5 / 65536;
     eye->z -= (cy / 256) * (cp / 256) * 5 / 65536;
     eye->y -= sp * 5 / 65536;   /* behind the focus along the view: up looks drop it */
-    clip_eye(focus, eye);
+    clip_eye(focus, eye,2);
 }

@@ -321,3 +321,84 @@ BIOS. Agents build; the human launches
     garbage high bits; mask `& 0xff` (test_gameplay stick test).
 49. **Item sprites:** `tools/build_item_sprites.py` (OOT_CORE branch of build.sh)
     writes 13 ITM*.SPR; pitch-band sheets store elevation as the pose axis.
+50. **Warp probe planning (2026-10-05):** `--clean WARP_PROBE=1`
+    does not show the probe: `viewer_hud()` returns under `DOSEI_CLEAN_TEST`
+    before rows 10-12. An isolated developer probe can use the existing HUD;
+    a Clean-equivalent overlay needs a diagnostic change. `build.sh` hardcodes
+    variant output and boundary-check paths, so copying a completed image to
+    `build/probe/` does not isolate its build. Isolate checkout/objects/generated
+    assets/staging and include every CUE-referenced audio track. Preserve the
+    usual Clean image. See TOMB_RAIDER_POLY_NOTES.md; probe built 2026-10-05
+    (gotcha 51), initially with 1856 B spare. Later probe builds were human-run;
+    severe swim persists. See gotchas 52-54 for Astra's current controlled build.
+
+51. **Isolated probe checkout** (2026-10-05, Tomb Raider warp study). `git archive <rev> | tar -x`
+    into `game/build/probe/oot-sat/`, plus `config.ini`, `shared/build/audio-source/`, and from
+    `game/build/`: `cd`, `generated`, `oot-core`, `TRACK0*.BIN/.json`. Do NOT `cp -r build/dependencies`:
+    it holds symlinks to the SDK and `C:/msys64`, so cp copied 3 GB; `--prepare` recreates them.
+    `build.sh` finds the toolchain at `$here/../..`, so export `SH_ELF_LINUX=/mnt/d/.../sh-elf-9.3-linux`.
+    Without `TRACK0*.BIN` the cue step fails with `Missing declared CD song CHEST: TRACK02.BIN`.
+    Build: `./build.sh --quick OOT_CORE=1 WARP_PROBE=1` (dev variant: HUD visible; `--clean` hides it).
+    Run it from a script file via `wsl.exe -e bash <script>` (gotcha 34).
+
+52. **Astra controlled warp build (2026-10-05).** `tools/control_probe/prepare.py`
+    snapshots the existing Opus probe into `build/astra-control/oot-sat/`, preserving
+    its Field STM and all CD audio tracks. It refuses to overwrite an existing
+    snapshot. Run the generated `build/astra-control/build.sh` in WSL; the normal
+    images and Opus copy remain untouched. No `WARP_PROBE=1`: this build replaces
+    the crowded HUD with a low-RAM command/trace mailbox. Build boundary: 5712 B.
+    Initial harness skipped TITLE -> FILE_SELECT, so loading the scene did not
+    enter PLAY; corrected before successful movement verification. The boot uses
+    the existing Level Select path with Adult/All Items enabled.
+
+53. **Visible Kronos belongs on the human's desktop.** Human explicitly authorized
+    Astra emulator control and requires the real GUI. Run
+    `powershell.exe -NoProfile -ExecutionPolicy Bypass -File game/tools/control_probe/launch.ps1`
+    from the repository root, outside the Codex restricted desktop
+    (`require_escalated` in this environment). It launches the configured original
+    executable visibly with the isolated disc; no alternate Kronos/settings copy.
+    A launch inside the restricted desktop was invisible to the human, and
+    PrintWindow returned a white render area. Read/control/capture commands for
+    the real GUI also require that desktop/process access. No global key injection.
+    Close the controlled session before rebuilding its mounted image.
+
+54. **Probe HUD height units differ.** Opus's small `L x,y,z` line prints Link's
+    eye/collision Y; its alternate `link x,y,z` line prints feet Y (90 lower).
+    Astra `pose --pose X FEET_Y Z YAW` explicitly takes feet and labels its HUD
+    `FEET`. Human `L 37,275,4353` corresponds to feet `(37,185,4353)`. The first
+    automation test incorrectly placed Link 90 units high; final replay uses the
+    corrected height and verifies settling/jump through real physics.
+
+55. **Local TR checkpoint (2026-10-05).** Current full runnable archive:
+    `build/astra-control/checkpoint-2026-10-05/game.cue`, all audio included.
+    It contains the camera fix and final bounded local renderer, 1632 B below
+    SGL. New renderer source remains in `tools/control_probe/` and the isolated
+    checkout. `build_tr_patch.py` consumes the frozen STM; `install_tr.py` and
+    `install_camera.py` install into that checkout only. Do not run prepare over
+    it. Human stopped renderer changes and requested FIELD_SQUARE_RETOPO_PLAN.md.
+
+56. **Controlled comparisons need identical residency.** Stream both local
+    pieces before each mode and wait for all ten children. Streaming hysteresis
+    otherwise makes the first baseline pose use a different LOD set. Compare
+    actual matrices and normal-input endpoints, not only displayed positions.
+    Whole-scene determinism is not claimed. Final evidence: verification/tr-v10.
+
+57. **Raw sprite submission bypasses SGL backface checks.** Preserve the
+    original Single_Plane test and material/CLUT semantics. Without it an
+    under-terrain camera can paint ground over Link. Near-crossing commands and
+    missing faces alone do not prove SGL's culling rule. Guard saturation is
+    not geometric clipping.
+
+58. **Ground camera clearance differs from wall clearance.** Shortening the
+    focus-to-eye ray at a slope may leave the eye only one unit above the floor.
+    Main player_camera now preserves age/profile height plus pitch above ground
+    and then constrains the ray against walls/ceilings. The main ELF-only check
+    passes with 6160 B spare; preserved Clean/Debug images remain unchanged.
+    Do not use build.sh's image-deleting failure path for an ELF-only audit.
+
+59. **Record moving cost separately from cached FPS.** Final local TR candidate
+    renders a frozen pose at about 29 FPS, but a paired normal 90-step walk
+    takes about 54% longer than baseline. It reserves 76800 extra texture bytes,
+    zero slots, at most 160 local commands. Positive visual feedback is not
+    performance acceptance. New square terrain also needs collision limits:
+    SA.COL currently has 1579 triangles against the baker's 2321 maximum.

@@ -684,6 +684,9 @@ static void         snap_camera_to_link(void)
     oot_follow_snap(&link_follow, &demo_link, demo_link_yaw);
     oot_follow_update(&link_follow, &demo_link, demo_link_yaw, false,
                       &demo_camera, &demo_yaw, &demo_pitch);
+    player_camera_constrain(&link_follow,&demo_link,
+        demo_link.y-DEMO_LINK_EYE_HEIGHT+oot_follow_scale.height+oot_follow_scale.y_offset,
+        &demo_camera,&demo_pitch);
 }
 
 /* Put Link at one of a scene's ROM spawn points and make the camera agree.

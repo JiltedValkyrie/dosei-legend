@@ -43,6 +43,7 @@ class TraversalCamera(unittest.TestCase):
     def tearDownClass(cls): cls.tmp.cleanup()
     def setUp(self):
         self.lib.oot_follow_set_adult(False)
+        self.lib.oot_follow_set_legacy(False)
         self.camera=Camera();self.follow=follow.Follow()
         self.player=follow.Position(0,90,0);self.eye=follow.Position()
         self.yaw=C.c_uint16();self.pitch=C.c_int32()
@@ -122,6 +123,82 @@ class TraversalCamera(unittest.TestCase):
         self.world([(t,1<<8) for t,_ in wall])
         self.step(2)
         self.assertLess(self.eye.z,-60)
+
+    def test_normal_and_far_camera_squeeze_before_wall_for_both_ages(self):
+        self.world(bg.wall(-60,-200,300))
+        for adult in (False,True):
+            for legacy in (False,True):
+                with self.subTest(adult=adult,legacy=legacy):
+                    self.lib.oot_follow_set_adult(adult)
+                    self.lib.oot_follow_set_legacy(legacy)
+                    self.camera=Camera();self.follow=follow.Follow()
+                    for _ in range(30):self.step()
+                    self.assertGreaterEqual(self.eye.z,-52)
+                    self.assertLessEqual(self.eye.z,0)
+
+    def test_normal_camera_does_not_enter_rising_ground(self):
+        # Ground rises behind Link: y=-z, so the desired eye lies underground.
+        self.world(bg.quad((-300,300,-300),(-300,0,0),(300,0,0),(300,300,-300)))
+        for adult in (False,True):
+            for legacy in (False,True):
+                with self.subTest(adult=adult,legacy=legacy):
+                    self.lib.oot_follow_set_adult(adult)
+                    self.lib.oot_follow_set_legacy(legacy)
+                    self.camera=Camera();self.follow=follow.Follow()
+                    for _ in range(30):self.step()
+                    self.assertGreater(self.eye.y,-self.eye.z)
+                    self.assertLess(self.eye.z,0)
+
+    def test_normal_camera_respects_camera_ignore_and_recovers_clear_distance(self):
+        wall=bg.wall(-60,-200,300)
+        self.world(wall)
+        for _ in range(30):self.step()
+        self.assertGreaterEqual(self.eye.z,-52)
+        self.world([(t,1<<8) for t,_ in wall])
+        self.step()
+        self.assertLess(self.eye.z,-60)
+        self.world([])
+        self.step()
+        self.assertLess(self.eye.z,-60)
+
+    def test_recorded_field_turn_keeps_camera_above_real_collision_floor(self):
+        data=(ROOT/'build/cd/SA.COL').read_bytes()
+        self.lib.bg_mesh_bytes.argtypes=[C.c_char_p,C.c_uint32]
+        self.lib.bg_mesh_bytes.restype=C.c_uint32
+        self.lib.bg_mesh_decode.argtypes=[C.c_char_p,C.c_uint32,C.c_void_p,C.c_uint32,C.POINTER(bg.Mesh)]
+        size=self.lib.bg_mesh_bytes(data,len(data));store=C.create_string_buffer(size)
+        mesh=bg.Mesh()
+        self.assertTrue(self.lib.bg_mesh_decode(data,len(data),store,size,C.byref(mesh)))
+        self.lib.bg_scene_set(C.byref(mesh))
+        self.lib.bg_floor.argtypes=[C.POINTER(bg.Vec),C.c_uint32,C.POINTER(bg.Hit)]
+        self.lib.bg_floor.restype=C.c_int32
+        self.lib.oot_follow_set_adult(True);self.lib.oot_follow_set_legacy(True)
+        self.player=follow.Position(60,90,3367)
+        self.follow.initialised=True;self.follow.yaw=40906;self.follow.distance=204
+        self.step(facing=24521)
+        hit=bg.Hit();ray=bg.Vec(self.eye.x,1000,self.eye.z)
+        floor=self.lib.bg_floor(C.byref(ray),1,C.byref(hit))
+        self.assertGreaterEqual(self.eye.y-floor,50,(self.eye.x,self.eye.y,self.eye.z,floor))
+        self.assertLess(self.pitch.value,0)
+
+    def test_slope_keeps_age_and_pitch_height_above_ground(self):
+        for adult in (False,True):
+            with self.subTest(adult=adult):
+                self.lib.oot_follow_set_adult(adult)
+                self.world([]);self.camera=Camera();self.follow=follow.Follow()
+                for _ in range(30):self.step()
+                clearance=self.eye.y
+                self.world(bg.quad((-300,300,-300),(-300,0,0),(300,0,0),(300,300,-300)))
+                self.step()
+                self.assertGreaterEqual(self.eye.y+self.eye.z,clearance)
+                self.assertLess(self.pitch.value,-1820)
+
+    def test_ground_raise_still_stops_at_wall(self):
+        self.world(bg.quad((-300,300,-300),(-300,0,0),(300,0,0),(300,300,-300))+
+                   bg.wall(-60,-200,500))
+        for _ in range(30):self.step()
+        self.assertGreater(self.eye.z,-60)
+        self.assertGreater(self.eye.y,-self.eye.z)
     def test_crawl_line_rejects_invalid_setting_ranges_and_zero_length(self):
         self.cams=(BgCamera*1)(BgCamera(0x1E,4,0))
         self.vectors=(C.c_int16*12)(0,0,0,10,20,30,10,20,130,0,0,0)

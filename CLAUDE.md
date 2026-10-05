@@ -48,7 +48,11 @@ create alternate image names unless explicitly requested. Do not overwrite a
 mounted image; resolve that blocker while preserving the usual output path.
 Launcher order: Play Dosei Legend (Standard) = clean/default;
 Play Dosei Legend (320x480i) = hires; Debug Mode = normal.
-Human owns runtime testing; do not launch an emulator or inject test input.
+Human owns ordinary runtime testing. Exception authorized 2026-10-05: Astra may
+launch and control the real, visible configured Kronos GUI for the isolated
+warp-control build. Human must see the same window; no copied/hidden emulator.
+The human explicitly permits foreground use during this task. Keep ordinary
+Clean/Debug discs preserved; diagnostic game input comes through its mailbox.
 
 ## Human rule: playable progress, severity-first bug/feature triage
 

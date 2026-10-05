@@ -8,6 +8,10 @@ typedef struct {
     bool initialized, returning;
 } player_camera_t;
 void player_camera_reset(player_camera_t *camera);
+/* Apply the same wall/floor/ceiling arm constraint on spawn and each update. */
+void player_camera_constrain(const oot_follow_t *follow,
+    const camera_position_t *player, int32_t at_y, camera_position_t *eye,
+    int32_t *pitch);
 /* Validated Camera_Subj4 line: reject unrelated, truncated or zero-length data. */
 bool player_camera_crawl_line(const bg_mesh_t *mesh, unsigned index,
                              bg_vec_t *point, int32_t direction[3]);
