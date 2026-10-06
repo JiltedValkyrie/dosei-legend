@@ -8,25 +8,35 @@ function = graphics.function
 
 ROOT = Path(__file__).resolve().parents[1]
 PLAYER = ROOT / 'oot-core/src/bridge_player.cpp'
+HOST = ROOT / 'src/oot_core_host.c'
 
 
 class CoreDialogue(unittest.TestCase):
     run_c = graphics.GraphicsBackend.run_c
 
     def test_host_mirror_uses_source_scene_time_inventory_and_rewards(self):
+        host = HOST.read_text()
+        clock = host[host.index('static unsigned short core_skybox_time;'):
+                     host.index('static void mirror_save(')]
         self.run_c(r'''
 #include <assert.h>
 #include <string.h>
 ''' + '#include "' + (ROOT / 'oot-core/include/oot_core_api.h').as_posix() + '"\n'
+            + '#include "' + (ROOT / 'src/game_mode.h').as_posix() + '"\n'
             + '#include "' + (ROOT / 'src/save_state.c').as_posix() + '"\n' + r'''
+static game_mode_t current_mode=GAME_MODE_PLAY;
+game_mode_t game_mode(void) { return current_mode; }
 static struct { unsigned save_scene,oot_scene; } scene;
-static struct { unsigned rupees; } gameplay;
+static struct { unsigned rupees,dead,paused; } gameplay;
+static unsigned world_blocked;
+static int gameplay_blocks_world(void) { return world_blocked; }
 #define scene_flow_entry() (&scene)
 static OotCoreSave captured;
 static void set_save(const OotCoreSave *s) { captured=*s; }
 static OotCoreEntry entry={.set_save=set_save};
 #define ENTRY (&entry)
-''' + function(ROOT / 'src/oot_core_host.c', 'static void mirror_save(')
+''' + clock
+            + function(HOST, 'static void mirror_save(')
             + function(ROOT / 'src/oot_core_host.c', 'static unsigned char host_give_item(')
             + function(ROOT / 'src/oot_core_host.c', 'static void host_rupees_change(') + r'''
 int main(void) {
@@ -36,7 +46,16 @@ int main(void) {
     save_state.owned_sword=save_state.equip_sword=1;
     save_state.owned_shield=save_state.equip_shield=1;
     save_state.fairy_ocarina=1; save_state.cutscene_index=0xfff1;
+    save_state.source_entrance=0x604;
+    save_state.total_days=11;save_state.bgs_day_count=3;
     mirror_save();
+    assert(captured.entrance_index==0x604);
+    assert(captured.day_time_out==&save_state.day_time);
+    assert(captured.skybox_time_out==&core_skybox_time);
+    assert(captured.total_days==&save_state.total_days && *captured.total_days==11);
+    assert(captured.bgs_day_count==&save_state.bgs_day_count && *captured.bgs_day_count==3);
+    assert(captured.reset_skybox_time && captured.skybox_time==0);
+    assert(!core_skybox_reset && !captured.time_blocked);
     assert(captured.link_age==0 && captured.night && captured.cutscene_index==0xfff1);
     assert(captured.scene_flags==(unsigned long*)&save_state.generic_scene[99]);
     assert(captured.generic_scene && captured.fairy_ocarina && captured.equip_sword==1);
@@ -45,6 +64,36 @@ int main(void) {
     save_state.day_time=0xC000; mirror_save(); assert(!captured.night);
     save_state.day_time=0x4555; mirror_save(); assert(!captured.night);
     save_state.day_time=0x4554; mirror_save(); assert(captured.night);
+    assert(!captured.reset_skybox_time);
+    /* Source frozen-room sky may remain ahead of dayTime. Ordinary host
+     * mirroring and scene changes must not turn that into another reset. */
+    *captured.skybox_time_out=0x5556;
+    *captured.day_time_out=0x4aaa;
+    scene.oot_scene=81;
+    mirror_save();
+    assert(captured.skybox_time==0x5556 && captured.day_time==0x4aaa);
+    assert(!captured.reset_skybox_time && oot_core_skybox_time()==0x5556);
+    /* Explicit source/probe sky assignments preserve the song lifecycle.
+     * Frontend reset separately clears pending time/song state (flag 2). */
+    oot_core_clock_reset(0); mirror_save();
+    assert(captured.reset_skybox_time==1 && !captured.skybox_time);
+    assert(captured.day_time==0x4aaa);
+    mirror_save(); assert(!captured.reset_skybox_time);
+    oot_core_session_reset(save_state.day_time); mirror_save();
+    assert(captured.reset_skybox_time==2 && captured.skybox_time==captured.day_time);
+    mirror_save(); assert(!captured.reset_skybox_time);
+    world_blocked=1; mirror_save(); assert(captured.time_blocked);
+    assert(captured.player_cutscene);
+    gameplay.paused=1;mirror_save();assert(!captured.player_cutscene);
+    gameplay.paused=0;
+    world_blocked=0; gameplay.dead=1; mirror_save(); assert(captured.time_blocked);
+    assert(captured.player_cutscene);
+    gameplay.dead=0; mirror_save(); assert(!captured.time_blocked);
+    assert(!captured.player_cutscene);
+    current_mode=GAME_MODE_CUTSCENE;mirror_save();assert(captured.player_cutscene);
+    current_mode=GAME_MODE_PLAY;
+    save_state.source_entrance=0xffff; mirror_save();
+    assert(captured.entrance_index==0xffff);
     scene.save_scene=SAVE_SCENE_KOKIRI_FOREST; mirror_save();
     assert(!captured.generic_scene && captured.scene_flags==(unsigned long*)&save_state.scene[0]);
     assert(host_give_item(0x1a)==0xff && save_state.bottle_items[0]==0x1a);
@@ -140,6 +189,43 @@ int main(void) {
     assert(gives==2 && last_item==ITEM_MILK && !npc.parent && messages==3);
     refuse=0; p.getItemId=GI_MILK; p.interactRangeActor=&npc;
     PlayerProxy_GetItem(&p,&play); assert(npc.parent==&p.actor && messages==4);
+    return 0;
+}
+''')
+
+    def test_dawn_hatch_requires_persistent_trade_slot_replacement(self):
+        self.run_c(r'''
+#include <assert.h>
+#include <stdint.h>
+''' + '#include "' + (ROOT / 'src/save_state.c').as_posix() + '"\n' + r'''
+typedef uint16_t u16;
+typedef uint32_t u32;
+typedef int32_t s32;
+typedef struct {int unused;} PlayState;
+static struct {unsigned rupees;} gameplay;
+static struct {struct {struct {struct {unsigned char items[24];} inventory;} info;} save;} gSaveContext;
+#define ARRAY_COUNT(a) (sizeof(a)/sizeof((a)[0]))
+#define ITEM_NONE 0xff
+''' + function(HOST, 'static unsigned char host_give_item(') + r'''
+static unsigned char Item_Give(PlayState* play,unsigned char item) { return host_give_item(item); }
+''' + function(ROOT/'oot-core/src/oot_core_api.cpp', 'static s32 OotCore_ReplaceDayItem(') + r'''
+int main(void) {
+    PlayState play={0};save_new_game();
+    for(unsigned i=0;i<24;++i)gSaveContext.save.info.inventory.items[i]=0xff;
+    save_state.source_items[23]=0x21;gSaveContext.save.info.inventory.items[23]=0x21;
+    save_state.source_items[22]=0x2d;gSaveContext.save.info.inventory.items[22]=0x2d;
+    save_state.c_items[0]=0x20+23;
+    assert(OotCore_ReplaceDayItem(&play,0x21,0x22));
+    assert(save_state.source_items[23]==0x22 && gSaveContext.save.info.inventory.items[23]==0x22);
+    assert(save_state.c_items[0]==0x20+23); /* slot assignment stays */
+    assert(OotCore_ReplaceDayItem(&play,0x2d,0x2e));
+    assert(save_state.source_items[22]==0x2e && gSaveContext.save.info.inventory.items[22]==0x2e);
+    assert(!OotCore_ReplaceDayItem(&play,0x21,0x22));
+    /* A stale mirror must never overwrite an unrelated persistent trade item
+     * or display a hatch textbox when the C backend refused the replacement. */
+    save_state.source_items[23]=0x27;gSaveContext.save.info.inventory.items[23]=0x21;
+    assert(!OotCore_ReplaceDayItem(&play,0x21,0x22));
+    assert(save_state.source_items[23]==0x27 && gSaveContext.save.info.inventory.items[23]==0x21);
     return 0;
 }
 ''')

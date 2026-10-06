@@ -21,6 +21,11 @@ extern "C" int puts(const char*);
 typedef decltype(0.0) hw_double;
 static hw_double D(f32 f) { return (hw_double)(decltype(0.0f))f; }
 
+/* Scene id selects BgCheck's custom memSize/subdivisions (Field: 0xB798). */
+#ifndef PROBE_SCENE
+#define PROBE_SCENE SCENE_KOKIRI_FOREST
+#endif
+
 static PlayState sPlay;
 static RegEditor sRegs;
 uintptr_t gSegments[NUM_SEGMENTS];
@@ -40,7 +45,7 @@ int main() {
     const unsigned long thaSize = 0x100000;
     static u64 buf[0x100000 / 8]; /* static: low address (see run script image base) */
     gRegEditor = &sRegs;
-    sPlay.sceneId = SCENE_KOKIRI_FOREST;
+    sPlay.sceneId = PROBE_SCENE;
     THA_Init(&sPlay.state.tha, buf, thaSize);
     BgCheck_Allocate(&sPlay.colCtx, &sPlay, (CollisionHeader*)oot_scene_blob.col_header);
     printf("subdivLen.x %.6f\nsubdivLen.y %.6f\nsubdivLen.z %.6f\n", D(sPlay.colCtx.subdivLength.x),
@@ -48,6 +53,11 @@ int main() {
     printf("subdivInv.x %.9f\nsubdivInv.y %.9f\nsubdivInv.z %.9f\n", D(sPlay.colCtx.subdivLengthInv.x),
            D(sPlay.colCtx.subdivLengthInv.y), D(sPlay.colCtx.subdivLengthInv.z));
     printf("polyNodes %ld\n", (long)sPlay.colCtx.polyNodes.count);
+    printf("polyNodesMax %ld\n", (long)sPlay.colCtx.polyNodes.max);
+    if (sPlay.colCtx.polyNodes.count > sPlay.colCtx.polyNodes.max) {
+        puts("polyNodes OVERFLOW");
+        return 1;
+    }
 
     int n = 0;
     u32 total = oot_scene_blob.num_rooms * oot_scene_blob.num_layers;

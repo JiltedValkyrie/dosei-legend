@@ -17,6 +17,7 @@
 #include "item.h"
 #include "save.h"
 #include "message.h"
+#include "ocarina.h"
 #include "animation.h"
 #include "gfx.h"
 #include "libu64/pad.h"
@@ -27,6 +28,37 @@
 #include "player.h"
 #include "oot_core_api.h"
 #include "oot_scene_blob.h"
+#include "environment.h"
+#include "frame_advance.h"
+#include "scene.h"
+#include "interface.h"
+#include "audio.h"
+#include "sequence.h"
+#include "sfx.h"
+#include "skybox.h"
+
+u16 gTimeSpeed = 0;
+u8 gWeatherMode = WEATHER_MODE_CLEAR;
+static const OotCoreSave* sHostSave;
+#include "../../build/oot-core/environment_player_gate.inc"
+static int OotCore_DayPlayerInCsMode(PlayState* play) {
+    return (sHostSave && sHostSave->player_cutscene) || GET_PLAYER(play) == NULL ||
+        OotCore_ClockPlayer_InCsMode(play);
+}
+/* The Saturn music backend does not yet expose the source's 30-frame fade. */
+static void OotCore_SunSongAudioFade(u16 frames) { (void)frames; }
+static s32 OotCore_ReplaceDayItem(PlayState* play, u16 oldItem, u16 newItem) {
+    for (u32 i = 0; i < ARRAY_COUNT(gSaveContext.save.info.inventory.items); ++i) {
+        if (gSaveContext.save.info.inventory.items[i] != oldItem) continue;
+        /* C owns inventory persistence and C-button icons. The original item
+         * backend replaces the trade slot; also update this frame's mirror. */
+        if (Item_Give(play, newItem) != ITEM_NONE) return false;
+        gSaveContext.save.info.inventory.items[i] = newItem;
+        return true;
+    }
+    return false;
+}
+#include "../../build/oot-core/environment_clock.inc"
 
 void oot_core_bench_run(OotCoreBench* out, unsigned int (*ticks)(void),
                         unsigned int (*ticks_to_us)(unsigned int));
@@ -44,6 +76,8 @@ unsigned int OotCore_Ocarina(unsigned int command);
 void OotCore_OcarinaReset(void);
 void OotCore_OcarinaScene(PlayState* play);
 void OotCore_OcarinaStep(PlayState* play);
+void OotCore_NpcTextStep(PlayState* play);
+unsigned int OotCore_NpcText(unsigned int command);
 GraphicsContext* OotCore_GfxCtx(void);
 void OotCore_GfxReset(void);
 u32 OotCore_GfxBytes(void);
@@ -63,10 +97,11 @@ void OotCore_ToolStep(PlayState* play);
 void OotCore_ToolReset(void);
 int OotCore_ToolCommand(unsigned int command, int* io);
 int OotCore_ToolView(const OotCoreToolView** out);
+int OotCore_DynaView(const OotCoreDynaView** out);
 int OotCore_MeshList(const OotCoreMeshKey** out);
 s32 OotCore_IsGenericDraw(s16 id);
 static u8 sGenericScene;
-static const OotCoreSave* sHostSave;
+static void save_copy_out(PlayState* play);
 extern s16 gOotCoreCamYaw;
 static void oot_core_set_camera(short yaw) {
     gOotCoreCamYaw = yaw;
@@ -93,14 +128,16 @@ static ActorEntry sRoomEntries[ROOM_ENTRIES_MAX];
 /* Scene_CommandActorEntryList for the room's main header, filtered to the
  * imported ids. Actor_UpdateAll spawns play->actorEntryList next frame. */
 /* Play_Init: gSaveContext.sceneLayer from cutscene index, age and time. */
-static s32 scene_layer(void) {
-    if (gSaveContext.save.cutsceneIndex >= 0xFFF0) {
-        return SCENE_LAYER_CUTSCENE_FIRST + (gSaveContext.save.cutsceneIndex & 0xF);
+static void environment_sky_commands(PlayState* play, const OotSceneLayer* layer) {
+    if (layer->sky_flags & 1) {
+        play->skyboxId = layer->sky_id;
+        play->envCtx.skyboxConfig = play->envCtx.changeSkyboxNextConfig = layer->sky_config;
+        play->envCtx.lightMode = layer->sky_light;
     }
-    if (!LINK_IS_ADULT) {
-        return IS_DAY ? SCENE_LAYER_CHILD_DAY : SCENE_LAYER_CHILD_NIGHT;
+    if (layer->sky_flags & 2) {
+        play->envCtx.skyboxDisabled = (layer->sky_flags >> 2) & 1;
+        play->envCtx.sunMoonDisabled = (layer->sky_flags >> 3) & 1;
     }
-    return IS_DAY ? SCENE_LAYER_ADULT_DAY : SCENE_LAYER_ADULT_NIGHT;
 }
 
 /* Scene_CommandAlternateHeaderList fallback: an absent layer uses the main
@@ -163,6 +200,8 @@ static void load_room_actors(PlayState* play, int room) {
         return;
     }
     layer = room_layer(room);
+    environment_sky_commands(play, layer);
+    OotCore_EnvironmentRoom(play, layer);
     list = (const ActorEntry*)layer->actors;
     for (i = 0; list != NULL && i < layer->num_actors && n < ROOM_ENTRIES_MAX; i++) {
         for (k = 0; k < ARRAY_COUNT(sRoomActorIds); k++) {
@@ -187,6 +226,11 @@ static void oot_core_init(const OotCoreHost* host) {
     }
     gOotCoreHost = host;
     gRegEditor = &sRegEditor;
+    gSaveContext.nextDayTime = NEXT_TIME_NONE;
+    gSaveContext.dogIsLost = true;
+    gSaveContext.seqId = (u8)NA_BGM_DISABLED;
+    gSaveContext.natureAmbienceId = NATURE_ID_DISABLED;
+    gSaveContext.forcedSeqId = NA_BGM_GENERAL_SFX;
     /* No KSEG0 on Saturn: segment 2 maps cart pointers to themselves
      * (SEGMENTED_TO_VIRTUAL, importer fixup). Segment 6 = current object. */
     gSegments[2] = 0x02000000;
@@ -259,7 +303,12 @@ static int oot_core_play_init(void* block, unsigned int bytes, int scene_id, con
     play->roomCtx.curRoom.num = room;
     play->roomCtx.prevRoom.num = -1;
     /* set_save ran first, so age/time/cutscene index are the C save's. */
-    gSaveContext.sceneLayer = scene_layer();
+    OotCore_TransitionTimeBegin();
+    gSaveContext.sceneLayer = OotCore_DestinationLayer(scene_id);
+    gTimeSpeed = 0;
+    /* Sky time belongs to the session. A frozen room may hold it ahead of
+     * dayTime; ordinary scene transitions must preserve that source state. */
+    gSaveContext.sunsSongState = SUNSSONG_INACTIVE;
     /* Scene_CommandPathList of the scene header the layer runs (Scene_
      * CommandAlternateHeaderList fallback as for the room lists). */
     if (sScene != NULL && sScene->num_path_layers > 0) {
@@ -274,7 +323,13 @@ static int oot_core_play_init(void* block, unsigned int bytes, int scene_id, con
             use = &paths[SCENE_LAYER_ADULT_DAY];
         }
         play->pathList = (Path*)use->actors;
+        environment_sky_commands(play, use);
+        if (use->sound_flags & 1) {
+            play->sceneSequences.seqId = use->seq_id;
+            play->sceneSequences.natureAmbienceId = use->nature_id;
+        }
     }
+    OotCore_EnvironmentSkyInit(play);
 
     sPlayerEntry.id = ACTOR_PLAYER;
     sPlayerEntry.pos.x = x;
@@ -288,6 +343,11 @@ static int oot_core_play_init(void* block, unsigned int bytes, int scene_id, con
     seed_scene_save(scene_id);
     Actor_InitContext(play, &play->actorCtx, play->playerEntry);
     load_room_actors(play, room);
+    OotCore_TransitionTimeFinish(play);
+    OotCore_DaySequenceInit(play);
+    gSaveContext.seqId = play->sceneSequences.seqId;
+    gSaveContext.natureAmbienceId = play->sceneSequences.natureAmbienceId;
+    save_copy_out(play);
 
     gOotCorePlay = play;
     return GET_PLAYER(play) != NULL;
@@ -386,6 +446,10 @@ static void save_copy_out(PlayState* play) {
     if (in == NULL) {
         return;
     }
+    if (in->day_time_out) *in->day_time_out = gSaveContext.save.dayTime;
+    if (in->skybox_time_out) *in->skybox_time_out = gSaveContext.skyboxTime;
+    if (in->total_days) *in->total_days = gSaveContext.save.totalDays;
+    if (in->bgs_day_count) *in->bgs_day_count = gSaveContext.save.bgsDayCount;
     for (i = 0; i < OOT_CORE_EVENTCHKINF_WORDS && in->event_chk_inf; i++) {
         in->event_chk_inf[i] = gSaveContext.save.info.eventChkInf[i];
     }
@@ -420,8 +484,25 @@ static void oot_core_set_save(const OotCoreSave* in) {
         return;
     }
     gSaveContext.save.linkAge = in->link_age;
-    gSaveContext.save.nightFlag = in->night;
+    /* A room time command does not recalculate nightFlag until the source
+     * environment update. Do not overwrite that state on each host mirror. */
+    if (in->reset_skybox_time || gSaveContext.save.dayTime != in->day_time)
+        gSaveContext.save.nightFlag = in->night;
     gSaveContext.save.dayTime = in->day_time;
+    if (in->total_days) gSaveContext.save.totalDays = *in->total_days;
+    if (in->bgs_day_count) gSaveContext.save.bgsDayCount = *in->bgs_day_count;
+    gSaveContext.save.entranceIndex = in->entrance_index;
+    if (in->reset_skybox_time) gSaveContext.skyboxTime = in->skybox_time;
+    if (in->reset_skybox_time == 2) {
+        gSaveContext.nextDayTime = NEXT_TIME_NONE;
+        gSaveContext.sunsSongState = SUNSSONG_INACTIVE;
+        gSaveContext.dogIsLost = true;
+        gSaveContext.seqId = (u8)NA_BGM_DISABLED;
+        gSaveContext.natureAmbienceId = NATURE_ID_DISABLED;
+        gSaveContext.forcedSeqId = NA_BGM_GENERAL_SFX;
+        gSaveContext.retainWeatherMode = false;
+        gWeatherMode = WEATHER_MODE_CLEAR;
+    }
     gSaveContext.save.cutsceneIndex = in->cutscene_index;
     for (i = 0; i < OOT_CORE_EVENTCHKINF_WORDS && in->event_chk_inf; i++) {
         gSaveContext.save.info.eventChkInf[i] = in->event_chk_inf[i];
@@ -515,6 +596,7 @@ static void oot_core_set_room(int room) {
     play->roomCtx.prevRoom = play->roomCtx.curRoom;
     play->roomCtx.curRoom.num = room;
     load_room_actors(play, room);
+    save_copy_out(play);
     play->roomCtx.prevRoom.num = -1;
     play->roomCtx.prevRoom.segment = NULL;
     func_80031B14(play, &play->actorCtx);
@@ -593,7 +675,11 @@ static void oot_core_update(void) {
     EffectSs_UpdateAll(play);
     gOotCorePhaseUs[1] = Phase_Us(t0);
     t0 = Phase_Now();
+    OotCore_NpcTextStep(play);
     Message_Update(play);
+    OotCore_SunSongUpdate(play);
+    OotCore_EnvironmentEvents(play);
+    if (!sHostSave || !sHostSave->time_blocked) OotCore_EnvironmentClock(play);
     AnimTaskQueue_Update(play, &play->animTaskQueue);
     /* Play_Draw's Message_Draw: it advances the text reveal (textDrawPos)
      * and page state; its display list goes to a scratch buffer. */
@@ -601,7 +687,16 @@ static void oot_core_update(void) {
     gOotCorePhaseUs[2] = Phase_Us(t0);
     t0 = Phase_Now();
     OotCore_DrawActors(play);
-    Message_Draw(play);
+    {
+        bool revealing = play->msgCtx.msgMode == MSGMODE_TEXT_DISPLAYING;
+        Message_Draw(play);
+        /* Two reveal ticks, but never accelerate page waits, choices, fades
+         * or Ocarina. The source parser still handles every control byte. */
+        if (revealing && play->msgCtx.msgMode == MSGMODE_TEXT_DISPLAYING) {
+            OotCore_GfxReset();
+            Message_Draw(play);
+        }
+    }
     gOotCorePhaseUs[3] = Phase_Us(t0);
     save_copy_out(play);
     play->gameplayFrames++;
@@ -614,6 +709,12 @@ static int oot_core_tool(unsigned int command, int* io) {
     int result = OotCore_ToolCommand(command, io);
     if (command == OOT_CORE_TOOL_USE && result)
         sHostInput.press.button = 0;
+    return result;
+}
+
+static unsigned int oot_core_npc_text(unsigned int command) {
+    unsigned int result=OotCore_NpcText(command);
+    if ((command & 0x10000u) && result) sHostInput.press.button=0;
     return result;
 }
 
@@ -721,11 +822,30 @@ static unsigned int oot_core_current_layer(void) {
     return gOotCorePlay ? (unsigned int)gSaveContext.sceneLayer : 0;
 }
 
+static unsigned int oot_core_skybox_settings(void) {
+    PlayState* play = gOotCorePlay;
+    if (!play) return 0;
+    return ((unsigned int)play->skyboxId & 255u) |
+        ((unsigned int)play->envCtx.skyboxConfig << 8) |
+        ((unsigned int)(play->envCtx.skyboxDisabled != 0) << 16) |
+        ((unsigned int)play->envCtx.lightMode << 24);
+}
+
+static void oot_core_cancel_transition_time(void) {
+    /* The host may already have replaced the play arena on a failed load.
+     * Touch only session globals, never the old PlayState. */
+    gSaveContext.nextDayTime = NEXT_TIME_NONE;
+    gSaveContext.respawnFlag = 0;
+    gSaveContext.sunsSongState = SUNSSONG_INACTIVE;
+}
+
 static int oot_core_transition_request(unsigned int consume) {
     PlayState* play = gOotCorePlay;
     int entrance;
     if (!play || play->transitionTrigger != TRANS_TRIGGER_START) return -1;
     entrance = play->nextEntranceIndex;
+    if (entrance == 0xffff && gSaveContext.respawnFlag == -2)
+        entrance = OOT_CORE_TRANSITION_RELOAD; /* level select has no source entrance */
     if (consume) play->transitionTrigger = TRANS_TRIGGER_OFF;
     return entrance;
 }
@@ -769,4 +889,9 @@ extern "C" const OotCoreEntry oot_core_entry __attribute__((section(".oot_entry"
     OotCore_Ocarina,
     oot_core_tool,
     OotCore_ToolView,
+    OotCore_DestinationLayer,
+    oot_core_skybox_settings,
+    oot_core_cancel_transition_time,
+    oot_core_npc_text,
+    OotCore_DynaView,
 };

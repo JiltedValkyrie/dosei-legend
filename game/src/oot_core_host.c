@@ -4,9 +4,10 @@
 #pragma GCC optimize("Os")
 #include <jo/jo.h>
 #include "action_audio.h"
-#include "demo.h"
+#include "recomp.h"
 #include "frame_timer.h"
 #include "gameplay.h"
+#include "game_mode.h"
 #include "kokiri_sgl.h"
 #include "asset_names.h"
 #include "scene_flow.h"
@@ -17,6 +18,7 @@
 #include "actor_mesh.h"
 #include "npc_draw.h"
 #include "collide.h"
+#include "kokiri_collision.h"
 #include "player_items.h"
 #include <stdlib.h>
 #include <string.h>
@@ -95,6 +97,16 @@ static unsigned char host_give_item(unsigned char item)
 {
     save_item_t give;
     switch (item) {
+    /* Source Inventory_ReplaceItem at dawn: trade slots already persist in
+     * source_items. C assignments point at a slot, so its icon follows it. */
+    case 0x22: /* ITEM_CHICKEN: SLOT_TRADE_CHILD, ITEM_WEIRD_EGG */
+        if (save_state.source_items[23] != 0x21) return item;
+        save_state.source_items[23] = item;
+        return 0xFF;
+    case 0x2E: /* ITEM_POCKET_CUCCO: SLOT_TRADE_ADULT, ITEM_POCKET_EGG */
+        if (save_state.source_items[22] != 0x2D) return item;
+        save_state.source_items[22] = item;
+        return 0xFF;
     case 0x00: give = SAVE_ITEM_DEKU_STICK; break;      /* ITEM_DEKU_STICK */
     case 0x01: give = SAVE_ITEM_DEKU_NUT; break;        /* ITEM_DEKU_NUT */
     case 0x83: give = SAVE_ITEM_RECOVERY_HEART; break;  /* ITEM_RECOVERY_HEART */
@@ -200,16 +212,31 @@ bool oot_core_boot(void)
     return true;
 }
 
-/* C Link -> player proxy: demo_link is the eye, OoT pos is the feet.
+/* C Link -> player proxy: recomp_link is the eye, OoT pos is the feet.
 ** World units are OoT units (1:1). */
 static void sync_player(void)
 {
-    ENTRY->set_player(demo_link.x, demo_link.y - DEMO_LINK_EYE_HEIGHT, demo_link.z,
-                      (short)demo_link_yaw);
+    ENTRY->set_player(recomp_link.x, recomp_link.y - RECOMP_LINK_EYE_HEIGHT, recomp_link.z,
+                      (short)recomp_link_yaw);
 }
 
 /* C save -> decomp mirror. Static: the blob keeps the pointer and copies
 ** flags back after each update. */
+static unsigned short core_skybox_time;
+static unsigned char core_skybox_reset = 2;
+unsigned int oot_core_skybox_time(void) { return core_skybox_time; }
+void oot_core_clock_reset(unsigned int skybox_time)
+{
+    /* Deferred until set_save: frontend choices may precede the first play. */
+    core_skybox_time = (unsigned short)skybox_time;
+    core_skybox_reset = 1;
+}
+void oot_core_session_reset(unsigned int skybox_time)
+{
+    oot_core_clock_reset(skybox_time);
+    core_skybox_reset = 2;
+}
+
 static void mirror_save(void)
 {
     {
@@ -218,6 +245,18 @@ static void mirror_save(void)
         unsigned int save_scene = scene_flow_entry()->save_scene;
         mirror.link_age = save_state.link_age;
         mirror.day_time = save_state.day_time;
+        mirror.day_time_out = &save_state.day_time;
+        mirror.skybox_time_out = &core_skybox_time;
+        mirror.total_days = (unsigned int*)&save_state.total_days;
+        mirror.bgs_day_count = (unsigned int*)&save_state.bgs_day_count;
+        mirror.entrance_index = save_state.source_entrance;
+        mirror.skybox_time = core_skybox_time;
+        mirror.reset_skybox_time = core_skybox_reset;
+        mirror.time_blocked = gameplay_blocks_world() || gameplay.dead;
+        /* Native dialogue/boss cinematics do not set the proxy Link's source
+         * cs flags. Suppress only the hatch textbox while they own Link. */
+        mirror.player_cutscene = game_mode() == GAME_MODE_CUTSCENE || gameplay.dead ||
+            (mirror.time_blocked && !gameplay.paused);
         /* Play_Init: night outside 06:30..18:00, exact source boundaries. */
         mirror.night = mirror.day_time > 0xC000 || mirror.day_time < 0x4555;
         mirror.cutscene_index = save_state.cutscene_index;
@@ -262,6 +301,7 @@ static void mirror_save(void)
         memcpy(mirror.player_name, "Link    ", 8); /* no file name in the C save */
         mirror.generic_scene = save_scene >= SAVE_SCENE_COUNT;
         ENTRY->set_save(&mirror);
+        core_skybox_reset = 0;
     }
 }
 
@@ -396,6 +436,97 @@ static bool sprites_refresh(void)
 ** until the scene changes; a missing or unaffordable sheet only hides that
 ** tool (the actor still plays). Pitch sheets keep 5 elevation bands as poses
 ** (tools/build_item_sprites.py). */
+/* Decomp DynaPoly actors (Bg_Spot01_Objects2 buildings...) -> C bg_dyna, so
+** C Link collides with the same source mesh. Converted once per actor into
+** the cart heap; transform refreshed after every decomp update. Normals are
+** the source's n / 32767 halved to Q14, as build_kokiri_scene does offline. */
+typedef struct {
+    unsigned int key;
+    uint32_t id;
+    collision_triangle_t *tri;
+    bg_mesh_t mesh;
+} core_dyna_t;
+static core_dyna_t core_dyna[OOT_CORE_DYNA_VIEWS_MAX];
+
+static void core_dyna_drop(core_dyna_t *d, bool remove)
+{
+    if (remove && d->id != BG_NONE) bg_dyna_remove(d->id);
+    if (d->tri) jo_free(d->tri);
+    memset(d, 0, sizeof(*d));
+}
+
+static void core_dyna_reset(void)
+{
+    unsigned int i;
+    /* scene_flow already cleared bg_dyna for the new scene */
+    for (i = 0; i < OOT_CORE_DYNA_VIEWS_MAX; ++i) if (core_dyna[i].key) core_dyna_drop(&core_dyna[i], false);
+}
+
+static int16_t q15_to_q14(int16_t n) { return (int16_t)(n >= 0 ? (n + 1) >> 1 : -((-n + 1) >> 1)); }
+
+static bool core_dyna_add(core_dyna_t *d, const OotCoreDynaView *v)
+{
+    unsigned int i, k, j, surfaces = 0, bytes = v->num_polys * (sizeof(collision_triangle_t) + 2u);
+    uint16_t *info;
+    d->tri = (collision_triangle_t *)jo_malloc(bytes);
+    if (!d->tri) return false;
+    info = (uint16_t *)(d->tri + v->num_polys);
+    for (i = 0; i < v->num_polys; ++i) {
+        const unsigned short *p = v->polys + i * 8u;
+        unsigned int idx[3] = { p[1] & 0x1FFFu, p[2] & 0x1FFFu, p[3] };
+        collision_triangle_t *c = &d->tri[i];
+        for (k = 0; k < 3; ++k) {
+            const short *q = v->vertices + (idx[k] < v->num_vertices ? idx[k] : 0) * 3u;
+            for (j = 0; j < 3; ++j) {
+                c->vertex[k][j] = q[j];
+                if (!k || q[j] < c->minimum[j]) c->minimum[j] = q[j];
+                if (!k || q[j] > c->maximum[j]) c->maximum[j] = q[j];
+            }
+        }
+        for (j = 0; j < 3; ++j) c->normal[j] = q15_to_q14((int16_t)p[4 + j]);
+        info[i] = (uint16_t)((p[0] & 0xFFu) | ((p[1] >> 13) << 8) | (((p[2] >> 13) & 1u) << 11));
+        if ((p[0] & 0xFFu) + 1u > surfaces) surfaces = (p[0] & 0xFFu) + 1u;
+    }
+    memset(&d->mesh, 0, sizeof(d->mesh));
+    d->mesh.triangles = d->tri;
+    d->mesh.triangle_count = v->num_polys;
+    d->mesh.info = info;
+    d->mesh.surfaces = v->surfaces;
+    d->mesh.surface_count = v->surfaces ? surfaces : 0;
+    d->id = bg_dyna_register(&d->mesh, v->transform & (BG_DYNA_POS | BG_DYNA_ROT_Y));
+    if (d->id == BG_NONE) { jo_free(d->tri); d->tri = 0; return false; }
+    d->key = v->key;
+    return true;
+}
+
+static void core_dyna_sync(void)
+{
+    const OotCoreDynaView *v;
+    int n = ENTRY->dyna_view(&v), i;
+    unsigned int s;
+    for (s = 0; s < OOT_CORE_DYNA_VIEWS_MAX; ++s) {
+        if (!core_dyna[s].key) continue;
+        for (i = 0; i < n && v[i].key != core_dyna[s].key; ++i) {}
+        if (i == n) core_dyna_drop(&core_dyna[s], true);       /* actor gone */
+    }
+    for (i = 0; i < n; ++i) {
+        core_dyna_t *d = 0, *free_slot = 0;
+        for (s = 0; s < OOT_CORE_DYNA_VIEWS_MAX; ++s) {
+            if (core_dyna[s].key == v[i].key) d = &core_dyna[s];
+            else if (!core_dyna[s].key && !free_slot) free_slot = &core_dyna[s];
+        }
+        if (!d) {
+            if (!free_slot || !v[i].num_polys || !core_dyna_add(free_slot, &v[i])) continue;
+            d = free_slot;
+        }
+        {
+            bg_vec_t pos = { v[i].x, v[i].y, v[i].z };
+            bg_dyna_set(d->id, &pos, v[i].rot_y, v[i].scale_q16);
+            bg_dyna_enable(d->id, v[i].enabled != 0);
+        }
+    }
+}
+
 static void tools_free(void)
 {
     unsigned int i;
@@ -450,12 +581,12 @@ static void tools_draw(void)
         switch (v[i].id) {
         case ACTOR_EN_ARROW: tool_put(TOOL_ARW, band, v[i].x, v[i].y, v[i].z, v[i].yaw); break;
         case ACTOR_EN_BOM:
-            if (v[i].params) tool_put(TOOL_EXP, demo_world_clock() / 2, v[i].x, v[i].y, v[i].z, 0);
+            if (v[i].params) tool_put(TOOL_EXP, recomp_world_clock() / 2, v[i].x, v[i].y, v[i].z, 0);
             else { npc_sprite_shadow_off = v[i].held; tool_put(TOOL_BOM, 0, v[i].x, v[i].y, v[i].z, v[i].yaw);
                    npc_sprite_shadow_off = 1; }
             break;
         case ACTOR_EN_BOM_CHU: tool_put(TOOL_CHU, 0, v[i].x, v[i].y, v[i].z, v[i].yaw); break;
-        case ACTOR_EN_BOOM: tool_put(TOOL_BOO, 2, v[i].x, v[i].y, v[i].z, (uint16_t)(demo_world_clock() * 0x2000u)); break;
+        case ACTOR_EN_BOOM: tool_put(TOOL_BOO, 2, v[i].x, v[i].y, v[i].z, (uint16_t)(recomp_world_clock() * 0x2000u)); break;
         case ACTOR_ARMS_HOOK: {
             int k, steps;
             tool_put(TOOL_HKT, band, v[i].x, v[i].y, v[i].z, v[i].yaw);
@@ -607,7 +738,7 @@ static void sprites_draw(void)
     unsigned int r, used = 0;
     for (k = 0; k < n && used < CORE_SPRITE_SLOTS; ++k) {
         unsigned int chosen = CORE_SPRITE_ROWS;
-        int dx = v[k].x - demo_camera.x, dz = v[k].z - demo_camera.z;
+        int dx = v[k].x - recomp_camera.x, dz = v[k].z - recomp_camera.z;
         if (!v[k].anim || !(v[k].flags & OOT_CORE_VIEW_DRAWN) ||
             dx < -2000 || dx > 2000 || dz < -2000 || dz > 2000) continue;
         for (r = 0; r < CORE_SPRITE_ROWS; ++r)
@@ -636,7 +767,7 @@ void oot_core_meshes_draw(void)
     unsigned int m;
     for (i = 0; i < n; ++i) {
         const OotCoreDrawItem *it = &items[i];
-        int dx = it->x - demo_camera.x, dz = it->z - demo_camera.z;
+        int dx = it->x - recomp_camera.x, dz = it->z - recomp_camera.z;
         if (dx < -2000 || dx > 2000 || dz < -2000 || dz > 2000) continue;
         for (m = 0; m < core_mesh_count; ++m)
             if (core_mesh_ready[m] && core_mesh_key[m].kind == it->kind &&
@@ -651,6 +782,7 @@ void oot_core_meshes_draw(void)
 /* Saturn pad -> N64 buttons the decomp reads (z_message, talk). The
 ** Saturn layout keeps A for A and B for B; the D-pad/stick menu step drives
 ** text choices as an N64 stick flick. */
+static bool npc_text_opened;
 static void send_input(const gameplay_input_t *in)
 {
     unsigned short press = (unsigned short)((in->interact ? 0x8000u : 0u) | (in->cancel ? 0x4000u : 0u));
@@ -662,6 +794,7 @@ static void send_input(const gameplay_input_t *in)
         if (in->c_use == 2 || in->menu_dx < 0) press |= 0x0002;
         if (in->c_use == 3 || in->menu_dx > 0) press |= 0x0001;
     }
+    if (npc_text_opened) { press=0; npc_text_opened=false; }
     ENTRY->set_input(press, press, 0, (signed char)(in->menu_step < 0 ? 60 : in->menu_step > 0 ? -60 : 0));
 }
 
@@ -675,6 +808,7 @@ void oot_core_frame(const gameplay_input_t *in)
         playing = false;
         sprites_reset();
         tools_free();
+        core_dyna_reset();
         play_scene = scene;
         meshes_room = -1;
         if (!load_scene_blob(scene)) return;
@@ -682,8 +816,8 @@ void oot_core_frame(const gameplay_input_t *in)
         playing = ENTRY->play_init(RAM_LOW(RAM_LOW_OOTPLAY_OFFSET), RAM_LOW_OOTPLAY_BYTES,
                                    scene_flow_entry()->oot_scene, (const void *)OOT_SCENECOL_ADDR,
                                    room,
-                                   (short)demo_link.x, (short)(demo_link.y - DEMO_LINK_EYE_HEIGHT),
-                                   (short)demo_link.z, (short)demo_link_yaw) != 0;
+                                   (short)recomp_link.x, (short)(recomp_link.y - RECOMP_LINK_EYE_HEIGHT),
+                                   (short)recomp_link.z, (short)recomp_link_yaw) != 0;
         if (playing) {
             ENTRY->set_objects(scene_objects, scene_object_count);
 #ifdef CORE_SPRITES
@@ -696,7 +830,7 @@ void oot_core_frame(const gameplay_input_t *in)
     }
     if (!playing) return;
     sync_player();
-    ENTRY->set_camera((short)demo_yaw);
+    ENTRY->set_camera((short)recomp_yaw);
     send_input(in);
     mirror_save();
     ENTRY->set_room(room);
@@ -716,6 +850,7 @@ void oot_core_frame(const gameplay_input_t *in)
             if (gameplay_link_point(18, hand)) ENTRY->tool(OOT_CORE_TOOL_HAND, (int *)hand);
         }
         ENTRY->update();
+        core_dyna_sync();
         CORE_DRAW->tool_bits = (unsigned int)ENTRY->tool(OOT_CORE_TOOL_STATE, CORE_DRAW->tool_pull);
         update_us = frame_timer_ticks_to_us(frame_timer_ticks() - t0);
         if (meshes_room != room) {
@@ -725,8 +860,8 @@ void oot_core_frame(const gameplay_input_t *in)
         {
             int dx, dz;   /* decomp actors pushing the player (En_Ko blockers) */
             ENTRY->player_push(&dx, &dz);
-            demo_link.x += dx;
-            demo_link.z += dz;
+            recomp_link.x += dx;
+            recomp_link.z += dz;
         }
     }
 }
@@ -745,6 +880,15 @@ int oot_core_door_action(unsigned int kind, unsigned int flag, int front_side, b
     return playing ? ENTRY->door_action(kind, flag, front_side, commit) : 0xFF00;
 }
 unsigned int oot_core_scene_layer(void) { return playing ? ENTRY->scene_layer() : 0; }
+unsigned int oot_core_destination_layer(unsigned int original_base_scene)
+{
+    return playing ? ENTRY->destination_layer(original_base_scene) : 0;
+}
+unsigned int oot_core_skybox_settings(void) { return playing ? ENTRY->skybox_settings() : 0; }
+void oot_core_cancel_transition_time(void)
+{
+    if (loaded) ENTRY->cancel_transition_time();
+}
 int oot_core_transition_request(bool consume)
 {
     return playing ? ENTRY->transition_request(consume) : -1;
@@ -754,6 +898,7 @@ unsigned int oot_core_ocarina_state(void) { return playing ? ENTRY->ocarina(0) :
 unsigned int oot_core_ocarina_note(void) { return playing ? ENTRY->ocarina(2) : 0; }
 unsigned int oot_core_ocarina_song(void) { return playing ? ENTRY->ocarina(3) : 0; }
 bool oot_core_ocarina_sun_allowed(void) { return playing && ENTRY->ocarina(4) != 0; }
+bool oot_core_ocarina_sun_start(void) { return playing && ENTRY->ocarina(5) != 0; }
 void oot_core_scene_restart(void) { playing = false; play_scene = ~0u; }
 
 /* The decomp text box on the VDP2 text layer, in the C dialogue rows.
@@ -761,12 +906,18 @@ void oot_core_scene_restart(void) { playing = false; play_scene = ~0u; }
 ** cleared once when the box closes. Returns true while it is up. */
 #define OC_MSG_ROW 20
 #define OC_MSG_ROWS (OOT_CORE_MSG_ROWS + 2)
+unsigned int oot_core_npc_text(unsigned int command)
+{
+    unsigned result=playing ? ENTRY->npc_text(command) : 0;
+    if ((command & 0x10000u) && result) npc_text_opened=true;
+    return result;
+}
 bool oot_core_message_box(void)
 {
     static unsigned short shown_serial;
     static bool was_active;
     /* z_message colour index -> Jo palette: white red green blue lightblue purple yellow black. */
-    static const unsigned char colour_map[8] = { 0, 2, 3, 5, 5, 6, 4, 1 };
+    static const unsigned char colour_map[8] = { 0, 2, 3, 4, 4, 6, 4, 0 };
     const OotCoreMessageView *v = playing ? ENTRY->message_view() : 0;
     unsigned int r, c;
     if (!v || !v->active) {
@@ -780,15 +931,17 @@ bool oot_core_message_box(void)
         for (r = 0; r < OOT_CORE_MSG_ROWS; ++r) {
             int row = OC_MSG_ROW + 1 + (int)r;
             bool choice_row = v->choices && r + v->choices >= v->rows && r < v->rows;
-            jo_printf(0, row, "%-40s", "");
-            for (c = 0; c < OOT_CORE_MSG_COLS; ) {
+            unsigned limit=OOT_CORE_MSG_COLS-(choice_row ? 2u : 0u);
+            /* Replace padded runs directly; never blank visible text first. */
+            jo_printf(0,row," ");
+            jo_printf(39,row," ");
+            if (choice_row) jo_printf(1,row,"%c ",r+v->choices-v->rows==v->choice ? '>' : ' ');
+            for (c = 0; c < limit; ) {
                 unsigned int start = c, colour = v->colour[r][c] & 7;
-                while (c < OOT_CORE_MSG_COLS && (v->colour[r][c] & 7) == colour) ++c;
+                while (c < limit && (v->colour[r][c] & 7) == colour) ++c;
                 jo_printf_with_color(1 + (int)start + (choice_row ? 2 : 0), row, colour_map[colour],
                                      "%.*s", (int)(c - start), &v->text[r][start]);
             }
-            if (choice_row)
-                jo_printf(1, row, "%c", r + v->choices - v->rows == v->choice ? '>' : ' ');
         }
         jo_set_printf_color_index(JO_COLOR_INDEX_White);
         shown_serial = v->serial;

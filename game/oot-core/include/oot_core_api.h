@@ -17,7 +17,8 @@
 #include "oot_core_host.h"
 
 #define OOT_CORE_MAGIC 0x4F4F5443u /* 'OOTC' */
-#define OOT_CORE_VERSION 19u
+#define OOT_CORE_VERSION 22u
+#define OOT_CORE_TRANSITION_RELOAD 0x10000 /* debug scene has no source entrance */
 /* set_flags bits. NPC_SPRITES: generic NPCs are host sprites (NPC views carry
  * object/anim/frame; their Actor_Draw is skipped, no limb matrices). */
 #define OOT_CORE_FLAG_NPC_SPRITES 1u
@@ -144,6 +145,15 @@ typedef struct OotCoreSave {
     unsigned int inventory_upgrades;
     unsigned char magic_level,magic,double_defense;
     unsigned char boots; /* PLAYER_BOOTS_KOKIRI/IRON/HOVER (fills old padding) */
+    unsigned short* day_time_out;
+    unsigned short* skybox_time_out;
+    unsigned short entrance_index; /* original EntranceIndex, or 0xffff if unknown */
+    unsigned short skybox_time; /* used only when reset_skybox_time is set */
+    unsigned char time_blocked; /* host pause/dialogue/game-over gate */
+    unsigned char reset_skybox_time; /* 1 explicit sky assignment; 2 frontend session reset */
+    unsigned char player_cutscene; /* C player cutscene/game-over ownership for dawn textbox */
+    unsigned int* total_days; /* source Save.totalDays; copied both ways */
+    unsigned int* bgs_day_count; /* source Save.bgsDayCount; copied both ways */
 } OotCoreSave;
 
 /* Link's tools on the decomp actors (v19, bridge_items.cpp). io is int[6]. */
@@ -166,6 +176,25 @@ typedef struct OotCoreToolView {
     int radius;                  /* bomb blast sphere radius, 0 = none */
     unsigned int dmg;            /* AT dmgFlags (C contacts mirror them) */
 } OotCoreToolView;
+
+/* One decomp DynaPoly actor (DynaPoly_SetBgActor, v22): its untransformed
+ * CollisionHeader data (object blob, cart) and the actor transform, so the C
+ * collision (bg_dyna) gets the same mesh. Layouts are the decomp's own POD:
+ * vertices Vec3s, polys CollisionPoly (8 halfwords: type, flags_vIA,
+ * flags_vIB, vIC, normal xyz (n / 32767), dist), surfaces SurfaceType pairs. */
+#define OOT_CORE_DYNA_VIEWS_MAX 16
+typedef struct OotCoreDynaView {
+    unsigned int key;            /* actor address: stable while it lives */
+    const short* vertices;
+    const unsigned short* polys;
+    const unsigned int* surfaces;
+    unsigned short num_vertices, num_polys;
+    int x, y, z;                 /* world.pos, Q0 */
+    unsigned short rot_y;        /* shape.rot.y */
+    unsigned char transform;     /* DYNA_TRANSFORM_* (POS 1, ROT_Y 2) */
+    unsigned char enabled;       /* !BGACTOR_COLLISION_DISABLED */
+    int scale_q16;               /* actor scale.x, Q16 */
+} OotCoreDynaView;
 
 typedef struct OotCoreEntry {
     unsigned int magic;
@@ -245,10 +274,21 @@ typedef struct OotCoreEntry {
     int (*transition_request)(unsigned int consume);
     /* 0 state (active bit0, accepts notes bit1, song+1 byte1), 1 start,
      * 2 consume sounded note+1, 3 consume completed song+1,
-     * 4 whether this scene supports the overworld Sun's Song reload. */
+     * 4 Sun's Song start allowed, 5 source effect-end/start guard. */
     unsigned int (*ocarina)(unsigned int command);
     int (*tool)(unsigned int command, int* io);
     int (*tool_view)(const OotCoreToolView** out);
+    /* Recompute destination variant; current scene_layer remains fixed. */
+    unsigned int (*destination_layer)(unsigned int original_base_scene);
+    /* low8 sky id, next8 config, bit16 disabled, high8 light mode. */
+    unsigned int (*skybox_settings)(void);
+    void (*cancel_transition_time)(void); /* failed load: discard pending Sun time */
+    /* 0 query; 0x10000|text opens/continues; 0x20000 closes. Result:
+     * 1 active, 2 ended, 4 choice accepted with index in bits 8+. */
+    unsigned int (*npc_text)(unsigned int command);
+    /* Live DynaPoly actors (v22); returns the count, at most
+     * OOT_CORE_DYNA_VIEWS_MAX. After update. */
+    int (*dyna_view)(const OotCoreDynaView** out);
 } OotCoreEntry;
 
 #endif

@@ -30,6 +30,7 @@
 #include "save.h"
 #include "item.h"
 #include "controller.h"
+#include "environment.h"
 
 extern const OotCoreHost* gOotCoreHost;
 
@@ -160,6 +161,7 @@ s32 AudioOcarina_MemoryGameNextNote(void) {
 }
 
 extern PlayState* gOotCorePlay;
+void OotCore_SunSongStart(PlayState* play);
 void OotCore_OcarinaScene(PlayState* play) {
     static const u8 restrictions[][3] = {
 #include "../../build/oot-core/ocarina_restrictions.inc"
@@ -171,7 +173,38 @@ void OotCore_OcarinaScene(PlayState* play) {
         break;
     }
 }
+/* C NPC placement/quest callbacks use the source text/page engine. */
+static unsigned int sNpcText;
+unsigned int OotCore_NpcText(unsigned int command) {
+    PlayState* play = gOotCorePlay;
+    if (!play) return 0;
+    if (command & 0x10000u) {
+        if (!sNpcText && play->msgCtx.msgMode != MSGMODE_NONE) return 0;
+        if (sNpcText && play->msgCtx.msgMode != MSGMODE_NONE)
+            Message_ContinueTextbox(play, command & 0xffffu);
+        else Message_StartTextbox(play, command & 0xffffu, NULL);
+        sNpcText = 1;
+    } else if (command & 0x20000u) {
+        if (sNpcText && play->msgCtx.msgMode != MSGMODE_NONE) Message_CloseTextbox(play);
+        sNpcText = 0;
+    }
+    return sNpcText;
+}
+void OotCore_NpcTextStep(PlayState* play) {
+    unsigned state;
+    if (sNpcText != 1) return;
+    state = Message_GetState(&play->msgCtx);
+    if (state == TEXT_STATE_CHOICE && Message_ShouldAdvance(play)) {
+        sNpcText = 4u | ((unsigned)play->msgCtx.choiceIndex << 8);
+    } else if (state == TEXT_STATE_EVENT && Message_ShouldAdvance(play)) {
+        Message_CloseTextbox(play);
+    } else if (state == TEXT_STATE_CLOSING || play->msgCtx.msgMode == MSGMODE_NONE) {
+        sNpcText = 2;
+    }
+}
+
 void OotCore_OcarinaReset(void) {
+    sNpcText = 0;
     sOcarinaActive = sSongMask = sInstrument = sCompletedSong = sSoundedNote = sListening = 0;
     sPlaybackStaff.state = 0;
 }
@@ -188,16 +221,19 @@ unsigned int OotCore_Ocarina(unsigned int command) {
     }
     if (!play || !player) return 0;
     if (command == 4) {
-        /* Source dungeon room types are not yet in OOC. Restrict this cheap
-         * time bridge to named overworld scenes; dungeon stun stays pending. */
-        return play->sceneId >= SCENE_HYRULE_FIELD && play->sceneId <= SCENE_OUTSIDE_GANONS_CASTLE &&
-            play->interfaceCtx.restrictions.sunsSong != 3 && !play->msgCtx.disableSunsSong;
+        return gTimeSpeed != 400 && !play->msgCtx.disableSunsSong &&
+            GET_EVENTINF_INGO_RACE_STATE() != INGO_RACE_STATE_HORSE_RENTAL_PERIOD;
+    }
+    if (command == 5) {
+        OotCore_SunSongStart(play);
+        return gSaveContext.sunsSongState != SUNSSONG_INACTIVE;
     }
     if (command == 1) {
         if (sOcarinaActive || play->msgCtx.msgMode != MSGMODE_NONE ||
             play->interfaceCtx.restrictions.ocarina ||
             (INV_CONTENT(ITEM_OCARINA_FAIRY) != ITEM_OCARINA_FAIRY &&
              INV_CONTENT(ITEM_OCARINA_FAIRY) != ITEM_OCARINA_OF_TIME)) return 0;
+        OotCore_OcarinaReset();
         sOcarinaActive = 1;
         player->stateFlags2 |= PLAYER_STATE2_USING_OCARINA;
         /* Source song-check actors observe 24 after the start animation. */
@@ -214,6 +250,17 @@ void OotCore_OcarinaStep(PlayState* play) {
     u16 press = play->state.input[0].press.button;
     if (!player) return;
     if (sOcarinaActive) {
+        /* The C player owns free play, including cancellation during the
+         * result/playback phases where z_message does not check B. */
+        if ((press & BTN_B) &&
+            (play->msgCtx.ocarinaAction == OCARINA_ACTION_FREE_PLAY ||
+             play->msgCtx.ocarinaAction == OCARINA_ACTION_FREE_PLAY_DONE)) {
+            OotCore_OcarinaReset();
+            player->stateFlags2 &= ~(PLAYER_STATE2_USING_OCARINA | PLAYER_STATE2_23 | PLAYER_STATE2_24 | PLAYER_STATE2_25);
+            play->msgCtx.ocarinaMode = OCARINA_MODE_04;
+            Message_CloseTextbox(play);
+            return;
+        }
         if (play->msgCtx.ocarinaMode == OCARINA_MODE_02 && play->msgCtx.lastPlayedSong < 6) {
             /* z_player.c sWarpSongEntrances / Environment_WarpSongLeave.
              * The common transition loader preserves destination spawn/yaw.
@@ -228,7 +275,8 @@ void OotCore_OcarinaStep(PlayState* play) {
              play->msgCtx.ocarinaAction == OCARINA_ACTION_FREE_PLAY_DONE)) {
             if (play->msgCtx.ocarinaAction == OCARINA_ACTION_FREE_PLAY_DONE && play->msgCtx.lastPlayedSong < 12)
                 sCompletedSong = play->msgCtx.lastPlayedSong + 1;
-            sOcarinaActive = 0;
+            sOcarinaActive = sListening = sInstrument = sSoundedNote = 0;
+            sPlaybackStaff.state = 0;
             player->stateFlags2 &= ~(PLAYER_STATE2_USING_OCARINA | PLAYER_STATE2_23 | PLAYER_STATE2_24 | PLAYER_STATE2_25);
             play->msgCtx.ocarinaMode = OCARINA_MODE_04;
         }

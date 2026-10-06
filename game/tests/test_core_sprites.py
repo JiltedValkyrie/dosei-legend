@@ -61,10 +61,10 @@ int main(void) {
 #include <stdint.h>
 #include <assert.h>
 #include <math.h>
-static struct { int x,y,z; } demo_camera;
-static uint16_t demo_yaw,demo_pitch;
+static struct { int x,y,z; } recomp_camera;
+static uint16_t recomp_yaw,recomp_pitch;
 static int distance=277, calls, last_depth;
-static int demo_screen_distance(void) { return distance; }
+static int recomp_screen_distance(void) { return distance; }
 static void kokiri_camera_sincos(uint16_t angle,int32_t *s,int32_t *c) {
     *s=(int32_t)(sin(angle*6.283185307179586/65536)*65536);
     *c=(int32_t)(cos(angle*6.283185307179586/65536)*65536); ++calls;
@@ -76,10 +76,10 @@ int main(void) {
     assert(!npc_sprite_in_view(1000,0,100,10));
     assert(npc_sprite_in_view(85,0,100,20)); /* partly on screen */
     assert(calls==2); /* shared view, including fairies: trig computed once */
-    demo_yaw=16384;
+    recomp_yaw=16384;
     assert(npc_sprite_in_view(100,0,0,10));
     assert(!npc_sprite_in_view(-100,0,0,10));
-    demo_pitch=16384;
+    recomp_pitch=16384;
     assert(npc_sprite_in_view(0,100,0,10));
     assert(!npc_sprite_in_view(0,-100,0,10));
     assert(npc_sprite_in_view(32768,0,0,10)); /* out-of-range guard */
@@ -123,7 +123,7 @@ int main(void) {
 #define RAM_LOW_OOTPLAY_BYTES 1
 #define RAM_LOW(x) ((void*)0)
 #define OOT_SCENECOL_ADDR 0
-#define DEMO_LINK_EYE_HEIGHT 16
+#define RECOMP_LINK_EYE_HEIGHT 16
 typedef struct { int unused; } gameplay_input_t;
 static bool loaded=true, playing, interior, paused;
 static unsigned inputs;
@@ -132,8 +132,8 @@ static unsigned play_scene=0xffff,step_phase,update_us;
 static int meshes_room=-1;
 static unsigned scene=14,room,updates,loads,spawns;
 static int source_room=-1, init_room=-1;
-static struct { int x,y,z; } demo_link;
-static int demo_link_yaw,demo_yaw;
+static struct { int x,y,z; } recomp_link;
+static int recomp_link_yaw,recomp_yaw;
 static const void *scene_objects[1]; static unsigned scene_object_count;
 static struct { int oot_scene; } entry;
 static unsigned scene_flow_scene(void) { return scene; }
@@ -165,6 +165,8 @@ static void update(void) { ++updates; spawns=1; }
 static void push(int *x,int *z) { *x=*z=0; }
 static int tool(unsigned c,int *io) { return 0; }
 static void tools_free(void) {}
+static void core_dyna_reset(void) {}
+static void core_dyna_sync(void) {}
 static bool gameplay_link_point(unsigned l,int32_t *o) { return false; }
 static struct { unsigned tool_bits; int tool_pull[6]; } core_draw;
 #define CORE_DRAW (&core_draw)
@@ -237,7 +239,7 @@ static OotCoreNpcView views[3];
 static int count;
 static unsigned reads,alloc_bytes,reuploads,uploads,draws;
 static unsigned opens,fail_file,fail_alloc,fail_read,invalid_packet,live;
-static struct { int x,z; } demo_camera;
+static struct { int x,z; } recomp_camera;
 static int mesh_list(const OotCoreMeshKey **p) { return 0; }
 static int npc_view(const OotCoreNpcView **p) { *p=views; return count; }
 static OotCoreEntry api={.mesh_list=mesh_list,.npc_view=npc_view};

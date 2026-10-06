@@ -8,6 +8,9 @@
 */
 #include <stdbool.h>
 #include <stdint.h>
+#ifndef OOT_CORE_TRANSITION_RELOAD
+#define OOT_CORE_TRANSITION_RELOAD 0x10000
+#endif
 typedef struct {
     unsigned int actors, missing, fallback, slots;
 } oot_core_sprite_stats_t;
@@ -21,6 +24,12 @@ bool oot_core_boot(void);
 /* After gameplay_step (fixed 30 Hz). Starts/stops the decomp play state
 ** with the scene and steps it 2 of every 3 calls. `in` = that step's input. */
 void oot_core_frame(const gameplay_input_t *in);
+unsigned int oot_core_skybox_time(void);
+unsigned int oot_core_skybox_settings(void);
+/* Explicit source/probe sky assignment; does not clear pending song state. */
+void oot_core_clock_reset(unsigned int skybox_time);
+/* Source frontend reset: file choose 0; level select dayTime. */
+void oot_core_session_reset(unsigned int skybox_time);
 /* Bit 0: a decomp conversation or text box is up (C Link and C A/B
 ** actions wait). Bit 1: a decomp actor offers talk (A goes to it). */
 unsigned int oot_core_talk(void);
@@ -28,6 +37,7 @@ unsigned int oot_core_talk(void);
 int oot_core_npcs(const OotCoreNpcView **out);
 /* Draw the decomp text box (VDP2 text + VDP1 panel); true while it is up. */
 bool oot_core_message_box(void);
+unsigned int oot_core_npc_text(unsigned int command);
 /* prop_query: decomp state word of actor `id` near (x, z), -1 if none. */
 int oot_core_prop(short id, int x, int z);
 const char *oot_core_debug_text(void);
@@ -35,12 +45,15 @@ const char *oot_core_debug_text2(void);
 const oot_core_sprite_stats_t *oot_core_sprite_stats(void);
 int oot_core_door_action(unsigned int kind, unsigned int flag, int front_side, bool commit);
 unsigned int oot_core_scene_layer(void);
+unsigned int oot_core_destination_layer(unsigned int original_base_scene);
+void oot_core_cancel_transition_time(void);
 int oot_core_transition_request(bool consume);
 bool oot_core_ocarina_start(void);
 unsigned int oot_core_ocarina_state(void);
 unsigned int oot_core_ocarina_note(void); /* 0 none, 1 A, 2 down, 3 right, 4 left, 5 up */
 unsigned int oot_core_ocarina_song(void); /* completed source song + 1; consume */
 bool oot_core_ocarina_sun_allowed(void);
+bool oot_core_ocarina_sun_start(void);
 void oot_core_scene_restart(void); /* after a successful full scene reload */
 /* Link's C-button tools on the decomp actors (bridge_items.cpp). Slot is the
 ** inventory slot; false = refused (no ammo/magic, one already out, no play). */
@@ -72,15 +85,23 @@ static inline bool oot_core_owns_kokiri_props(void) { return oot_core_is_playing
 ** C keeps them (fast) until the 32-bit Fx conversion lands. */
 static inline bool oot_core_owns_kokiri_npcs(void) { return false; }
 #else
+static inline bool oot_core_is_playing(void) { return false; }
 #define oot_core_frame(in) ((void)0)
+#define oot_core_skybox_time() 0x8000u
+#define oot_core_skybox_settings() 1u
+static inline void oot_core_clock_reset(unsigned int skybox_time) { (void)skybox_time; }
+static inline void oot_core_session_reset(unsigned int skybox_time) { (void)skybox_time; }
 static inline bool oot_core_owns_kokiri_props(void) { return false; }
 static inline bool oot_core_owns_kokiri_npcs(void) { return false; }
 static inline unsigned int oot_core_talk(void) { return 0; }
 static inline unsigned int oot_core_update_us(void) { return 0; }
 static inline bool oot_core_message_box(void) { return false; }
+static inline unsigned int oot_core_npc_text(unsigned int command) { (void)command;return 0; }
 static inline int oot_core_door_action(unsigned int kind, unsigned int flag, int front_side, bool commit)
 { (void)kind; (void)flag; (void)front_side; (void)commit; return 0xFF00; }
 static inline unsigned int oot_core_scene_layer(void) { return 0; }
+static inline unsigned int oot_core_destination_layer(unsigned int scene) { (void)scene; return 0; }
+static inline void oot_core_cancel_transition_time(void) {}
 static inline int oot_core_transition_request(bool consume) { (void)consume; return -1; }
 static inline bool oot_core_ocarina_start(void) { return false; }
 static inline bool oot_core_tool_use(unsigned int slot, const int32_t origin[3], uint16_t yaw, int16_t pitch)
@@ -93,6 +114,7 @@ static inline unsigned int oot_core_ocarina_state(void) { return 0; }
 static inline unsigned int oot_core_ocarina_note(void) { return 0; }
 static inline unsigned int oot_core_ocarina_song(void) { return 0; }
 static inline bool oot_core_ocarina_sun_allowed(void) { return false; }
+static inline bool oot_core_ocarina_sun_start(void) { return false; }
 static inline void oot_core_scene_restart(void) {}
 static inline int oot_core_prop(short id, int x, int z) { (void)id; (void)x; (void)z; return -1; }
 #endif

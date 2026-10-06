@@ -24,6 +24,11 @@ import pathlib
 import re
 import struct
 import sys
+from environment_source import (clock_source, room_clock_source, room_time,
+                                room_behavior, sun_song_source, destination_layer_source,
+                                transition_clock_source, clock_events_source, player_clock_gate_source)
+from environment_selection_source import sky_settings, retained_weather_source
+from environment_sequence_source import sound_settings, sequence_source
 
 OOT_DEFAULT = pathlib.Path((__import__('os').environ.get('DOSEI_OOT') or 'D:/Workspace-Claude/game-decomps/n64/oot'))
 VERSION = 'ntsc-1.2'
@@ -187,26 +192,49 @@ def scene_blob_source(path, asset_root, objects=()):
     end = text.index('};\n', m.end()) + 3
     body = '\n'.join(arrays) + '\n' + text[m.start():end]
     per_room = []
+    oot = asset_root.parent.parent
     for room in room_files(path):
         rtext = room.read_text(encoding='utf-8')
         includes += [l for l in asset_includes(room, rtext) if l not in includes]
         layers = room_layers(room, rtext, asset_root)
         wanted = {n for n, _ in layers if n}
         body += ''.join('\n' + a.group(0) for a in ROOM_ACTORS.finditer(rtext) if a.group(1) in wanted)
-        per_room.append(layers)
+        # Same header/layer ordering as the actor list. Time is a room command.
+        time_paths = [room.with_suffix('.inc.c')]
+        alt = ALT_TABLE.search(rtext)
+        if alt:
+            time_paths += [None if n == 'NULL' else room.parent / (n + '.inc.c')
+                           for n in re.findall(r'^\s*(\w+),',
+                               (asset_root / alt.group(2)).read_text(encoding='utf-8'), re.M)]
+        if len(time_paths) != len(layers):
+            raise ValueError(f'{room}: actor/time layer count differs')
+        per_room.append([(n, p, (room_time(t) if t else (0,0,0)) +
+                         room_behavior(t, oot) + sky_settings(t, oot) + sound_settings(t, oot))
+                         for (n,p),t in zip(layers,time_paths)])
     if len(per_room) > 32:
         raise SystemExit(f'{path}: {len(per_room)} rooms > OOT_SCENE_MAX_ROOMS')
     num_layers = max((len(l) for l in per_room), default=1)
     rows = []
     for layers in per_room:
-        layers = layers + [(None, False)] * (num_layers - len(layers))
-        rows += [f'    {{ {n}, ARRAY_COUNT({n}), 1 }},' if n else f'    {{ 0, 0, {int(p)} }},'
-                 for n, p in layers]
+        layers = layers + [(None, False, (0,)*12)] * (num_layers - len(layers))
+        for n, p, metadata in layers:
+            actors = f'{n}, ARRAY_COUNT({n})' if n else '0, 0'
+            rows.append(f'    {{ {actors}, {int(p)}, ' + ', '.join(map(str,metadata)) + ' },')
     table = ('static const OotSceneLayer oot_scene_layers[] = {\n'
              + ('\n'.join(rows) if rows else '    { 0, 0, 0 },') + '\n};\n')
     path_defs, path_layers = scene_paths(path, text, asset_root)
     body += path_defs
-    path_rows = [f'    {{ {n}, 0, 1 }},' if n else f'    {{ 0, 0, {int(p)} }},' for n, p in path_layers]
+    scene_headers = [path.with_suffix('.inc.c')]
+    alt = ALT_TABLE.search(text)
+    if alt:
+        scene_headers += [None if n == 'NULL' else path.parent/(n+'.inc.c')
+                          for n in re.findall(r'^\s*(\w+),',
+                              (asset_root/alt.group(2)).read_text(encoding='utf-8'), re.M)]
+    if len(scene_headers) != len(path_layers):
+        raise ValueError(f'{path}: scene sky/path layer count differs')
+    path_rows = [f'    {{ {n or "0"}, 0, {int(p)}, 0, 0, 0, 0, 0, ' +
+                 ', '.join(map(str,sky_settings(header,oot)+sound_settings(header,oot))) + ' },'
+                 for (n,p),header in zip(path_layers,scene_headers)]
     table += ('static const OotSceneLayer oot_scene_paths[] = {\n' + '\n'.join(path_rows) + '\n};\n')
     header = ('extern "C" const OotSceneBlob oot_scene_blob'
               ' __attribute__((section(".scene_header"), used)) = {\n'
@@ -293,11 +321,16 @@ def keep_ph_source():
 # actors read from their object segment (skeletons, limbs, animations).
 OBJECTS = ['object_os_anime', 'object_km1', 'object_kw1', 'object_fa', 'object_md', 'object_kanban',
            'object_tsubo', 'object_gs', 'object_wood02', 'object_syokudai',
-           'object_in', 'object_ma1', 'object_ma2', 'object_ta', 'object_niw', 'object_cow']
+           'object_in', 'object_ma1', 'object_ma2', 'object_ta', 'object_niw', 'object_cow',
+           # Kakariko buildings (Bg_Spot01_Objects2): mesh + DynaPoly collision.
+           'object_spot01_matoya', 'object_spot01_matoyab']
 # Definitions kept verbatim; everything else (Gfx, Vtx, textures, palettes)
 # becomes a one-element placeholder: the draw shim keys on its address.
 OBJECT_KEEP_TYPES = {'AnimationHeader', 'JointIndex', 's16', 'StandardLimb', 'LodLimb',
-                     'FlexSkeletonHeader', 'SkeletonHeader', 'void*', 'LinkAnimationHeader'}
+                     'FlexSkeletonHeader', 'SkeletonHeader', 'void*', 'LinkAnimationHeader',
+                     # DynaPoly collision (Bg actors): host bg_dyna reads it.
+                     'CollisionHeader', 'CollisionPoly', 'SurfaceType', 'Vec3s', 'BgCamInfo',
+                     'WaterBox'}
 OBJECT_DEF = re.compile(r'^((?:const )?[A-Za-z_][A-Za-z0-9_]*\*?) ([A-Za-z_][A-Za-z0-9_]*)(\[[^\]]*\])? = \{\n'
                         r'(?:.*?\n)*?\};\n', re.M)
 
@@ -314,6 +347,10 @@ GENERIC_DRAW_SOURCES = [
     ('ACTOR_EN_WOOD02', 'src/overlays/actors/ovl_En_Wood02/z_en_wood02.c'),
     ('ACTOR_OBJ_SYOKUDAI', 'src/overlays/actors/ovl_Obj_Syokudai/z_obj_syokudai.c'),
     ('ACTOR_OBJ_KIBAKO', 'src/overlays/actors/ovl_Obj_Kibako/z_obj_kibako.c'),
+    # Kakariko shooting gallery / construction site / posters: building
+    # visuals + DynaPoly collision only (human GO 2026-10-06). Its daytime
+    # En_Daiku_Kakariko child is not imported, so that spawn simply fails.
+    ('ACTOR_BG_SPOT01_OBJECTS2', 'src/overlays/actors/ovl_Bg_Spot01_Objects2/z_bg_spot01_objects2.c'),
 ]
 GENERIC_DRAW = [a for a, _ in GENERIC_DRAW_SOURCES]
 # NPCs the decomp owns in generic scenes (no C copy there): spawned there,
@@ -1080,6 +1117,12 @@ def main():
     ap.add_argument('--oot', type=pathlib.Path, default=OOT_DEFAULT)
     ap.add_argument('--out', type=pathlib.Path, default=OUT_DEFAULT)
     args = ap.parse_args()
+    write_if_changed(args.out / 'environment_clock.inc',
+                     clock_source(args.oot) + room_clock_source(args.oot) +
+                     sun_song_source(args.oot) + destination_layer_source(args.oot) +
+                     transition_clock_source(args.oot) + retained_weather_source(args.oot) +
+                     sequence_source(args.oot) + clock_events_source(args.oot))
+    write_if_changed(args.out / 'environment_player_gate.inc', player_clock_gate_source(args.oot))
     write_if_changed(args.out / 'ocarina_restrictions.inc', ocarina_restrictions_source(args.oot))
 
     stats = {'macros': 0, 'fxl': 0, 'anon': 0, 'mtxf': 0, 'files': 0, 'written': 0, 'problems': []}
@@ -1157,7 +1200,19 @@ def main():
     for name, scene_c in registered_scenes(asset_root):
         src = args.out / 'scenecol' / (name + '.cpp')
         objs = scene_objects(scene_c, built, enum_ids)
-        write_if_changed(src, scene_blob_source(scene_c, asset_root, objs))
+        text = scene_blob_source(scene_c, asset_root, objs)
+        if scene_c.stem == 'spot00_scene':
+            # Local Field retopology: PolyList/VtxList match SA.COL exactly.
+            sys.path.insert(0, str(GAME / 'tools'))
+            from field_retopo import scenecol_patch, record
+            from layout_variants import build_document
+            document = build_document()
+            for old, new in scenecol_patch(scene_c, args.out / 'scenecol', document).items():
+                if old not in text:
+                    raise SystemExit(f'{scene_c}: {old} not in the scene blob')
+                text = text.replace(old, new)
+            record('ooc', document)
+        write_if_changed(src, text)
         scenes.append(name)
     mk += ['', 'OOT_SCENECOL_NAMES = ' + ' '.join(scenes)]
     mk += ['', 'OOT_OBJECT_NAMES = ' + ' '.join(built[i] for i in sorted(built))]

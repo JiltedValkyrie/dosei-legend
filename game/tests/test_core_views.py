@@ -36,7 +36,7 @@ typedef struct { unsigned texno,atrb; } SPR_ATTR;
 #define FAIRY_COLMODE_RGB 5
 #define FALSE 0
 #define FOREST_FAR 100
-static struct { int x,y,z; } demo_camera;
+static struct { int x,y,z; } recomp_camera;
 static unsigned grass_sprite=77,kokiri_rejected;
 static OotCoreActorView rows[24];
 static int row_count,wanted_category,query_calls,drop_count,grass_count;

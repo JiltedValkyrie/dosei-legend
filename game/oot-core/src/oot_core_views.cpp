@@ -535,3 +535,45 @@ unsigned int OotCore_TalkState(void) {
              (player->stateFlags2 & PLAYER_STATE2_USING_OCARINA)) ? 1u : 0u) |
            (player->talkActor != NULL ? 2u : 0u);
 }
+
+/* Live DynaPoly actors for the C collision (bg_dyna): untransformed source
+ * collision plus the actor transform (DynaPoly_ExpandSRT: scale, shape.rot,
+ * world.pos). The C side converts the mesh once per actor. */
+int OotCore_DynaView(const OotCoreDynaView** out) {
+    static OotCoreDynaView sViews[OOT_CORE_DYNA_VIEWS_MAX];
+    int n = 0;
+    *out = sViews;
+    if (gOotCorePlay == NULL) {
+        return 0;
+    }
+    DynaCollisionContext* dyna = &gOotCorePlay->colCtx.dyna;
+    for (s32 i = 0; i < BG_ACTOR_MAX && n < OOT_CORE_DYNA_VIEWS_MAX; i++) {
+        if (!(dyna->bgActorFlags[i] & BGACTOR_IN_USE)) {
+            continue;
+        }
+        Actor* actor = dyna->bgActors[i].actor;
+        CollisionHeader* col = dyna->bgActors[i].colHeader;
+        if (actor == NULL || col == NULL || col->polyList == NULL || col->vtxList == NULL) {
+            continue;
+        }
+        OotCoreDynaView* v = &sViews[n++];
+        v->key = (unsigned int)(uintptr_t)actor;
+        v->vertices = (const short*)col->vtxList;
+        v->polys = (const unsigned short*)col->polyList;
+        v->surfaces = (const unsigned int*)col->surfaceTypeList;
+        v->num_vertices = col->numVertices;
+        v->num_polys = col->numPolygons;
+        v->x = (int)actor->world.pos.x;
+        v->y = (int)actor->world.pos.y;
+        v->z = (int)actor->world.pos.z;
+        v->rot_y = (unsigned short)actor->shape.rot.y;
+        v->transform = (unsigned char)((DynaPolyActor*)actor)->transformFlags;
+        v->enabled = !(dyna->bgActorFlags[i] & BGACTOR_COLLISION_DISABLED);
+#if OOT_CORE_HWFLOAT
+        v->scale_q16 = (int)(actor->scale.x * 65536.0f);
+#else
+        v->scale_q16 = actor->scale.x.v;   /* Fx is Q16 storage */
+#endif
+    }
+    return n;
+}
