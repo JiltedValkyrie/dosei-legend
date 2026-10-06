@@ -48,6 +48,34 @@ GROUPS = (
 POINTS_CARVE = 0x2000   # ram_low.h RAM_LOW_LINK_GEAR_POINTS_BYTES (12 B per vertex)
 
 
+def shield_materials(oot):
+    """Identify shield surfaces by source texture address, never by colour.
+
+    Player_Draw binds segment 0x0C to gCullBackDList. These shield lists call
+    it before their surfaces. Hylian wood is its real reverse, not a Deku
+    variant; making it two-sided lets that reverse paint across the front.
+    Keep sword, sheath, hands and boots on their existing animated path.
+    """
+    wanted = {
+        'gameplay_keep': (4, ('gHylianShieldDesignTex', 'gHilite1Tex')),
+        'object_link_boy': (6, ('gLinkAdultHylianShieldBackTex',
+                               'gLinkAdultMirrorShieldLowerDesignTex',
+                               'gLinkAdultMirrorShieldUpperDesignTex')),
+    }
+    found = {}
+    for name, (segment, symbols) in wanted.items():
+        xml = ET.parse(oot / 'assets/xml/objects' / (name + '.xml'))
+        found.update((e.attrib['Name'], (segment << 24) | int(e.attrib['Offset'], 0))
+                     for e in xml.iter('Texture') if e.attrib['Name'] in symbols)
+        if any(symbol not in found for symbol in symbols):
+            raise ValueError('Missing Link shield source texture: ' + name)
+    return {
+        'hylian': {found['gHylianShieldDesignTex'], found['gLinkAdultHylianShieldBackTex']},
+        'mirror': {found['gHilite1Tex'], found['gLinkAdultMirrorShieldLowerDesignTex'],
+                   found['gLinkAdultMirrorShieldUpperDesignTex']},
+    }
+
+
 def gear_faces(oot, rom_dir):
     obj = link.read_object(oot, 'object_link_boy', rom_dir)
     keep = link.read_object(oot, 'gameplay_keep', rom_dir)
@@ -66,8 +94,14 @@ def gear_faces(oot, rom_dir):
     # artwork would add ~200 tiles to each room's actor bank).
     hand = {int(e.attrib['Offset'], 0) for e in xml.iter('Texture')
             if any(k in e.attrib['Name'] for k in ('Hand', 'Gauntlet'))}
+    shield = shield_materials(oot)
     for face in faces:
         image = face.get('image')
+        # The last SetTextureImage can be a TLUT load. The sampled texture's
+        # address is the material; using face['image'] misses wood after TLUT.
+        material = (face.get('texture') or {}).get('address')
+        face['cull'] = any(kind in face['group'] and material in images
+                           for kind, images in shield.items())
         face['full_texture'] = (not face['group'].startswith('boots') and image is not None and
                                 (image & 0xFFFFFF) not in hand)
         face['tile_size'] = 8
@@ -108,9 +142,12 @@ def build(oot, rom_dir, out, cd):
             for face in records:
                 tile = tiles[face['tex_off']]
                 flat = tile['width'] == 8 and tile['height'] == 2 and set(tile['pixels']) <= {0x11}
+                # Only shield surfaces use Single_Plane. gear_draw refreshes
+                # their normals after skinning; bind-pose normals are unsafe.
+                plane = 0 if face['cull'] else 1
                 polygons.extend(struct.pack('>3i4H', *sgl.face_normal(baked, face['idx']), *face['idx']))
                 if flat:
-                    attributes.extend(struct.pack('>BB5H', 1, 0x67, 0xFFFF, 0x88, tile['clut'][1] | 0x8000, 0, 4))
+                    attributes.extend(struct.pack('>BB5H', plane, 0x67, 0xFFFF, 0x88, tile['clut'][1] | 0x8000, 0, 4))
                     continue
                 key = face['tex_off']
                 if key not in remap:
@@ -120,7 +157,7 @@ def build(oot, rom_dir, out, cd):
                     pixels.extend(tile['pixels'])
                     pixels.extend(bytes((-len(pixels)) % 8))
                     palettes.extend(struct.pack('>16H', *tile['clut']))
-                attributes.extend(struct.pack('>BB5H', 1, 0x67, remap[key],
+                attributes.extend(struct.pack('>BB5H', plane, 0x67, remap[key],
                                               0x88 | (0x100 if face['mesh'] else 0), 0, 0, 2))
             ranges.append((poly_total, len(records), vert_total, len(group_owners)))
             owners.extend(group_owners)
