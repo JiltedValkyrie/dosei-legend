@@ -6,7 +6,10 @@
 #define jo_free dosei_allocator_free
 #define jo_add_memory_zone dosei_allocator_add_zone
 #define jo_reduce_memory_fragmentation dosei_allocator_reduce
+/* The SDK percent uses JO_PERCENT_USED (soft-float); replaced below. */
+#define jo_memory_usage_percent dosei_allocator_usage_percent_float
 #include "malloc.c"
+#undef jo_memory_usage_percent
 #undef jo_malloc_with_behaviour
 #undef jo_free
 #undef jo_add_memory_zone
@@ -16,6 +19,25 @@
 typedef char heap_zone_count_matches[
     HEAP_PROFILE_ZONES == JO_MALLOC_MAX_MEMORY_ZONE ? 1 : -1];
 heap_profile_t dosei_heap_profile;
+
+/* Same walk as the SDK, integer percent (human rule: no soft-float). */
+int jo_memory_usage_percent(void)
+{
+    int zone;
+    unsigned int total = 0, free_bytes = 0;
+    for (zone = 0; zone < __jo_memory_zone_index; ++zone) {
+        jo_memory_block *block = (jo_memory_block *)memory_zones[zone].begin;
+        total += memory_zones[zone].end - memory_zones[zone].begin;
+        if (memory_zones[zone].high < memory_zones[zone].end)
+            free_bytes += memory_zones[zone].end - memory_zones[zone].high;
+        while ((unsigned char *)block < memory_zones[zone].high) {
+            if (block->zone == JO_BLOCK_FREE) free_bytes += block->size;
+            block = (jo_memory_block *)(((unsigned char *)block) + block->size);
+        }
+    }
+    /* total < 8 MB: (used / 64) * 100 fits 32 bits. */
+    return total ? (int)(((total - free_bytes) / 64u) * 100u / (total / 64u ? total / 64u : 1u)) : 0;
+}
 void jo_reduce_memory_fragmentation(void);
 
 static void profile_extent(unsigned int zone)

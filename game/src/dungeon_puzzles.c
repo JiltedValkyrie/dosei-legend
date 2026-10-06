@@ -6,6 +6,7 @@
 #pragma GCC optimize ("Os")
 #endif
 #include "dungeon_puzzles.h"
+#include "../../shared/lib/collision/div32.h"   /* 32-bit divides, no ___divdi3 */
 #include "kokiri_collision.h"
 #include "kokiri_camera.h"
 #include "save_state.h"
@@ -207,7 +208,7 @@ bool dungeon_puzzles_shot(const int32_t from[3],int32_t to[3]) {
             int16_t angle=(int16_t)(collide_heading(to[0]-from[0],to[2]-from[2])-p->yaw);
             if(angle>=-0x5000 && angle<=0x5000)continue;
         }
-        t=(int64_t)(plane-az)*65536/(bz-az);
+        t=muldiv_s32(plane-az,65536,bz-az);
         ax=(int32_t)(((int64_t)(from[0]-s->x)*cs-(int64_t)(from[2]-s->z)*sn)>>16);
         bx=(int32_t)(((int64_t)(to[0]-s->x)*cs-(int64_t)(to[2]-s->z)*sn)>>16);
         x=ax+(int32_t)((bx-ax)*t/65536);y=from[1]-s->y/256+(int32_t)((to[1]-from[1])*t/65536);

@@ -1,6 +1,7 @@
 #pragma GCC optimize("Os") /* actor/state logic, not draw loops: size over speed (work RAM) */
 /* Navi, Link's companion fairy. Idle-follow behaviour from ovl_En_Elf. */
 #include "navi.h"
+#include "../../shared/lib/collision/div32.h"   /* 32-bit divides, no ___divdi3 */
 #include "kokiri_camera.h"
 
 /* Positions and velocities are Q8 world units: the source works in floats
@@ -215,8 +216,8 @@ static void     update(const int32_t anchor[3], const int32_t hat[3], bool has_a
     magnitude = isqrt32((want[0] / 256) * (want[0] / 256) +
                         (want[2] / 256) * (want[2] / 256));
     if (magnitude > cap) {
-        want[0] = (int32_t)(((int64_t)want[0] * cap) / magnitude);
-        want[2] = (int32_t)(((int64_t)want[2] * cap) / magnitude);
+        want[0] = muldiv_s32(want[0], cap, magnitude);
+        want[2] = muldiv_s32(want[2], cap, magnitude);
     }
     want[1] = (target[1] - pos_q8[1]) / 2;
     if (want[1] > VEL_CAP_Y) want[1] = VEL_CAP_Y;

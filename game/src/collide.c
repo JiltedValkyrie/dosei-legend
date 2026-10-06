@@ -1,6 +1,7 @@
 #pragma GCC optimize ("Os") /* Bounded integer contacts; keep code within high RAM. */
 /* Actor-vs-actor collision check. See collide.h. Integer only. */
 #include "collide.h"
+#include "../../shared/lib/collision/div32.h"
 
 static collider_t  *at_list[COLLIDE_LIST_MAX], *ac_list[COLLIDE_LIST_MAX],
                    *oc_list[COLLIDE_LIST_MAX];
@@ -191,33 +192,45 @@ static bool cap_cyl(const collider_t *cap, const collider_t *cyl,
  * math and also cover zero-length capsules (enemy head spheres). */
 static bool __attribute__((optimize("Os"))) cap_cap(const collider_t *a, const collider_t *b, int32_t *overlap)
 {
-    int64_t u[3]={a->bx-a->ax,a->by-a->ay,a->bz-a->az};
-    int64_t v[3]={b->bx-b->ax,b->by-b->ay,b->bz-b->az};
-    int64_t w[3]={a->ax-b->ax,a->ay-b->ay,a->az-b->az};
-    int64_t aa=0,bb=0,cc=0,dd=0,ee=0,den,s=0,t=0,d2=0;
-    int32_t reach=a->radius+b->radius,dist;
+    /* 32-bit values; cross terms use the native dmuls.l product (allowed),
+     * divides are 32-bit (div32.h, no ___divdi3). Components are shifted by
+     * k so every |value| < 2^13: sums of products then fit 32 bits. k is 0
+     * for ordinary colliders (segments under 8192 units). */
+    int32_t u[3]={a->bx-a->ax,a->by-a->ay,a->bz-a->az};
+    int32_t v[3]={b->bx-b->ax,b->by-b->ay,b->bz-b->az};
+    int32_t w[3]={a->ax-b->ax,a->ay-b->ay,a->az-b->az};
+    int32_t aa=0,bb=0,cc=0,dd=0,ee=0,s=0,t=0,reach=a->radius+b->radius,rs,dist;
+    int64_t den,d2=0;
+    uint32_t big=0;
+    int k=0;
     unsigned i;
     for(i=0;i<3;++i) {
         /* Reject disjoint segment bounds before the divisions. */
-        int64_t amin=w[i]+(u[i]<0?u[i]:0), amax=w[i]+(u[i]>0?u[i]:0);
+        int32_t amin=w[i]+(u[i]<0?u[i]:0), amax=w[i]+(u[i]>0?u[i]:0);
         if(amin>(v[i]>0?v[i]:0)+reach || amax<(v[i]<0?v[i]:0)-reach)return false;
+        big|=(uint32_t)(u[i]<0?-u[i]:u[i])|(uint32_t)(v[i]<0?-v[i]:v[i])|(uint32_t)(w[i]<0?-w[i]:w[i]);
+    }
+    while((big>>k)>=8192u)++k;
+    rs=(reach+(1<<k)-1)>>k;
+    for(i=0;i<3;++i) {
+        u[i]>>=k;v[i]>>=k;w[i]>>=k;
         aa+=u[i]*u[i];bb+=u[i]*v[i];cc+=v[i]*v[i];dd+=u[i]*w[i];ee+=v[i]*w[i];
     }
-    if(!aa) t=cc?ee*4096/cc:0;
-    else if(!cc) s=-dd*4096/aa;
+    if(!aa) t=cc?muldiv_s32(ee,4096,cc):0;
+    else if(!cc) s=muldiv_s32(-dd,4096,aa);
     else {
-        den=aa*cc-bb*bb;
-        if(den>0) s=(bb*ee-cc*dd)*4096/den;
+        den=(int64_t)aa*cc-(int64_t)bb*bb;
+        if(den>0) s=muldiv64_s32(4096,(int64_t)bb*ee-(int64_t)cc*dd,den);
         if(s<0)s=0;else if(s>4096)s=4096;
-        t=(bb*s+ee*4096)/cc;
-        if(t<0) {t=0;s=-dd*4096/aa;}
-        else if(t>4096) {t=4096;s=(bb-dd)*4096/aa;}
+        t=div64s_approx((int64_t)bb*s+(int64_t)ee*4096,cc);
+        if(t<0) {t=0;s=muldiv_s32(-dd,4096,aa);}
+        else if(t>4096) {t=4096;s=muldiv_s32(bb-dd,4096,aa);}
     }
     if(s<0)s=0;else if(s>4096)s=4096;
     if(t<0)t=0;else if(t>4096)t=4096;
-    for(i=0;i<3;++i) {int64_t d=w[i]*4096+u[i]*s-v[i]*t;d2+=d*d;}
-    if(d2>=(int64_t)reach*reach*4096*4096)return false;
-    dist=collide_isqrt((uint32_t)(d2/(4096*4096)));
+    for(i=0;i<3;++i) {int32_t d=w[i]*4096+u[i]*s-v[i]*t;d2+=(int64_t)d*d;}   /* |d| < 2^27 */
+    if(d2>=((int64_t)(rs*rs))<<24)return false;
+    dist=collide_isqrt((uint32_t)(d2>>24))<<k;
     *overlap=reach-dist;
     return true;
 }

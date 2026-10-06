@@ -26,6 +26,7 @@ class CueRuntime(unittest.TestCase):
 #include <math.h>
 #include <string.h>
 #include "cutscenes.h"
+#include "''' + (ROOT.parent / 'shared/lib/collision/div32.h').as_posix() + '''"
 static struct {
     unsigned short frame;
     const cutscene_cue_t *player_cue, *actor_cues[10];

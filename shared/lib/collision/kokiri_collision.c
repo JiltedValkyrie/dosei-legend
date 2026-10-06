@@ -1,5 +1,8 @@
 /* Static ROM collision, independent of rendering and controller APIs. */
 #include "kokiri_collision.h"
+#define DIV32_IMPLEMENTATION
+#include "div32.h"   /* no libgcc 64-bit divides (human rule 2026-10-06) */
+#undef DIV32_IMPLEMENTATION
 #include <limits.h>
 
 #define RADIUS 24
@@ -208,7 +211,8 @@ static bool sphere_touches(const collision_triangle_t *t, const int32_t p[3],
         for (int k = 0; k < 3; k++) dot += (int64_t)(p[k]-t->vertex[0][k])*t->normal[k];
         if (dot > radius*16384 || dot < -radius*16384) return false;
         int32_t projected[3];
-        for (int k = 0; k < 3; k++) projected[k] = p[k] - (int32_t)(dot*t->normal[k]/268435456);
+        /* |dot| <= radius * 16384 (checked above): a 32-bit hardware product. */
+        for (int k = 0; k < 3; k++) projected[k] = p[k] - (int32_t)(((int64_t)(int32_t)dot*t->normal[k]) >> 28);
         if (inside(t, projected)) return true;
         /* Include triangle edges and vertices, not only face interiors. */
         for (int edge = 0; edge < 3; edge++) {
@@ -221,7 +225,7 @@ static bool sphere_touches(const collision_triangle_t *t, const int32_t p[3],
                 if (along < 0) along = 0;
                 if (along > length) along = length;
                 for (int k = 0; k < 3; k++) {
-                        int32_t q = a[k] + (length ? (int32_t)((b[k]-a[k])*along/length) : 0);
+                        int32_t q = a[k] + (length ? muldiv64_s32(b[k]-a[k], along, length) : 0);
                         distance += (int64_t)(p[k]-q)*(p[k]-q);
                 }
                 if (distance <= radius*radius) return true;
@@ -280,8 +284,8 @@ static bool old_floor_at(const collision_triangle_t *t, int32_t x, int32_t z,
 {
         if (t->normal[1] < 8192 || x < t->minimum[0] || x > t->maximum[0] ||
             z < t->minimum[2] || z > t->maximum[2]) return false;
-        *y = t->vertex[0][1] - (int32_t)(((int64_t)t->normal[0]*(x-t->vertex[0][0]) +
-            (int64_t)t->normal[2]*(z-t->vertex[0][2]))/t->normal[1]);
+        *y = t->vertex[0][1] - div64s_approx((int64_t)t->normal[0]*(x-t->vertex[0][0]) +
+            (int64_t)t->normal[2]*(z-t->vertex[0][2]), t->normal[1]);
         int32_t p[3] = {x,*y,z};
         return inside(t,p);
 }
@@ -831,8 +835,8 @@ int32_t bg_poly_plane_distance(const bg_hit_t *hit, const bg_vec_t *pos)
 static bool plane_y(const collision_triangle_t *t, int32_t x, int32_t z, int32_t *y)
 {
         if (!t->normal[1]) return false;
-        *y = t->vertex[0][1] - (int32_t)(((int64_t)t->normal[0]*(x-t->vertex[0][0]) +
-            (int64_t)t->normal[2]*(z-t->vertex[0][2]))/t->normal[1]);
+        *y = t->vertex[0][1] - div64s_approx((int64_t)t->normal[0]*(x-t->vertex[0][0]) +
+            (int64_t)t->normal[2]*(z-t->vertex[0][2]), t->normal[1]);
         return true;
 }
 
@@ -921,9 +925,9 @@ static bool line_visit(const collision_triangle_t *t, uint32_t bg_id, uint32_t p
         /* CollisionPoly_LineVsPoly rejects. */
         if ((da >= 0 && db >= 0) || (da < 0 && db < 0) ||
             ((f->checks & BG_CHECK_ONE_FACE) && da < 0 && db > 0) || !dd) return true;
-        p[0] = f->a.x + (int32_t)((int64_t)(f->b.x - f->a.x) * da / dd);
-        p[1] = f->a.y + (int32_t)((int64_t)(f->b.y - f->a.y) * da / dd);
-        p[2] = f->a.z + (int32_t)((int64_t)(f->b.z - f->a.z) * da / dd);
+        p[0] = f->a.x + muldiv64_s32(f->b.x - f->a.x, da, dd);
+        p[1] = f->a.y + muldiv64_s32(f->b.y - f->a.y, da, dd);
+        p[2] = f->a.z + muldiv64_s32(f->b.z - f->a.z, da, dd);
         if (!inside_tol(t, p, dominant_axis(t), 1)) return true;
         dist = (int64_t)(p[0]-f->a.x)*(p[0]-f->a.x) + (int64_t)(p[1]-f->a.y)*(p[1]-f->a.y) +
                (int64_t)(p[2]-f->a.z)*(p[2]-f->a.z);
@@ -957,9 +961,11 @@ typedef struct {
 static int32_t round_div(int64_t n, int64_t d)
 {
         /* Round away from zero: a push must clear the radius, not stop short. */
-        int64_t q = n / d;
-        if (q * d != n) q += ((n < 0) == (d < 0)) ? 1 : -1;
-        return (int32_t)q;
+        /* d = |n_xz| * 16384 fits 32 bits; approximate quotient, then the
+         * remainder check uses the hardware product only. */
+        int32_t q = div64s_approx(n, (int32_t)d);
+        if ((int64_t)q * (int32_t)d != n) q += ((n < 0) == (d < 0)) ? 1 : -1;
+        return q;
 }
 
 static bool wall_visit(const collision_triangle_t *t, uint32_t bg_id, uint32_t poly, void *c)
@@ -989,7 +995,7 @@ static bool wall_visit(const collision_triangle_t *t, uint32_t bg_id, uint32_t p
                 int j;
                 for (j = 0; j < 3; j++)
                         if (j != k) rest += (int64_t)t->normal[j] * (p[j] - t->vertex[0][j]);
-                intersect = t->vertex[0][k] - (int32_t)(rest / na);
+                intersect = t->vertex[0][k] - div64s_approx(rest, na);
         }
         p[k] = intersect;
         if (!inside_approx(t, p, k)) return true;
@@ -1416,16 +1422,18 @@ bool bg_dyna_carry(uint32_t id, bg_vec_t *pos, uint16_t *yaw)
         turn = (uint16_t)(d->rot_y - d->prev_rot_y);
         if (d->transform & BG_DYNA_POS) {
                 if (d->prev_scale_q16) {
-                        int64_t rx = pos->x - d->prev_pos[0];
-                        int64_t ry = pos->y - d->prev_pos[1];
-                        int64_t rz = pos->z - d->prev_pos[2];
-                        int64_t s = sin_q14(turn), c = cos_q14(turn);
-                        int64_t den = (int64_t)16384 * d->prev_scale_q16;
-                        /* R(cur) R(-prev) = R(cur - prev) about the one axis;
-                         * then the scale ratio cur / prev. */
-                        pos->x = d->pos[0] + (int32_t)((rx * c + rz * s) * d->scale_q16 / den);
-                        pos->y = d->pos[1] + (int32_t)(ry * d->scale_q16 / d->prev_scale_q16);
-                        pos->z = d->pos[2] + (int32_t)((rz * c - rx * s) * d->scale_q16 / den);
+                        int32_t rx = pos->x - d->prev_pos[0];
+                        int32_t ry = pos->y - d->prev_pos[1];
+                        int32_t rz = pos->z - d->prev_pos[2];
+                        int32_t s = sin_q14(turn), c = cos_q14(turn);
+                        /* R(cur) R(-prev) = R(cur - prev) about the one axis
+                         * (hardware products, Q14), then the scale ratio
+                         * cur / prev as one 32-bit divide (no ___divdi3). */
+                        int32_t ox = (int32_t)(((int64_t)rx * c + (int64_t)rz * s) / 16384);
+                        int32_t oz = (int32_t)(((int64_t)rz * c - (int64_t)rx * s) / 16384);
+                        pos->x = d->pos[0] + muldiv_s32(ox, d->scale_q16, d->prev_scale_q16);
+                        pos->y = d->pos[1] + muldiv_s32(ry, d->scale_q16, d->prev_scale_q16);
+                        pos->z = d->pos[2] + muldiv_s32(oz, d->scale_q16, d->prev_scale_q16);
                 }
                 result = true;
         }

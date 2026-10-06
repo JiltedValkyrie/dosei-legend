@@ -1,6 +1,7 @@
 #pragma GCC optimize("Os") /* cold menu/save/script code: size over speed (work RAM) */
 #pragma GCC optimize ("Os") /* Cold 20 Hz script player; preserve high-RAM headroom. */
 #include <jo/jo.h>
+#include "../../shared/lib/collision/div32.h"   /* 32-bit divides, no ___divdi3 */
 #include "asset_loading.h"
 #include "cutscene.h"
 #include "demo.h"
@@ -764,7 +765,7 @@ static void update_cues(const cutscene_t *cs)
             for (axis = 0; axis < 3; ++axis) {
                 int32_t target = starts[axis] * 256 + offset[axis];
                 int32_t velocity, change, step = axis == 1 ? 8192 : 384;
-                if (span > 0) target += (int32_t)((int64_t)(ends[axis] - starts[axis]) * into * 256 / span);
+                if (span > 0) target += div64s_approx((int64_t)(ends[axis] - starts[axis]) * (into * 256), span);
                 velocity = (target - state.navi_pos[axis]) / 5;
                 if (velocity > 5120) velocity = 5120;
                 if (velocity < -5120) velocity = -5120;
@@ -785,9 +786,9 @@ static void update_cues(const cutscene_t *cs)
         span = cue->end - cue->start;
         into = state.frame - cue->start;
         if (span <= 0) continue;
-        state.actor_pos[i][0] = cue->x + (int32_t)((int64_t)(cue->ex - cue->x) * into / span);
-        state.actor_pos[i][1] = cue->y + (int32_t)((int64_t)(cue->ey - cue->y) * into / span);
-        state.actor_pos[i][2] = cue->z + (int32_t)((int64_t)(cue->ez - cue->z) * into / span);
+        state.actor_pos[i][0] = cue->x + muldiv_s32(cue->ex - cue->x, into, span);
+        state.actor_pos[i][1] = cue->y + muldiv_s32(cue->ey - cue->y, into, span);
+        state.actor_pos[i][2] = cue->z + muldiv_s32(cue->ez - cue->z, into, span);
     }
 }
 

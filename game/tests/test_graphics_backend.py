@@ -34,6 +34,11 @@ class GraphicsBackend(unittest.TestCase):
 #include <stdlib.h>
 #define assert(c) do { if (!(c)) { fprintf(stderr,"check failed: %s\\n", #c); exit(1); } } while (0)
 ''')
+        # Extracted game functions may call the 32-bit divide helpers (no
+        # ___divdi3 on target); host builds get them static inline.
+        if any(name in source for name in ('div64s_approx', 'muldiv_s32', 'muldiv64_s32', 'ratio64_q16')) \
+                and 'div32.h' not in source:
+            source = '#include "%s"\n' % (ROOT.parent / 'shared/lib/collision/div32.h').as_posix() + source
         with tempfile.TemporaryDirectory() as tmp:
             p = Path(tmp)
             (p / 'test.c').write_text(source)
