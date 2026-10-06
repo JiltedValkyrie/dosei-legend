@@ -197,6 +197,9 @@ Start again to pause.
 Model tool: `tools/mesh-workshop/open-mesh-workshop.bat`. Imported tri/quad
 candidates are editing assets, not automatically runtime-ready meshes.
 
+Audio tool: `tools/audio-workshop/open-audio-workshop.bat`. Plays US 1.2 SFX
+and music on the PC. No import or export.
+
 ## Focused checks
 
 Run tests relevant to the changed feature. Available suite entry points:
