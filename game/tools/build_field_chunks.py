@@ -8,6 +8,7 @@ XZ distance band [near, far) measured from Link to the piece bounds:
   cell far    LOD2: 2x2 heightfield quads, top-down bake    [FULL_RING, inf)
   object lod1 original faces of a Workshop LOD object       [lod0, cull)
   object lod0 the imported close-up mesh                    [0, lod0)
+  landmark   retained low-detail source cards/buildings       [0, inf)
 
 A piece is resident while Link is within its band widened by HYSTERESIS, drawn
 only inside the exact band. bake() sweeps a lattice over the Field and refuses
@@ -43,6 +44,18 @@ LOD2_GRID = 2        # quads per cell side
 LOD2_TILE = 16
 LOD0_TILE = 16
 KIND_FULL, KIND_FAR, KIND_LOD1, KIND_LOD0 = 0, 1, 2, 3
+KIND_LANDMARK = 4
+PIECE_LANDMARK = 1  # piece pad bit 0; dedicated unfogged palette ownership
+LANDMARK_TILE = 16
+# Exact NTSC 1.2 source IDs; object checks below refuse a different extraction.
+# Retain the complete ranch enclosure and castle entrance walls as well as cards.
+LANDMARKS = (
+    ('mountain', 6, tuple(range(310, 320))),
+    ('castle_market', 35, tuple(range(1631, 1639))),
+    ('ranch', 5, tuple(range(161, 310))),
+    ('castle_walls', 34, tuple(range(1485, 1631))),
+)
+MOUNTAIN_BODY = frozenset(range(312, 320))
 LOD0_OBJECT_BASE = 0x10000
 MAX_PIECES = 255     # one-byte object id per polygon; 0xFF is never used
 
@@ -73,25 +86,25 @@ def _bounds(points):
 
 
 class Pool:
-    """Global tile pool, deduplicated by exact (size, CLUT, pixels)."""
+    """Deduplicate exact tiles only within the same palette/fog policy."""
 
     def __init__(self, tiles=()):
         self.tiles, self.ids = [], {}
         for t in tiles:
-            self.add(t['width'], t['height'], t['clut'], t['pixels'])
+            self.add(t['width'], t['height'], t['clut'], t['pixels'], t.get('policy', 0))
 
-    def add(self, width, height, clut, pixels):
-        key = (width, height, tuple(clut), bytes(pixels))
+    def add(self, width, height, clut, pixels, policy=0):
+        key = (width, height, tuple(clut), bytes(pixels), policy)
         if key not in self.ids:
             self.ids[key] = len(self.tiles)
             self.tiles.append(dict(width=width, height=height, clut=tuple(clut),
-                                   pixels=bytes(pixels)))
+                                   pixels=bytes(pixels), policy=policy))
         return self.ids[key]
 
 
-def _face(points, tile, cull=False, mesh=False):
+def _face(points, tile, cull=False, mesh=False, far_sort=False):
     return dict(points=[tuple(int(round(v)) for v in p[:3]) for p in points],
-                tile=tile, cull=cull, mesh=mesh)
+                tile=tile, cull=cull, mesh=mesh, far_sort=far_sort)
 
 
 def _group_tile(pool, group, size):
@@ -108,6 +121,44 @@ def lod0_faces(faces, pool):
         out[group['tri']['lod0_of']].append(_face(
             group['points'], tile, group['tri']['cull'], group['tri']['transparent']))
     return out
+
+
+def landmark_faces(source_faces, pool, specs):
+    """Bake bounded source silhouettes, separate from terrain/LOD2 palettes.
+
+    Group original triangles once; repeating UVs are baked into the 16x16
+    tile, never expanded into more draw faces. Original source IDs are kept
+    so removal from the already-converted (possibly retopologized) records
+    can be checked before packing.
+    """
+    indexed = {f.get('source_index', i): f for i, f in enumerate(source_faces)}
+    pieces, selected = [], set()
+    for name, obj, ids in specs:
+        if selected.intersection(ids):
+            raise ValueError('overlapping Field landmark source IDs')
+        for i in ids:
+            if i not in indexed or indexed[i].get('object') != obj:
+                raise ValueError('Field landmark %s source %d is not object %d' % (name, i, obj))
+        selected.update(ids)
+        out = []
+        for group in quads.build([indexed[i] for i in ids]):
+            sources = tuple(ids[i] for i in group['source'])
+            group['kind'] = quads.BAKE
+            clut, pixels = hybrid.render_tile(group, LANDMARK_TILE, LANDMARK_TILE, False)
+            tile = pool.add(LANDMARK_TILE, LANDMARK_TILE, clut, pixels,
+                            policy=PIECE_LANDMARK)
+            mesh = group['tri']['transparent']
+            # Mountain body is opaque cutout art despite the source object's
+            # translucent pass. Smoke (310/311) keeps its authored mesh mode.
+            if set(sources) <= MOUNTAIN_BODY:
+                mesh = False
+            face = _face(group['points'], tile, group['tri']['cull'], mesh)
+            face['source'] = sources
+            out.append(face)
+        pieces.append(dict(kind=KIND_LANDMARK, flags=PIECE_LANDMARK,
+                           name=name, object=obj, group=('landmark', name),
+                           near=0, far=FAR_INF, faces=out))
+    return pieces, selected
 
 
 class Surface:
@@ -196,18 +247,33 @@ def lod2_faces(surface, origin, cell, pool, heights):
     return out
 
 
-def build_pieces(positions, records, tiles, source_faces, lod_settings, lod0_source):
+def build_pieces(positions, records, tiles, source_faces, lod_settings, lod0_source,
+                 landmark_specs=()):
     """Return (pieces, pool, origin)."""
     pool = Pool(tiles.values())  # original ids are preserved: pool id == tile index
     lod_objects = {int(k): v for k, v in lod_settings.items()}
+    landmarks, landmark_ids = landmark_faces(source_faces, pool, landmark_specs)
+    if any(p['object'] in lod_objects for p in landmarks):
+        raise ValueError('Field landmark object also has a Workshop LOD override')
     xs = [p[0] for p in positions]
     zs = [p[2] for p in positions]
     origin = (min(xs), min(zs))
     cells = collections.defaultdict(list)
     objects = collections.defaultdict(list)
+    removed = set()
     for r in records:
+        source_ids = set(r.get('source', ()))
+        if source_ids & landmark_ids:
+            if not source_ids <= landmark_ids:
+                raise ValueError('converted Field face mixes landmark and terrain source IDs: %s' % r['source'])
+            removed.update(source_ids)
+            continue
         face = _face([positions[i] for i in r['indices'][:3 if r['indices'][2] == r['indices'][3] else 4]],
-                     r['tile'], r['cull'], r['mesh'])
+                     r['tile'], r['cull'], r['mesh'], r.get('far_sort', False))
+        if r.get('far_sort') and len(set(r['indices'])) not in (3, 4):
+            raise ValueError('retopo face %s collapsed after welding' % r['source'])
+        if r.get('far_sort') and len(set(r['indices'])) == 3 and r['indices'][2] != r['indices'][3]:
+            raise ValueError('retopo quad %s lost a corner after welding' % r['source'])
         if r['object'] in lod_objects:
             objects[r['object']].append(face)
             continue
@@ -215,10 +281,15 @@ def build_pieces(positions, records, tiles, source_faces, lod_settings, lod0_sou
         cell = ((sum(q[0] for q in p) // len(p) - origin[0]) >> CELL_SHIFT,
                 (sum(q[2] for q in p) // len(p) - origin[1]) >> CELL_SHIFT)
         cells[cell].append(face)
+    if removed != landmark_ids:
+        raise ValueError('Field landmark originals missing after layout conversion: %s' %
+                         sorted(landmark_ids - removed))
     pieces = []
     for cell in sorted(cells):
         pieces.append(dict(kind=KIND_FULL, cell=cell, group=('cell', cell), near=0, far=FULL_RING, faces=cells[cell]))
-    surface = Surface([f for f in source_faces if f.get('object') not in lod_objects])
+    surface = Surface([f for i, f in enumerate(source_faces)
+                       if f.get('object') not in lod_objects and
+                       f.get('source_index', i) not in landmark_ids])
     heights = {}
     for cell in sorted(cells):
         faces = lod2_faces(surface, origin, cell, pool, heights)
@@ -239,7 +310,11 @@ def build_pieces(positions, records, tiles, source_faces, lod_settings, lod0_sou
         pieces.append(dict(kind=KIND_LOD1, object=obj, group=('object', obj), near=near, far=cull, faces=objects[obj]))
         if near_faces.get(obj):
             pieces.append(dict(kind=KIND_LOD0, object=obj, group=('object', obj), near=0, far=near, faces=near_faces[obj]))
+    pieces.extend(landmarks)
     for piece in pieces:
+        flags = piece.get('flags', 0)
+        if flags & ~PIECE_LANDMARK or bool(flags & PIECE_LANDMARK) != (piece['kind'] == KIND_LANDMARK):
+            raise ValueError('invalid Field piece landmark flags')
         points = [p for f in piece['faces'] for p in f['points']]
         b = _bounds(points)
         # A LOD2 piece's band is measured to its whole cell, so it can never be
@@ -401,7 +476,9 @@ def pack(pieces, pool, plan, normal=face_normal):
             data.extend(struct.pack('>3i4H', *normal(baked, f['local']), *f['local']))
         for f in piece['faces']:
             n = normal(baked, f['local'])
-            sort = 0x66 if floor_uses_far_sort(baked, f['local'], n) else 0x67
+            # Retopo pieces keep their large parent floor's far sort even when
+            # a small cut piece would fall under the 64-unit extent rule.
+            sort = 0x66 if f.get('far_sort') or floor_uses_far_sort(baked, f['local'], n) else 0x67
             data.extend(struct.pack('>BB5H', 0 if f['cull'] else 1, sort, f['tile'],
                                     0x88 | (0x100 if f['mesh'] else 0), 0, 0, 2))
         data.extend(struct.pack('>%dH' % len(piece['tiles']), *piece['tiles']))
@@ -409,7 +486,7 @@ def pack(pieces, pool, plan, normal=face_normal):
         b = piece['bounds']
         rows.append(PIECE.pack(*b, piece['near'], piece['far'], len(piece['points']),
                                len(piece['faces']), len(piece['tiles']), piece['kind'],
-                               groups[piece['group']], 0, offset, 0))
+                               groups[piece['group']], piece.get('flags', 0), offset, 0))
     pool_offset = head_bytes + len(data)
     total = pool_offset + len(pixels)
     header = HEADER.pack(MAGIC, VERSION, len(pieces), len(pool.tiles), len(pixels),
@@ -448,7 +525,7 @@ def unpack(blob):
     for i in range(h[2]):
         row = PIECE.unpack_from(blob, at + i * PIECE.size)
         pieces.append(dict(bounds=row[:6], near=row[6], far=row[7], points=row[8], polys=row[9],
-                           refs=row[10], kind=row[11], group=row[12], offset=row[14]))
+                           refs=row[10], kind=row[11], group=row[12], flags=row[13], offset=row[14]))
     return h, buckets, tiles, pieces
 
 
@@ -477,7 +554,8 @@ def bake(oot, rom_dir, head, actor, owl_actor, document, out_path, report_path=N
             streamed=True)
         manifest = json.loads((folder / 'texture_manifest.json').read_text())
     records = manifest['faces']
-    source_faces = [f for f in hybrid.load_faces(oot, rom_dir, prefix='spot00') if f['room'] == room]
+    source_faces = [dict(f, source_index=i) for i, f in
+                    enumerate(hybrid.load_faces(oot, rom_dir, prefix='spot00')) if f['room'] == room]
     lod0_source = []
     lod_settings = {}
     if document and document.get('lods'):
@@ -486,13 +564,17 @@ def bake(oot, rom_dir, head, actor, owl_actor, document, out_path, report_path=N
         lod0_source = [f for f in extended if f.get('lod0_of') is not None and f['room'] == room]
         lod_settings = settings.get(room, {})
     pieces, pool, origin = build_pieces(positions, records, tiles, source_faces,
-                                        lod_settings, lod0_source)
+                                        lod_settings, lod0_source, LANDMARKS)
     plan = sweep(pieces, pool, actor, owl_actor)
     summary = dict(origin=origin, pieces=len(pieces), tiles=len(pool.tiles),
                    kinds=dict(collections.Counter(p['kind'] for p in pieces)),
                    worst=plan['worst'], worst_at=plan['worst_at'], owl_worst=plan['owl_worst'], buckets=plan['buckets'],
                    slots=plan['slots'], vram_total=plan['vram_total'], vram_limit=plan['vram_limit'],
-                   actor_polygons=actor['polygons'], failures=plan['failures'])
+                   actor_polygons=actor['polygons'], failures=plan['failures'],
+                   landmarks=[dict(name=p['name'], sources=sum(len(f['source']) for f in p['faces']),
+                                   polygons=len(p['faces']), vertices=len(p['points']),
+                                   tiles=len(p['tiles']), flags=p['flags'])
+                              for p in pieces if p['kind'] == KIND_LANDMARK])
     if report_path is not None:
         pathlib.Path(report_path).write_text(json.dumps(dict(summary, cells=plan['cells']), indent=1) + '\n')
     print('field stream: %d pieces (%s), %d pool tiles; worst resident %d polys / %d verts / '

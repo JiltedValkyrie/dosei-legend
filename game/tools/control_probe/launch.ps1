@@ -1,8 +1,10 @@
 # Launch the real configured GUI on the human's desktop. In Codex, invoke this
 # outside the restricted execution desktop (require_escalated).
+param([string]$Run = '')
 $ErrorActionPreference = 'Stop'
 $astraRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../../..'))
-$astraRun = Join-Path $astraRoot 'game/build/astra-control'
+# -Run selects another isolated run folder (default: Astra's controlled build).
+$astraRun = if ($Run) { [IO.Path]::GetFullPath($Run) } else { Join-Path $astraRoot 'game/build/astra-control' }
 $astraCue = Join-Path $astraRun 'oot-sat/game/build/game.cue'
 . (Join-Path $astraRoot 'tools/launcher/project-config.ps1')
 $astraPaths = Get-ProjectPaths

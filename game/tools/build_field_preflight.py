@@ -29,8 +29,8 @@ def main():
     ledger = manifest.scene_manifest('spot00', segments, names, objects,
         manifest.scenes.entrance_table(args.oot), ('SCENE_HYRULE_FIELD', 1))
     for exit in ledger['exits']:
-        exit['demo_policy'] = ('return_to_woods' if exit['scene'] == 'SCENE_LOST_WOODS'
-                               else 'demo_boundary_required')
+        exit['recomp_policy'] = ('return_to_woods' if exit['scene'] == 'SCENE_LOST_WOODS'
+                               else 'recomp_boundary_required')
     ledger['owls'] = [a for r in ledger['rooms'] for a in r['actors'] if a['name'] == 'En_Owl']
     collision = hybrid.source.collision_data(segments['spot00_scene'])
     (args.out / 'FIELD.COL').write_bytes(manifest.scenes.collision_file(collision))

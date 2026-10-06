@@ -7,10 +7,12 @@ import control as c
 def main():
     import argparse
     ap=argparse.ArgumentParser(__doc__);ap.add_argument('--folder',default='tr-v6')
+    # Square-retopo images have no TR path: pass --modes 0,0.
+    ap.add_argument('--modes',default='0,2,2,0')
     args=ap.parse_args()
     p=c.Process(json.loads((c.RUN/'session.json').read_text(encoding='utf-8-sig'))['pid'])
     result=[]
-    for mode in (0,2,2,0):
+    for mode in map(int,args.modes.split(',')):
         p.command(4,hud=1+(mode<<8))
         p.command(1,pose=[37,185,4353,13714],camera=[-91,262,4320,13714,-1820],legacy=0)
         a=p.words()[22];t=time.monotonic()
@@ -23,6 +25,7 @@ def main():
         result.append(row);print(json.dumps(row),flush=True)
     p.command(4,hud=513)
     p.command(1,pose=[37,185,4353,13714],camera=[-91,262,4320,13714,-1820],legacy=0)
+    (c.RUN/'verification'/args.folder).mkdir(parents=True,exist_ok=True)
     (c.RUN/'verification'/args.folder/'performance.json').write_text(json.dumps(result,indent=2))
 
 

@@ -59,7 +59,7 @@ split predicates, triangle masking, and visual benefit during movement.
 ## Repository review and corrections
 
 1. SGL near handling already exists. `main.c` sets `slZdspLevel(3)` and the
-   live `demo_screen_distance()`; 30 is only the 240-distance case. Both
+   live `recomp_screen_distance()`; 30 is only the 240-distance case. Both
    `build_sgl_scene.py` and the active binary exporter `build_room_scene.py`
    set `UseNearClip`. Those facts **do not prove** TR-equivalent rejection of
    every face with one near vertex, or prove current wedges fixed. Sega's
@@ -261,7 +261,7 @@ The isolated probe source has two distinct diagnostics paths:
   does nothing by design" is incorrect. The bottom VRAM/CPU line is always
   drawn by this function and does not identify the running build.
 - `player_input.c:245` implements the developer L+R+Down chord, delivered to
-  `viewer_hud()` through `demo_diagnostics_toggled`. Probe rows are inside
+  `viewer_hud()` through `recomp_diagnostics_toggled`. Probe rows are inside
   `if (!debug_visible)`, not the alternate viewer panel. Inspect the whole
   input-to-display path rather than infer visibility from the boolean's name.
 
@@ -577,7 +577,7 @@ Trace result (human, Kronos, Debug slot 11:51, Link 37,275,4353):
   715 (1092,-98,674,674) all S (submitted) with 0 VDP1 commands. 701, 699, 716 (all corners > 30) drawn, max |X| <= 484.
   659 (1870,858,270,270) S0, probably off-screen (unproven). Fits: SGL drops a whole face crossing near -> missing floor.
 - cam LEGACY, pc -214,235,4288 p0: 657/656/698 with corners -407/-18 each drew 1 command (max |X| 506). But the screen is
-  pitched down while trace says p0, so trace depth (demo_yaw/demo_pitch) is wrong in LEGACY. Untrusted.
+  pitched down while trace says p0, so trace depth (recomp_yaw/recomp_pitch) is wrong in LEGACY. Untrusted.
 Open: compute trace depth from SGL's real matrix (slGetMatrix at forest submit), retest both camera modes.
 Handed to Astra 2026-10-05. Probe code + Debug slot image hold the trace; usual Clean untouched; nothing committed.
 
@@ -759,3 +759,27 @@ Its small regular geometry is useful evidence for the next experiment. The
 static study does not prove holes are invisible. Likewise our missing faces
 cannot all be attributed to whole-face near rejection: actual SGL near/XY
 handling, authored backfaces and a below-ground camera all contributed.
+
+## Square-plan collision review
+
+2026-10-05, Astra. Reviewed Claude's collision map and independently checked
+Grok's corrections against source and staged data. The full current requirements
+and four-face mapping are in
+[FIELD_SQUARE_RETOPO_PLAN.md](FIELD_SQUARE_RETOPO_PLAN.md#collision-review-2026-10-05).
+Feet `(60,3367)` lie on collision polygon 436 only; the moved camera's floor hit
+is separate. Field uses the `0xF000` spot allocation, not the non-spot `0xB798`
+entry. This is not all free node space. Curb polygons 598–613 extend to Z 6800;
+required boundary cuts must stay on their own planes and preserve camera ignore.
+
+All 1,579 baseline COL triangles agree with the extracted coordinates, rounded
+Q14 normals and info words. Independently decoded staged OOC coordinates, info
+and surfaces also agree. Compiled OOC normals differ from COL by one Q14 unit on
+at least one component of 786 faces after conversion; do not call source-text
+agreement exact compiled-payload parity. Normal conversion and floor/ray behavior
+need explicit checks for new geometry. Audit script and hashes are saved in
+`game/build/astra-control/verification/field-collision-review/`.
+
+A concurrent uncommitted retopology draft is now in the shared tree. This audit
+changes documentation only and does not certify its geometry, collision, build
+or runtime behavior. The accepted renderer/camera checkpoint remains `c2655b2`
+and the saved complete disc above.

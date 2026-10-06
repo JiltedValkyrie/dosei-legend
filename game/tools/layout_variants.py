@@ -17,6 +17,9 @@ EDITABLE = {0x125, 0x141, 0x00A}  # grass, signposts, chests
 
 # Mesh keys for per-object replacement/LOD. spot00 = Hyrule Field.
 MESH_KEY = r'(spot04_room_[0-2]|ydan_room_0|spot00_room_0)/object/(0|[1-9][0-9]*)'
+# Source-face retopology patches (tools/field_retopo.py): geometry, fans and
+# collision frozen in one content-addressed bundle.
+PATCH_KEY = r'spot00_room_0/retopo/[a-z0-9][a-z0-9-]{0,31}'
 # Runtime stores distances as unsigned 16-bit; keep below signed range too.
 LOD_DISTANCE_MAX = 32767
 
@@ -34,7 +37,7 @@ def empty(): return {'version': 1, 'base': 'ntsc-1.2', 'rooms': {}}
 
 
 def validate(document):
-    if not isinstance(document, dict) or not {'version','base','rooms'} <= set(document) or set(document)-{'version','base','rooms','meshes','labels','lods'}:
+    if not isinstance(document, dict) or not {'version','base','rooms'} <= set(document) or set(document)-{'version','base','rooms','meshes','labels','lods','patches'}:
         raise ValueError('Invalid layout document fields')
     if document['version'] != 1 or document['base'] != 'ntsc-1.2' or not isinstance(document['rooms'], dict):
         raise ValueError('Unsupported layout version/base')
@@ -95,6 +98,13 @@ def validate(document):
         if type(near) is not int or type(far) is not int or not 0<=near<=LOD_DISTANCE_MAX or not 1<=far<=LOD_DISTANCE_MAX:
             raise ValueError('LOD distances must be integers 0..%d (cull at least 1)' % LOD_DISTANCE_MAX)
         if near>far: raise ValueError('LOD0 distance cannot exceed cull distance')
+    patches=document.get('patches',{})
+    if not isinstance(patches,dict): raise ValueError('Invalid retopology patch mapping')
+    for key,entry in patches.items():
+        if not isinstance(key,str) or not re.fullmatch(PATCH_KEY,key):
+            raise ValueError('Invalid retopology patch key')
+        if not isinstance(entry,dict) or set(entry)!={'sha256','bundle'} or            any(not isinstance(entry[k],str) or not re.fullmatch('[0-9a-f]{64}',entry[k]) for k in ('sha256','bundle')):
+            raise ValueError('Invalid retopology patch fields')
     return document
 
 
@@ -192,7 +202,7 @@ def for_build(segments):
 def validate_environment(document):
     if any(os.environ.get(k) not in (None,'','none') for k in ('ROOM_IMPORTS','QUAD_OBJ','AUTHORED_OBJ')):
         raise ValueError('Named layout conflicts with legacy mesh overrides; clear override environment variables')
-    if (document.get('meshes') or document.get('lods')) and (os.environ.get('TEXTURE_PATH','hybrid')!='hybrid' or os.environ.get('STREAM_ROOMS','1')!='1'):
+    if (document.get('meshes') or document.get('lods') or document.get('patches')) and (os.environ.get('TEXTURE_PATH','hybrid')!='hybrid' or os.environ.get('STREAM_ROOMS','1')!='1'):
         raise ValueError('Per-object mesh layouts require TEXTURE_PATH=hybrid and STREAM_ROOMS=1')
 
 
@@ -210,7 +220,7 @@ def main():
         sys.path.insert(0, str(GAME.parent/'shared/tools'))
         import build_kokiri_scene as source
         prefixes={'spot04'} if document['rooms'] else set()
-        prefixes.update(k.split('_room_')[0] for k in [*document.get('meshes',{}),*document.get('lods',{})])
+        prefixes.update(k.split('_room_')[0] for k in [*document.get('meshes',{}),*document.get('lods',{}),*document.get('patches',{})])
         for prefix in prefixes:
             original = source.extract(args.oot,args.rom_dir,prefix=prefix)
             apply(original, document)
@@ -220,6 +230,13 @@ def main():
         for entry in document.get('lods',{}).values():
             from map_meshes import bundle_path
             if entry['bundle'] is not None: bundle_path(entry['bundle'])
+        for key,entry in document.get('patches',{}).items():
+            from map_meshes import bundle_path
+            bundle_path(entry['bundle'])
+            room=key.split('/')[0]
+            segment=source.extract(args.oot,args.rom_dir,prefix=room.split('_room_')[0])[room]
+            if hashlib.sha256(segment).hexdigest()!=entry['sha256']:
+                raise ValueError('Retopology source room changed: '+key)
     atomic_json(args.snapshot, {'layout':name, 'document':document})
     print('Layout build source:', name or 'legacy Workshop selection')
 

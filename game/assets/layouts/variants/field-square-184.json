@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "base": "ntsc-1.2",
+  "rooms": {},
+  "labels": {
+    "spot04/room/0/mesh/7": "kokiri0-treeline"
+  },
+  "meshes": {
+    "spot04_room_0/object/7": {
+      "sha256": "7b9dd5957248c6d7a5df4f11294b7f6213b4d36ad9738166c6dc9b6a91c849f3",
+      "bundle": "d45a9bc58866bb3d460ab7f650b67304ea0221680e03ab6b67e403020b3d5915",
+      "position": [
+        615.5,
+        692.5,
+        -631.5
+      ],
+      "yaw": 0.0,
+      "scale": 1.0
+    }
+  },
+  "patches": {
+    "spot00_room_0/retopo/obj17-fan": {
+      "sha256": "82ae51ac16439f65c2b61ce602c07d38834e05620ba43d3ae8f4112e0a1174f3",
+      "bundle": "09944ed99406fa1f5ec80d00dbb1924204f9d600ec72ee82c6d1f7e328772c48"
+    }
+  }
+}

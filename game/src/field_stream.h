@@ -4,7 +4,7 @@
 ** Hyrule Field distance streaming: KRM2 layout (tools/build_field_chunks.py)
 ** and the pure selection / slot logic, shared by kokiri_sgl.c and host tests.
 **
-** The whole KRM2 file sits in one RAM-cart block. Pieces are grouped; members
+** KRM2 geometry and pixels occupy separate RAM-cart blocks. Pieces are grouped; members
 ** of a group (a cell's full/LOD2 pair, an object's LOD0/LOD1 pair) are
 ** exclusive, so at most one is resident. A resident member stays while Link
 ** is inside its band widened by the hysteresis; otherwise the first member
@@ -23,6 +23,8 @@
 #define FIELD_KIND_FAR  1u
 #define FIELD_KIND_LOD1 2u
 #define FIELD_KIND_LOD0 3u
+#define FIELD_KIND_LANDMARK 4u
+#define FIELD_PIECE_LANDMARK 1u /* piece.pad: retained source cards/buildings */
 #define FIELD_FAR_INF   0xFFFFu
 #define FIELD_NONE      0xFFFFu
 #define FIELD_MAX_BUCKETS 16u

@@ -219,6 +219,16 @@ def convert(oot, head, actor, out_dir, patches_only=False, rom_dir=None,
               % (workshop['accepted_pairs'], workshop['material_or_uv_rejected'],
                  workshop['split_incompatible']), flush=True)
     groups = quads.build(source_faces, preferred)
+    if document and document.get('patches'):
+        # Local retopology (field_retopo.py): parents stay in the sizing passes
+        # below, so no unrelated tile changes; replace_pieces swaps them after.
+        from field_retopo import apply_patches
+        groups = apply_patches(groups, source_faces, source.extract(oot, rom_dir, prefix=prefix),
+                               document, prefix)
+        if prefix == 'spot00' and any(g.get('retopo_drop') for g in groups):
+            from field_ground_grid import extend
+            from build_field_chunks import LANDMARKS
+            groups = extend(groups, {i for _, _, ids in LANDMARKS for i in ids})
     # Bake tiled UVs into the authored face instead of adding repeat/height
     # subdivisions. Retopology belongs to the imported mesh's author.
     for group in groups:
@@ -420,6 +430,9 @@ def convert(oot, head, actor, out_dir, patches_only=False, rom_dir=None,
         pieces[i] = (group,tile)
         if len(tiles) > before:
             remaining -= cost
+    if any(g.get('retopo_drop') for g, _ in pieces):
+        from field_retopo import replace_pieces
+        pieces = replace_pieces(pieces, tiles, add_tile)
     # Remove superseded tiles; compact IDs keep Jo's shared sprite table small.
     used = set(tile for _, tile in pieces)
     mapping = {old:new for new,old in enumerate(sorted(used))}
@@ -444,7 +457,8 @@ def convert(oot, head, actor, out_dir, patches_only=False, rom_dir=None,
                             object=group['tri'].get('object',0),
                             room=group['tri']['room'], indices=ids,
                             flat_shaded=flat_surface(group),
-                            cull=face['cull'], mesh=face['mesh']))
+                            cull=face['cull'], mesh=face['mesh'],
+                            far_sort=bool(group.get('far_sort'))))
 
     budget = Budget()
     budget.add('forest', [(t['width'],t['height']) for t in tiles.values()], len(faces), len(positions))
@@ -542,7 +556,7 @@ def refine_room_ground(bakes, pieces, actor, texture_budget=None):
     for i,g in enumerate(bakes):
         n = quads.normal(g['points'])
         if (len(g['points']) == 4 and g['size'] > 128 and
-            not g['tri'].get('authored_mesh') and
+            not g['tri'].get('authored_mesh') and not g.get('retopo_drop') and
             not g['tri']['transparent'] and
             abs(n[1]) > .85*math.sqrt(sum(x*x for x in n))):
             candidates.append((g['size'],i))

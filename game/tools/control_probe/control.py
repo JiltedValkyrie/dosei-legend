@@ -8,6 +8,7 @@ import ctypes as C
 from ctypes import wintypes as W
 import hashlib
 import json
+import os
 from pathlib import Path
 import re
 import struct
@@ -15,7 +16,8 @@ import subprocess
 import time
 
 ROOT = Path(__file__).resolve().parents[3]
-RUN = ROOT / "game/build/astra-control"
+# CONTROL_RUN selects another isolated run folder (e.g. game/build/square-retopo).
+RUN = Path(os.environ.get("CONTROL_RUN") or ROOT / "game/build/astra-control").resolve()
 EMU = ROOT / "game/build/kronos-fix/kronos.exe"
 DISC = RUN / "oot-sat/game/build/game.cue"
 MAGIC = 0x41535452
@@ -139,6 +141,25 @@ def signed(n):
     return n - 0x100000000 if n & 0x80000000 else n
 
 
+def environment(p):
+    """Read telemetry from the exact diagnostic ELF; no emulator memory write."""
+    elf = RUN / "oot-sat/game/build/game.elf"
+    symbols = json.loads((RUN / 'environment-symbols.json').read_text())
+    if symbols['elf_sha256'] != sha(elf):
+        raise RuntimeError('Environment symbols do not match the current ELF')
+    output = symbols['nm']
+    match = re.search(r"^([0-9a-fA-F]+) [A-Za-z] _?control_environment$", output, re.M)
+    if not match:
+        raise RuntimeError("This image has no environment telemetry")
+    address = int(match[1], 16)
+    if not 0x06000000 <= address <= 0x060FFFE8:
+        raise RuntimeError("Environment telemetry outside high work RAM")
+    raw = t2(p.read(p.ptrs["HighWram"] + address - 0x06000000, 24))
+    day, sky, paused, mode, days, bgs_days = struct.unpack(">6I", raw)
+    return dict(day_time=day, skybox_time=sky, paused=bool(paused), game_mode=mode,
+                total_days=days, bgs_days=bgs_days)
+
+
 def status(w):
     return dict(request=w[4], error=w[21], frame=w[22], sim_steps=w[23], remaining=w[24],
                 link=list(map(signed, w[25:29])), camera=list(map(signed, w[29:34])))
@@ -175,7 +196,9 @@ def trace(p):
 
 def main():
     ap=argparse.ArgumentParser(__doc__)
-    ap.add_argument("action",choices=["status","pose","step","camera","freeze","trace","capture","stop","mode"])
+    ap.add_argument("action",choices=["status","pose","step","camera","freeze","trace","capture","stop","mode","time","environment"])
+    ap.add_argument("--time",type=lambda v:int(v,0),help="diagnostic u16 clock value")
+    ap.add_argument("--sky-time",type=lambda v:int(v,0),help="separate diagnostic sky time (defaults to --time)")
     ap.add_argument("--mode",type=int,choices=[0,1,2],default=0,help="0 SGL baseline; 1 guard diagnostic; 2 bounded local split")
     ap.add_argument("--pose",type=int,nargs=4,metavar=("X","FEET_Y","Z","YAW"))
     ap.add_argument("--camera",type=int,nargs=5,metavar=("X","Y","Z","YAW","PITCH"))
@@ -189,6 +212,12 @@ def main():
     p=Process(session["pid"])
     if sha(EMU)!=session["exe_sha256"]:raise RuntimeError("Emulator changed since launch")
     if args.action=="status": result=status(p.words())
+    elif args.action=="environment":result=environment(p)
+    elif args.action=="time":
+        sky=args.time if args.sky_time is None else args.sky_time
+        if args.time is None or not 0<=args.time<=65535 or not 0<=sky<=65535:
+            ap.error("time requires unsigned 16-bit --time/--sky-time")
+        p.command(5,pose=[args.time,sky,0,0]);result=environment(p)
     elif args.action=="mode": result=p.command(4,hud=1+(args.mode<<8))
     elif args.action=="pose":
         if args.pose is None or args.camera is None:ap.error("pose needs --pose and --camera")

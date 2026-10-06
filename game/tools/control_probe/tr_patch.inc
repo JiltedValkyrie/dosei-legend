@@ -111,8 +111,8 @@ static void __attribute__((optimize("Os"))) tr_draw(unsigned visible)
     unsigned i,j,k;
     const int gx=JO_TV_WIDTH/2+128,gy=JO_TV_HEIGHT/2+128;
     if(!tr_mode() || !tr_vram || !field_active) {w->emitted=w->dropped=w->clamped=0;return;}
-    if(forest_reused && w->focal==demo_screen_distance()) {tr_submit(visible);return;}
-    w->focal=demo_screen_distance();
+    if(forest_reused && w->focal==recomp_screen_distance()) {tr_submit(visible);return;}
+    w->focal=recomp_screen_distance();
     w->emitted=w->dropped=w->clamped=0;
     for(i=0;i<forest_polygon_count;++i) {
         unsigned tag=forest_mesh[i]>>4,n=1,cx,cy,shift=0,count=0,ci;
@@ -128,9 +128,9 @@ static void __attribute__((optimize("Os"))) tr_draw(unsigned visible)
              * sidedness: otherwise an under-terrain camera sees its underside
              * painted over Link. Q12 normal dot world delta fits 32 bits. */
             const POLYGON *poly=&kokiri_pdata.pltbl[i];
-            int side=(poly->norm[0]>>4)*(demo_camera.x-asset->world[0][0])+
-                     (poly->norm[1]>>4)*(-demo_camera.y-asset->world[0][1])+
-                     (poly->norm[2]>>4)*(demo_camera.z-asset->world[0][2]);
+            int side=(poly->norm[0]>>4)*(recomp_camera.x-asset->world[0][0])+
+                     (poly->norm[1]>>4)*(-recomp_camera.y-asset->world[0][1])+
+                     (poly->norm[2]>>4)*(recomp_camera.z-asset->world[0][2]);
             if(side<=0)continue;
         }
         for(j=0;j<4;++j) {
