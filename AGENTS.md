@@ -12,12 +12,15 @@ Read [DOSEI-LEGEND-BIBLE.md](DOSEI-LEGEND-BIBLE.md) for asset and drop rules.
 
 ## Performance rule (human, 2026-10-03)
 
-Runtime game math must use 32-bit integers/fixed point, not 64-bit arithmetic
-or wide fallbacks. Approximation is allowed: performance takes priority over
-1:1 OoT numerical/visual fidelity. Preserve playable collision, combat and story.
-Existing wide code is migration debt, not permission to add more. Track its
-removal explicitly; do not claim a complete conversion from one optimized path.
-This supersedes earlier instructions favoring wide math for exact decomp parity.
+Runtime game values are 32-bit integers/fixed point. Narrowed 2026-10-06 by the
+human: the native SH-2 hardware multiply (dmuls.l/dmulu.l, 64-bit product in
+MACH:MACL) is ALLOWED, including the int64 casts that generate it; take the
+needed 32 bits from the product. BANNED: software 64-bit helpers (___divdi3,
+___muldi3 ...), stored 64-bit values, soft-float, and slow split-multiply
+replacements. Approximation is allowed: speed takes priority over 1:1 OoT
+numerical/visual fidelity. Preserve playable collision, combat and story.
+Existing software-wide code is migration debt. Audit with
+tools/audit_oot_core_wide.py. Supersedes the 2026-10-05 blanket dmuls ban.
 
 ## Permanent actor rendering rule (human, 2026-10-03)
 

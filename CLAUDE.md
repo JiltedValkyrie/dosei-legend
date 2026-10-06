@@ -99,10 +99,13 @@ Caveman talk. No waste token. Efficient good. Stop talk between final output. Wa
 
 ## SH-2 runtime rule: NO FPU
 
-Human directive 2026-10-03: no 64-bit runtime math. Use 32-bit integer/fixed
-math and accept approximations for speed; 1:1 OoT fidelity is not required.
-Keep collision, combat and story playable. Existing wide code must be migrated,
-not extended with new wide fallbacks. See AGENTS.md and the current plan.
+Human directive 2026-10-03, narrowed 2026-10-06: stored game values are 32-bit.
+ALLOWED: native SH-2 `dmuls.l`/`dmulu.l` (hardware 32x32 product in MACH:MACL)
+and the casts needed to generate them, e.g. `(int32_t)(((int64_t)a * b) >> 16)`.
+BANNED: software 64-bit helpers (___divdi3, ___muldi3, 64-bit shifts calls),
+64-bit stored values, soft-float. No slow split-multiply replacements. Speed
+wins; approximation is fine; keep collision, combat and story playable.
+Audit: `tools/audit_oot_core_wide.py` (fails on helpers/soft-float only).
 
 Model import rules: read [DOSEI-LEGEND-BIBLE.md](DOSEI-LEGEND-BIBLE.md).
 All animated importers must preserve per-vertex matrix ownership at load time.
