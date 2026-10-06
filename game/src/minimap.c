@@ -17,6 +17,8 @@
 #include "ui_preferences.h"
 #include "world_props.h"
 #include "world_signs.h"
+#include "player_camera.h"
+#include "scene_flow.h"
 #include "dungeon_doors.h"
 #include "ram_cart.h"
 #include "pause_inventory_data.h"
@@ -64,7 +66,12 @@ static bool hud_load(void)
         !hud_file("BUTTONS.MAP", HUD_MAP_BYTES, HUD_NAMES) ||
         PAUSE_ICON_BYTES > 0xE000u ||
         !hud_file("PAUSEINV.BIN", PAUSE_ICON_BYTES, HUD_ICON_ATLAS)) return false;
-    for (i=0; i<16; ++i) ((volatile unsigned short *)JO_VDP2_CRAM)[HUD_CRAM+i]=hud_palette[i];
+    /* NBG2 bank 11 follows item banks 5..10; palette travels with its tiles. */
+    for (i=0; i<16; ++i) {
+        ((volatile unsigned short *)JO_VDP2_CRAM)[HUD_CRAM+i]=hud_palette[i];
+        ((volatile unsigned short *)JO_VDP2_CRAM)[944+i]=
+            ((volatile unsigned short *)HUD_VRAM_CELLS)[HUD_CAMERA_PALETTE/2+i];
+    }
     hud_items_key = hud_actions_key = ~0u;
     return true;
 }
@@ -242,6 +249,9 @@ static void hud_visibility(int variant)
         ? save_state.equip_sword : 0u;
     uint32_t actions=0, items=0;
     int key = variant < 0 ? -1 : variant + preset * 32 + weapon * 320;
+    bool camera = variant >= 0 && player_camera_orbit_active() &&
+        !recomp_first_person() && !scene_flow_is_interior();
+    if (camera) key |= 0x10000;
     volatile uint16_t *map = (volatile uint16_t *)MINIMAP_VRAM_MAP;
     unsigned int base = (HUD_VRAM_CELLS - MINIMAP_VRAM_MAP) / 32u;
     for (x=0; x<3; ++x) {
@@ -275,6 +285,11 @@ static void hud_visibility(int variant)
         for (x=0; x<HUD_ITEM_COUNT; ++x)
             map[hud_item_positions[x]] = (uint16_t)((hud_item_palette[hud_item_front][x]<<12) | (patch+x));
     }
+    for (y=0; y<HUD_CAMERA_H; ++y)
+        for (x=0; x<HUD_CAMERA_W; ++x)
+            map[(HUD_CAMERA_Y+y)*64u+HUD_CAMERA_X+x] = camera
+                ? 0xB000u | (base+HUD_CAMERA_TILE+y*HUD_CAMERA_W+x)
+                : (MINIMAP_VRAM_CELLS-MINIMAP_VRAM_MAP)/32u;
     hud_variant = key;
 }
 

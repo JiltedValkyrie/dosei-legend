@@ -527,6 +527,18 @@ def build(oot, source, out):
     # ('path', segments): portamento/legato rendered on one sample run;
     # vibrato and DEKU_JR_DEAD's second layer (LAYER_4829) are not (logged).
     tick = 1 / 96
+    # Camera turn: source A4 attack, then E4 -> A3 falling portamento.
+    # Match the existing offline linear glide convention (no runtime synth).
+    camera = layer_body(seq, 'LAYER_5C22')
+    if not all(s in camera for s in ('SF0_INST_84', 'PITCH_A4, 6, 90',
+                                    'portamento  0x82, PITCH_A3, 144',
+                                    'PITCH_E4, 24, 60')):
+        raise ValueError('NA_SE_SY_CAMERA_ZOOM_DOWN_2 changed')
+    camera_sample = font.find('.//Instrument[@ProgramNumber="84"]').attrib['Sample']
+    entries.append(('camera_zoom_down_2', camera_sample, ('path', [
+        (note('A4'), note('A4'), 6 * tick, (90 / 127) ** 2),
+        (note('E4'), note('A3'), 24 * tick, (60 / 127) ** 2),
+    ]), 0, 'CHAN_5C1E / LAYER_5C22'))
     font1 = fonts[1]
 
     def inst1(program):

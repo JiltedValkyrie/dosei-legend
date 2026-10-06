@@ -153,6 +153,17 @@ void set_events2(unsigned int e) { gameplay.events2 = e; }
     def keyed(self, slot):
         return self.lib.reg(slot, 0) & 0x1800 == 0x1800
 
+    def test_camera_turn_plays_requested_resident_sample(self):
+        samples = {s['name']: s for s in json.loads((GEN/'action_audio.json').read_text())['samples']}
+        sample = samples['camera_zoom_down_2']
+        self.assertEqual(sample['source'], 'CHAN_5C1E / LAYER_5C22')
+        self.lib.action_audio_decomp_sfx(0x4829)
+        self.assertTrue(self.keyed(27))
+        self.assertEqual(self.lib.reg(27, 6), sample['length'])
+        self.assertEqual(self.lib.reg(27, 2), (0x50000 + sample['offset']) & 0xffff)
+        for slot in range(24):
+            self.assertEqual(self.lib.reg(slot, 0), 0)
+
     def test_ocarina_notes_use_resident_samples_without_touching_music(self):
         samples = {s['name']: s for s in json.loads((GEN/'action_audio.json').read_text())['samples']}
         for note in range(5):

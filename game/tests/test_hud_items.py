@@ -61,6 +61,10 @@ static unsigned short cram_ram[2048];
 #define JO_VDP2_CRAM ((uintptr_t)cram_ram)
 static unsigned char hud_item_palette[2][HUD_ITEM_COUNT];
 static int hud_variant=-1;
+static bool overhead, first_person, interior;
+static bool player_camera_orbit_active(void) { return overhead; }
+static bool recomp_first_person(void) { return first_person; }
+static bool scene_flow_is_interior(void) { return interior; }
 save_state_t save_state;
 static bool jo_is_pad1_available(void) { return true; }
 static bool jo_is_input_analog(int pad) { return false; }
@@ -144,7 +148,22 @@ int main(void) {
     assert(hud_item_front!=previous); dump();
     previous=hud_item_front;
     hud_visibility(0); assert(hud_item_front==previous);
+    /* Same action/item key: camera changes alone must redraw and clear hints. */
+    for(unsigned state=0;state<8;state++) {
+        overhead=state&1; first_person=state&2; interior=state&4;
+        hud_visibility(0);
+        bool camera=overhead && !first_person && !interior;
+        for(unsigned y=0;y<HUD_CAMERA_H;y++) for(unsigned x=0;x<HUD_CAMERA_W;x++) {
+            unsigned expected=camera ? 0xB000u | (0x4000u/32u+
+                HUD_CAMERA_TILE+y*HUD_CAMERA_W+x) : 0x2000u/32u;
+            assert(ram[(HUD_CAMERA_Y+y)*64+HUD_CAMERA_X+x]==expected);
+        }
+        assert(hud_item_front==previous);
+    }
+    overhead=true; first_person=interior=false;
     hud_visibility(-1); assert(hud_item_front==previous);
+    for(unsigned y=0;y<HUD_CAMERA_H;y++) for(unsigned x=0;x<HUD_CAMERA_W;x++)
+        assert(ram[(HUD_CAMERA_Y+y)*64+HUD_CAMERA_X+x]==0x2000u/32u);
     hud_visibility(0); assert(hud_item_front==previous);
     /* Composing icons cannot touch heart banks/atlas or spill a 60-cell bank. */
     for(unsigned i=0x10000/2;i<0x12000/2;i++) assert(ram[i]==0xA5A5);

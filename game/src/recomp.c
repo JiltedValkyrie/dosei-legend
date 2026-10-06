@@ -1728,7 +1728,7 @@ void recomp_update(void)
     player_input_step(in_gameplay, &input);
     if (input.camera_orbit_turn) {
         player_camera_orbit_turn(input.camera_orbit_turn);
-        action_audio_decomp_sfx(0x4809); /* NA_SE_SY_CURSOR: resident UI tick. */
+        action_audio_decomp_sfx(0x4829); /* NA_SE_SY_CAMERA_ZOOM_DOWN_2. */
     }
     if (input.camera_experiment_toggled && game_mode()==GAME_MODE_PLAY &&
         !gameplay_blocks_world() && !gameplay.dead && !scene_flow_is_interior() &&

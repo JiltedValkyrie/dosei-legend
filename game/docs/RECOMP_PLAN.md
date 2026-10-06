@@ -1,5 +1,21 @@
 # Full OoT recomp plan
 
+Camera HUD (2026-10-06): human approved mockup and requested implementation plus
+commit. Native CAMERA / Z / B+Z strip uses 88x24 pixels at (216,64), beneath
+existing item buttons. Shows only with normal gameplay HUD in overhead camera;
+clears in regular view, first-person/crawl camera, interiors and hidden HUD.
+Existing button cell allocation holds 33 contiguous camera tiles and its palette;
+no extra HUD name-map reservation, heap or VDP1 slots. Palette bank 11 follows
+the composed item banks; main RAM does not retain an extra palette/map table.
+Camera turns now play requested NA_SE_SY_CAMERA_ZOOM_DOWN_2 (0x4829), baked
+from CHAN_5C1E / LAYER_5C22 with the existing offline linear falling-glide
+approximation. Both age banks include it at half rate; worst sound bank leaves
+952 bytes. Host verification: executing HUD visibility/item regression 1/1;
+audio bank and SCSP routing checks 23/23. Full Clean OOT_CORE build passes
+(`build/camera-hud-clean.log`), .bss ends 0x06083f30 (208 bytes below work area).
+Updated `build/game-clean.cue` / ISO ready; runtime appearance and sound
+acceptance remain open. Preview: `build/mockups/camera-controls-v1.png`.
+
 ## Mandatory Link migration: next step
 
 Human directive (2026-10-06): replace handwritten C Link gameplay with the real
@@ -171,8 +187,8 @@ Latest camera follow-up (2026-10-06): reversed both first-raised-view Z/B+Z
 quarter-turn directions. Each turn uses a 16-step cubic Hermite smoothstep
 (~0.53 s at 30 Hz), zero endpoint slopes, and only 32-bit integer math.
 Bounded pending turns preserve cardinal stops; opposite pending taps cancel,
-and view changes clear pending turns. The resident NA_SE_SY_CURSOR route
-(currently ACTION_MESSAGE's UI tick) plays once per Z edge. No new audio asset.
+and view changes clear pending turns. The initial cursor tick is superseded by
+resident NA_SE_SY_CAMERA_ZOOM_DOWN_2, played once per Z edge (see HUD update above).
 Verification: 93 executing camera/control host checks pass in WSL, including
 reversed endpoints, wrap, easing, radius, queued reversal and reset. Claude's full Clean build at 10:33 includes both changed camera sources
 (`build/fix-full-clean.log`); 304 B spare. Disc program, core and all five Adult

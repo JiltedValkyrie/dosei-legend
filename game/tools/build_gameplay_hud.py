@@ -8,6 +8,44 @@ X, Y, W, H = 152, 0, 152, 64
 CELL_LIMIT = 0x4000
 ITEM_PATCH_CELLS = [(y,x) for y in range(2,8) for x in range(9,19)]
 WEAPON_PATCH_CELLS = [(y,x) for y in range(2,7) for x in range(1,5)]
+CAMERA_X, CAMERA_Y, CAMERA_W, CAMERA_H = 216, 64, 88, 24
+
+
+def camera_strip():
+    """Native pixel artwork for the approved Z / B+Z overhead-camera hint."""
+    im = Image.new('RGBA', (W, H))
+    d = ImageDraw.Draw(im)
+    glyphs = dict(zip('CAMERZB+', (
+        ('0111','1000','1000','1000','0111'),
+        ('0110','1001','1111','1001','1001'),
+        ('10001','11011','10101','10001','10001'),
+        ('1111','1000','1110','1000','1111'),
+        ('1110','1001','1110','1010','1001'),
+        ('1111','0001','0010','0100','1111'),
+        ('1110','1001','1110','1001','1110'),
+        ('000','010','111','010','000'))))
+    def text(word, x, y):
+        for dx, colour in ((1, (8,12,24,255)), (0, (248,248,224,255))):
+            at = x
+            for ch in word:
+                for row, bits in enumerate(glyphs[ch]):
+                    for col, bit in enumerate(bits):
+                        if bit == '1': d.point((at+col+dx,y+row+dx),fill=colour)
+                at += len(glyphs[ch][0])+1
+    text('CAMERA', 28, 1)
+    for left, right in ((2,40),(46,85)):
+        d.rounded_rectangle((left,9,right,23),radius=2,fill=(8,12,24,255))
+        d.rectangle((left+2,10,right-2,20),fill=(40,48,88,255))
+        d.line((left+2,10,right-2,10),fill=(136,152,192,255))
+        d.line((left+2,11,left+2,19),fill=(88,104,152,255))
+    text('Z', 13, 14)
+    text('B+Z', 51, 14)
+    arrow = [(3,0),(2,1),(1,2),(2,3),(3,4),(2,2),(5,2),(6,3),(7,4),(7,5),(6,6),(5,7),(3,7)]
+    for ox, mirror in ((26,False),(73,True)):
+        for shadow, colour in ((1,(8,12,24,255)),(0,(248,248,224,255))):
+            for x,y in arrow:
+                d.point((ox+(7-x if mirror else x)+shadow,12+y+shadow),fill=colour)
+    return im
 
 
 def make_images(oot, analog=False, mode="saturn", citems=None,
@@ -151,13 +189,23 @@ def build(oot, out_cd, out_gen):
         for owned in range(2):
             mapping = all_maps[mode*32 + owned*16]
             patches.append([mapping[y*(W//8)+x] for y,x in patch_cells])
+    # Name-map reservation is full. Store this single strip in contiguous cells
+    # so runtime derives tile IDs without another map or main-RAM table.
+    camera_tile = len(blob)//32
+    camera_blob, camera_palette, camera_maps = encode([camera_strip()])
+    camera_cells = [camera_maps[0][y*(W//8)+x]
+                    for y in range(CAMERA_H//8) for x in range(CAMERA_W//8)]
+    blob += b''.join(camera_blob[tile*32:tile*32+32] for tile in camera_cells)
+    camera_palette_offset = len(blob)
+    blob += struct.pack('>16H', *camera_palette)
+    if len(blob)>CELL_LIMIT: raise ValueError('Camera HUD exceeds button cell reservation')
     (out_cd/'BUTTONS.BIN').write_bytes(blob)
     map_words = [v for mapping in maps for v in mapping] + [v for patch in patches for v in patch]
     item_offset = len(map_words)
     map_words += [mapping[y*(W//8)+x] for mapping in all_maps[320:322]
                   for y,x in ITEM_PATCH_CELLS]
     weapon_offset = len(map_words)
-    map_words += [mapping[y*(W//8)+x] for mapping in all_maps[322:]
+    map_words += [mapping[y*(W//8)+x] for mapping in all_maps[322:322+len(weapons)]
                   for y,x in WEAPON_PATCH_CELLS]
     if len(map_words)*2 > 0x3800: raise ValueError('HUD maps collide with composed C-item banks')
     (out_cd/'BUTTONS.MAP').write_bytes(struct.pack('>%dH'%len(map_words),*map_words))
@@ -179,6 +227,12 @@ def build(oot, out_cd, out_gen):
          'static const unsigned short hud_item_positions[] = {%s};' %
              ','.join(str(y*64+x+X//8) for y,x in ITEM_PATCH_CELLS),
          '#define HUD_MAP_BYTES %d' % (len(map_words)*2),
+         '#define HUD_CAMERA_TILE %d' % camera_tile,
+         '#define HUD_CAMERA_PALETTE %d' % camera_palette_offset,
+         '#define HUD_CAMERA_X %d' % (CAMERA_X//8),
+         '#define HUD_CAMERA_Y %d' % (CAMERA_Y//8),
+         '#define HUD_CAMERA_W %d' % (CAMERA_W//8),
+         '#define HUD_CAMERA_H %d' % (CAMERA_H//8),
          '#define HUD_PATCH_OFFSET %d' % (32*W*H//64),
          '#define HUD_PATCH_COUNT %d' % len(patch_cells),
          'static const unsigned short hud_patch_positions[] = {%s};' %

@@ -429,6 +429,7 @@ void action_audio_decomp_sfx(unsigned int sfx_id)
     case 0x284E: play_area(AREA_SFX_CUT, 26); break;   /* NA_SE_EV_PLANT_BROKEN */
     case 0x4803: rupee_start(); break;                 /* NA_SE_SY_GET_RUPY */
     case 0x4824: play(ACTION_GET_ITEM, 27); break;     /* NA_SE_SY_GET_ITEM */
+    case 0x4829: play(ACTION_CAMERA_ZOOM_DOWN_2, 27); break;
     case 0x480B: play(ACTION_HP_RECOVER, 27); break;   /* NA_SE_SY_HP_RECOVER */
     case 0x4818:                                       /* NA_SE_SY_MESSAGE_PASS */
     case 0x482E:                                       /* NA_SE_SY_MESSAGE_END */
