@@ -1,5 +1,19 @@
 # Dosei Legend engineering rules
 
+## Link gameplay must migrate to decomp (human, 2026-10-06)
+
+Replace the handwritten C Link with the real core/decomp Player. Mandatory next
+implementation priority; profiling chooses optimizations, not whether to migrate.
+Preserve all existing Saturn controls, features and player fixes by applying
+them to the decomp implementation or its Saturn adapters. First record each
+behavior, current source, replacement owner and verification; no silent removal
+to simplify the port. Keep Link's Saturn renderer, gear and presentation working.
+Converge on one authoritative Player and collision world, including actor contact
+feedback. Temporary C paths are migration scaffolding, not a permanent fallback
+or a completed port. Retire each replaced path after runtime/human acceptance.
+Detailed sequence and completion rules:
+[RECOMP_PLAN.md](game/docs/RECOMP_PLAN.md#mandatory-link-migration-next-step).
+
 ## Permanent NPC/enemy sprite rule (2026-10-03)
 
 All NPCs, animals, fairies and non-boss enemies render as offline-baked sprites
@@ -250,7 +264,7 @@ runtime 3D characters (Link and exempt bosses). Sprite baking may use full
 source artwork; only the small finished cels reach Saturn. Do not strip useful
 sprite detail merely because its offline source model contains a body material.
 
-Permanent user rule, updated 2026-09-25 (demo plan): hair is flat too. The
+Permanent user rule, updated 2026-09-25 (recomp plan): hair is flat too. The
 2026-09-22 hair-and-face rule and the earlier quarter-resolution rule are
 superseded.
 

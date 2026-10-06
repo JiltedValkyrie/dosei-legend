@@ -10,6 +10,18 @@ Short caveman words to human. Save human credit. Good good.
 Read [CLAUDE.md](CLAUDE.md) for project state, branch, and directives.
 Read [DOSEI-LEGEND-BIBLE.md](DOSEI-LEGEND-BIBLE.md) for asset and drop rules.
 
+## Mandatory Link migration (human, 2026-10-06)
+
+Next implementation priority: replace the handwritten C Link gameplay with the
+real core/decomp Player. This is required, not a benchmark-dependent option.
+Carry every existing Saturn adaptation, added feature and player fix onto the
+decomp implementation without losing functionality. Inventory those behaviors
+and their verification before replacement; retain the Saturn renderer/backend.
+One authoritative Player and collision world is the destination. A query bridge
+or expanded Player proxy alone does not finish the migration. Keep working C
+paths only during staged replacement; retire them after replacement acceptance.
+Follow [the migration rules](game/docs/RECOMP_PLAN.md#mandatory-link-migration-next-step).
+
 ## Performance rule (human, 2026-10-03)
 
 Runtime game values are 32-bit integers/fixed point. Narrowed 2026-10-06 by the
@@ -44,7 +56,7 @@ or converting actors; update its coverage and verification in the same task.
 
 ## Keep the game plan current — every agent, every session
 
-Read [DEMO_PLAN.md](game/docs/DEMO_PLAN.md) before game work. Update it in the
+Read [RECOMP_PLAN.md](game/docs/RECOMP_PLAN.md) before game work. Update it in the
 same task whenever implementation, scope, ownership, blockers or verification
 changes. Reconcile the whole document: replace stale claims and contradictory
 next steps, rather than only adding a new checkpoint at the top. Clearly

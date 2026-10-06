@@ -11,13 +11,13 @@ the baseline functionality. No renderer/clipping changes were made.
   row-by-row into Jo's NBG1. Existing PRESS START patch blinks every 30 ticks.
 - Start toggles title/idle pan; manual controls match the baseline; A toggles
   diagnostics, hidden by default. Music keeps playing during gameplay.
-- `demo_camera.c` and `demo_collision.c` compile the unchanged portable baseline
+- `recomp_camera.c` and `recomp_collision.c` compile the unchanged portable baseline
   C sources into local objects. Jo input is explicitly mapped to normalized
   camera bits; SGL sin/cos supplies movement trig. Positions/collision stay in
   source space. Rendering applies pitch/yaw and translation, no Y reflection.
 - Collision is 60,912 heap bytes, not static BSS. Title upload uses 1 KB staging;
   prompt is 2,352 resident bytes. Audio envelopes remain 112,176 heap bytes.
-- Demo has its own PAL/NTSC 60 Hz clock, independent of audio success. Gameplay
+- Recomp has its own PAL/NTSC 60 Hz clock, independent of audio success. Gameplay
   ticks at 30 Hz with a four-step catch-up cap; idle pan stays 90 units/60 Hz tick.
 
 Final build passed with `.bss` end `0x0609ECE0`, 91,776 bytes below the SGL area.
@@ -58,7 +58,7 @@ environment for normal output. No persistent emulator audio setting was edited.
 
 Title artwork is still absent, not an asset-loading regression: it has not been
 ported. Controls/collision/NPC remain deferred. The historical fixed-view results
-below predate these changes and are not the current demo's completion status.
+below predate these changes and are not the current recomp's completion status.
 
 ## Current update - submission capacity resolved (Opus)
 

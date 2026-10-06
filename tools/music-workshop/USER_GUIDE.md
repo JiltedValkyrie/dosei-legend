@@ -327,7 +327,7 @@ as a template and keep the following changes together:
    used by the bank definition. Use short ISO-compatible names like NEW.PCM
    and NEW.LVL. Arrange generation/copying BEFORE build_cart_tables.py runs.
 5. Wire the intended scene/cutscene to that bank. Area selection currently
-   lives in scene_music() in game/src/demo.c; cutscene bank selection is in
+   lives in scene_music() in game/src/recomp.c; cutscene bank selection is in
    game/src/cutscene.c. Creating a bank does not select it automatically.
 6. Rebuild Clean and check the target map, file capacity, trigger carve and
    sound-RAM limits. Listen in the actual scene and across music transitions.

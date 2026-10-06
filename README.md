@@ -1,13 +1,13 @@
-# Dosei Legend ? Kokiri Forest on Sega Saturn
+# Dosei Legend: full OoT recomp for Sega Saturn
 
-A work-in-progress Zelda adaptation using **Jo Engine / SGL**, developed on
-`dev`. **Requires the 4 MB RAM expansion cartridge.** The current playable
+A work-in-progress full OoT recomp using **Jo Engine / SGL**, developed on
+`main`. **Requires the 4 MB RAM expansion cartridge.** The current playable
 route includes Link's house, Kokiri Forest, the sword chest, Kokiri Shop,
 NPC dialogue, traversal, combat, hearts, saves and pause pages.
 
-The [approved demo plan](game/docs/DEMO_PLAN.md) extends through the Deku Tree,
-Gohma, Lost Woods and Hyrule Field; that is planned scope, not a claim those
-areas are finished. See [current handoff](game/docs/OPUS_HANDOFF.md),
+The [full recomp plan](game/docs/RECOMP_PLAN.md) covers every scene, era, actor
+and story system. The opening route sets implementation order; whole-game
+completion remains pending. See [current handoff](game/docs/ASTRA_HANDOFF_2026-10-05.md),
 [progress](VSLICEPROGRESS.md) and [known gaps](game/docs/BUG_FEATURE_LOG.md).
 The older [vertical-slice scope](VERTICALSLICE.md) is historical where superseded.
 
@@ -89,7 +89,7 @@ configure Kronos or remap gameplay inputs. The table assumes default Y jump.
 | --- | --- |
 | Digital D-pad | Camera-relative movement; steer in the air |
 | 3D pad stick (analog mode) | Proportional movement; Holding B selects walk speed ceiling; B tap cancels / puts away the stick |
-| B | Toggle walk/run; start in run |
+| B | Hold to walk; tap to cancel / put away the stick |
 | Y | Manual jump; no double-jump |
 | X | Attack with equipped sword; cuts grass and damages enemies |
 | Hold R | Guard with equipped shield |
@@ -97,8 +97,10 @@ configure Kronos or remap gameplay inputs. The table assumes default Y jump.
 | B during dialogue | Cancel/close when the conversation allows it; does not toggle walk/run |
 | Hold Z | Lock onto a valid attention target, including NPCs/enemies; release to unlock |
 | Tap Z | Recenter when the press did not acquire a lock |
+| Z / B + Z in first raised camera | Turn 90 degrees clockwise / counter-clockwise per Z press; replaces targeting in this view |
 | Move while holding Z | Strafe/back up while keeping facing |
 | Tap L | Show/hide minimap |
+| L + R + B | Permanent camera easter egg: normal → far/high → higher → steep overhead → north-up top-down → normal |
 | Hold C + D-pad (digital) | N64 C directions; C-Up accepts Navi first, otherwise changes view |
 | D-pad (analog gameplay) | N64 C directions without holding C |
 | Start | Title/menu flow; open or close pause during gameplay |
@@ -109,6 +111,12 @@ and free to act. D-pad/stick looks; another action button exits without firing
 that action. Navi calls take priority. Houses start in their original panorama;
 C-Up toggles the overhead picture and back. The shop keeps its fixed view.
 L now toggles the minimap, replacing the temporary hold-L free look.
+Release all three buttons before cycling again. The easter egg is available in
+Clean during outdoor gameplay; boot starts with the normal camera. Raised views
+start facing north and bypass camera obstruction clipping for surveying terrain; Link's
+collision stays active. Interiors, first-person and cutscenes retain their views.
+The first raised view remembers its quarter-turn heading until reboot. Missing
+area warnings stay quiet nearby after dismissal; walk 600 units away to rearm.
 These camera/text changes build and pass host checks; Kronos acceptance is pending.
 Landing rolls depend on landing conditions.
 Find the sword in the maze chest; buy the Deku Shield for 40 rupees in Kokiri

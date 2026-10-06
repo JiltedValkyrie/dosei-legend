@@ -1,7 +1,7 @@
 # Dosei Legend game
 
-Active Jo Engine / SGL project. See the [directory map](../README.md),
-[approved demo scope](docs/DEMO_PLAN.md) and [progress](../VSLICEPROGRESS.md).
+Full OoT recomp using Jo Engine / SGL. See the [directory map](../README.md),
+[full recomp plan](docs/RECOMP_PLAN.md) and [progress](../VSLICEPROGRESS.md).
 
 ## Build and launch
 
@@ -26,6 +26,8 @@ on request.
 Clean player test from `game/`: `./build.sh --clean` produces `build/game-clean.cue`
 and `.iso`, with all in-game diagnostic overlays suppressed (including L+R).
 Choose **clean player test** in the root launcher, or run `run-kronos-clean.bat`.
+The permanent L+R+B outdoor camera easter egg also works in Clean; it cycles
+through four higher views and back to normal. Release all three to cycle again.
 Windows build: `build.bat -Variant clean`. Reopen the launcher after updating.
 Separate objects preserve normal/hi-res builds. Safety checks remain enabled;
 this is not a `JO_DEBUG=0` build. Kronos's own FPS display is an emulator setting.
@@ -75,7 +77,7 @@ Successful Y jump plays child Link's jump voice; existing landing rolls have
 voice/body sounds. Footsteps follow moving walk/run cycles, using one forest
 footstep material. Grass disappears when cut by the active sword swing.
 Existing airborne clip is reused; no dedicated takeoff clip yet.
-Current Link/follow behavior is in `src/demo.c`.
+Current Link/follow behavior is in `src/recomp.c`.
 
 Child outdoor running uses 165 native world units/second (5.5 per 30 Hz step),
 with fractional movement retained on both axes. Animation playback is tuned to

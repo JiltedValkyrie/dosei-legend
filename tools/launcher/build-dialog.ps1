@@ -335,13 +335,13 @@ function Show-BuildDialog {
             '  VRAM    440488 of  445432 B (98.9%), 4944 B spare',
             '  note: spot04 exitIndex 5 leads to SCENE_KOKIRI_SHOP',
             'boundary check failed: removing the image so it cannot be run',
-            'src/demo.c:12:5: error: something is wrong',
-            'src/demo.c:12:5: warning: unused variable')
+            'src/recomp.c:12:5: error: something is wrong',
+            'src/recomp.c:12:5: warning: unused variable')
         $mustDrop = @(
             'build/dependencies/sdk/Compiler/WINDOWS/bin/sh-elf-gcc.exe src/main.c  -DJO_FRAMERATE=1 -o build/obj/main.o',
             "makefile:142: warning: overriding recipe for target 'build/game.elf'",
             'jo_engine_makefile:321: warning: ignoring old recipe for target ''build/game.elf''',
-            'D:\path\build_demo_assets.py:130: DeprecationWarning: Image.Image.getdata is deprecated',
+            'D:\path\build_recomp_assets.py:130: DeprecationWarning: Image.Image.getdata is deprecated',
             '')
         foreach ($line in $mustKeep) {
             if (!(Test-BuildLogLine $line)) { throw "Filter hid a needed line: $line" }

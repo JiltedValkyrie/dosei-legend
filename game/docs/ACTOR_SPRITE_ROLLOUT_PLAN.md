@@ -1,5 +1,23 @@
 # All-scene NPC and enemy sprite rollout
 
+2026-10-06 requested Kokiri dialogue follow-up: native child/Mido/Saria placement
+now hands regular conversation pages and choices to core z_message. Existing C
+text-id selection and quest/gate close callbacks remain; no actor import, mesh,
+skeleton or sprite budget changes. Five new host checks cover page ownership,
+choice results, once-only host closure, accelerated reveal and bold glyphs.
+Core dialogue/Ocarina/view regressions pass. No bake/target build (human hold),
+and no runtime acceptance. Full actor migration and all-era coverage remain open.
+
+
+Wave 0 Fx32 (2026-10-05): sprite rollout of all 151 sprite_required actors
+is approved as order (Fx32 -> per-scene actor packs -> demo route child-first,
+each scene's talk/trigger/save flags wired same wave; En_Elf in Kokiri; C mesh
+enemies replaced only after damage/stun/shots/drops/rewards match; gohma.c
+larva path kept). Fx32 is implemented, host-probed and Clean target-built;
+one integer-division ruling and human runtime checks remain. See
+OOT_CORE_PIPELINE_PLAN.md "Wave 0 Fx32".
+No actor import until Wave 0 closes.
+
 Character ground shadows (2026-10-04): shared sprite draw adds one black VDP1
 mesh-dither circular disk for visible NPCs, animals and sprite cutscene characters.
 Link and native fairies use the same helper. Static geometry persists through
@@ -242,4 +260,4 @@ runtime disc payloads, report room + actor costs, and rebuild the usual
 `game-clean.cue/.iso`. Human tests own Mednafen/hardware execution; agents do not
 launch emulators. Capture actor counts, missing-key/upload failures, heap/VRAM
 peaks and CPU/VDP1 time at named scenarios. A screenshot or build alone does not
-complete a wave. Update this plan, DEMO_PLAN and the pipeline handoff together.
+complete a wave. Update this plan, RECOMP_PLAN and the pipeline handoff together.

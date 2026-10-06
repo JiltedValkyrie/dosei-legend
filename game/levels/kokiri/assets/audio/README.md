@@ -21,7 +21,7 @@ The preview contains the intro and one pass, not a loop-boundary acceptance test
 
 ## Integration — intentionally left to Opus
 
-No active `main.c`, `demo.c`, makefile, build script, or music player was changed
+No active `main.c`, `recomp.c`, makefile, build script, or music player was changed
 by this audio task. Keep title music on the title screen; load this bank for
 forest gameplay when ready to wire the transition.
 
@@ -38,7 +38,7 @@ forest gameplay when ready to wire the transition.
 4. These banks **cannot coexist in 512 KB sound RAM**. Replace the title bank;
    free its 112,176-byte envelope allocation before loading this 73,896-byte one.
    Loading the whole PCM bank into the application's heap is not viable either.
-5. Keep demo/input time independent of score time. Title re-entry requires
+5. Keep recomp/input time independent of score time. Title re-entry requires
    loading the title bank back; exact restart/resume behavior is a gameplay choice.
 
 PCM plus the 4 KB sound-CPU boot area occupies 484,178 of 524,288 bytes.

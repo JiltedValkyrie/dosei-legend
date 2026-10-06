@@ -1,13 +1,252 @@
 # Plan: bulk decomp pipeline ("oot-core" on Saturn)
 
-Current task (2026-10-05): human requested wrapping the local TR experiment
-after saying it looks really good. Runnable checkpoint with all audio, source
-and measurements: `game/build/astra-control/checkpoint-2026-10-05/`.
-The next direction is [FIELD_SQUARE_RETOPO_PLAN.md](FIELD_SQUARE_RETOPO_PLAN.md):
-local regular square ground, existing textures and collision rebaked from the
-same final surface. Plan written; retopology not implemented. Camera collision
-is fixed in main source and the controlled image; no production renderer or
-usual Clean/Debug ISO promotion. Opus's original probe remains intact.
+## NEXT SESSION: mandatory Link migration (human, 2026-10-06)
+
+Replace handwritten C Link with real core/decomp Player. Required next
+implementation priority, not a benchmark-dependent choice. Preserve all Saturn
+adaptations, added functionality and Link fixes on top of source Player behavior.
+Start with a code/test-backed behavior inventory and dependency/ownership map;
+then migrate in stages while keeping Saturn rendering/backend and gameplay timing.
+One authoritative Player/shared collision world is the endpoint; a query bridge
+or larger proxy is insufficient. Preserve actor contact/rider/switch feedback.
+Retire replaced C paths only after replacement runtime/human acceptance.
+Detailed rules and acceptance: [RECOMP_PLAN.md](RECOMP_PLAN.md#mandatory-link-migration-next-step).
+
+Review found the gallery bridge calls bg_dyna_set every core step, rebuilding
+unchanged static triangles; it passes only Y rotation/uniform X scale and omits
+water/camera data and rider feedback. Keep it temporary and avoid redundant
+transforms without breaking rider history. Profile total collision/update cost
+and memory to guide core optimization; neither implementation is presumed faster.
+Documentation/source review only in this task; no Player migration, new test,
+build or runtime acceptance. Handoff for Claude is recorded; start unconfirmed.
+Earlier checkpoints below retain their evidence and gaps, not scheduling priority.
+
+Camera defaults / fixed sky curtain (2026-10-06, source only): Hyrule Field
+(SCENE_SPOT00) enters overhead; other scenes enter regular follow. Scene-entry
+placement resets pending orbit turns and heading. L+R+B now toggles only regular
+and the accepted first overhead view; the three farther survey views are removed.
+Z/B+Z eased quarter-turns remain in overhead. First-person/interior framing stays
+separate. 94 executing camera/control host checks pass.
+The gradient's VDP2 rows were already fixed. Field's dither curtain now follows
+camera position and cancels yaw/pitch, keeping its vertical screen position fixed
+on slopes and in first-person. Distance sorting and two-panel mesh remain; terrain
+fog still uses Link-relative depth. Four haze host checks pass. No build/bake or
+runtime test, per human hold. Human visual checks remain after a later build.
+
+
+Dialogue readability and Kokiri text handoff (2026-10-06, source only):
+- A or B fills the current core text page; a later press advances it. Source
+  control codes, choices, page waits and Ocarina timing stay in z_message.
+  Revealing text receives two draw/reveal ticks per core step; other message
+  modes run once. The separate cutscene typewriter increases from 2 to 4 chars.
+- Regular Kokiri conversations (children, Mido, Saria) open/continue/close through
+  the core ROM-message engine. C retains placement, text-id selection and existing
+  quest/gate/close callbacks; this is a text-engine migration, not a full actor
+  import. Source choices return to the existing branch callbacks. Core mode no
+  longer uses the C page renderer for these conversations. Non-core fallback,
+  shop/item/system messages and scripted greeting cutscenes remain separate.
+- Shared dialogue font ASCII is bolded once at boot; pause restores those cells.
+  Core blue/light-blue text maps to yellow, black to white; cutscene blue emphasis
+  also maps to yellow. Core rows overwrite padded colour runs without blanking
+  the visible page first. Old per-name kana glyph generation is removed.
+- Host verification: 15 focused cases pass (5 new page/choice/reveal/font checks,
+  5 Ocarina, 3 core dialogue, 2 core views); 1 source-table Ocarina comparison
+  skipped in WSL. gameplay.c syntax passes both core/non-core configurations.
+- Human explicitly says DO NOT BUILD. No target build, bake, disc change or
+  emulator run in this task. Core ABI increments to 21; matching rebuilt host
+  and blob are required later. Earlier RAM overflow remains a build blocker;
+  these source changes do not prove target fit or runtime acceptance.
+
+
+Song of Time repeat fix (2026-10-06): the requested shortcut now toggles both
+child/adult directions. Load failure restores the original age; equipment changes
+only after a successful load. Free-play start resets stale audio state; completion
+stops listening/playback; B cancels free play during recognition or result playback
+and releases the player flags. The retained Ocarina instruction row is written
+only on open and cleared on close instead of being rewritten each display frame.
+Host: five Ocarina tests pass (one local-source comparison skipped in WSL),
+including four successive toggles, both recovery directions, repeated recognition,
+completion consumption and playback cancellation. Clean link failed the SGL
+boundary check: .bss ends 0x06085600, 5,632 B over 0x06084000. Log:
+`build/ocarina-repeat-clean.log`. Build guard removed game-clean ISO/CUE/ELF/raw;
+no runnable updated disc is available. Shared-tree size recovery is required
+before human retest. Heap/actor capacities were not reduced; no runtime check.
+
+
+## Raised-camera turns (2026-10-06)
+
+Z/B+Z reversed; 16-step 32-bit cubic smoothstep replaces snapping, with bounded
+pending turns and resident cursor/UI tick. 93 WSL camera/control checks pass.
+Claude's full Clean build at 10:33 includes camera edits; 304 B spare. ISO program,
+core and all five Adult Link files match staging; original 672-poly mesh restored.
+Gossip Stone messages were nonfatal warnings, not a proven build blocker.
+Human turn-feel/audio/Adult Link acceptance remains open. This image was later
+removed by the failed Ocarina rebuild boundary guard; see current blocker above.
+The earlier 2,704 B margin was from mixed objects, not usable headroom.
+
+## Wave 0 Fx32 (2026-10-05, Claude; Astra GO, build allowed)
+
+Human request: every NPC/animal/non-boss enemy -> real decomp actor + baked
+sprite, then dialogue/trigger/save/era/time hooks. Astra review: no new wide
+math, so shared Fx narrows to 32-bit FIRST; actor imports wait for it. Then
+per-scene actor packs, demo route child-first, C mesh enemies replaced by
+decomp actors (gohma.c larva path kept). Ledger: 151 sprite_required.
+
+Implemented, host-tested, target-built (runtime NOT run; human owns it):
+- oot-core/include/fx.h: Fx = one s32 Q16.16, saturating +/-FX_MAX. Mul from
+  16-bit halves, div by 32/32 remainder steps; Fx*int, Fx/int, int/Fx exact
+  integer paths. Runtime mul/div out of line (OotFx_* in oot_math.cpp).
+  No long long, dmuls.l/MACH:MACL product or 64/32 divider in Fx.
+  -DFX_SAT_AUDIT host hook reports each saturating caller.
+- oot_math.cpp: 32-bit isqrt/sqrtf, sin/cos via 32-bit turn product.
+- fx_sq.h (prelude): SQ/SQXZ/SQXYZ return pending squares (scaled hypot and
+  comparisons); every decomp `f32 ...Sq` is retyped FxSq (stored square,
+  scaled terms, explicit-only conversion to Fx); OotFx_Det2/DotRatio2/
+  DotRatio3 for coordinate cross/dot products; OotFx_ScaleWrap16 for
+  RAD/DEG_TO_BINANG and Math_SinF/CosF (wrap like N64 s16 store);
+  OotFx_Q15Normal for COLPOLY_GET_NORMAL; IS_ZERO exact for squares.
+- Importer rewrites: fix_rand_ranges (Rand*n, n >= 32768 -> 32-bit helpers,
+  same single draw), fix_cross_products (sys_math3d, 12 sites),
+  fix_stored_squares, cylinder side quadratics (Math3D_CylVsLineSeg,
+  z_collision_check) -> bounded closest-approach/half-chord roots,
+  subdivLengthInv lookups -> divide by subdivLength, plane sign test,
+  sys_matrix 1/65536 literal, En_Md path yaw, arrow/attention squares.
+  import_report.txt lists FX RANGE literals (29 now; reviewed: factorial
+  table >7! unused by imports, 1e38 sentinels map to max, sys_matrix
+  32768 range checks harmless).
+- Tests updated: test_core_bgcheck (saturation values; Fx32 rewrites in the
+  differential), test_ocarina (one-word Fx), math_probe cases.
+
+Evidence:
+- math_probe: 460 values, 0 over tolerance.
+- bgcheck_probe Kokiri (S1): 4,997 rays, 0 floor mismatches, polyNodes
+  5052 = 5052, height error median 0, p99 0.29, max 2.4 units.
+- bgcheck_probe Hyrule Field (SA): 34,961 rays, 0 floor mismatches,
+  polyNodes 5723 = 5723, p99 0.57, max 4.7 units (steep far slopes).
+- test_core_bgcheck: 3 pass; 3,190 Ranch/Kakariko contacts identical,
+  wall square roots 27,476 -> 895. test_sprite_clock, test_core_sprites,
+  test_core_views, test_core_dialogue, ocarina Saria test pass.
+- Blob: _oot_core_end 0x027DDE90 (450,192 B of 589,824; was 523,056 B),
+  OOTCORE.BIN 388,808 B. SH-2 audit: no soft-float, no 64-bit libgcc
+  helpers, no divider registers, no dmul in Fx code.
+- Usual Clean image rebuilt (`./build.sh --clean --quick OOT_CORE=1`,
+  build/fx32-clean.log): .bss 0x06083570, 2,704 B below work area.
+
+Astra review fixes (2026-10-06):
+- Integer squares (ATTENTION_RANGES SQ(350) = 122500) no longer pass through
+  saturated Fx: FxSq(int) stores the 32-bit isqrt root (OotFx_SqFromInt).
+- Math3D_Vec3f_Cross -> OotFx_Cross3: one shared shift for all six products,
+  uniform 2^-k scale when a component exceeds Fx (every caller normalizes or
+  passes unit normals). (300,0,300) x (300,0,600): y < 0, normalized -1.
+- tools/audit_oot_core_wide.py matches 1-3 underscore helper spellings
+  (___divdi3), excludes mangled _Z names, and has --self-test positive and
+  negative controls. Real blob: only the 28 integer-division dmul sites.
+- tests/test_fx32.py: every attention range boundary (r-1 inside, r+1
+  outside, exact root), 2^31 integer square, cross/normal checks, audit
+  controls. Re-run: math 0/460, Kokiri+Field 0 floor mismatches, 3,190
+  contacts, 17 focused tests OK; Clean .bss 0x06083570 (2,704 B spare),
+  OOTCORE.BIN 389,084 B.
+
+Human test 2026-10-06 (image built from mixed objects, see BUILD.md 78):
+- "oc load failed f 0", no Ranch NPCs/Cuccos, ocarina dead, rocks not
+  liftable: stale non-core ram_cart.o/scene_flow.o reused by my OOT_CORE=1
+  quick build. makefile OOT_CORE stamp now forces full recompiles; full
+  `./build.sh --clean OOT_CORE=1` rebuild (build/fix-full-clean.log).
+- Adult Link looked strange: disc still held Grok's cut ADLTMESH.BIN
+  (11,456 B, ~358 polys, staged 10-05 19:39; quick builds never rebake).
+  Current tool bakes the original 672-poly mesh; full build restages it.
+- Kakariko shooting gallery exterior walls never drawn (pre-existing): the
+  building is decomp Bg_Spot01_Objects2 (params 4 gallery, 3 adult matoyab
+  that spawns carpenter Sabooro by day), not room geometry. Not imported;
+  decomp DynaPoly_SetBgActor had no bridge to C bg_dyna. DONE 2026-10-06
+  (Astra GO: visuals + collision only, NPC scope unchanged): imported as a
+  GENERIC_DRAW prop with object_spot01_matoya/matoyab (O180/O181.OOB; meshes
+  Q18007 gallery, Q1800A/D/11 posters, Q18107 construction site). Object
+  blobs now keep CollisionHeader/CollisionPoly/SurfaceType/Vec3s/BgCamInfo/
+  WaterBox. API v22 `dyna_view` lists live DynaPoly actors; oot_core_host
+  core_dyna_* converts each source mesh once (normals n/2 Q14, surface/
+  ignore/conveyor info) into the cart heap, bg_dyna_register/set/enable each
+  decomp step, removes on actor death, resets on scene change. Daytime
+  En_Daiku_Kakariko child spawn fails (not imported), as intended.
+  tests/test_core_dyna.py; full Clean build passes, .bss 272 B spare; both
+  ELF audits 0 failing. Human runtime check of walls/roof/posters pending.
+
+Human ruling 2026-10-06 (supersedes the blanket dmuls ban): native
+dmuls.l/dmulu.l ALLOWED (speed wins), stored values 32-bit; software 64-bit
+helpers and soft-float BANNED; approximation fine. Done:
+- Fx multiply back to inline dmuls.l + xtrct (MACH range check saturates);
+  Det2/Cross3/DotRatio mul_shr use dmulu.l. Blob 499,216 B (90 KB spare).
+- Game C: all 26 ___divdi3 calls removed via shared/lib/collision/div32.h
+  (div64s_approx with one exact remainder correction, muldiv_s32,
+  muldiv64_s32; SH-2 one out-of-line copy, host fixtures static inline):
+  kokiri_collision (floor/plane height, line/edge params, wall push, dyna
+  carry), collide.c cap_cap (32-bit, 13-bit normalized operands), cutscene
+  cues, navi cap, dungeon_puzzles, recomp project_attention/crawl_camera.
+  Power-of-two int64 divides stay (GCC inlines them, no helper).
+- Jo jo_memory_usage_percent soft-float replaced by an integer version in
+  heap_profile.c.
+- Audit: dmuls/dmulu informational; fails on helpers/soft-float/divider.
+  Game ELF 0 failing (605 allowed multiplies), blob 0 failing.
+- Tests: 131 collision/bgcheck/push/climb/navi/cutscene/fx32 OK; full 58-file
+  run 783 tests, remaining 7 errors + 2 failures are other agents' in-flight
+  API changes (scene_flow.h/kokiri_camera.h attribute mismatch,
+  link_anim_skin, POINT/SPdis, forest_scene), not div32/Fx.
+- Clean: .bss 0x06083480, 2,944 B spare.
+
+Open (Wave 0 not closed):
+1. Preserve the main ELF/blob helper audit during Player migration. Native
+   dmuls/dmulu, including compiler-generated constant-division products, are
+   allowed by the narrowed 2026-10-06 ruling. Do not replace them with slow
+   split multiplies. Software-wide/soft-float helpers remain banned.
+2. Pre-existing stale fixtures fail (not Fx): test_core_save,
+   test_ocarina song-pattern/Sun's Song (time API changes elsewhere).
+3. Runtime: human Kronos check of collision, NPC talk ranges, attention,
+   Mido path, item drops before actor imports start.
+
+Current follow-up: exit-refusal zone latch, 90-degree Z/B+Z turns in the first
+raised camera, and Link-anchored Field fade/two-panel curtain are implemented.
+114 host checks pass (controls/camera/routes/haze, including three Clean-input
+checks). Clean passes (`build/field-orbit-fix.log`), .bss0x06083DA0, 608 B spare.
+Disc payloads match staging; frame setup is size-optimized. Heap and actor
+budgets remain preserved.
+Kronos is closed. First raised camera has positive human feedback; higher views
+still expose large ground holes. Runtime acceptance of new fixes is pending.
+See RECOMP_PLAN.md for current verification and remaining work.
+
+Earlier task (2026-10-05): Astra owns the square-retopology runtime comparison
+and environment/time integration. See [RECOMP_PLAN.md](RECOMP_PLAN.md) for current
+scope, [FIELD_SQUARE_RETOPO_STATUS.md](FIELD_SQUARE_RETOPO_STATUS.md) for the
+split-loader fix and runtime evidence, and
+[ENVIRONMENT_TIME_STATUS.md](ENVIRONMENT_TIME_STATUS.md) for source clock,
+landmark/fog/sky requirements and unresolved exact-parity work. 184 boundary
+walk completed; the resumed 256 run also completed both boundary walks and its
+90-step checks (5.657/5.703 s). The central patch has positive human visual
+acceptance; north/castle reports are outside it. Human now requests Clean
+promotion, broader ground quads, persistent castle/ranch walls and dark horizon
+bands. Selection is `field-square-184`; outer visual panels use 1280-unit cells
+on original planes, central panels stay 184. Capacity sweep passes including owl:
+1249 Field polygons, 1732 vertices, 331776/445432 bytes. Clean rebuild passes:
+Latest haze follow-up: `build/field-haze-final.log`, .bss0x06083FF0, 16 B below SGL. Cached sky
+helpers use Os/shared mixing; heap and actor capacities remain intact. 47 Field/
+sky host checks pass; ISO Field/COL/OOC/program bytes match staging.
+Human accepts the dark sky and now requests a world-space dither band. This is
+built as one upright camera-following mesh quad at3200 units, before Field's
+4000 distance mesh/4500 full fog. Normal world depth/pitch applies; zero texture
+slots. Two haze plus twelve sky checks pass. Human appearance/occlusion pending.
+Human owns runtime checks. No GUI fixtures.
+See [ASTRA_HANDOFF_2026-10-05.md](ASTRA_HANDOFF_2026-10-05.md).
+Core API 20/OOC room-layer time metadata passed a coordinated isolated rebuild;
+do not mix old OOC data with the new core. Clock/Sun's Song/destination-layer,
+natural nine-state dawn sequence and v13 saved counter/hatch host tests pass.
+Combined v2 passed visible-GUI clock cadence (+200 daytime/+400 nighttime per
+30 steps), separate sky-time hold, pause freeze and a natural-sequence day-counter
+increment. Adult Hylian front and Master Sword HUD look correct. Latest v3 builds
+with 5,216 B below SGL but is unrun; initial equipment cursor and targeted landmark
+trace are its pending checks. Far landmark SORT_CEN depth-sum overflow is identified,
+now avoided with landmark SORT_MIN; visibility/occlusion still needs human checks.
+Castle entrance walls and the entire ranch enclosure are retained. Counter reload/hatching target
+checks, held/Mirror equipment, original BGM/nature handoff, weather,
+song-effect timing and full audio/cutscene environment parity remain open.
 
 The isolated candidate has a 160-command cap for the same ten P3 children,
 guard projection and boundary refinement. It adds 76800 texture bytes, no slots;
@@ -17,7 +256,7 @@ error and major missing-floor cases improve. Remaining small raster gaps and
 the measured ~54% longer 90-step walk prevent calling it a complete performance
 or all-route solution. Current camera host checks: 18 camera + 25 follow pass;
 main Clean ELF links with 6160 B spare, ISO preserved. Existing collision/follow
-wide math remains migration debt. DEMO_PLAN.md holds the current queue;
+wide math remains migration debt. RECOMP_PLAN.md holds the current queue;
 TOMB_RAIDER_POLY_NOTES.md retains the evidence and rejected variants.
 BURNING_RANGERS_POLY_NOTES.md: BR static study (small tile faces, no clip/split).
 
@@ -65,8 +304,9 @@ Asked human which maps/NPCs and era; no answer yet. Preserve source conditions.
 
 Song of Time shortcut (human request, 2026-10-04): completing the known song as
 Child Link now changes him to Adult Link and reloads the current scene at its
-saved entrance, refreshing actors, model, camera and music. Already-adult play
-leaves age unchanged. Failed loading restores child age and the source scene;
+saved entrance, refreshing actors, model, camera and music. The 2026-10-06
+follow-up below now toggles adult back to child too. Failed loading restores
+the prior age and source scene;
 equipment changes only after successful loading. This requested shortcut is
 separate from unfinished source Temple sword time travel. Level Select explicitly
 shows **ADULT LINK: NO/YES**, default No; R toggles before confirmed entry.
@@ -81,7 +321,7 @@ Final WSL Clean rebuild passes (build/character-shadow-build.log);
 Active regression batch: complete source inventory/quest display, current-region
 map, Ocarina/song bridge, real Adult Link asset/era path, interior views, door
 materials, tomb alpha and populated Cucco CPU cost. Human screenshots supersede
-the older cleanup report below. See DEMO_PLAN.md for current test/build status;
+the older cleanup report below. See RECOMP_PLAN.md for current test/build status;
 the 400-check Clean evidence below describes the committed baseline only.
 This regression batch now has 578 distinct passing host cases, full asset
 generation and a passing WSL Clean relink. Final .bss end 0x06083E80 leaves
@@ -264,7 +504,7 @@ collision, combat and story. This supersedes the review's proposed wide DIVU
 fast path and earlier preferences for exact Fx arithmetic. Existing wide core
 and backend math remains migration debt; it has NOT all been converted.
 
-**First implementation batch:** `src/demo_camera.c` now converts headings with
+**First implementation batch:** `src/recomp_camera.c` now converts headings with
 32-bit integer multiplication. Large component pairs scale down together before
 Q16 conversion; in-range inputs are unchanged. No float or wide arithmetic in
 the new runtime path. The proposed wide-divide patch was removed before build;
@@ -299,7 +539,7 @@ draw and old Q24 benchmarks must not be presented as current Clean timings.
 #### Recommended refactors, in implementation order
 
 1. **Remove software-double conversions from common heading math (CPU).**
-   `src/demo_camera.c:17` calls `slAtan(toFIXED(dz), toFIXED(dx))`; this SDK's
+   `src/recomp_camera.c:17` calls `slAtan(toFIXED(dz), toFIXED(dx))`; this SDK's
    macro multiplies by `65536.0`. Pre-fix `collide_heading` disassembly showed
    two each of `__floatsidf`, `__muldf3`, `__fixdfsi`: six helper calls
    per heading. Digital movement inlines them into `player_input_motion`; analog
@@ -395,7 +635,7 @@ draw and old Q24 benchmarks must not be presented as current Clean timings.
   do not simply suppress fields used by attention or other actors. Background
   collision already has spatial lists; profile stationary floor rays before
   adding another broadphase. Dynamic floors/water invalidate naive caches.
-- Catch-up runs up to four C steps (`src/demo.c:1680`) and up to three decomp
+- Catch-up runs up to four C steps (`src/recomp.c:1680`) and up to three decomp
   updates (`src/oot_core_host.c:485`) per displayed frame. Each update calls
   OotCore_DrawActors and Message_Draw (`oot_core_api.cpp:531-532`). Only the last
   prop draw list is displayed. Eventually separate pure render extraction from
@@ -556,7 +796,7 @@ Ranch/CPU implementation is described separately above.
   reads SDK shadow at GBR+416/+432; END reads EDSR. Intended settings only, not
   proof of hardware state. Verified offsets in LIBSGL slInitScroll/slSpriteColMode.
   Sega register rule: https://www.infochunk.com/saturn/segahtml_en/hard/vdp2/hon/p15_20.htm
-  Register audit found two real write-only-read bugs: demo_vblank's TVMD &= mask
+  Register audit found two real write-only-read bugs: recomp_vblank's TVMD &= mask
   discarded display/mode bits, and pause saved invalid cycle-register reads.
   New sgl_registers.h reads this SDK's shadow. TVMD preserves shadow bits;
   pause uses slScrCycleSet for both shadow/hardware and restores saved cycles.
@@ -569,8 +809,8 @@ Ranch/CPU implementation is described separately above.
   other remaining symptoms stay open. No intermediate human-test requests.
   Missing riders and house-exit crash are not independently root-caused yet.
 
-`DEMO_PLAN.md` was absent on this branch; restored as a concise current full-game
-status document under the required historical filename, not a new demo scope.
+The game plan was restored on this branch as a concise full-game status
+document. Its current name is `RECOMP_PLAN.md` after the 2026-10-05 naming change.
 
 ## Context
 Hand-port 1 system at time -> guess behavior, bugs pile up (BUG log long). zeldaret/oot at
@@ -904,7 +1144,7 @@ per 2 KB sector. New `ram_cart_load_scratch(name,&len)` (ram_cart.c/.h) = one GF
 into the pause page+backup carves (0x1D000, 325 KB, idle unless paused; never call while
 paused). Converted: pause pages (pause_windows.c; human confirmed menu much faster),
 room .MSH (kokiri_sgl.c room_load_bank, parsed via the opening-cache path), interior
-backdrops .RGB, SFX/action PCM banks (action_audio.c upload), TITLE.RGB (demo.c).
+backdrops .RGB, SFX/action PCM banks (action_audio.c upload), TITLE.RGB (recomp.c).
 Still streamed (small): minimap/health HUD files. Pause `paint()` still copies 76,800
 cart pixels per cursor move: next suspect if cursor lag remains.
 
@@ -930,7 +1170,7 @@ the mesh is marked unloaded (no motion) instead of a fatal error.
 - Historical lead (not established for this VDP1 shot): VDP2 VRAM cycle patterns. Jo/SGL `slScrAutoDisp` picks them; Kronos ignores
   them, Mednafen/hardware obey. NBG1 bitmap sits in A0/A1 (needs 2 slots per bank);
   NBG0 text in B1, NBG2 minimap in B0. Pause path already sets them explicitly
-  (demo.c slScrCycleSet). Waiting on human: Mednafen Ctrl+1..7 layer toggles to name
+  (recomp.c slScrCycleSet). Waiting on human: Mednafen Ctrl+1..7 layer toggles to name
   the bad layer. Then set explicit cycles for backdrop/cutscene. Other open lead:
   SGL MaxPolygons 3750 vs vdp1_budget.py 2200 command reserve (GAME_TEXTURE_BASE 0x13300).
 
@@ -1129,7 +1369,7 @@ Step 5 tasks, in order:
 4. Hide the C grass that the decomp now owns: world_props grass in Kokiri Forest only
    (world_props.c / world_props_draw.c). Grass is invisible until Phase 2 draw shim, so for
    testing either keep C grass drawn but non-interactive, or add a debug marker. Pick the
-   option that keeps the slice playable; record it in DEMO/plan.
+   option that keeps the slice playable; record it in RECOMP/plan.
 5. Collectibles: En_Item00 spawned by Item_DropCollectibleRandom must be picked up by the
    player proxy (needs player cylinder / Actor_HasParent etc. — check what En_Item00 tests;
    bridge only what is missing). Drops must match the real table (CLAUDE.md drop rule).
@@ -1185,7 +1425,7 @@ Run over ALL sequences, collect unsupported-opcode list, implement missing opcod
 - new: `game/oot-core/**`, `game/tools/oot_core_import.py`, fixed `Fx` header
 - `game/makefile` (add C++ objects, SH-2 g++ from sh2eb-elf)
 - `shared/tools/build_title_audio.py`, `shared/lib/music/music.c`
-- `game/docs/DEMO_PLAN.md` (record strategy + phase status, required rule)
+- `game/docs/RECOMP_PLAN.md` (record strategy + phase status, required rule)
 
 ## Verification
 - Host: compile oot-core natively, run actor update vs real float build, compare outputs (diff tolerance).
@@ -1196,3 +1436,17 @@ Run over ALL sequences, collect unsupported-opcode list, implement missing opcod
 ## Risk
 Phase 0 may fail perf. Then fallback: keep hand-port but drive it from decomp source per system
 (current way) + bulk music still win.
+
+
+2026-10-06 map curtain follow-up (source only; no target build): shared 3D
+curtain uses per-map base fog palette and clock tint, matching the fixed dark
+horizon band. Kokiri daytime source fog is warm RGB 200/200/150. All 75 map
+palettes parse; 17 sky/curtain host cases pass. Static rooms retain static tint;
+weather/story palette selection and target appearance/fit remain unverified.
+Next authorized build regenerates environment_sky_data.h (+600 palette bytes).
+See RECOMP_PLAN.md for current coverage and bitmap-interior limitation.
+
+Human authorized follow-up quick build: Clean OOT_CORE=1 passes; regenerated
+sky tables included, .bss 0x06083ef0 leaves 272 B below SGL. Missing curtain
+scene-flow declaration fixed. All CUE files present. No emulator verification.
+Log: build/curtain-quick-build.log.

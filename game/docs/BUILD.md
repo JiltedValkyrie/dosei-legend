@@ -199,7 +199,8 @@ sudo apt-get install -y python3-pil genisoimage   # Pillow + mkisofs
     blob when an address changes; the host rejects a blob whose col_header is outside the
     carve. Check: `xxd -l 4 build/cd/S1.OOC` starts with the OOT_SCENECOL_ADDR top half.
 42. **Windows python wrote CRLF into build.sh** (`set: pipefail: invalid option name`).
-    Edit .sh files with sed/Edit, or python `open(p, 'w', newline='')`; fix: `sed -i 's/$//'`.
+    Edit .sh files with sed/Edit, or python `open(p, 'w', newline='')`; fix: `sed -i 's/
+$//'`.
 43. **SGL `sprHflip` is broken** (SL_DEF.H: `UseTexture << PDATA16`, undeclared). Use
     `(1 << 4) | sprNoflip` for a horizontally flipped sprite.
 
@@ -270,7 +271,7 @@ BIOS. Agents build; the human launches
   Ranch rebake leaves every other room using obsolete alpha/material rules.
   Preserve unregistered preflight rows and explicit blocked destinations.
   Count 64 KiB actor reserve and 32 KiB spare in both density passes/final checks.
-- `build_fairy.py` owns all 32x32 wing/glow cels. `build_demo_assets.py` delegates
+- `build_fairy.py` owns all 32x32 wing/glow cels. `build_recomp_assets.py` delegates
   to it; do not overwrite FAIRY.RGB with the old 16x16 helper. Runtime no longer
   consumes FAIRY.BIN. Character offline models remain in generated/cache folders;
   converted NPC/rider/owl BIN/ANM/TRK/SKN files must not be staged on the disc.
@@ -402,3 +403,180 @@ BIOS. Agents build; the human launches
     zero slots, at most 160 local commands. Positive visual feedback is not
     performance acceptance. New square terrain also needs collision limits:
     SA.COL currently has 1579 triangles against the baker's 2321 maximum.
+
+60. **Field retopology patches (2026-10-05).** `tools/field_retopo.py` bakes one
+    content-addressed bundle (`assets/layouts/meshes/<sha>/patch.json`) used by
+    three consumers: the STM (build_hybrid_scene/build_field_chunks), SA.COL
+    (build_scene_table) and SA.OOC (oot_core_import, generated
+    `spot00_retopo_PolyList/VtxList.inc.c`). Each writes
+    `build/generated/retopo-<stm|col|ooc>.json`; build.sh refuses a disc whose
+    records differ. Selecting a patched layout needs a full build: `--quick`
+    keeps the old STM/COL but re-imports SA.OOC from the live selection, and the
+    pairing check then stops it. Main selection is now `field-square-184`
+    (human-authorized Clean promotion, 2026-10-05).
+61. **Parents stay through texture sizing.** Removing replaced faces before the
+    greedy/floor-upgrade passes re-distributes VRAM and changes unrelated tiles.
+    `apply_patches` only marks them; `replace_pieces` swaps after sizing.
+    `field_retopo.py --budget` diffs every STM face (corners, attrs, texels) and
+    fails on any unrelated change. Fanned neighbours that had been rejoined with
+    a partner into one quad leave that partner drawn alone (reported as
+    orphan-partner).
+62. **Small floor pieces lose far sort.** `floor_uses_far_sort` needs an XZ
+    extent over 64. Retopo records carry `far_sort` so cut pieces keep the
+    parent floor's 0x66.
+63. **TR control probe assumes C=D children.** `build_tr_patch.py` asserts the
+    old P3 triangles; a square-retopo STM has none. Square images run plain SGL;
+    `compare_square.py` and `performance_tr.py --modes 0,0` measure them.
+64. **Field BgCheck takes the spot branch** (`BgCheck_IsSpotScene`): memSize
+    0xF000, 16x4x16 subdivisions; the 0xB798 custom size is never reached.
+    `PROBE_SCENE=SCENE_HYRULE_FIELD oot-core/tests/run_bgcheck_probe.sh <SA.cpp>`
+    prints `polyNodes` (count) and `polyNodesMax`. Count is valid; max uses
+    64-bit host type sizes. Target sizes (sh-elf g++): CollisionContext 8068,
+    StaticLookup 6, SSNode 4, CollisionPoly 16, Vec3s 6, so capacity =
+    (0xF000 - (6144 + polys + 4000 + 8192 + 3072 + 8068)) / 4.
+    Script: build/square-retopo/bgcheck/sizes.sh.
+    The fx host probe then hits a pre-existing ASAN stack overflow in
+    `OotCore_BgInt` (8-byte memcpy from a host f32), unpatched Field too: read
+    the node lines, ignore compare_probe's crash.
+65. **Collision normals: one rule.** New polygons: Q15 from the welded integer
+    triangle; SA.COL stores round(q15/2) (the ROM rule); SA.OOC writes
+    COLPOLY_SNORMAL literals half a step past q15 so the (s16) cast lands on it;
+    dist from the Q15 normal. Baseline OOC/COL already differ by one Q14 unit on
+    786 faces (Astra audit); do not call that a regression.
+66. **Integer rounding decides coplanar overlay ties.** Road collision overlays
+    sit within ~1 unit of the Field ground; after re-tessellation `bg_floor`
+    returns the road surface instead of grass at a few points (5 of 11,384 in
+    the 184 sweep, footstep sound only). The host floor test fails if it grows
+    past 2%.
+
+67. **Streamed Field must not need one contiguous whole-file block.** The
+    retopo STM fits aggregate cart RAM but exceeds the largest heap block.
+    `field_storage.h` reads a validated header, then allocates geometry and
+    sector-aligned pixels separately. Keep both blocks alive through streaming,
+    free both on failure/unload, and retain the first-sector pixel prefix.
+    Do not replace this with a full temporary file read. Loader-only 184/256
+    builds pass with 9152 B below SGL and complete visible-GUI boundary walks.
+68. **Environment API/OOC changes require a coordinated rebuild.** API20 adds
+    clock/sky state and scene/room metadata. Rebuild host, core and every OOC.
+    NTSC_1_2 has version value4 while PAL_1_0 is3: the original >=PAL guards
+    apply to NTSC1.2. Use the real versions.h in host tests. Source Sun's Song
+    also needs the header declaring OCARINA_MODE/ACTION enums.
+69. **Field bank aliases are not gameplay scene IDs.** KOKIRI_FIELD_SCENE is
+    the flat cutscene's STORY_BANK_FIELD, not SCENE_SPOT00. Gameplay fog policy
+    must use SCENE_SPOT00. Rebuild per-map fog lookup tables after each bank
+    assigns forest_scene, not only once before the first room load.
+70. **Landmark removal changes object capacity as well as textures.** The
+    isolated184 far-landmark sweep needs60 resident objects, up from59;
+    update the generated capacity header and manifest with the staged STM.
+    Landmark palettes have a separate deduplication class so terrain fog cannot
+    wash them out. Canonical WSL3.11 bake is required for bitwise freeze checks:
+    host Python3.12 can differ at a few floating-point raster boundaries.
+71. **SDK keeps inline helper bodies.** `-fkeep-inline-functions` retained sky
+    helper copies across translation units. Local static non-inline helpers in
+    environment_sky.h recover space; combined environment-v3 ends .bss at
+    0x06082BA0, 5216 B below SGL. Recheck the actual target map after changes.
+72. **HUD weapon patches need their whole VDP2 reservation.** BUTTONS.MAP is
+    14288 B, within0x3800 bytes. Dynamic C-item maps start0x25E4B800 and occupy
+    8192 B; hearts begin0x25E50000. Keep baker/compositor addresses and pause
+    backup coverage synchronized. Preserve action-caption overlap in patches.
+73. **SGL centroid sort can overflow for retained far landmarks.** SORT_CEN
+    sums four Q16 depths in signed32 bits before averaging: mean depth8192
+    crosses its limit. Raising the CPU range does not make it safe. SORT_MIN/MAX
+    avoid the sum. Tagged landmarks now use SORT_MIN; ordinary terrain keeps
+    its existing sort policy. Runtime visibility/occlusion still needs human
+    acceptance. See FIELD_LANDMARK_AUDIT.md.
+74. **Whole-Field ground grids must include the owl in pricing.** The outer
+    512/768/896/1024-unit trials exceeded combined table/vertex/slot limits.
+    The selected outer1280 + central184 layout fits all existing reserves.
+    `field_ground_grid.py` splits only source visual planes; it does not add
+    collision nodes outside the accepted central bundle. Keep full streaming
+    sweeps, source-plane/UV tests and STM/COL/OOC pairing checks. Uniform184
+    across the map is not implemented or budgeted to fit.
+75. **Cached sky colour code must stay compact.** The initial full Clean link
+    with the horizon exceeded static RAM by688 B; compact shared mix helpers
+    reduced that to80 B. Size-optimizing the cached refresh too gives final
+    .bss0x06083F30, 208 B below SGL. Do not lower heaps or actor limits to hide
+    a link overflow. Logs: field-clean-build.log (asset bake),
+    field-clean-link-final.log (passing relink). New sky target helpers use
+    integer math only; other pre-existing wide runtime paths remain debt.
+76. **Field haze consumes geometry but no texture slots.** One static quad is
+    submitted in world space at3200 units with MESHon; count its four vertices
+    and one polygon alongside Link/owl. Combined worst case is2422/2500
+    vertices and2474/2600 polygons. Clean initially exceeded static RAM by16 B;
+    compact sky callback/cold background-priority setup gives .bss0x06083FF0,
+    only16 B spare (`build/field-haze-final.log`). Keep the boundary guard and
+    heap/actor capacities. Human accepted the dark sky, not yet this new band.
+77. **Exit/orbit/Link-fade follow-up needs compact frame setup.** The added
+    state and second haze panel initially exceeded high work RAM by1056 B.
+    Size-optimizing `viewer_draw` (frame setup/dispatch, not geometry loops)
+    gives .bss0x06083DA0, 608 B spare (`build/field-orbit-fix.log`). Heaps,
+    actor capacities and the boundary guard are unchanged. Current haze totals
+    are2475/2600 polygons and2424/2500 vertices including Field/Link/owl.
+78. **The usual Clean image needs `OOT_CORE=1`.** `./build.sh --clean --quick`
+    alone builds a game WITHOUT the decomp core (no OOTCORE.BIN/OOC/OOB staged,
+    .bss looks ~9 KB roomier) and overwrites game-clean.iso. Always
+    `./build.sh --clean --quick OOT_CORE=1` (2026-10-05 Fx32 rebuild hit this).
+    Worse: the next OOT_CORE=1 quick build REUSED the non-core ram_cart.o and
+    scene_flow.o (flags did not trigger a recompile). Non-core ram_cart.h has a
+    smaller fixed-carve area, so ram_cart_fixed refused the OOTCORE carve
+    ("oc load failed f 0") and every fixed carve base disagreed between objects
+    (human: no Ranch NPCs, no ocarina, no rock lifting, missing Kakariko
+    building). makefile now writes build/generated/oot_core_mode.stamp and
+    every game object depends on it, so flipping OOT_CORE recompiles all.
+79. **Fx32 (Wave 0): an outlined `Fx(float)` runs soft-double.** The float/
+    double constructors and `fx_from_double` must stay `FX_INL`; when GCC
+    outlined them at -Os every literal called __muldf3/__fixdfsi at runtime.
+    Runtime mul/div are out of line (OotFx_Mul/Div/MulInt/DivInt/IntDiv in
+    oot_math.cpp): inlined saturation cost ~90 KB, and a constant divisor in
+    an inlined op became a dmulu.l reciprocal multiply. Audit every blob:
+    `sh-elf-objdump -d build/oot-core/oot-core.elf > X; python3
+    tools/audit_oot_core_wide.py X` (dmuls/dmulu, divider registers, libgcc
+    64-bit/soft-float calls under any __/___ prefix; literal-pool words that
+    decode as mac.l or `sts mach` are ignored). Run `--self-test` after editing
+    its regexes: the first version missed target ___divdi3 entirely. Remaining hits are GCC magic multiplies for
+    decomp INTEGER `/10 /20 /60` (28 sites, 10 functions): open question.
+80. **Fx32 probes run in WSL.** `OOT=... bash oot-core/tests/run_bgcheck_probe.sh
+    [build/oot-core/scenecol/SA.cpp]` (PROBE_SCENE=SCENE_HYRULE_FIELD for SA)
+    and `HOST_CXX=g++ bash oot-core/tests/run_host_probe.sh` (now python3).
+    `FX_SAT_AUDIT=1` on the bgcheck probe links oot-core/tests/fx_sat_audit.cpp
+    and prints each saturating site; symbolize with `addr2line -f -C -i`.
+    Probe flags use -nostdinc and the prelude keyword renames: host-only
+    helpers there are plain C style (no <cstdio>, no `namespace`/`class`).
+81. **Backslashes through Bash heredoc -> Python edits get mangled.** `\b`
+    and `\1` reached oot_core_import.py as \x08/\x01 bytes (regexes silently
+    matched nothing / emitted control chars). Edit regex text with the Edit
+    tool or a script written by the Write tool; grep for [\x00-\x08] after.
+82. **Importer Fx32 rewrites must be mirrored by tests that re-run parts of
+    the importer.** test_core_bgcheck rebuilds z_bgcheck from raw source; it
+    now applies fix_rand_ranges/fix_cross_products/fix_stored_squares too,
+    or its source disagrees with the imported FxSq headers.
+
+## Camera/Adult Link build verification (2026-10-06)
+
+Correction: the Gossip Stone messages in `camera-ease-clean.log` are nonfatal;
+`build_core_meshes.py` returns success after reporting them. They did not establish
+the cause of that interrupted build. Claude's full build completed at 10:33
+(`fix-full-clean.log`) and compiled both changed camera sources. Its .bss ends
+0x06083ED0, 304 B spare; the earlier 2,704 B report came from mixed core objects.
+The ISO program, core and all five Adult Link payloads match staging byte-for-byte.
+ADLTMESH.BIN is restored to 21,504 B (672 polygons), previously 11,456 B (358).
+No extra quick build is needed for the camera. Runtime acceptance remains pending.
+
+## Ocarina repeat rebuild boundary failure (2026-10-06)
+
+The shared-tree quick Clean rebuild reached linking but failed the SGL boundary:
+.bss 0x06085600 exceeds 0x06084000 by 5,632 bytes. Log:
+`build/ocarina-repeat-clean.log`. The guard removed usual Clean ISO/CUE/ELF/raw.
+The prior 10:33 image is no longer at that path. Restore code/static-RAM fit before
+retesting; do not lower heap/actor capacities or disable the guard. Ocarina host
+checks pass; this is not target/runtime acceptance. Size growth is not yet attributed.
+83. **No software 64-bit divides (human 2026-10-06).** `int64 / variable`
+    calls libgcc ___divdi3: use shared/lib/collision/div32.h (div64s_approx,
+    muldiv_s32, muldiv64_s32). `int64 / power-of-two constant` is inlined
+    by GCC (keep it: it truncates like the original; `>>` floors and broke
+    exact host contacts by one unit). div32 bodies: one out-of-line SH-2 copy
+    (inlining cost ~8 KB of work RAM; DIV32_IMPLEMENTATION in
+    kokiri_collision.c), static inline on the host. Test fixtures that copy
+    single functions need the header: test_graphics_backend.run_c adds it;
+    custom harnesses (cutscene parity, item aim) include it explicitly.
+    Audit both ELFs with tools/audit_oot_core_wide.py (dmuls allowed).

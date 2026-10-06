@@ -1,12 +1,289 @@
-# Current game plan (historical filename)
+# Full OoT recomp plan
 
-Current assignment (2026-10-05): human stopped renderer work after positive
-visual feedback ("It look really good") and requested a square-retopology plan.
-[FIELD_SQUARE_RETOPO_PLAN.md](FIELD_SQUARE_RETOPO_PLAN.md) is written; square
-geometry and new collision are not implemented. Next work is a local planar
-square preview and exact bake budget, reusing existing ground textures and
-generating matching collision. Continuous ground and stable texture mapping
-take priority over exact texture fidelity. No distant group expansion.
+## Mandatory Link migration: next step
+
+Human directive (2026-10-06): replace handwritten C Link gameplay with the real
+core/decomp Player, including z_player_call.c and ovl_player_actor. This is a
+required implementation wave, not an optional experiment or a decision awaiting
+benchmark results. All existing Saturn adaptations, added features and Link fixes
+must survive on top of the decomp implementation. It supersedes the older
+actor-first continuation below. Full-game scope and existing unfinished work stay.
+
+Current state: C owns Link movement/actions; bridge_player.cpp supplies a proxy
+to core actors. Link and core actors still use separate collision worlds. The
+gallery prop and its geometry bridge are implemented with host/target evidence
+recorded in OOT_CORE_PIPELINE_PLAN.md; human runtime acceptance is pending.
+This update records requirements and source review only. No real Player migration,
+new host test, target build, bake or runtime acceptance is claimed. Handoff goes
+to Claude through the human; Claude starting migration is not yet confirmed.
+
+Rules and sequence:
+1. Before replacement, inventory existing Link behavior from actual code, tests
+   and human directives. Record current source, intended core/adapter owner and
+   verification for every fix/addition; distinguish accepted, implemented-only
+   and still-missing behavior. Include digital/analog/custom controls and labels,
+   B-held walking, Y jump, A interaction, X attack, R shield, C-item access,
+   targeting, first-person/house views and the added overhead camera/turns;
+   child/adult animation and gear, movement/ledge/roll/climb/crawl/lift/swim,
+   combat/tools/damage, dialogue/rewards, Ocarina/era changes, cutscene control,
+   inventory/save/death/respawn and scene transitions. This is an audit list,
+   not a claim all of those systems are already complete.
+2. Import and adapt real Player source. Core owns player action state, movement,
+   collision response and gameplay interactions. Keep Saturn input, rendering,
+   audio, UI and save adapters where needed. Preserve the current Link renderer,
+   meshes, gear fixes and presentation; importing Player does not require an N64
+   graphics backend or change the NPC sprite/boss rules. Put Saturn additions
+   into explicit source patches/adapters with a clear behavior owner.
+3. Migrate in bounded stages with one gameplay owner per migrated subsystem.
+   Preserve simulation/input-edge timing and the existing 20 Hz core contract;
+   adapt render/input cadence without running two Player action machines or
+   applying movement, hits, item use or rewards twice. Keep working legacy paths
+   until their replacements pass acceptance, then archive the replaced code.
+   Remaining C actor/camera collision callers must be accounted for before
+   removing their collision storage. End state: one authoritative Player and
+   shared core collision world; no permanent proxy or second gameplay solver.
+4. Preserve dynamic collision semantics: contact/bg IDs, standing/riding and
+   switch feedback, required transforms, enable/delete lifecycle, surfaces,
+   water and camera metadata. A collision-query adapter alone is not completion.
+   The gallery bridge is temporary static-building support: source review found
+   Y-only rotation, uniform scale from X, missing water/camera data and no rider
+   feedback to core. It calls bg_dyna_set every core step, rebuilding transformed
+   triangles/bounds even when unchanged. Avoid that repeated work while the
+   bridge remains, without erasing previous transforms needed for rider motion.
+5. Measure whole collision/update cost, memory and dynamic rebuilds on the target
+   as migration proceeds, alongside representative query costs. Neither core nor
+   C is presumed faster. Results guide bounded optimization of the chosen core
+   implementation, never permission to abandon Player migration. Native SH-2
+   multiply is allowed; stored runtime values stay 32-bit. No software-wide or
+   soft-float helpers, reduced actor/heap budgets, or disabled boundary guards.
+6. Verify preserved behavior with focused executing checks, a matching host/core
+   target build and human runtime checks in both eras. Include static walls,
+   moving/rotating platforms and switches when their source actors are integrated.
+   Track gaps explicitly; original-source availability, proxy success or a build
+   alone does not finish migration. Completion requires real Player ownership,
+   preserved Saturn functionality, retired duplicate paths and runtime acceptance.
+
+Latest recorded Clean margin is 272 B (curtain/gallery checkpoints); this task
+does not reverify the artifact. Older failures, margins and build holds below
+describe their named checkpoints, not current headroom or a new hold.
+
+## Historical checkpoints and retained verification gaps
+
+The migration rules and final next-action list set current priority. Checkpoints
+below retain evidence and unfinished requirements; their older ordering, blanket
+hardware-multiply ban and build-state claims are superseded by current directives.
+
+Map curtain / environment tint (2026-10-06, source, host and target verified):
+- Shared fixed-height dither curtain now submits in every 3D scene, including
+  the panorama geometry path. Near room walls naturally occlude it; flat bitmap
+  interiors keep their existing background renderer, with no foreground veil.
+- Curtain and dark horizon band use the same map/time colour. Base source scene
+  fog colours tint the ground gradient and normal outdoor sky; Kokiri's unset
+  sky uses a darkened fog tint. Kokiri daytime fog is RGB 200/200/150 (warm yellow
+  grey), not evidence that its original skybox is goldenrod.
+- Four six-hour colour anchors approximate time changes; static-light rooms keep
+  their first light colour. Alternate weather/story fog palettes remain pending.
+  All 75 current map palettes parse. Two polygons/six vertices reserved in boss
+  and story geometry budgets; no curtain textures or sprite slots added.
+- 13 sky and 4 curtain host tests pass, including Kokiri source colours, map
+  differences, darker night and fixed camera alignment. Human authorized Clean quick build with OOT_CORE=1; colour tables regenerated
+  (600 additional palette bytes for 75 maps). Build passes with .bss ending
+  0x06083ef0, 272 bytes below SGL work area. Log: build/curtain-quick-build.log.
+  No emulator run; human scene/night appearance checks remain pending.
+
+Camera defaults / fixed sky curtain (2026-10-06, source only): Hyrule Field
+(SCENE_SPOT00) enters overhead; other scenes enter regular follow. Scene-entry
+placement resets pending orbit turns and heading. L+R+B now toggles only regular
+and the accepted first overhead view; the three farther survey views are removed.
+Z/B+Z eased quarter-turns remain in overhead. First-person/interior framing stays
+separate. 94 executing camera/control host checks pass.
+The gradient's VDP2 rows were already fixed. The shared dither curtain follows
+camera position and cancels yaw/pitch, keeping its vertical screen position fixed
+on slopes and in first-person. Distance sorting and two-panel mesh remain; terrain
+fog still uses Link-relative depth. Four haze host checks pass. No build/bake or
+runtime test, per human hold. Human visual checks remain after a later build.
+
+
+Dialogue readability and Kokiri text handoff (2026-10-06, source only):
+- A or B fills the current core text page; a later press advances it. Source
+  control codes, choices, page waits and Ocarina timing stay in z_message.
+  Revealing text receives two draw/reveal ticks per core step; other message
+  modes run once. The separate cutscene typewriter increases from 2 to 4 chars.
+- Regular Kokiri conversations (children, Mido, Saria) open/continue/close through
+  the core ROM-message engine. C retains placement, text-id selection and existing
+  quest/gate/close callbacks; this is a text-engine migration, not a full actor
+  import. Source choices return to the existing branch callbacks. Core mode no
+  longer uses the C page renderer for these conversations. Non-core fallback,
+  shop/item/system messages and scripted greeting cutscenes remain separate.
+- Shared dialogue font ASCII is bolded once at boot; pause restores those cells.
+  Core blue/light-blue text maps to yellow, black to white; cutscene blue emphasis
+  also maps to yellow. Core rows overwrite padded colour runs without blanking
+  the visible page first. Old per-name kana glyph generation is removed.
+- Host verification: 15 focused cases pass (5 new page/choice/reveal/font checks,
+  5 Ocarina, 3 core dialogue, 2 core views); 1 source-table Ocarina comparison
+  skipped in WSL. gameplay.c syntax passes both core/non-core configurations.
+- Human explicitly says DO NOT BUILD. No target build, bake, disc change or
+  emulator run in this task. Core ABI increments to 21; matching rebuilt host
+  and blob are required later. Earlier RAM overflow remains a build blocker;
+  these source changes do not prove target fit or runtime acceptance.
+
+
+Song of Time repeat fix (2026-10-06): the requested shortcut now toggles both
+child/adult directions. Load failure restores the original age; equipment changes
+only after a successful load. Free-play start resets stale audio state; completion
+stops listening/playback; B cancels free play during recognition or result playback
+and releases the player flags. The retained Ocarina instruction row is written
+only on open and cleared on close instead of being rewritten each display frame.
+Host: five Ocarina tests pass (one local-source comparison skipped in WSL),
+including four successive toggles, both recovery directions, repeated recognition,
+completion consumption and playback cancellation. Clean link failed the SGL
+boundary check: .bss ends 0x06085600, 5,632 B over 0x06084000. Log:
+`build/ocarina-repeat-clean.log`. Build guard removed game-clean ISO/CUE/ELF/raw;
+no runnable updated disc is available. Shared-tree size recovery is required
+before human retest. Heap/actor capacities were not reduced; no runtime check.
+
+
+Human scope/wording directive (2026-10-05): full OoT recomp for Saturn. Every
+scene, era, day/night/story layer, actor and game system remains in scope.
+Use "full recomp", "game", "implementation wave" and "opening route" in
+current plans and handoffs. The opening route orders work; it does not limit
+the finished game. Project files and symbols now use recomp naming. Original
+decomp symbols, archived Git refs and historical screenshot paths retain their names.
+
+Naming change (2026-10-05): renamed this plan, the recomp runtime sources and
+header, asset tool/test and control-probe include. Updated source symbols,
+build inputs, callers, tests, tooling and documentation together. Static rename
+and reference checks only; no compilation, bake or runtime check. Existing
+binaries retain their previous symbols until an authorized rebuild; updated
+probe tooling requires a matching rebuilt binary before use.
+
+Current Wave 0 status (2026-10-06): OOT_CORE_PIPELINE_PLAN.md records Fx32
+implementation, host checks and Clean builds, superseding the earlier build hold.
+Runtime acceptance and later actor waves remain open. Other wide paths remain debt.
+
+Human ruling (2026-10-06, narrowed): native SH-2 dmuls.l/dmulu.l and the
+casts that generate them are allowed. Stored values remain 32-bit; software
+64-bit helpers and soft-float are banned. Approximation is authorized. Claude's
+gallery import and both ELF audits are recorded in the pipeline handoff;
+gallery runtime acceptance remains pending. Link migration is the next priority.
+
+Latest camera follow-up (2026-10-06): reversed both first-raised-view Z/B+Z
+quarter-turn directions. Each turn uses a 16-step cubic Hermite smoothstep
+(~0.53 s at 30 Hz), zero endpoint slopes, and only 32-bit integer math.
+Bounded pending turns preserve cardinal stops; opposite pending taps cancel,
+and view changes clear pending turns. The resident NA_SE_SY_CURSOR route
+(currently ACTION_MESSAGE's UI tick) plays once per Z edge. No new audio asset.
+Verification: 93 executing camera/control host checks pass in WSL, including
+reversed endpoints, wrap, easing, radius, queued reversal and reset. Claude's full Clean build at 10:33 includes both changed camera sources
+(`build/fix-full-clean.log`); 304 B spare. Disc program, core and all five Adult
+Link payloads match staging. Adult mesh restored from 358 to original 672 polygons.
+That image is historical: the later Ocarina build failed and removed it.
+Earlier Gossip Stone messages were nonfatal
+warnings, not the cause of the interrupted camera build.
+Human turn-feel/audio acceptance remains pending.
+
+Latest implemented follow-up: stop repeated unavailable-exit text, add 90-degree Z/B+Z
+turns to the first raised camera, and anchor Field fog/dither to Link.
+Implemented: failed destinations warn once within a 600-unit XZ neighbourhood;
+walking away or changing scenes rearms the notice. Repeated scripted requests
+are consumed, movement remains possible, and valid transitions still work.
+First raised view: Z/B+Z turn opposite directions, now reversed and eased
+by the camera follow-up above.
+Targeting/recenter and B cancellation are consumed only for that outdoor view.
+The later camera-default change replaces the five-view cycle with two views.
+Field fog and distance mesh use Link-relative forward depth; visibility keeps
+camera depth. The later fixed-curtain change replaces the Link-position/yaw
+anchor with camera position/yaw/pitch cancellation. Source fade caching also tracks Link movement. This does not fix
+large ground triangles disappearing or establish a clipping root cause.
+
+Verification: 71 controls, 20 camera, 16 route and 4 haze/fade host checks pass.
+Three controls checks also pass with DOSEI_CLEAN_TEST enabled (114 checks total).
+The route harness was updated for existing source time/layer APIs. Clean rebuild
+passes (`build/field-orbit-fix.log`): .bss0x06083DA0, 608 B below SGL. Disc
+Field/COL/OOC/program bytes match staging and all CUE tracks exist. Frame setup
+uses size optimization; heap/actor capacities stay unchanged. Human runtime acceptance
+of these fixes remains pending. The human likes the first raised view; higher
+views still expose ground defects. Dark sky is accepted and retained. Combined
+Field/Link/owl/haze is 2475/2600 polygons, 2424/2500 vertices. Existing wide
+crawl-camera math remains migration debt.
+
+Earlier human feedback: dark sky gradient is accepted; retain it. Add a
+camera-following world-space dither curtain before full Field fog. Implemented
+as one upright VDP1 mesh quad at3200 units, with ordinary depth sorting and
+camera pitch projection; no texture/sprite slot. Clean build passes
+(`build/field-haze-final.log`), .bss0x06083FF0, 16 B below SGL. Two executing
+haze host tests and twelve sky tests pass. Combined Field/Link/owl/haze uses
+2474/2600 polygons and 2422/2500 vertices. ISO bytes/track references verified;
+new target helper uses integer shifts and existing SGL calls. Human owns runtime
+appearance/occlusion checks. Sky callback and cold background-priority setup
+use size optimization; no heap/actor capacity was reduced.
+
+Human now requests the accepted quad ground in usual Clean, broader Field ground
+coverage, persistent castle/ranch walls and a dark horizon veil (2026-10-05).
+This supersedes the isolated/build-only scope in the paused handoff. Human owns
+runtime checks; do not run GUI fixtures. Selection now uses `field-square-184`.
+Implementation adds offline outer-ground subdivisions without altering source
+planes or outer collision, retains the complete ranch enclosure/castle walls,
+uses SORT_MIN for landmarks and adds four dark Field background bands.
+Whole-map capacity checks pass: 1249 Field polygons, 1732 vertices and
+331776/445432 bytes, including Link/owl/effect reserves. Outer cells are 1280
+units; uniform fine 184 cells across the map exceed current limits. Usual Clean
+build passes (`build/field-haze-final.log`), .bss 0x06083FF0: 16 B below
+SGL. Heap and actor capacities are preserved; cached sky helpers use size
+optimization. 47 focused Field/sky host checks pass. Disc Field/COL/OOC/program
+bytes match staging and all CUE tracks exist. Human runtime checks remain;
+changes are uncommitted. Static RAM margin is tight.
+
+Earlier isolated verification (2026-10-05): the split-block Field loader fixes the initial contiguous
+SAR0.STM allocation failure in both isolated builds. 184 now runs in the visible
+configured Kronos; its full boundary walk completed, and two 90-step walks took
+5.781 s each. The resumed 256 run completed both boundary walks and measured
+5.657/5.703 s for 90 steps. The earlier interruption was the human closing the
+GUI, not an emulator crash. The human accepts the central patch's appearance
+("VERY nice"). Good ground at (0,181,6178) is inside the patch; the bad north
+ground at (6,67,7067), source1029, and castle approach (0,0,2940), sources602/612,
+are outside it. Preserve that accepted patch. Wider visual-only ground panels
+and Clean promotion are implemented and target-built, awaiting human checks.
+
+New authorized environment work: [ENVIRONMENT_TIME_STATUS.md](ENVIRONMENT_TIME_STATUS.md).
+Keep distant low-detail volcano/ranch/castle landmarks visible without distance
+dither, bring terrain fog closer, blend lower sky toward each map's ground
+colour, and implement source time-of-day behavior. Clock, Sun's Song, destination
+time/layer rules and layered room/sky settings are imported. Natural dawn's
+nine-state sequence and saved day counters are implemented; 10 clock, 7 natural
+sequence, 3 dialogue/hatch and 38 save/migration host tests pass. Source sky
+colours, per-map lower gradient, closer Field fog and retained
+far landmarks are implemented. Canonical landmark bake fits 340512/445432 B,
+with zero unrelated full-detail changes. Combined v2 passed visible-GUI +200
+daytime/+400 nighttime advancement per 30 steps, separate sky-time hold, pause
+freeze and one natural-sequence day-counter increment. Its 90-step walks took
+5.766/5.781 s. Hylian front and Master Sword HUD look correct; pause dims owned
+age-ineligible gear. The wood was Hylian's own back face, not a second shield.
+Latest v3 builds with 5,216 B below SGL; initial equipment cursor and targeted
+landmark trace changes are not runtime-tested. Held/Mirror gear and v13 reload/
+hatching need target checks. Far landmarks remain unresolved: SGL SORT_CEN's
+32-bit depth sum overflows above mean z8192; central castle needs separate
+trace. New SORT_MIN avoids that sum; runtime visibility/occlusion still needs
+human checks. Original BGM/nature handoff, audio/weather
+ownership, source song-effect timing and full cutscene environment lifecycle
+remain open. Do not claim exact whole-environment parity.
+
+Retopology geometry/budget history and images:
+[FIELD_SQUARE_RETOPO_STATUS.md](FIELD_SQUARE_RETOPO_STATUS.md),
+[FIELD_SQUARE_RETOPO_PLAN.md](FIELD_SQUARE_RETOPO_PLAN.md).
+Existing textures and common STM/COL/OOC geometry stay required. Human's good
+visual feedback is local acceptance, not proof of all-route holes/seams or
+performance acceptance. Outer expansion now uses coarser visual-only panels on
+original planes, preserving collision and the fine central patch.
+
+Collision audit (2026-10-05): baseline COL agrees with all 1,579 extracted
+polygons, source-derived Q14 normals and info words. Decoded staged OOC agrees
+on geometry, flags and surfaces; 786 faces have a one-unit Q14 normal difference
+after conversion. Preserve that baseline distinction when checking new outputs.
+Grok's corrections are confirmed: Field uses the `0xF000` spot allocation,
+recorded feet `(60,3367)` lie only on poly 436, and curb 598–613 extends to
+Z 6800. Plan now requires real node capacity checks before writes and boundary
+cuts on each curb's own plane. No implementation or build changed in this audit.
 
 Current TR candidate is frozen at
 `build/astra-control/checkpoint-2026-10-05/game.cue`, with all audio tracks,
@@ -102,8 +379,9 @@ Human visual/FPS acceptance remains pending; no emulator launched.
 
 Song of Time shortcut (human request, 2026-10-04): completing the known song as
 Child Link now changes him to Adult Link and reloads the current scene at its
-saved entrance, refreshing actors, model, camera and music. Already-adult play
-leaves age unchanged. Failed loading restores child age and the source scene;
+saved entrance, refreshing actors, model, camera and music. The 2026-10-06
+follow-up below now toggles adult back to child too. Failed loading restores
+the prior age and source scene;
 equipment changes only after successful loading. This requested shortcut is
 separate from unfinished source Temple sword time travel. Level Select explicitly
 shows **ADULT LINK: NO/YES**, default No; R toggles before confirmed entry.
@@ -113,13 +391,15 @@ Host Ocarina/Level Select batches pass 15 tests. WSL Clean rebuild passes;
 
 Updated 2026-10-05. Active branch: main (oot-core decomp pipeline). Goal: the full OoT decomp on Saturn,
 using imported original game logic with Saturn graphics/audio/file backends.
-This is not a new standalone demo or a rewrite of OoT gameplay.
+The full recomp preserves source gameplay with the required Saturn adaptations.
 
-## Current priority
+## Prior regression priority and evidence
 
 Current warp task is wrapped at the saved local TR candidate and camera fix.
-The next implementation scope is the square-retopology plan above, including
-matching collision and existing textures; it has not started. The preceding
+Wave 0 implementation and build evidence are in the current pipeline handoff;
+runtime acceptance and later waves remain pending. Existing square-retopology
+work and its unresolved geometry, collision and budget checks remain recorded
+above. The preceding
 human regression report (2026-10-04, after main integration):
 the capped test save
 still displays only four inventory items and Emerald; world map remains Kokiri,
@@ -237,7 +517,7 @@ confirmed OOM). Latest human explicitly confirms opening the menu before music
 now works. House-exit CD failure has no explicit acceptance yet. Latest forest
 and nightmare screenshots still show severe VDP1 corruption before the CLUT fix.
 
-## Current continuation: implementation and verification
+## Prior world-content continuation: implementation and verification
 
 The committed baseline includes cleanup rollback/retry, common door policies, source save predicates, same-room
 sprite discovery, automatic talk/milk handshakes and the opt-in full test loadout
@@ -397,10 +677,26 @@ counts and image contents describe those builds, not the current continuation.
 
 ## Next actions / remaining work
 
-0. Complete the local TR-style candidate's matched movement, camera, floor-hole
-   and runtime-cost checks. Source material/palette, original assets and global
-   near remain fixed; ten selected P3 children only. Keep failed candidates out
-   of player images. Warp acceptance and Clean promotion remain pending.
+Next implementation: mandatory Link migration under the rules at the top of this
+plan. Start with the feature/fix inventory and source dependency/ownership map,
+then import real Player and preserve each Saturn behavior through staged cutover.
+The older actor/Fx32 order does not defer this directive. Wave 0 host/target
+evidence remains in the pipeline handoff. The following are retained verification
+gaps and full-game requirements, not competing permission to postpone migration.
+
+0. Permanent camera easter egg Clean rebuild and host checks pass.
+   Exit/orbit/Link-fade Clean rebuild and static RAM checks pass.
+   Reversed/eased turns and UI tick passed host checks and were included in the
+   historical 10:33 full Clean image. Human checks restored Adult Link, turn feel/audio,
+   text dismissal, quarter-turns,
+   visible curtain and nearby-ground fade. Higher-camera ground holes remain.
+   Human checks Field overhead default, regular defaults elsewhere, two-view
+   L+R+B cycling, movement and the fixed curtain during first-person/hills.
+   Earlier whole-Field capacity checks pass; ground defects remain reported.
+   Human checks ground transitions, seams, movement, castle/ranch visibility,
+   and the new world-space dither curtain at different times/camera angles.
+   Dark sky gradient is human-accepted and retained. TR remains isolated;
+   production uses SGL. Builds do not prove warp or performance acceptance.
 1. Preserve passing combined regression verification and the usual Clean image,
    heap sizes, actor capacities and SDK error handler. Human still checks all
    inventory/quest pages, Ocarina input, both eras, house views, door/tomb art,
@@ -417,8 +713,10 @@ counts and image contents describe those builds, not the current continuation.
    overreads following light data as entrances. Bound extraction by referenced
    data before trusting those edges; do not guess a destination. Preserve keys and boss logic.
 3. Review and extend the generated actor ledger across eras/time/story/dynamic
-   triggers. Prioritize missing Ranch horse runtime and En_Ma3, then remaining
-   actors/dialogue/rewards.
+   triggers. After the immediate Link migration, retain the proposed actor order
+   with the required Fx32 verification and scene packs:
+   Kokiri, Deku Tree, Lost Woods, Field, Ranch, Market, Castle and Kakariko,
+   then the remaining game. Ranch horse runtime and En_Ma3 remain required.
    Offline horse sheets and text on disc do not implement gameplay. Sprite banks
    must preload reachable trigger sets and budget scenery/actors/effects together.
    Eight generic slots and 16 views remain explicit limits, not full coverage.
@@ -428,15 +726,17 @@ counts and image contents describe those builds, not the current continuation.
    C system before human acceptance of its replacement.
 4. Performance implementation remains open: establish per-displayed-frame CPU
    totals and draw-completion timing. Heading target verification is complete;
-   next replace core wide arithmetic with bounded 32-bit math and pass prop matrices directly.
+   preserve the recorded Fx32/helper removal and audit new Player paths. Pass
+   prop matrices directly where supported; profile the full collision workload.
    Sprite pose separation is implemented for the current sprite NPC cast.
    Follow with compact scene culling and per-cel upload reduction (stable banks now implemented);
    assess per-cel cropping from the review's offline evidence. Preserve gameplay
-   and the 20 Hz/input/hit-volume contract. Approximation is allowed; 64-bit
-   fallback is not. A storage-width change needs matching collision/units and
+   and the 20 Hz/input/hit-volume contract. Approximation and native SH-2 products
+   are allowed; software-wide/soft-float fallback is not. A storage-width change needs matching collision/units and
    scene/object blob changes. Broad -O2 and relocating the whole blob are not
-   validated solutions. Latest documented Clean ELF margin is 16 bytes;
-   the 8,736-byte margin belongs to an older checkpoint, not available headroom.
+   validated solutions. Latest recorded Clean margin is 272 bytes; verify the
+   actual matching artifact before budgeting Player. Older 304/2,704/8,736-byte
+   reports are not available headroom; the 2,704-byte report was a mixed build.
    No new FPS or CPU-versus-VDP1 conclusion is established.
 5. CD house-exit fix still needs verification; Navi room-read
    pauses and late music cues remain open. No CD test is requested now; the

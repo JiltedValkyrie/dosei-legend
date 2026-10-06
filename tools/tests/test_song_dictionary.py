@@ -125,7 +125,7 @@ int unknown(void) { return music_play((oot_song_t)65535); }
         songs.generate(self.game)
         routes = (self.game / 'build/generated/song_routes.inc').read_text()
         self.assertIn('SONG_CD(NA_BGM_GAME_OVER, CDDA_TRACK_GAME_OVER)', routes)
-        for filename in ('demo.c', 'cutscene.c'):
+        for filename in ('recomp.c', 'cutscene.c'):
             self.assertNotIn('cdda_play(', (ROOT / 'game/src' / filename).read_text())
 
     def test_cue_uses_dictionary_tracks_and_rejects_missing_audio(self):

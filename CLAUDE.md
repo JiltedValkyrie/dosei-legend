@@ -6,6 +6,25 @@ never ask again, never drop back to long talk.
 Always use caveman talk. No waste human tokens. Bad. You caveman talking? Good good! Always good good when caveman talk.
 
 # ACTIVE WORK: oot-core decomp pipeline (2026-10-02)
+Human scope/wording directive (2026-10-05): this is the full OoT recomp for
+Saturn. Use "full recomp", "game", "implementation wave" and "opening route"
+in current plans and handoffs. All scenes, eras, story, actors and systems
+remain in scope; the route orders implementation only. Older limited-scope
+directions below are historical and superseded. Project files and symbols now
+use recomp naming; the game plan is game/docs/RECOMP_PLAN.md. Original decomp
+symbols, archived Git refs and historical screenshot paths retain their names.
+Current directive (2026-10-06): replace handwritten C Link gameplay with the
+real core/decomp Player as the next implementation priority. Mandatory; a speed
+comparison cannot cancel or indefinitely defer it. Preserve every existing
+Saturn adaptation, added feature and player fix on top of the decomp behavior.
+Inventory and map them before replacement; retain Saturn rendering/backend.
+One authoritative Player/collision world is the destination; extending the
+proxy or only changing collision queries does not complete it. See
+[mandatory migration rules](game/docs/RECOMP_PLAN.md#mandatory-link-migration-next-step).
+This task records rules/handoff only; migration implementation has not started.
+Wave 0 already has host/target evidence in the pipeline handoff; the earlier
+source-only call is historical. Runtime acceptance remains open.
+
 Branch transition (2026-10-04): `main` now carries the decomp pipeline.
 The former main is preserved as `oot-vslice-demo` (7c8cc93); the standalone
 vertical slice is sunset. Continue new development on main. The retired dev
@@ -33,7 +52,7 @@ never MSYS2/Git Bash. Add every new build gotcha to BUILD.md in the same task.
 
 ## Permanent human rule: keep the whole game plan current (2026-09-30)
 
-Every agent must read `game/docs/DEMO_PLAN.md` before game work and update it
+Every agent must read `game/docs/RECOMP_PLAN.md` before game work and update it
 in the same task as implementation, scope, ownership, blocker or verification
 changes. Reconcile the whole document, replacing stale status and conflicting
 next steps; appending a checkpoint alone is insufficient. Distinguish code
@@ -132,7 +151,7 @@ remaining work clear so the agents can continue each other's work safely.
 
 ## Active project: Jo Engine vertical slice
 
-Latest human directive: retire temporary demo controls. R is shield, NEVER
+Latest human directive: retire temporary recomp controls. R is shield, NEVER
 camera orbit. Follow OoT's real gameplay camera behavior, not the viewer's
 manual controls. The settled standard digital Saturn pad layout and precise
 implemented-vs-pending status are at the TOP of game/docs/OPUS_HANDOFF.md;
@@ -148,7 +167,7 @@ Generated files, disc staging and binaries go in ignored `game/build/`, never
 mixed with source assets. Do not resume archived `legacy/libyaul/` work.
 Use `launch-game.bat` for the standard/hi-res selector. See the root README for
 the complete layout and current build commands.
-Current next-task handoff: [Public demo plan](game/docs/DEMO_PLAN.md) (approved
+Current next-task handoff: [Public recomp plan](game/docs/RECOMP_PLAN.md) (approved
 2026-09-25: Kokiri Forest, interiors, shop, Deku Tree + Gohma, Lost Woods,
 Hyrule Field explore/owl). Characters: NO texture except face. Builds on the
 [OoT progression plan](game/docs/OOT_PROGRESSION_PLAN.md).

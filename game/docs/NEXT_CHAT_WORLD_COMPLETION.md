@@ -28,13 +28,13 @@ Level Select explicitly labels its existing R toggle ADULT LINK: NO/YES.
 Shared ground-shadow helper covers sprite NPCs/animals/cutscene cast, Link and
 native fairies with one untextured dithered quad. No-floor/offscreen/high-flight
 cases skip submission. Legacy mesh enemy/boss shadows remain outside this pass.
-41 focused host checks pass; final image evidence is in DEMO_PLAN.md.
+41 focused host checks pass; final image evidence is in RECOMP_PLAN.md.
 Human runtime appearance/FPS checks pending; no emulator launch or new commit.
 
 
 2026-10-04, main carries the oot-core checkpoint. Preserve shared work. This handoff records
 partial implementation and remaining work, not world/runtime acceptance. Read AGENTS.md,
-CLAUDE.md, DOSEI-LEGEND-BIBLE.md, DEMO_PLAN.md, OOT_CORE_PIPELINE_PLAN.md and
+CLAUDE.md, DOSEI-LEGEND-BIBLE.md, RECOMP_PLAN.md, OOT_CORE_PIPELINE_PLAN.md and
 ACTOR_SPRITE_ROLLOUT_PLAN.md first.
 
 New active human report: capped inventory owns all source slots but pause art
