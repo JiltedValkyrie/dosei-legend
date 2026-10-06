@@ -16,6 +16,13 @@ typedef struct OotSceneLayer {
     const void* actors;          /* decomp ActorEntry[] or NULL */
     unsigned short num_actors;
     unsigned short present;
+    unsigned short time;       /* baked Scene_CommandTimeSettings conversion */
+    unsigned char time_speed;
+    unsigned char time_flags;  /* bit 0 command exists; bit 1 sets time */
+    unsigned char room_type;
+    unsigned char behavior_flags; /* bit 0 command exists; bit 1 disables warp songs */
+    unsigned char sky_id, sky_config, sky_light, sky_flags;
+    unsigned char seq_id, nature_id, sound_flags;
 } OotSceneLayer;
 
 typedef struct OotSceneBlob {
