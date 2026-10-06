@@ -50,8 +50,14 @@ static unsigned int          c_release_consumed[4];
 static bool                  c_direction_held[4];
 static bool                 look_was_active;
 static bool                 view_look;
+static bool orbit_active;
+static int8_t orbit_direction;
+static bool orbit_b_claimed;
+void player_input_set_orbit(bool active) { orbit_active=active; }
 void player_input_set_view_look(bool active) { view_look = active; }
 static bool                 diagnostics_chord_held;
+static input_edge_t edge_camera_experiment;
+static volatile bool camera_experiment_held;
 
 static const uint16_t       c_direction_bit[4] = {
     CAMERA_UP, CAMERA_DOWN, CAMERA_LEFT, CAMERA_RIGHT
@@ -71,6 +77,7 @@ void player_input_reset(void)
     /* Run, not walk: this preserves the speed the slice already shipped. */
     move_mode = PLAYER_MOVE_RUN;
     dialogue_open = false;
+    orbit_active=false;orbit_direction=0;orbit_b_claimed=false;
     attack_release_produced = attack_release_consumed = 0;
     edge_jump = edge_interact = edge_attack =
         edge_recenter = (input_edge_t){0};
@@ -86,6 +93,8 @@ void player_input_reset(void)
     }
     look_was_active = view_look = false;
     diagnostics_chord_held = false;
+    edge_camera_experiment = (input_edge_t){0};
+    camera_experiment_held = false;
 }
 
 void player_input_sample(uint16_t held)
@@ -112,6 +121,23 @@ void player_input_sample_3d(uint16_t held, bool analog, uint8_t x, uint8_t y,
 void player_input_sample_pad(uint16_t held, bool analog, uint8_t x, uint8_t y)
 {
     unsigned int i;
+    const uint16_t chord = CAMERA_L | CAMERA_R | CAMERA_B;
+    bool pressed = !dialogue_open && (held & chord) == chord;
+    input_edge_sample(&edge_camera_experiment, pressed && !camera_experiment_held);
+    if (pressed) camera_experiment_held = true;
+    if (!(held & chord)) camera_experiment_held = false;
+    if (camera_experiment_held) {
+        held &= (uint16_t)~chord;
+        b_down = b_claimed = false;
+        b_ticks = 0;
+    }
+    if (!(held & CAMERA_B)) orbit_b_claimed=false;
+    if (orbit_active && !dialogue_open && !view_look && (held & CAMERA_Z)) {
+        if (!edge_recenter.held) orbit_direction=(held & CAMERA_B) ? -1 : 1;
+        /* Claim B until release, including when B was held before Z. */
+        if (held & CAMERA_B) orbit_b_claimed=true;
+    }
+    if (orbit_b_claimed) { held &= (uint16_t)~CAMERA_B; b_down=false; }
     input_edge_sample(&edge_jump, (held & jump_button) != 0);
     if (!dialogue_open) held &= (uint16_t)~jump_button;
     bool c_mode = analog || (held & CAMERA_C) != 0;
@@ -166,6 +192,7 @@ static int stick_radius(int x, int y)
 ** target button and is read on the movement path, so holding it strafes. */
 void player_input_step(bool in_gameplay, player_input_t *out)
 {
+    bool camera_experiment = input_edge_consume(&edge_camera_experiment);
     bool analog = analog_snapshot;
     uint16_t held = held_snapshot;
     uint16_t dpad = held & DPAD_MASK;
@@ -221,6 +248,8 @@ void player_input_step(bool in_gameplay, player_input_t *out)
     out->interact_held = false;
     out->diagnostics_toggled = false;
     out->camera_swap_toggled = false;
+    out->camera_experiment_toggled = false;
+    out->camera_orbit_turn = 0;
     out->map_toggled = false;
     out->cancel_pending = false;
     out->menu_dx = out->menu_dy = out->menu_page = 0;
@@ -233,6 +262,12 @@ void player_input_step(bool in_gameplay, player_input_t *out)
         /* Title input is discarded, not queued for the first gameplay step. */
         look_was_active = false;
         diagnostics_chord_held = false;
+        return;
+    }
+
+    if (!dialogue_open && (camera_experiment || camera_experiment_held)) {
+        out->camera_experiment_toggled = camera_experiment;
+        out->attack_held = false;
         return;
     }
 
@@ -366,6 +401,11 @@ void player_input_step(bool in_gameplay, player_input_t *out)
         out->look_exited = true;
     look_was_active = false;
 
+    if (orbit_active) {
+        if (recentered) out->camera_orbit_turn=orbit_direction;
+        recentered=false;
+        held &= (uint16_t)~CAMERA_Z;
+    }
     if (c_mode)
     {
         /* Literal direction mapping, and the D-pad is consumed: nothing here

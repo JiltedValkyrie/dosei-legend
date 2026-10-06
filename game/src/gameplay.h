@@ -10,7 +10,7 @@
 ** and its active hit window, the shield, and which grass has been cut.
 **
 ** Deliberately platform free, like player_input.c: no jo, no SGL, integers
-** only. demo.c owns the fixed step and the audio; this file owns the rules, so
+** only. recomp.c owns the fixed step and the audio; this file owns the rules, so
 ** the host tests drive the same code the Saturn runs.
 **
 ** Placement comes from build/generated/kokiri_actors.h. Grass and NPCs are the
@@ -28,7 +28,7 @@
 #define GP_GET_CONTAINER   32u
 #define GP_GET_CHEST_ITEM  64u
 
-/* Feedback raised during one step. demo.c turns these into sound; nothing in
+/* Feedback raised during one step. recomp.c turns these into sound; nothing in
 ** here plays audio, so a test can assert the event without a sound driver. */
 #define GP_EVENT_PICKUP     (1u << 0)   /* got an item: chest or purchase */
 #define GP_EVENT_SWING      (1u << 1)
@@ -49,13 +49,13 @@
 #define GP_EVENT_FOOTSTEP   (1u << 16)
 #define GP_EVENT_ROLL_VOICE (1u << 17)
 #define GP_EVENT_RUPEE      (1u << 18)
-/* The player chose SAVE in the pause menu. demo.c owns the device write, so
+/* The player chose SAVE in the pause menu. recomp.c owns the device write, so
 ** gameplay.c stays free of the SDK and the host tests can assert the intent
 ** without a backup cartridge. */
 #define GP_EVENT_SAVE       (1u << 19)
 #define GP_EVENT_SAVE_FAILED (1u << 20)
 /* A short L tap with no lock taken: recentre the camera behind Link. Raised
-** here rather than read straight off the pad in demo.c, because whether a
+** here rather than read straight off the pad in recomp.c, because whether a
 ** press recentres depends on whether it became a lock-on. */
 #define GP_EVENT_RECENTER   (1u << 21)
 /* Ledge climbs (Player_Action_80845668 / func_808389E8). CLIMB_END = the
@@ -63,7 +63,7 @@
 ** hop's NA_SE_VO_LI_SWORD_N. */
 #define GP_EVENT_CLIMB_END  (1u << 22)
 #define GP_EVENT_HOP_VOICE  (1u << 23)
-/* Mido stood aside (0x1033 closed): demo.c may play his walk-away. */
+/* Mido stood aside (0x1033 closed): recomp.c may play his walk-away. */
 #define GP_EVENT_MIDO_ASIDE (1u << 24)
 #define GP_EVENT_HURT       (1u << 25)   /* Link took damage */
 #define GP_EVENT_KNOCKDOWN  (1u << 26)   /* knockback large: Link falls */
@@ -172,7 +172,7 @@ enum { GP_SFX_SCRUB_UP, GP_SFX_SCRUB_DOWN, GP_SFX_SCRUB_THROW, GP_SFX_SCRUB_WALK
 #define GP_NUT_LIFE_STEPS       450
 /* Player_ActionHandler_10 (Z-targeted, outdoors): jump slash launches at
 ** speedXZ 5 / velocity.y 5; sidehop 8.5 / 3.5; backflip 6 / 5.8. Q8 source
-** units, as demo.c's air code expects. Phase 6 = jump slash in the air. */
+** units, as recomp.c's air code expects. Phase 6 = jump slash in the air. */
 #define GP_JUMP_SLASH_SPEED_Q8  1280
 #define GP_JUMP_SLASH_VY_Q8     1280
 #define GP_SIDEHOP_SPEED_Q8     2176
@@ -322,7 +322,7 @@ typedef struct
     bool        charge_committed;   /* actionVar2 = 1: release spins */
     uint8_t     charge_from;    /* attack that led into the charge */
     uint16_t    charge_q16;     /* unk_858 */
-    int32_t     lunge_q16;      /* forward speed a step, for demo.c */
+    int32_t     lunge_q16;      /* forward speed a step, for recomp.c */
     int32_t     lunge_decel_q16;    /* its step toward zero */
     bool        blade_bounced;  /* AT_BOUNCED on the blade this pass */
     bool        guard_pending;  /* shield AC_BOUNCED, read next step */
@@ -358,7 +358,7 @@ typedef struct
     uint16_t    boulder_rot;
     int32_t     boulder_x, boulder_y, boulder_z, boulder_speed, boulder_vy;
     /* Link hurt: steps of intangibility left; knockback heading/speed Q16
-    ** for demo.c to apply (speed decays there). */
+    ** for recomp.c to apply (speed decays there). */
     uint16_t    hurt_flash_phase;
     uint8_t     hurt_flash_timer;
     uint8_t     intangible;
@@ -413,7 +413,7 @@ bool gameplay_actor_message(uint16_t text_id);
 ** libm. Declared here so this file needs no SDK header. */
 uint16_t            gameplay_facing(int32_t dx, int32_t dz);
 
-/* True while a text box owns the input: demo.c must suppress movement, jump,
+/* True while a text box owns the input: recomp.c must suppress movement, jump,
 ** attack, guard and the walk/run toggle for as long as this holds. */
 bool                gameplay_is_talking(void);
 /* Current page's line count and one line, for the box renderer. */
@@ -422,7 +422,7 @@ bool gameplay_page_more(void);
 const char         *gameplay_page_line(unsigned int line);
 const char         *gameplay_speaker_name(void);
 
-/* Pause inventory. While paused the world is frozen: demo.c must not step
+/* Pause inventory. While paused the world is frozen: recomp.c must not step
 ** locomotion, camera easing, gravity or any action. */
 bool                gameplay_is_paused(void);
 /* True when either the pause menu or a text box owns the pad. */
@@ -445,12 +445,12 @@ void                gameplay_step(const gameplay_input_t *in);
 void                gameplay_land(int32_t fell, bool rolled);
 void                gameplay_void_out(void);
 void                gameplay_void_respawned(void);
-/* The death clip ended (demo.c): the Game Over menu may start. */
+/* The death clip ended (recomp.c): the Game Over menu may start. */
 void                gameplay_death_anim_done(void);
 /* kokiri_npcs index of the locked actor, -1 when none or not an NPC. */
 int                 gameplay_target_npc(void);
 bool                gameplay_grass_cut(unsigned int index);
-/* Platform hooks for the held weapon (demo.c on Saturn; stubs in host tests).
+/* Platform hooks for the held weapon (recomp.c on Saturn; stubs in host tests).
 ** Base/tip in world units, y = Link's feet frame, from the last posed left
 ** hand.  A Deku Stick uses its own source attachment, not the sword line.
 ** False: no pose; the sector stand-in is used.

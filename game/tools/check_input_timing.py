@@ -15,7 +15,7 @@ import tempfile
 
 def main():
     root = pathlib.Path(__file__).resolve().parents[1]
-    source = (root / 'src/demo.c').read_text()
+    source = (root / 'src/recomp.c').read_text()
     lag = re.search(r'^#define FOLLOW_LAG\s+(\d+)', source, re.M)[1]
     function = re.search(
         r'static int32_t follow_approach\([^}]+\n}', source)[0]

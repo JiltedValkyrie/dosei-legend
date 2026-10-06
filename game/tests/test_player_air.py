@@ -200,7 +200,7 @@ class PlayerAir(unittest.TestCase):
 
     # ---- walking off a real edge: collision + rules together ----
     def run_off(self, triangles, start, heading, speed_q8, steps=120):
-        """Mirror of demo.c's step order around a departure."""
+        """Mirror of recomp.c's step order around a departure."""
         tris = (Triangle * len(triangles))(*triangles)
         self.lib.kokiri_collision_init(tris, len(triangles))
         link = Vec(*start)

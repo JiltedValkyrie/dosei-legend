@@ -426,6 +426,15 @@ def main():
         scene = segments[entry['prefix'] + '_scene']
         surfaces = source.collision_surfaces(scene)
         collision = source.collision_data(scene)
+        if entry['prefix'] == 'spot00':
+            # Local Field retopology: same welded surface as the STM floor.
+            from field_retopo import patch_collision, record
+            from layout_variants import build_document
+            document = build_document()
+            collision, retopo = patch_collision(collision, 'spot00', document)
+            record('col', document)
+            if retopo:
+                print('retopo collision:', retopo, flush=True)
         (args.cd / asset_names.scene_asset(index, 'COL')).write_bytes(
             collision_file(collision, transitions(
                 args.oot, args.rom_dir, prefix=entry['prefix'], room_count=entry['rooms'],

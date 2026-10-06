@@ -15,7 +15,7 @@ void kokiri_camera_sincos(uint16_t yaw, int32_t *sine, int32_t *cosine)
     *cosine = (int32_t)(cos(radians) * 65536);
 }
 
-/* Same basis as demo_camera.c's Saturn version: atan2(dx, dz). */
+/* Same basis as recomp_camera.c's Saturn version: atan2(dx, dz). */
 uint16_t kokiri_camera_facing(int32_t dx, int32_t dz)
 {
     double a = atan2((double)dx, (double)dz) * 65536.0 / 6.283185307179586;
@@ -79,6 +79,8 @@ int control_jump(void) { return mapped.jump; }
 int control_recenter(void) { return mapped.recenter; }
 int control_interact(void) { return mapped.interact_pending; }
 int control_cancel(void)   { return mapped.cancel_pending; }
+int control_camera_experiment(void) { return mapped.camera_experiment_toggled; }
+int control_map_toggle(void) { return mapped.map_toggled; }
 int control_menu_step(void){ return mapped.menu_step; }
 int control_attack(void) { return mapped.attack_pending; }
 int control_attack_held(void) { return mapped.attack_held; }
@@ -129,3 +131,4 @@ int control_motion_speed(void) {
     uint16_t heading; int32_t speed;
     return player_input_motion(&mapped, 0, &heading, &speed) ? speed : 0;
 }
+int control_orbit_turn(void) { return mapped.camera_orbit_turn; }

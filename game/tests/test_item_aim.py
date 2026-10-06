@@ -1,4 +1,4 @@
-"""Compile the actual demo aim routing and projection blocks with host state."""
+"""Compile the actual recomp aim routing and projection blocks with host state."""
 import ctypes as C
 import math
 import os
@@ -16,14 +16,14 @@ class ItemAim(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.tmp = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
-        demo = (ROOT/'src/demo.c').read_text()
-        latch = demo[demo.index('    cancel_pending = cancel_pending || input.cancel_pending'):]
+        recomp = (ROOT/'src/recomp.c').read_text()
+        latch = recomp[recomp.index('    cancel_pending = cancel_pending || input.cancel_pending'):]
         latch = latch[:latch.index('    if (input.menu_step)')]
-        route = demo[demo.index('                if (input.look_mode) {', demo.index('gameplay_input_t action = {0};')):]
+        route = recomp[recomp.index('                if (input.look_mode) {', recomp.index('gameplay_input_t action = {0};')):]
         route = route[:route.index('                if (!gameplay_blocks_world() && !action.pause &&')]
-        projection = demo[demo.index('static int project_attention('):]
+        projection = recomp[recomp.index('static int project_attention('):]
         projection = projection[:projection.index('\nbool attention_on_screen')]
-        source = r'''
+        source = '#include "%s"\n' % (ROOT.parent / 'shared/lib/collision/div32.h').as_posix() + r'''
 #include <math.h>
 #include <string.h>
 #include "gameplay.h"
@@ -31,8 +31,8 @@ class ItemAim(unittest.TestCase):
 #include "player_input.h"
 gameplay_t gameplay; save_state_t save_state;
 static unsigned item_aim,c_use; static bool view_first_person,cancel_pending,interact_pending,pause_pending;
-static unsigned short demo_link_yaw,demo_yaw; static int demo_pitch;
-static struct {int x,y,z;} demo_camera;
+static unsigned short recomp_link_yaw,recomp_yaw; static int recomp_pitch;
+static struct {int x,y,z;} recomp_camera;
 static struct {int look_pitch,look_yaw;} link_follow;
 static bool fp_camera_done; static int fp_steps;
 static void first_person_camera_step(const player_input_t *in){(void)in;++fp_steps;}
@@ -43,11 +43,11 @@ bool gameplay_blocks_world(void){return gameplay.paused || gameplay.talking;}
 static void snap_camera_to_link(void){}
 static void oot_follow_look_exit(void *p){(void)p;link_follow.look_pitch=link_follow.look_yaw=0;}
 static void oot_follow_look(void *p,int x,int y){(void)p;(void)x;(void)y;}
-static int demo_screen_distance(void){return 160;}
+static int recomp_screen_distance(void){return 160;}
 void kokiri_camera_sincos(uint16_t a,int32_t *s,int32_t *c){*s=lround(sin(a*6.28318530718/65536)*65536);*c=lround(cos(a*6.28318530718/65536)*65536);}
 void reset(void){memset(&gameplay,0,sizeof(gameplay));memset(&save_state,0,sizeof(save_state));
 save_state.slingshot=1;save_state.ammo_seeds=10;save_state.c_items[0]=2;
-item_aim=0;view_first_person=false;cancel_pending=false;pause_pending=false;demo_link_yaw=0;}
+item_aim=0;view_first_person=false;cancel_pending=false;pause_pending=false;recomp_link_yaw=0;}
 int aiming(void){return item_aim && view_first_person;}
 int route(int press,int cancel,int target,int pause){
 player_input_t input={0};gameplay_input_t action={0};
@@ -59,8 +59,8 @@ action.c_use=press;action.target_held=target;
 last_pitch=action.item_pitch;last_eye=action.item_from_eye;return action.c_use;
 }
 ''' + projection + r'''
-int screen(int x,int y,int z,int pitch,int axis){int32_t p[3]={x,y,z},sx,sy;demo_pitch=pitch;project_attention(p,&sx,&sy);return axis?sy:sx;}
-int screen_pose(int x,int y,int z,int yaw,int pitch,int axis){demo_yaw=yaw;return screen(x,y,z,pitch,axis);}
+int screen(int x,int y,int z,int pitch,int axis){int32_t p[3]={x,y,z},sx,sy;recomp_pitch=pitch;project_attention(p,&sx,&sy);return axis?sy:sx;}
+int screen_pose(int x,int y,int z,int yaw,int pitch,int axis){recomp_yaw=yaw;return screen(x,y,z,pitch,axis);}
 '''
         out = Path(cls.tmp.name)/'aim.dll'
         env = dict(os.environ, PATH=str(GCC.parent)+os.pathsep+os.environ.get('PATH',''))

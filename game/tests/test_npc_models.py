@@ -1,86 +1,17 @@
-﻿"""Check imported topology, per-frame head bases and the target integer pose math."""
+﻿"""Check the target integer NPC pose math."""
 import ctypes
-import json
 import math
 import os
 from pathlib import Path
-import struct
 import subprocess
 import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
-MODELS = ROOT / 'build/generated/npcs'
 GCC = Path('C:/msys64/mingw64/bin/gcc.exe')
 
 
 class NpcModels(unittest.TestCase):
-    def test_greeting_clips_share_idle_vertex_and_material_order(self):
-        idle = (MODELS / 'NPC01.BIN').read_bytes()
-        header = struct.unpack_from('>8I', idle)
-        for model in (16, 17, 18):
-            data = (MODELS / ('NPC%02d.BIN' % model)).read_bytes()
-            self.assertEqual(struct.unpack_from('>8I', data), header)
-            # Positions change; indices and texture records must not. Runtime
-            # swaps only ANM/TRK and retains the idle polygons and VDP1 bank.
-            self.assertEqual(data[header[5]:], idle[header[5]:])
-
-    def test_every_child_model_has_complete_motion_and_tracking(self):
-        manifest = json.loads((MODELS / 'manifest.json').read_text())
-        self.assertEqual([r['model'] for r in manifest], list(range(19)))
-        # 16-18 are Saria's greeting-cutscene poses. EnSa_HandleCutscene indexes
-        # sAnimationInfo1 with the actor cue id, so these three must be exactly
-        # the clips cues 1, 2 and 3 of gKokiriForestSariaGreetingCs name -- a
-        # wrong clip here plays a wrong-looking greeting rather than failing.
-        # Cue 4 is model 1's own gSariaWaitArmsToSideAnim, so there is
-        # deliberately no fourth model.
-        greeting = {r['model']: r['clip'] for r in manifest if r['model'] >= 16}
-        self.assertEqual(greeting, {16: 'gSariaLookUpArmExtendedAnim',
-                                    17: 'gSariaWaveAnim',
-                                    18: 'gSariaRunAnim'})
-        for row in manifest:
-            if row['model'] >= 16:
-                self.assertEqual(row['object'], 'object_sa')
-        for row in manifest:
-            with self.subTest(model=row['model']):
-                stem = MODELS / ('NPC%02d' % row['model'])
-                mesh = stem.with_suffix('.BIN').read_bytes()
-                motion = stem.with_suffix('.ANM').read_bytes()
-                tracking = stem.with_suffix('.TRK').read_bytes()
-                magic, version, vertices, faces, vo, ro, to, tb = struct.unpack_from('>4s7I', mesh)
-                self.assertEqual((magic, version), (b'KFR1', 2))
-                self.assertEqual((vertices, faces), (row['vertices'], row['faces']))
-                self.assertEqual(len(mesh), to + tb)
-                for i in range(faces):
-                    indices = struct.unpack_from('>4H', mesh, ro + 20*i)
-                    self.assertLess(max(indices), vertices)
-                magic, av, poses, ticks = struct.unpack_from('>4s3I', motion)
-                self.assertEqual((magic, av), (b'CVA1', vertices))
-                self.assertEqual(len(motion), 16 + ticks*2 + poses*vertices*6)
-                self.assertLess(max(struct.unpack_from('>%dH' % ticks, motion, 16)), poses)
-                magic, tv, tt, pivot = struct.unpack_from('>4s3I', tracking)
-                self.assertEqual((magic, tv, tt), (b'NTR2', vertices, ticks))
-                # The head pivot is the skeleton's, not the clip's: Saria's
-                # greeting models share object_sa with model 1 and so share
-                # its pivot height.
-                self.assertEqual(pivot, 576 if row['object'] == 'object_sa' else 768)
-                flags = tracking[16:16+vertices]
-                self.assertEqual(sum(f & 1 for f in flags), row['head_vertices'])
-                self.assertEqual(sum(f >> 1 & 1 for f in flags), row['torso_vertices'])
-                self.assertLessEqual(max(flags), 3)
-                self.assertGreater(row['head_vertices'], 0)
-                # Head sits inside the torso subtree; legs stay outside it.
-                self.assertTrue(all(f & 2 for f in flags if f & 1))
-                self.assertLess(row['torso_vertices'], vertices)
-                start = 16 + ((vertices + 3) & ~3)
-                self.assertEqual(len(tracking), start + ticks*54)
-                for frame in range(ticks):
-                    for at in (0, 30):
-                        basis = struct.unpack_from('>9h', tracking, start + frame*54 + at)
-                        for axis in range(3):
-                            self.assertAlmostEqual(sum((v / 16384)**2 for v in basis[axis*3:axis*3+3]),
-                                                   1, delta=.0002)
-
     @classmethod
     def setUpClass(cls):
         cls.folder = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)

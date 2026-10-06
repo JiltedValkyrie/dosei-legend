@@ -118,7 +118,7 @@ class Navi(unittest.TestCase):
                    abs(self.lib.navi_z() - z))
 
     def test_spawns_over_the_focus_point(self):
-        """demo.c hands over Link's focus.pos (link_anim_focus); she hovers
+        """recomp.c hands over Link's focus.pos (link_anim_focus); she hovers
         lockOnArrowOffset 500 x 0.01 = 5 plus 1500 x 0.008 = 12 above it,
         +-5 for the vertical orbit."""
         focus = (1000, 560, -200)

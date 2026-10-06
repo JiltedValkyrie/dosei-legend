@@ -5,10 +5,10 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'tools'))
-from build_demo_assets import rgb555, main
+from build_recomp_assets import rgb555, main
 from build_sgl_scene import read_scene
 
-class DemoAssets(unittest.TestCase):
+class RecompAssets(unittest.TestCase):
     def test_color_key_and_channels(self):
         self.assertEqual(rgb555((0, 0, 0)), 0)
         self.assertEqual(rgb555((255, 0, 0)), 0x801f)

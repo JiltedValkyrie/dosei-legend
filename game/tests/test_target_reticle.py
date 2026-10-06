@@ -6,7 +6,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'tools'))
-from build_demo_assets import build_lock_reticle_corner, rgb555
+from build_recomp_assets import build_lock_reticle_corner, rgb555
 
 
 class TargetReticleTests(unittest.TestCase):
@@ -27,7 +27,7 @@ class TargetReticleTests(unittest.TestCase):
 
     def test_target_ui_uses_reticle_not_dialogue_glyphs(self):
         main = (ROOT / 'src/main.c').read_text(encoding='utf-8')
-        block = main[main.index('if (demo_slingshot_aiming())'):main.index('kokiri_rupee_hud_draw()', main.index('if (demo_slingshot_aiming())'))]
+        block = main[main.index('if (recomp_slingshot_aiming())'):main.index('kokiri_rupee_hud_draw()', main.index('if (recomp_slingshot_aiming())'))]
         # Slingshot aim: VDP2 text crosshair at screen centre (human 2026-10-01).
         self.assertIn('jo_printf(20, 15, "+")', block)
         self.assertIn('kokiri_lock_reticle_draw(x,y,kind)', block)
@@ -45,7 +45,7 @@ class TargetReticleTests(unittest.TestCase):
         self.assertIn('slZdspLevel(KOKIRI_ZDSP_LEVEL);', main)
         body = source[source.index('int                 kokiri_hud_depth'):]
         body = body[:body.index('}') + 1]
-        self.assertIn('demo_screen_distance() >> KOKIRI_ZDSP_LEVEL', body)
+        self.assertIn('recomp_screen_distance() >> KOKIRI_ZDSP_LEVEL', body)
         for path in ('src/kokiri_sgl.c', 'src/minimap.c', 'src/npc_draw.c'):
             text = (ROOT / path).read_text(encoding='utf-8')
             self.assertNotIn('pos[2] = 31 * 65536', text, path)

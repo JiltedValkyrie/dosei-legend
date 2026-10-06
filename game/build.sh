@@ -133,9 +133,9 @@ fi
 "$python" "$here/tools/build_scene_table.py" --oot "$oot" --rom-dir "$roms"
 "$python" "$here/tools/build_area_music.py" --oot "$oot"
 cp "$here"/build/generated/owl/OWL*.BIN "$here"/build/generated/owl/OWL*.ANM "$here/build/cd/"
-"$python" "$here/tools/build_npc_models.py" --oot "$oot" --rom-dir "$roms"
+# NPCs ship as sprites only: no mesh NPC BIN/ANM/TRK/SKN build.
 "$python" "$here/tools/build_npc_sprites.py" --oot "$oot" --rom-dir "$roms"   # NPC sprite sheets (Clean)
-cp "$here"/build/generated/npcs/NPC*.BIN "$here"/build/generated/npcs/NPC*.ANM "$here"/build/generated/npcs/NPC*.TRK "$here"/build/generated/npcs/NPC*.SKN "$here"/build/generated/npcs/NPC*.SPR "$here/build/cd/"
+cp "$here"/build/generated/npcs/NPC*.SPR "$here/build/cd/"
 # Surface bits now live inside S<n>.COL (KBG2); drop the retired .SUR files.
 rm -f "$here"/build/cd/S*.SUR
 "$python" "$here/tools/build_scene_backdrops.py" --oot "$oot" --rom-dir "$roms"
@@ -151,7 +151,7 @@ rm -f "$here"/build/cd/S*.SUR
 "$python" "$here/tools/song_dictionary.py"
 "$python" "$here/tools/build_action_audio.py" --oot "$oot"
 "$python" "$here/tools/build_opening_audio.py" --oot "$oot"
-"$python" "$here/tools/build_demo_assets.py" --oot "$oot"
+"$python" "$here/tools/build_recomp_assets.py" --oot "$oot"
 "$python" "$here/tools/build_fairy.py" --oot "$oot"
 # En_Karebaba flat model (M2d.2) -> build/cd/DEKUBABA.BIN
 "$python" "$here/tools/build_dekubaba.py" --oot "$oot" --rom-dir "$roms"
@@ -224,7 +224,14 @@ done
 cd "$here"
 "$python" "$here/tools/check_disc_directory.py"
 "$python" "$here/tools/check_forest_budget.py"
+# Field floor (STM) and C collision (COL) must come from one retopo bundle.
+"$python" "$here/tools/field_retopo.py" --check-pairing stm,col
 fi  # quick
+# Small colour tables derive from the staged geometry and original sky images.
+# Run for quick builds too: they use the same preserved room banks.
+"$python" "$here/tools/build_environment_sky.py" --oot "$oot" \
+    --cd "$here/build/cd" --scene-table "$here/build/generated/scene_table.json" \
+    --out "$here/build/generated"
 # oot-core (fork Phase 0): `./build.sh OOT_CORE=1` mirrors the decomp first.
 # Without it, drop a stale OOTCORE.BIN so it never ships on a normal disc.
 oot_core=0
@@ -233,6 +240,8 @@ for arg in "$@"; do
 done
 if [ "$oot_core" = 1 ]; then
     "$python" "$here/tools/oot_core_import.py" --oot "$oot"
+    # oot-core scene collision (SA.OOC) must match the Field STM/COL bundle.
+    "$python" "$here/tools/field_retopo.py" --check-pairing stm,col,ooc
     # Phase 2 draw shim meshes (K/Q*.MSH) + build/oot-core/generic_meshes.h.
     "$python" "$here/tools/build_core_meshes.py" --oot "$oot" --rom-dir "$roms"
     # Sprite NPCs have no runtime skin models or limb draw registry.

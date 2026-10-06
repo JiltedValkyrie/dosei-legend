@@ -5,7 +5,7 @@
 /*
 ** Which screen the game is on, and which screen it is allowed to reach next.
 **
-** This replaces the pair of booleans demo.c used to carry (`title_visible`,
+** This replaces the pair of booleans recomp.c used to carry (`title_visible`,
 ** `file_select_visible`). Two booleans describe four states, three of which
 ** were meaningful and one of which -- both set -- was nonsense that nothing
 ** prevented. The opening cutscene adds enough states (a cutscene that owns the

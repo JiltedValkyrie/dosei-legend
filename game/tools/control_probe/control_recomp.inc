@@ -1,4 +1,7 @@
-/* Included by demo.c: use the existing level-select/spawn and pad paths. */
+/* Included by recomp.c: use the existing level-select/spawn and pad paths. */
+/* Read-only telemetry, found by symbol in the exact diagnostic ELF. Keeping
+ * this out of the command mailbox preserves the existing trace wire layout. */
+static volatile uint32_t control_environment[6];
 static void __attribute__((optimize("Os"))) control_begin(void)
 {
     volatile control_mailbox_t *m = CONTROL;
@@ -27,21 +30,21 @@ static void __attribute__((optimize("Os"))) control_begin(void)
             /* Reinitialize movement state before positioning; y is FEET. */
             place_at_spawn(SCENE_SPOT00, 0);
             gameplay_reset();
-            demo_link.x = m->pose[0];
-            demo_link.y = m->pose[1] + DEMO_LINK_EYE_HEIGHT;
-            demo_link.z = m->pose[2];
-            demo_link_yaw = (uint16_t)m->pose[3];
-            link_safe_position = demo_link;
-            link_fall_peak_y = demo_link.y;
+            recomp_link.x = m->pose[0];
+            recomp_link.y = m->pose[1] + RECOMP_LINK_EYE_HEIGHT;
+            recomp_link.z = m->pose[2];
+            recomp_link_yaw = (uint16_t)m->pose[3];
+            link_safe_position = recomp_link;
+            link_fall_peak_y = recomp_link.y;
             link_anim_pose(LINK_CLIP_IDLE, 0, 0);
             player_input_reset();
             oot_follow_set_legacy(m->legacy != 0);
             snap_camera_to_link();
-            demo_camera.x = m->camera[0];
-            demo_camera.y = m->camera[1];
-            demo_camera.z = m->camera[2];
-            demo_yaw = (uint16_t)m->camera[3];
-            demo_pitch = m->camera[4];
+            recomp_camera.x = m->camera[0];
+            recomp_camera.y = m->camera[1];
+            recomp_camera.z = m->camera[2];
+            recomp_yaw = (uint16_t)m->camera[3];
+            recomp_pitch = m->camera[4];
             m->remaining = 0;
         } else if (m->opcode == 2 && m->steps <= 600) {
             m->remaining = m->steps;
@@ -50,6 +53,11 @@ static void __attribute__((optimize("Os"))) control_begin(void)
             snap_camera_to_link();
         } else if (m->opcode == 4) {
             m->remaining = 0;
+        } else if (m->opcode == 5 && (unsigned)m->pose[0] <= 65535u &&
+                   (unsigned)m->pose[1] <= 65535u) {
+            save_state.day_time = (uint16_t)m->pose[0];
+            oot_core_clock_reset((unsigned)m->pose[1]);
+            m->remaining = 0;
         } else m->error = 2;
         m->ack = m->request;
     }
@@ -57,6 +65,9 @@ static void __attribute__((optimize("Os"))) control_begin(void)
      * exactly one normal 30 Hz update, irrespective of emulator/host speed. */
     if (m->remaining) {
         --m->remaining; ++m->sim_steps; ticks += 2;
+        /* Start has its own edge latch outside player_input. Match VBlank's
+         * normal producer so the probe can exercise the real pause path. */
+        input_edge_sample(&start_edge, (m->buttons & CAMERA_START) != 0);
         player_input_sample_pad((uint16_t)m->buttons, true,
                                 (uint8_t)m->axis_x, (uint8_t)m->axis_y);
     }
@@ -65,13 +76,19 @@ static void __attribute__((optimize("Os"))) control_begin(void)
 static void control_end(void)
 {
     volatile control_mailbox_t *m = CONTROL;
-    m->link_now[0] = demo_link.x;
-    m->link_now[1] = demo_link.y - DEMO_LINK_EYE_HEIGHT;
-    m->link_now[2] = demo_link.z;
-    m->link_now[3] = demo_link_yaw;
-    m->camera_now[0] = demo_camera.x;
-    m->camera_now[1] = demo_camera.y;
-    m->camera_now[2] = demo_camera.z;
-    m->camera_now[3] = demo_yaw;
-    m->camera_now[4] = demo_pitch;
+    control_environment[0] = save_state.day_time;
+    control_environment[1] = oot_core_skybox_time();
+    control_environment[2] = gameplay_is_paused();
+    control_environment[3] = game_mode();
+    control_environment[4] = save_state.total_days;
+    control_environment[5] = save_state.bgs_day_count;
+    m->link_now[0] = recomp_link.x;
+    m->link_now[1] = recomp_link.y - RECOMP_LINK_EYE_HEIGHT;
+    m->link_now[2] = recomp_link.z;
+    m->link_now[3] = recomp_link_yaw;
+    m->camera_now[0] = recomp_camera.x;
+    m->camera_now[1] = recomp_camera.y;
+    m->camera_now[2] = recomp_camera.z;
+    m->camera_now[3] = recomp_yaw;
+    m->camera_now[4] = recomp_pitch;
 }

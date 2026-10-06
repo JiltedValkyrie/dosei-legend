@@ -17,9 +17,9 @@ class Presentation(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.tmp=tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
-        demo=(ROOT/'src/demo.c').read_text(encoding='utf-8')
+        recomp=(ROOT/'src/recomp.c').read_text(encoding='utf-8')
         draw=(ROOT/'src/kokiri_sgl.c').read_text(encoding='utf-8')
-        freeze=demo[demo.index('    if(frozen_fanfare) {'):demo.index('    jo_img patch;',demo.index('    if(frozen_fanfare) {'))]
+        freeze=recomp[recomp.index('    if(frozen_fanfare) {'):recomp.index('    jo_img patch;',recomp.index('    if(frozen_fanfare) {'))]
         source=r'''#include <stdbool.h>
 #include <stdint.h>
 #include <string.h>
@@ -37,7 +37,7 @@ void player_input_reset(void){}
 void combat_input_cancel(void *p){(void)p;}
 void chest_scene_step(void){++camera_steps;}
 void snap_camera_to_link(void){++restored;}
-''' + function(demo,'bool demo_chest_opening(void)') + function(demo,'unsigned demo_chest_frame(void)') + r'''
+''' + function(recomp,'bool recomp_chest_opening(void)') + function(recomp,'unsigned recomp_chest_frame(void)') + r'''
 void advance(unsigned now,int playing){ticks=now;busy=playing;
 ''' + freeze + r'''
 }
@@ -59,22 +59,22 @@ unsigned draw_test(unsigned level,unsigned accepts,unsigned field){ATTR a={0x100
         env=dict(os.environ,PATH=str(GCC.parent)+os.pathsep+os.environ.get('PATH',''))
         subprocess.run([str(GCC),'-shared','-O2','-x','c','-','-o',str(out)],input=source,text=True,check=True,env=env)
         cls.lib=C.CDLL(str(out))
-        cls.lib.demo_chest_opening.restype=C.c_bool
+        cls.lib.recomp_chest_opening.restype=C.c_bool
     @classmethod
     def tearDownClass(cls):cls.tmp.cleanup()
     def test_chest_pose_waits_for_song_then_queues_item_once_and_releases(self):
         g=self.lib;g.reset_chest();g.advance(120,1)
-        self.assertTrue(g.demo_chest_opening());self.assertEqual(g.demo_chest_frame(),40)
+        self.assertTrue(g.recomp_chest_opening());self.assertEqual(g.recomp_chest_frame(),40)
         self.assertEqual(g.state(1),0)
         g.advance(520,0)
-        self.assertFalse(g.demo_chest_opening());self.assertEqual(g.demo_chest_frame(),132)
+        self.assertFalse(g.recomp_chest_opening());self.assertEqual(g.recomp_chest_frame(),132)
         self.assertEqual(g.state(1),34);self.assertEqual(g.state(2),1)
         g.advance(580,1);self.assertEqual(g.state(3),30)
         self.assertTrue(g.state(0))
         g.advance(760,0);self.assertFalse(g.state(0));self.assertEqual(g.state(4),760)
     def test_failed_cd_start_still_runs_opening_animation_before_item(self):
         g=self.lib;g.reset_chest();g.advance(3,0)
-        self.assertTrue(g.demo_chest_opening());self.assertEqual(g.state(1),0)
+        self.assertTrue(g.recomp_chest_opening());self.assertEqual(g.state(1),0)
         g.advance(396,0);self.assertEqual(g.state(1),34)
     def test_tint_table_address_and_attributes_restored_even_when_rejected(self):
         g=self.lib

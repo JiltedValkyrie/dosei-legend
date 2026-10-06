@@ -27,7 +27,7 @@
 ** False if a load fails. Collision, textures and actor storage may already be
 ** replaced; callers must reload a valid scene before resuming gameplay.
 **
-** Deliberately does NOT touch the save. demo_init() stages the forest here
+** Deliberately does NOT touch the save. recomp_init() stages the forest here
 ** just to give the title's attract flight some collision to fly over, which
 ** is not "the player is in the forest"; recording the player's position is
 ** the caller's job, at the point they actually arrive somewhere. */

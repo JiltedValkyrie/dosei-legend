@@ -37,8 +37,8 @@ class SceneRoomType(unittest.TestCase):
         for scene in (4, 5, 6, 7, 8, 9):
             self.assertTrue(self.lib.indoors(scene), scene)
 
-    def test_demo_gates_evade_on_room_type_not_forest(self):
-        text = (ROOT / 'src/demo.c').read_text()
+    def test_recomp_gates_evade_on_room_type_not_forest(self):
+        text = (ROOT / 'src/recomp.c').read_text()
         self.assertIn('!scene_room_indoors(save_state.scene_id) && evade_floor_ok()', text)
         self.assertNotIn('save_state.scene_id == SAVE_SCENE_KOKIRI_FOREST && evade_floor_ok()', text)
 

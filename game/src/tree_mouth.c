@@ -6,7 +6,7 @@
 #include "kokiri_collision.h"
 #include <jo/jo.h>
 #include "kokiri_sgl.h"
-#include "demo.h"
+#include "recomp.h"
 #include "gameplay.h"
 #include "save_state.h"
 #include "cutscene.h"
@@ -28,7 +28,7 @@ void tree_mouth_reset(void) {
     actor_kill(actor_resolve(handle));handle=0;slot=BG_NONE;opening=false;
 }
 void tree_mouth_step(void) {
-    actor_t *a;bg_vec_t p;unsigned tick=demo_clock(),delta=tick-last_tick;last_tick=tick;
+    actor_t *a;bg_vec_t p;unsigned tick=recomp_clock(),delta=tick-last_tick;last_tick=tick;
     if(cutscene_is_playing() && !cutscene_is_in_scene())return;
     if(save_state.scene_id!=SAVE_SCENE_KOKIRI_FOREST || kokiri_scene_room()!=1) {
         if(handle)tree_mouth_reset();return;
@@ -44,8 +44,8 @@ void tree_mouth_step(void) {
         if(slot>=BG_DYNA_MAX)jo_core_error("Tree mouth collision pool exhausted");
     }
     if(cutscene_is_playing() && cutscene_id()==CUTSCENE_TREE_MEETING) {
-        demo_link.x=cutscene_link_x();demo_link.y=cutscene_link_y()+DEMO_LINK_EYE_HEIGHT;
-        demo_link.z=cutscene_link_z();demo_link_yaw=cutscene_link_yaw();
+        recomp_link.x=cutscene_link_x();recomp_link.y=cutscene_link_y()+RECOMP_LINK_EYE_HEIGHT;
+        recomp_link.z=cutscene_link_z();recomp_link_yaw=cutscene_link_yaw();
     }
     if(cutscene_is_playing() && cutscene_id()==CUTSCENE_TREE_OPEN) {
         if(cutscene_frame()<20)progress=0;
@@ -61,7 +61,7 @@ void tree_mouth_step(void) {
     if(cutscene_is_playing() || gameplay_blocks_world())return;
     if(save_get_event_chk_inf(EVENTCHKINF_DEKU_TREE_MOUTH_OPEN)) {a->flags&=~ACTOR_FLAG_TARGETABLE;return;}
     {
-        int32_t dx=demo_link.x-a->x,dy=demo_link.y-DEMO_LINK_EYE_HEIGHT-a->y,dz=demo_link.z-a->z;
+        int32_t dx=recomp_link.x-a->x,dy=recomp_link.y-RECOMP_LINK_EYE_HEIGHT-a->y,dz=recomp_link.z-a->z;
         int turn=(int16_t)collide_heading(dx,dz);
         bool met=save_get_event_chk_inf(EVENTCHKINF_MET_DEKU_TREE);
         if(turn<0)turn=-turn;
@@ -78,10 +78,10 @@ void tree_mouth_step(void) {
 void tree_mouth_prepare_choice(void) {
     int32_t x,y,z,dx,dy,dz;int turn;
     tree_mouth_position(&x,&y,&z);
-    dx=demo_link.x-x;dy=demo_link.y-DEMO_LINK_EYE_HEIGHT-y;dz=demo_link.z-z;
+    dx=recomp_link.x-x;dy=recomp_link.y-RECOMP_LINK_EYE_HEIGHT-y;dz=recomp_link.z-z;
     if(dx<-350 || dx>350 || dy<-350 || dy>350 || dz<-350 || dz>350)return;
     turn=(int16_t)collide_heading(dx,dz);if(turn<0)turn=-turn;
     if(dx*dx+dy*dy+dz*dz<350*350 && turn<0x7530) {
-        demo_link.x=3827;demo_link.y=-161+DEMO_LINK_EYE_HEIGHT;demo_link.z=-1142;
+        recomp_link.x=3827;recomp_link.y=-161+RECOMP_LINK_EYE_HEIGHT;recomp_link.z=-1142;
     }
 }

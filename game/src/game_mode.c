@@ -94,7 +94,7 @@ const char         *game_mode_name(game_mode_t mode)
 
 bool                game_mode_owns_pad(void)
 {
-    /* The title takes only Start, which demo.c reads as a raw edge rather than
+    /* The title takes only Start, which recomp.c reads as a raw edge rather than
     ** through the menu mapping, so it is not listed here. A cutscene takes only
     ** A to advance a text box and is handled the same way. */
     return (current == GAME_MODE_FILE_SELECT ||

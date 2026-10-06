@@ -4,7 +4,7 @@
 #include <stdint.h>
 
 /*
-** Death -> Game Over -> save -> continue (M2e). Platform free: demo.c plays
+** Death -> Game Over -> save -> continue (M2e). Platform free: recomp.c plays
 ** Link's death clip, writes the save and reloads the scene; main.c draws the
 ** VDP2 text. Source: z_player.c func_80836448 / func_80843AE8,
 ** z_game_over.c GameOver_Update, z_kaleido_scope.c PAUSE_STATE_GAME_OVER_*.

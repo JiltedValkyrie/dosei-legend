@@ -47,6 +47,8 @@ int main(void) {
         code = text[text.index('static OcarinaStaff sOcarinaStaff;'):] if 'static OcarinaStaff sOcarinaStaff;' in text else text[text.index('static OcarinaStaff sOcarinaStaff,'):]
         code = code[:code.index('/* ---- graph.c:')]
         code = code.replace(graphics.function(BRIDGE,'void OotCore_OcarinaScene('),'')
+        for marker in ('unsigned int OotCore_NpcText(', 'void OotCore_NpcTextStep('):
+            code = code.replace(graphics.function(BRIDGE,marker),'')
         self.run_c(r'''
 #include <assert.h>
 #include <stddef.h>
@@ -61,6 +63,7 @@ enum { OCARINA_SONG_MAX=14, OCARINA_BTN_INVALID=255, OCARINA_RECORD_OFF=0,
 #define PLAYER_STATE2_23 0x800000u
 #define PLAYER_STATE2_24 0x1000000u
 #define PLAYER_STATE2_25 0x2000000u
+#define BTN_B 0x4000
 #define BTN_A 0x8000
 #define BTN_CDOWN 4
 #define BTN_CRIGHT 1
@@ -75,6 +78,13 @@ typedef struct { struct { struct { struct { u16 button; } press; } input[1]; } s
     struct { struct { unsigned ocarina,warpSongs,sunsSong; } restrictions; } interfaceCtx;
     int nextEntranceIndex,transitionTrigger,sceneId; Player player; } PlayState;
 static unsigned inventory=8,opened;
+static int gTimeSpeed;
+enum { INGO_RACE_STATE_HORSE_RENTAL_PERIOD=1,SUNSSONG_INACTIVE=0 };
+#define GET_EVENTINF_INGO_RACE_STATE() 0
+static struct { unsigned sunsSongState; } gSaveContext;
+static void OotCore_SunSongStart(PlayState *p) { (void)p;gSaveContext.sunsSongState=1; }
+static void Message_CloseTextbox(PlayState *p) { p->msgCtx.msgMode=0; }
+
 PlayState* gOotCorePlay;
 #define GET_PLAYER(p) (&(p)->player)
 #define INV_CONTENT(item) inventory
@@ -130,7 +140,24 @@ int main(void) {
     OotCore_OcarinaReset();assert(!OotCore_Ocarina(0));
     play.sceneId=81;assert(OotCore_Ocarina(4));
     play.msgCtx.disableSunsSong=1;assert(!OotCore_Ocarina(4));
-    play.msgCtx.disableSunsSong=0;play.sceneId=0;assert(!OotCore_Ocarina(4));
+    play.msgCtx.disableSunsSong=0;gTimeSpeed=400;assert(!OotCore_Ocarina(4));
+    for(i=0;i<3;++i) {
+        play.msgCtx.msgMode=0;assert(OotCore_Ocarina(1));
+        AudioOcarina_SetInstrument(1);AudioOcarina_Start(1u<<10);
+        for(j=0;j<6;++j) note(&play,gOcarinaSongButtons[10].buttonsIndex[j]);
+        play.msgCtx.ocarinaAction=OCARINA_ACTION_FREE_PLAY_DONE;
+        play.msgCtx.lastPlayedSong=10;play.msgCtx.msgMode=0;
+        OotCore_OcarinaStep(&play);
+        assert(!OotCore_Ocarina(0));assert(OotCore_Ocarina(3)==11);
+        assert(!OotCore_Ocarina(3) && !sListening && !sInstrument);
+    }
+    assert(OotCore_Ocarina(1));
+    play.msgCtx.ocarinaAction=OCARINA_ACTION_FREE_PLAY_DONE;
+    AudioOcarina_SetPlaybackSong(11,1);
+    play.state.input[0].press.button=BTN_B;OotCore_OcarinaStep(&play);
+    assert(!OotCore_Ocarina(0) && !OotCore_Ocarina(3) && !sPlaybackStaff.state);
+    assert(!(play.player.stateFlags2&PLAYER_STATE2_USING_OCARINA));
+
     return 0;
 }
 ''')
@@ -153,7 +180,7 @@ int main(void) {
         actual = re.search(r'entrance\[6\] = \{([^}]+)\}', BRIDGE.read_text())[1]
         self.assertEqual(list(map(lambda value:int(value,16),actual.split(','))), [entrances[name] for name in names])
 
-    def test_suns_song_reload_commits_time_and_recovers_failure(self):
+    def test_time_song_toggles_repeatedly_and_recovers_both_ages(self):
         self.run_c(r'''
 #include <assert.h>
 #include <stdbool.h>
@@ -162,7 +189,7 @@ static unsigned song,allowed=1,reloads,resets,failures,mode;
 #define GAME_MODE_LOADING 1
 #define GAME_MODE_PLAY 2
 static unsigned oot_core_ocarina_song(void) { unsigned s=song;song=0;return s; }
-static bool oot_core_ocarina_sun_allowed(void) { return allowed; }
+static bool oot_core_ocarina_sun_start(void) { return allowed; }
 static unsigned scene_flow_scene(void) { return 4; }
 static void game_mode_set(unsigned m) { mode=m; }
 static bool scene_flow_load(unsigned scene,unsigned spawn) { ++reloads;assert(scene==4 && spawn==2);if(failures){--failures;return false;}return true; }
@@ -173,19 +200,22 @@ static bool scene_flow_is_interior(void) { return false; }
 static void interior_camera(void) { assert(0); }
 static void scene_music(void) {}
 static void jo_core_error(const char *message) { assert(!message); }
-''' + graphics.function(ROOT/'src/demo.c','static bool __attribute__((optimize("Os"))) finish_ocarina_song(') + r'''
+''' + graphics.function(ROOT/'src/recomp.c','static bool __attribute__((optimize("Os"))) finish_ocarina_song(') + r'''
 int main(void) {
-    save_state.entrance=2;save_state.day_time=0x8000;song=10;
-    assert(finish_ocarina_song() && save_state.day_time==0xc002 && reloads==1 && resets==1 && mode==2);
-    song=10;assert(finish_ocarina_song() && save_state.day_time==0x4555);
-    song=10;allowed=0;assert(!finish_ocarina_song() && reloads==2);
-    allowed=1;song=10;failures=1;assert(finish_ocarina_song() && save_state.day_time==0x4555 && reloads==4);
-    song=11;assert(!finish_ocarina_song() && reloads==4);
-    save_state.link_age=1;song=11;
-    assert(finish_ocarina_song() && !save_state.link_age && reloads==5);
-    song=11;assert(!finish_ocarina_song() && reloads==5);
-    save_state.link_age=1;song=11;failures=1;
-    assert(finish_ocarina_song() && save_state.link_age==1 && reloads==7);
+    save_state.entrance=2;save_state.link_age=1;
+    for(unsigned i=0;i<4;++i) {
+        unsigned old=save_state.link_age;song=11;
+        assert(finish_ocarina_song() && save_state.link_age!=old);
+        assert(reloads==i+1 && resets==i+1 && mode==GAME_MODE_PLAY);
+        assert(!finish_ocarina_song());
+    }
+    for(unsigned age=0;age<2;++age) {
+        save_state.link_age=age;song=11;failures=1;
+        assert(finish_ocarina_song() && save_state.link_age==age);
+    }
+    assert(reloads==8 && resets==6);
+    song=10;assert(finish_ocarina_song());
+    allowed=0;song=10;assert(!finish_ocarina_song());
     return 0;
 }
 ''')
@@ -202,7 +232,7 @@ static void oot_core_frame(const gameplay_input_t *in) { ++frames;assert(!in->ca
 static unsigned oot_core_ocarina_note(void) { unsigned n=note;note=0;return n; }
 static void action_audio_ocarina(unsigned n) { ++sounds;assert(n==3); }
 static bool finish_ocarina_song(void) { ++songs;return false; }
-''' + graphics.function(ROOT/'src/demo.c','static bool step_core_gameplay(') + r'''
+''' + graphics.function(ROOT/'src/recomp.c','static bool step_core_gameplay(') + r'''
 int main(void) {
     gameplay_input_t in={1,1};note=4;
     paused=true;assert(!step_core_gameplay(&in,false)); /* opening press */

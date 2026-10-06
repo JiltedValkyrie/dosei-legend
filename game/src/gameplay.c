@@ -616,7 +616,7 @@ static void         boulder_wait_start(void)
 /* Player_UpdateDamage, AC_HIT branch: the last pass's body hit costs its
 ** damage, pushes Link 4.0 away from the attacker, 20 frames intangible. */
 /* En_Nutsball, the Deku Scrub projectile (z_en_nutsball.c), as M2c's
-** labelled reflection test: only a standard-build emitter (demo.c) fires it;
+** labelled reflection test: only a standard-build emitter (recomp.c) fires it;
 ** no Deku Scrub exists in the slice until M5. Source drop audit: Actor_Kill
 ** with no item drop, so none here. Q16 position; y = cylinder base. */
 static bool         nut_bg_hit;
@@ -947,6 +947,8 @@ static void         mido_talk_closed(uint16_t text_id)
 
 /* ---- speakerless text (get-item, shop) ------------------------------------ */
 
+static bool core_npc_talking;
+
 static bool         open_system_text(uint16_t text_id)
 {
     unsigned int i;
@@ -1214,6 +1216,7 @@ bool                gameplay_wonder_drop(unsigned int index)
 
 void __attribute__((optimize("Os"))) gameplay_reset(void)
 {
+    core_npc_talking=false;
     unsigned int i;
     gameplay.hurt_flash_timer=0;gameplay.hurt_flash_phase=0;
     gameplay.world_sfx=0;gameplay.opened_chest=0;
@@ -1302,6 +1305,9 @@ void __attribute__((optimize("Os"))) gameplay_reset(void)
     gameplay.paused = false;
     gameplay.cursor = GP_SLOT_SWORD;
     gameplay.pause_window = (pause_window_state_t){ .page = PAUSE_EQUIPMENT, .cursor = {0, 2, 18, 1} };
+    gameplay.pause_window.cursor[PAUSE_EQUIPMENT] =
+        save_state.equip_sword >= 1 && save_state.equip_sword <= 3
+        ? save_state.equip_sword : save_state.link_age ? 1 : 2;
     gameplay.rupees = 0;
     gameplay.rupee_taken = 0;
     gameplay.drop_rng = 0x12345678u;
@@ -1581,7 +1587,7 @@ void gameplay_update_facing(int32_t x, int32_t z)
 
 /* L presses toggle the lock. OoT supports Switch and Hold; this slice uses
 ** a simple Switch-style toggle. L is also the recenter button, and
-** demo.c only recenters when no lock was taken or dropped. */
+** recomp.c only recenters when no lock was taken or dropped. */
 static void         drop_target(void)
 {
     if (gameplay.target != ACTOR_HANDLE_NONE)
@@ -1818,7 +1824,7 @@ static void         register_link(const gameplay_input_t *in)
 
 /* The one contact pass per step: begin, register everything, run, consume.
 ** Runs at the end of gameplay_step, after the boulder moved and before
-** demo.c moves Link (pre-movement Link pose, the same step's sword window).
+** recomp.c moves Link (pre-movement Link pose, the same step's sword window).
 ** Consumption: sword results now (grass/wonders are cut on this step, as
 ** before); Link's body hit and the boulder's AT_HIT next step. */
 static void         run_contacts(const gameplay_input_t *in)
@@ -2854,6 +2860,7 @@ static bool __attribute__((optimize("Os"))) continue_text(uint16_t text_id)
     if (!open_system_text(text_id))
         return false;
     gameplay.speaker = speaker;
+    if (core_npc_talking) oot_core_npc_text(0x10000u | text_id);
     gameplay.events &= ~GP_EVENT_TALK_OPEN;
     gameplay.events |= GP_EVENT_TALK_PAGE;
     gameplay.choice = 0;
@@ -2898,6 +2905,7 @@ static void __attribute__((optimize("Os"))) close_talk_as(bool accepted)
 {
     uint16_t text_id = gameplay.rule >= 0 ? dialogue_rules[gameplay.rule].text_id : 0;
     bool mido = gameplay.speaker >= 0 && gate_mido(gameplay.speaker);
+    if (core_npc_talking) { oot_core_npc_text(0x20000u);core_npc_talking=false; }
     if (gameplay.speaker >= 0) npc_talk_closed(kokiri_npcs[gameplay.speaker].kind,text_id);
     gameplay.talking = false;
     gameplay.speaker = -1;
@@ -2916,6 +2924,17 @@ static void __attribute__((optimize("Os"))) update_talk(const gameplay_input_t *
 {
     if (gameplay.shop_state) {
         shop_update(in);
+        return;
+    }
+    if (gameplay.talking && core_npc_talking) {
+        unsigned state=oot_core_npc_text(0);
+        gameplay.prompt=-1;
+        if (state & 4u) {
+            const dialogue_branch_t *branch=choice_branch();
+            gameplay.choice=(state>>8)&3u;
+            if (!branch || gameplay.choice>=3 || !branch->next[gameplay.choice] ||
+                !continue_text(branch->next[gameplay.choice])) close_talk();
+        } else if (!state || (state & 2u)) close_talk();
         return;
     }
     if (gameplay.talking) {
@@ -2987,6 +3006,9 @@ static void __attribute__((optimize("Os"))) update_talk(const gameplay_input_t *
     gameplay.rule = rule_for((unsigned int)gameplay.prompt);
     if (gameplay.rule < 0)
         return;
+    core_npc_talking=oot_core_npc_text(0x10000u | dialogue_rules[gameplay.rule].text_id)!=0;
+    /* A playing core owns NPC pages; a busy message cannot fall back to C. */
+    if (oot_core_is_playing() && !core_npc_talking) return;
     gameplay.speaker = gameplay.prompt;
     gameplay.page = gameplay.page_part = 0;
     gameplay.talking = true;
@@ -3099,7 +3121,7 @@ void                gameplay_step(const gameplay_input_t *in)
     gameplay.events = 0;
     gameplay.events2 = 0;
     gameplay.baba_events = 0;
-    /* Dead: the Game Over flow owns the pad (demo.c steps game_over). */
+    /* Dead: the Game Over flow owns the pad (recomp.c steps game_over). */
     if (gameplay.dead)
         return;
     /* A lethal landing outranks new conversations, props and pause input. */

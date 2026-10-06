@@ -7,7 +7,7 @@
 #include "kokiri_camera.h"
 #include "kokiri_sgl.h"
 #include "ram_cart.h"
-#include "demo.h"
+#include "recomp.h"
 
 #define PARTS           6       /* head, stem top/middle/base, leaves, stick */
 #define PART_HEAD       0
@@ -114,7 +114,7 @@ void            kokiri_babas_draw(void)
     for (i = 0; i < karebaba_count(); ++i) {
         const karebaba_t *b = karebaba_at(i);
         int x = b->pos_q8[0] >> 8, y = b->pos_q8[1] >> 8, z = b->pos_q8[2] >> 8;
-        int dx = b->home[0] - demo_camera.x, dz = b->home[2] - demo_camera.z;
+        int dx = b->home[0] - recomp_camera.x, dz = b->home[2] - recomp_camera.z;
         bool grow = b->action == KAREBABA_GROW || b->action == KAREBABA_REGROW;
         if (dx > DRAW_FAR || dx < -DRAW_FAR || dz > DRAW_FAR || dz < -DRAW_FAR)
             continue;

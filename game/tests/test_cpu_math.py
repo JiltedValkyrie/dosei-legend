@@ -19,7 +19,7 @@ static int32_t passed_x, passed_z;
 static int slAtan(int32_t z, int32_t x) {
     passed_z=z; passed_x=x; return 0xabcdef;
 }
-''' + graphics.function(ROOT / 'src/demo_camera.c',
+''' + graphics.function(ROOT / 'src/recomp_camera.c',
                        'uint16_t kokiri_camera_facing') + r'''
 static void check(int32_t x, int32_t z) {
     assert(kokiri_camera_facing(x,z)==0xcdef);

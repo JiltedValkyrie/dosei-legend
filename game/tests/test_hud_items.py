@@ -10,8 +10,9 @@ import unittest
 import test_graphics_backend as graphics
 
 ROOT = Path(__file__).resolve().parents[1]
-CD = ROOT / 'build/cd'
-GENERATED = ROOT / 'build/generated'
+ASSETS = Path(os.environ.get('DOSEI_HUD_ASSETS', ROOT / 'build'))
+CD = ASSETS / 'cd'
+GENERATED = ASSETS / 'generated'
 
 
 def defines(path):
@@ -30,7 +31,7 @@ class HudItems(unittest.TestCase):
         names = list(struct.unpack('>%dH' % ((CD / 'BUTTONS.MAP').stat().st_size // 2),
                                    (CD / 'BUTTONS.MAP').read_bytes()))
         icons = (CD / 'PAUSEINV.BIN').read_bytes()
-        self.assertLessEqual(len(names) * 2, 0x3000)
+        self.assertLessEqual(len(names) * 2, 0x3800)
         self.assertLessEqual(0x12000 + len(icons), 0x20000)
         source = r'''
 #include <stdio.h>
@@ -51,11 +52,14 @@ static unsigned short ram[0x10000];
 #define MINIMAP_VRAM_CELLS ((uintptr_t)ram+0x2000u)
 #define HUD_VRAM_CELLS ((uintptr_t)ram+0x4000u)
 #define HUD_NAMES (ram+0x8000u/2)
-#define HUD_ITEM_CELLS (ram+0xB000u/2)
+#define HUD_ITEM_CELLS (ram+0xB800u/2)
 #define HUD_ITEM_BANK_WORDS 1024u
 #define HUD_ICON_ATLAS (ram+0x12000u/2)
 static uint32_t hud_items_key=~0u,hud_actions_key=~0u;
 static unsigned hud_item_front;
+static unsigned short cram_ram[2048];
+#define JO_VDP2_CRAM ((uintptr_t)cram_ram)
+static unsigned char hud_item_palette[2][HUD_ITEM_COUNT];
 static int hud_variant=-1;
 save_state_t save_state;
 static bool jo_is_pad1_available(void) { return true; }
@@ -64,9 +68,13 @@ static unsigned ui_labels(void) { return 0; }
 ''' + '\n'.join(graphics.function(ROOT / 'src/save_state.c', marker) for marker in (
             'unsigned save_inventory_item(', 'unsigned save_c_item_for_slot(',
             'bool save_inventory_slot_usable(', 'unsigned save_c_item_inventory_slot(')) + '\n' + '\n'.join(
-            graphics.function(ROOT / 'src/minimap.c', marker) for marker in (
-                'static unsigned hud_icon_colour(', 'static void hud_item_pixel(',
-                'static void hud_items_compose(', 'static void hud_visibility(')) + '\n'
+            graphics.function(ROOT / 'src/minimap.c', marker) + suffix for marker, suffix in (
+                ('static unsigned hud_icon_colour(', ''), ('static void hud_item_pixel(', ''),
+                ('static const unsigned char hud_item_at', ';'),
+                ('typedef struct {\n    const volatile', ' hud_item_art_t;'),
+                ('static unsigned hud_source_index(', ''), ('static unsigned hud_item_rgb(', ''),
+                ('static unsigned hud_rgb_distance(', ''), ('static unsigned hud_overlap(', ''),
+                ('static void hud_items_compose(', ''), ('static void hud_visibility(', ''))) + '\n'
         source += 'static const unsigned short button_data[]={' + ','.join(
             map(str, struct.unpack('>%dH' % (len(buttons) // 2), buttons))) + '};\n'
         source += 'static const unsigned short name_data[]={' + ','.join(map(str, names)) + '};\n'
@@ -79,6 +87,8 @@ static void dump(void) {
     volatile unsigned short *cells=HUD_ITEM_CELLS+hud_item_front*2u*HUD_ITEM_BANK_WORDS;
     fwrite((const void *)cells,sizeof(short),HUD_ITEM_COUNT*16,stdout);
     fwrite((const void *)(cells+HUD_ITEM_BANK_WORDS),sizeof(short),HUD_ITEM_COUNT*16,stdout);
+    fwrite(hud_item_palette[hud_item_front],1,HUD_ITEM_COUNT,stdout);
+    fwrite(cram_ram+768,sizeof(short),256,stdout);
 }
 int main(void) {
 #ifdef _WIN32
@@ -88,6 +98,22 @@ int main(void) {
     memcpy((void *)HUD_VRAM_CELLS,button_data,sizeof(button_data));
     memcpy(HUD_NAMES,name_data,sizeof(name_data));
     memcpy(HUD_ICON_ATLAS,icon_data,sizeof(icon_data));
+    /* Equipped sword changes while the generic GP_SWORD bit stays set.
+     * No C-item rebake or action/Navi change is needed to refresh its icon. */
+    for(unsigned weapon=1;weapon<=3;weapon++) {
+        save_state.equip_sword=weapon;
+        hud_visibility(16);
+        unsigned front=hud_item_front;
+        for(unsigned i=0;i<HUD_WEAPON_COUNT;i++)
+            assert(ram[hud_weapon_positions[i]]==(0x2000u|(0x4000/32+
+                name_data[HUD_WEAPON_OFFSET+weapon*8*HUD_WEAPON_COUNT+i])));
+        hud_visibility(17); assert(hud_item_front==front);
+    }
+    save_state.equip_sword=0;
+    hud_visibility(0);
+    for(unsigned i=0;i<HUD_WEAPON_COUNT;i++)
+        assert(ram[hud_weapon_positions[i]]==(0x2000u|(0x4000/32+
+            name_data[HUD_WEAPON_OFFSET+i])));
     memcpy(save_state.source_items,inventory,24);
     for(unsigned i=0;i<4;i++) save_state.bottle_items[i]=inventory[18+i];
     save_state.stick_owned=save_state.nut_owned=save_state.slingshot=save_state.fairy_ocarina=1;
@@ -100,8 +126,9 @@ int main(void) {
         /* A-label and Navi changes select existing banks without composition. */
         hud_visibility(3); assert(hud_item_front==front);
         hud_visibility(0); assert(hud_item_front==front);
-        unsigned base=0xB000/32+front*2*HUD_ITEM_BANK_WORDS/16;
-        for(unsigned i=0;i<HUD_ITEM_COUNT;i++) assert(ram[hud_item_positions[i]]==(0x2000u|base+i));
+        unsigned base=0xB800/32+front*2*HUD_ITEM_BANK_WORDS/16;
+        for(unsigned i=0;i<HUD_ITEM_COUNT;i++)
+            assert(ram[hud_item_positions[i]]==((unsigned)hud_item_palette[front][i]<<12|(base+i)));
         dump();
     }
     /* Same assignment can gain a new bottle content or upgraded ocarina. */
@@ -148,35 +175,60 @@ int main(void) {
         empty = tiled(buttons, [names[(2 + c // 10) * defs['HUD_MAP_W'] + 9 + c % 10] for c in range(60)])
         overlay = tiled(buttons, names[defs['HUD_NAVI_OFFSET']:defs['HUD_NAVI_OFFSET'] + 60])
 
+        def rgb(index):
+            return palette[index] & 0x7FFF if index else None
+
         def expected(assignment, navi):
-            pixels = [row[:] for row in empty]
+            """Exact source colours (RGB555, None = transparent)."""
+            pixels = [[rgb(i) for i in row] for row in empty]
             for item, (left, top) in zip(assignment, ((25, 18), (3, 2), (47, 2))):
                 if item == 255:
                     continue
                 off = icondefs['PAUSE_ICON_META'] + item * icondefs['PAUSE_ICON_RECORD']
                 colours = struct.unpack_from('>16H', icons, off + 32)
-                remap = [0]
-                for colour in colours[1:]:
-                    distance = lambda index: sum((((colour >> shift) & 31) -
-                                                  ((palette[index] >> shift) & 31)) ** 2 for shift in (0, 5, 10))
-                    remap.append(min(range(1, 16), key=distance))
                 for y in range(26):
                     for x in range(26):
                         sample = (y * 28 // 26) * 28 + x * 28 // 26
                         index = (icons[off + 64 + sample // 2] >> (0 if sample & 1 else 4)) & 15
-                        pixels[top + y][left + x] = remap[index] if index else blank[top + y][left + x]
+                        pixels[top + y][left + x] = (colours[index] & 0x7FFF if index else
+                                                     rgb(blank[top + y][left + x]))
             if navi:
-                pixels = [[b or a for a, b in zip(row, over)] for row, over in zip(pixels, overlay)]
+                pixels = [[rgb(b) if b else a for a, b in zip(row, over)] for row, over in zip(pixels, overlay)]
             return pixels
 
+        def distance(a, b):
+            return sum((((a >> s) & 31) - ((b >> s) & 31)) ** 2 for s in (0, 5, 10))
+
+        dump = 2 * 1920 + 60 + 512
         assignments = [(item, 255, 255) for item in items] + [(20, 8, 43), (26, 7, 43)]
-        self.assertEqual(len(output), len(assignments) * 2 * 1920)
+        self.assertEqual(len(output), len(assignments) * dump)
+        exact = total = 0
         for test, assignment in enumerate(assignments):
+            chunk = output[test * dump:(test + 1) * dump]
+            pal = chunk[3840:3900]
+            cram = struct.unpack('=256H', chunk[3900:])
             for navi in range(2):
-                raw = output[(test * 2 + navi) * 1920:(test * 2 + navi + 1) * 1920]
-                words = struct.unpack('=960H', raw)
+                words = struct.unpack('=960H', chunk[navi * 1920:(navi + 1) * 1920])
                 actual = tiled(struct.pack('>960H', *words), range(60))
-                self.assertEqual(actual, expected(assignment, navi), (test, assignment, navi))
+                want = expected(assignment, navi)
+                for y in range(48):
+                    for x in range(80):
+                        bank = pal[y // 8 * 10 + x // 8]
+                        index, colour = actual[y][x], want[y][x]
+                        context = (test, assignment, navi, x, y)
+                        self.assertEqual(index == 0, colour is None, context)
+                        if colour is None:
+                            continue
+                        got = palette[index] & 0x7FFF if bank == 2 else cram[bank * 16 + index]
+                        entries = ([palette[i] & 0x7FFF for i in range(1, 16)] if bank == 2 else
+                                   cram[bank * 16 + 1:bank * 16 + 16])
+                        # Each pixel takes the closest colour its cell's palette offers.
+                        self.assertEqual(distance(got, colour),
+                                         min(distance(e, colour) for e in entries), context)
+                        exact += got == colour
+                        total += 1
+        # Per-icon palettes keep the menu colours (shared palette lost most).
+        self.assertGreater(exact * 100, total * 90, (exact, total))
         self.assertNotEqual(expected((8, 255, 255), 0), expected((7, 255, 255), 0))
 
 

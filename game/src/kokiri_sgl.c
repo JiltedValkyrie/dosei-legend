@@ -26,6 +26,7 @@
 #include "kokiri_scene.h"
 #include "kokiri_collision.h"
 #include "scene_table.h"
+#include "scene_flow.h"
 #include "room_portal.h"
 #include "link_scene.h"
 #include "link_clips.h"
@@ -48,7 +49,7 @@ static unsigned int hit_table_offset, hit_filter;
 void kokiri_hit_filter(unsigned level){hit_filter=level<=32?level:0;}
 #define TEXTURE_CAPACITY (0x7fef8u - texture_base)
 #define CUTSCENE_TEXTURE_BASE ((3750u * 32 + 8192 + 255) & ~255u)
-#include "demo.h"
+#include "recomp.h"
 #include "ram_cart.h"
 #include "ram_low.h"
 #include "navi.h"
@@ -63,6 +64,7 @@ void kokiri_hit_filter(unsigned level){hit_filter=level<=32?level:0;}
 #include "field_stream.h"
 #include "story_route.h"
 #include "oot_core_host.h"
+#include "environment_sky.h"
 
 /* Original forest renderer: radius (4367) * 60%, halved for the room banks.
 ** The authored single-mesh scene spans the whole town in one list, so that
@@ -74,11 +76,14 @@ void kokiri_hit_filter(unsigned level){hit_filter=level<=32?level:0;}
 #define FOREST_FAR_DEFAULT (4367 * 6 / 10 / 2)
 #endif
 #define FIELD_FAR 9000
+#define FIELD_LANDMARK_FAR 26000
+#define FOREST_FACE_LANDMARK 8u
 static int forest_far_current = FOREST_FAR_DEFAULT;
 static unsigned short forest_scene;
 #define FOREST_FAR (forest_far_current)
-#define FOREST_FOG_END (forest_scene == STORY_BANK_NAVI ? 1310 : FOREST_FAR)
-#define FOREST_FOG_START (FOREST_FOG_END / 2)
+#define FOREST_FOG_END (forest_scene == SCENE_SPOT00 ? 4500 : forest_scene == STORY_BANK_NAVI ? 1310 : FOREST_FAR)
+#define FOREST_FOG_START (forest_scene == SCENE_SPOT00 ? 1800 : FOREST_FOG_END / 2)
+#define FOREST_MESH_START (forest_scene == SCENE_SPOT00 ? 4000 : FOREST_FAR * 7 / 8)
 /* Low RAM is not zeroed at boot: depths are written before each prep reads
  * them; mesh flags and fog sentinels are filled on every bank load. */
 #define forest_depth ((short *)RAM_LOW(RAM_LOW_FOREST_DEPTH_OFFSET))
@@ -152,6 +157,7 @@ static bool forest_prepared;
 ** figures -- and must not be read as this frame's work. */
 static bool forest_reused;
 static int prepared_x, prepared_y, prepared_z, prepared_pitch;
+static int prepared_link_x, prepared_link_z;
 #ifdef DOSEI_ACTOR_ORDER_PROBE
 static void actor_order_prepare(int x, int y, int z, int yaw);
 static void actor_order_queue(void);
@@ -160,15 +166,19 @@ static unsigned short prepared_yaw;
 static unsigned int prepared_visible;
 #define fog_channel ((unsigned char (*)[17][32])RAM_LOW(RAM_LOW_FOG_CHANNEL_OFFSET))
 typedef char fog_channel_fits[2*17*32 <= RAM_LOW_FOG_CHANNEL_BYTES ? 1 : -1];
+static unsigned short forest_ground_colour;
 
 static void __attribute__((optimize("Os"))) forest_fog_init(void)
 {
     unsigned int amount, channel;
+    forest_ground_colour = forest_scene < STORY_BANK_BASE ?
+        environment_sky_floor(forest_scene) : C_RGB(27, 27, 19);
     for (amount = 0; amount <= 16; ++amount)
         for (channel = 0; channel < 32; ++channel) {
             int c = (int)channel, a = (int)amount;
-            fog_channel[0][amount][channel] = (unsigned char)(c + (27-c)*a/16);
-            fog_channel[1][amount][channel] = (unsigned char)(c + (19-c)*a/16);
+            int r = forest_ground_colour & 31, g = (forest_ground_colour >> 5) & 31;
+            fog_channel[0][amount][channel] = (unsigned char)((c*(16-a) + r*a) >> 4);
+            fog_channel[1][amount][channel] = (unsigned char)((c*(16-a) + g*a) >> 4);
         }
 }
 
@@ -202,10 +212,10 @@ static unsigned char forest_face_flags(unsigned int i)
 #define MENU_EQUIP_FILE     "EQUIP.RGB"
 #define MENU_TEX_SIZE       32
 /* The real OoT message panel, gDefaultMessageBackgroundTex, converted by
-** tools/build_demo_assets.py. Drawn behind cutscene text. */
+** tools/build_recomp_assets.py. Drawn behind cutscene text. */
 #define MSGBOX_FILE         "MSGBOX.RGB"
 /* Stored small and stretched by VDP1: the panel is a gradient, and VDP1
-** VRAM is the binding constraint -- see tools/build_demo_assets.py. */
+** VRAM is the binding constraint -- see tools/build_recomp_assets.py. */
 #define MSGBOX_WIDTH        32
 #define MSGBOX_HEIGHT       16
 #define MSGBOX_PIXEL_BYTES  (MSGBOX_WIDTH * MSGBOX_HEIGHT * 2)
@@ -553,7 +563,7 @@ static bool __attribute__((optimize("Os"))) fairy_load(void)
 }
 
 #ifdef KOKIRI_STREAM_ROOMS
-typedef struct { void *pixels; int pixel_bytes; } opening_cache_t;
+typedef struct { void *pixels, *mesh; int pixel_bytes, mesh_bytes; } opening_cache_t;
 static opening_cache_t opening_cache[10];
 
 void kokiri_opening_cache_free(void)
@@ -564,8 +574,31 @@ void kokiri_opening_cache_free(void)
     opening_pixel_pool_bytes = 0;
     for (i = 0; i < 10; ++i) {
         if (opening_cache[i].pixels) jo_free(opening_cache[i].pixels);
-        opening_cache[i].pixels = 0;
+        if (opening_cache[i].mesh) jo_free(opening_cache[i].mesh);
+        opening_cache[i].pixels = opening_cache[i].mesh = 0;
     }
+}
+
+/* Navi's flight swaps room banks every 100 camera frames. Never read CD
+** mid-shot (it stalled the flight): every .MSH loads behind the loading
+** screen, and the flight refuses to start without them. `rooms` = banks the
+** cutscene reaches (frames / 100 + 1); bank 0 is the start bank. */
+bool __attribute__((optimize("Os"))) kokiri_opening_cache_meshes(unsigned int rooms)
+{
+    unsigned int i;
+    for (i = 1; i < rooms && i < 10; ++i) {
+        char mesh[12];
+        if (opening_cache[i].mesh) continue;
+        if (!asset_scene_name(mesh, STORY_BANK_NAVI, (int)i, "MSH")) return false;
+        asset_loading(mesh);
+        opening_cache[i].mesh = jo_fs_read_file_ptr(mesh, 0, &opening_cache[i].mesh_bytes);
+        if (!opening_cache[i].mesh) {
+            jo_core_error("%s: Navi flight mesh does not fit RAM", mesh);
+            return false;
+        }
+    }
+    asset_loading_done();
+    return true;
 }
 
 bool __attribute__((optimize("Os"))) kokiri_opening_cache_load(void)
@@ -635,7 +668,7 @@ bool kokiri_scene_backdrop_active(void)
 **   interior: NBG0 text, sprites, NBG1   -- the backdrop is the room, so Link
 **             and everything else must draw OVER it.
 */
-static void screens_for_backdrop(bool interior)
+static void __attribute__((optimize("Os"), noinline)) screens_for_backdrop(bool interior)
 {
     /* Braces are required, not style: jo_core_set_screens_order is a macro
     ** whose definition ends in a semicolon (jo/core.h:191), so a braceless
@@ -654,7 +687,7 @@ static void screens_for_backdrop(bool interior)
 }
 
 /* The backdrop shares NBG1 with the title artwork -- they are never both on
-** screen -- so whichever was uploaded last is what NBG1 holds. demo.c reloads
+** screen -- so whichever was uploaded last is what NBG1 holds. recomp.c reloads
 ** the title image when it returns to the title for that reason. */
 bool __attribute__((optimize("Os"))) kokiri_scene_load_backdrop(unsigned int scene, unsigned int room)
 {
@@ -731,10 +764,11 @@ static void __attribute__((optimize("Os"))) relocate_resident(unsigned int next_
 }
 
 /* ---- Hyrule Field distance streaming (field_stream.h, KRM2) ----------------
-** One cart block holds the whole Field. Swaps run only while VDP1 is idle:
+** Separate cart blocks hold geometry and pixels. Swaps run only while VDP1 is idle:
 ** freed tiles return to their bucket, new tiles upload into fixed slots, then
 ** the room tables are rebuilt from the resident pieces in group order. */
-static unsigned char *field_blob;
+#include "field_storage.h"
+static unsigned char *field_blob, *field_pixel_storage;
 static const field_header_t *field_head;
 static const field_bucket_t *field_buckets;
 static const field_tile_t *field_tiles;
@@ -752,12 +786,14 @@ static unsigned int field_tick, field_overflow, field_swaps;
 static void field_stream_free(void)
 {
     if (field_blob) jo_free(field_blob);
+    if (field_pixel_storage) jo_free(field_pixel_storage);
     if (field_tile_slot) jo_free(field_tile_slot);
     if (field_tile_ref) jo_free(field_tile_ref);
     if (field_current) jo_free(field_current);
     if (field_want) jo_free(field_want);
     if (field_stack) jo_free(field_stack);
-    field_blob = 0; field_tile_slot = field_current = field_want = field_stack = 0;
+    field_blob = field_pixel_storage = 0; field_pool = 0;
+    field_tile_slot = field_current = field_want = field_stack = 0;
     field_tile_ref = 0;
     field_active = false;
 }
@@ -803,7 +839,14 @@ static bool __attribute__((optimize("Os"))) field_validate(unsigned int length)
         const ATTR *attr;
         const uint16_t *refs;
         unsigned int end;
-        if (p->group >= h->groups || p->data < at || (p->data & 3)) return false;
+        if (p->group >= h->groups || p->data < at || (p->data & 3) ||
+            (p->pad & ~FIELD_PIECE_LANDMARK) || p->kind > FIELD_KIND_LANDMARK)
+            return false;
+        if ((p->pad & FIELD_PIECE_LANDMARK) &&
+            (p->kind != FIELD_KIND_LANDMARK || p->near || p->far != FIELD_FAR_INF))
+            return false;
+        if (p->kind == FIELD_KIND_LANDMARK && !(p->pad & FIELD_PIECE_LANDMARK))
+            return false;
         end = p->data + p->points * sizeof(POINT) + p->polys * (sizeof(POLYGON) + sizeof(ATTR)) +
               p->refs * 2;
         if (end > h->pool_offset || p->points > h->max_points || p->polys > h->max_polys)
@@ -888,6 +931,8 @@ static void __attribute__((optimize("O2"))) field_rebuild(void)
             }
             kokiri_objects[p + i] = (unsigned char)o;
             forest_mesh[p + i] = forest_face_flags(p + i);
+            if (piece->pad & FIELD_PIECE_LANDMARK)
+                forest_mesh[p + i] |= FOREST_FACE_LANDMARK;
         }
         for (i = 0; i < 3; ++i) {
             kokiri_bounds[o].minimum[i] = piece->bounds[i];
@@ -956,22 +1001,22 @@ static void field_apply(void)
 
 static void field_position(int *x, int *z)
 {
-    *x = demo_link_active ? demo_link.x : demo_camera.x;
-    *z = demo_link_active ? demo_link.z : demo_camera.z;
+    *x = recomp_link_active ? recomp_link.x : recomp_camera.x;
+    *z = recomp_link_active ? recomp_link.z : recomp_camera.z;
 }
 
 static bool __attribute__((optimize("Os"))) field_stream_load(unsigned int scene, unsigned int room)
 {
     char name[] = "S0R0.STM";
-    int length = 0;
+    unsigned int length = 0;
     unsigned int i, at, pools = 0, required, capacity;
     int x, z;
     field_stream_free();
     name[1] = asset_name_digit(scene); name[3] = asset_name_digit(room);
     asset_loading(name);
-    field_blob = (unsigned char *)jo_fs_read_file_ptr(name, 0, &length);
+    bool loaded = field_storage_load(name, &field_blob, &field_pixel_storage, &length);
     asset_loading_done();
-    if (!field_blob) { jo_core_error("%s does not fit RAM cart", name); return false; }
+    if (!loaded) { jo_core_error("%s: split load failed", name); return false; }
     field_head = (const field_header_t *)field_blob;
     at = sizeof(field_header_t);
     field_buckets = (const field_bucket_t *)(field_blob + at);
@@ -987,7 +1032,7 @@ static bool __attribute__((optimize("Os"))) field_stream_load(unsigned int scene
         jo_core_error("%s is malformed", name);
         return false;
     }
-    field_pool = field_blob + field_head->pool_offset;
+    field_pool = field_pixel_storage + (field_head->pool_offset & 2047u);
     for (i = 0; i < field_head->buckets; ++i)
         pools += field_buckets[i].size * field_buckets[i].slots;
     relocate_resident(GAME_TEXTURE_BASE);
@@ -1041,6 +1086,7 @@ static bool __attribute__((optimize("Os"))) field_stream_load(unsigned int scene
     requested_room = (int)room;
     forest_scene = (unsigned short)scene;
     forest_far_current = (int)field_head->far;
+    forest_fog_init();
     actor_vram_base = vram_used;
     actor_sprite_base = sprite_next;
     ++actor_bank_generation;
@@ -1091,9 +1137,16 @@ static bool __attribute__((optimize("Os"))) room_load_bank(unsigned int scene, u
     const unsigned char *cached;
     int mesh_bytes = 0;
     /* Whole .MSH in one CD read; no permanent copy in the heap. */
-    asset_loading(mesh_name);
-    cached = (const unsigned char *)ram_cart_load_scratch(mesh_name, &mesh_bytes);
-    asset_loading_done();
+    if (scene == STORY_BANK_NAVI && room < 10 && opening_cache[room].mesh) {
+        cached = opening_cache[room].mesh;
+        mesh_bytes = opening_cache[room].mesh_bytes;
+    } else if (scene == STORY_BANK_NAVI && room) {
+        return false;   /* mid-flight: no live CD read, ever */
+    } else {
+        asset_loading(mesh_name);
+        cached = (const unsigned char *)ram_cart_load_scratch(mesh_name, &mesh_bytes);
+        asset_loading_done();
+    }
     if (!cached) return false;
     if (mesh_bytes < (int)sizeof(header) || !room_read(&file, header, sizeof(header), &cached))
         return false;
@@ -1167,6 +1220,7 @@ static bool __attribute__((optimize("Os"))) room_load_bank(unsigned int scene, u
     forest_scene = (unsigned short)scene;
     forest_far_current = scene == KOKIRI_FIELD_SCENE ? FIELD_FAR :
                          (scene >= STORY_BANK_BASE && scene < STORY_BANK_BASE+ASSET_ID_LIMIT ? 2620 : FOREST_FAR_DEFAULT);
+    forest_fog_init();
     actor_vram_base = vram_used;
     actor_sprite_base = sprite_next;
     ++actor_bank_generation;
@@ -1340,14 +1394,14 @@ bool kokiri_scene_update(void)
     ** Link is not walking anywhere during a cutscene, so there is nothing to
     ** stream for. */
     if (cutscene_is_playing()) { room_gameplay = false; return true; }
-    if (!demo_link_active || demo_title_is_visible() || backdrop_active || forest_scene == STORY_BANK_PANORAMA) { room_gameplay = false; return true; }
+    if (!recomp_link_active || recomp_title_is_visible() || backdrop_active || forest_scene == STORY_BANK_PANORAMA) { room_gameplay = false; return true; }
     if (!room_gameplay) { target = forest_room; room_gameplay = true; }
-    dungeon_doors_constrain(&demo_link.x,&demo_link.z,demo_link.y-DEMO_LINK_EYE_HEIGHT);
+    dungeon_doors_constrain(&recomp_link.x,&recomp_link.z,recomp_link.y-RECOMP_LINK_EYE_HEIGHT);
     for (i=0;i<KOKIRI_PORTAL_COUNT;++i) {
         const kokiri_portal *p = &kokiri_portals[i];
         int32_t sine,cosine;
-        int dx = demo_link.x-p->x, dz = demo_link.z-p->z;
-        int dy = demo_link.y-DEMO_LINK_EYE_HEIGHT-p->y;
+        int dx = recomp_link.x-p->x, dz = recomp_link.z-p->z;
+        int dy = recomp_link.y-RECOMP_LINK_EYE_HEIGHT-p->y;
         int side, depth, portal_side;
         if (p->scene != forest_scene) continue;
         if (p->layers && (oot_core_scene_layer()>=32 || !(p->layers&(1u<<oot_core_scene_layer())))) continue;
@@ -1566,6 +1620,7 @@ bool __attribute__((optimize("Os"))) kokiri_link_gear_upload(void)
 }
 
 /* Skin and submit the active groups (gear_active bits) in Link's matrix. */
+#include "link_shield_normal.h"
 static void gear_draw(void)
 {
     const link_gear_head_t *h = (const link_gear_head_t *)gear_skin;
@@ -1585,6 +1640,14 @@ static void gear_draw(void)
         part.pltbl = (POLYGON *)gear_mesh + g[0];
         part.attbl = (ATTR *)(gear_mesh + LINK_GEAR_POLYGON_COUNT * sizeof(POLYGON)) + g[0];
         part.nbPolygon = g[1];
+        {
+            unsigned j;
+            for (j = 0; j < g[1]; ++j) if (part.attbl[j].flag == Single_Plane) {
+                POLYGON *p = part.pltbl + j;
+                link_shield_normal(part.pntbl[p->Vertices[0]], part.pntbl[p->Vertices[1]],
+                                   part.pntbl[p->Vertices[2]], p->norm);
+            }
+        }
         submit(&part, 2u);
         at += g[3];
     }
@@ -1645,9 +1708,9 @@ static bool forest_lod_changed(void)
 {
     unsigned int i;
     bool changed = false;
-    int x = demo_camera.x, y = demo_camera.y, z = demo_camera.z;
-    if (demo_link_active) {
-        x = demo_link.x; y = demo_link.y - DEMO_LINK_EYE_HEIGHT; z = demo_link.z;
+    int x = recomp_camera.x, y = recomp_camera.y, z = recomp_camera.z;
+    if (recomp_link_active) {
+        x = recomp_link.x; y = recomp_link.y - RECOMP_LINK_EYE_HEIGHT; z = recomp_link.z;
     }
     for (i = 0; i < forest_lod_count; ++i) {
         unsigned char state = (unsigned char)mesh_lod_select(&forest_lods[i], x, y, z);
@@ -1658,10 +1721,13 @@ static bool forest_lod_changed(void)
 }
 #endif
 
+#include "field_haze.h"
+
 void                kokiri_scene_draw(void)
 {
     unsigned int i, j, visible = forest_polygon_count;
     int32_t sine, cosine;
+    int32_t fog_offset=0;
     frame_timer_begin(FRAME_PHASE_PREP);
     if (forest_scene == STORY_BANK_PANORAMA) {
         /* Original pre-rendered house panorama, centred on the eye just as
@@ -1671,16 +1737,19 @@ void                kokiri_scene_draw(void)
         submitted = 0;
         frame_timer_end(FRAME_PHASE_PREP);
         jo_3d_push_matrix();
-        jo_3d_translate_matrix(demo_camera.x, -demo_camera.y, demo_camera.z);
+        jo_3d_translate_matrix(recomp_camera.x, -recomp_camera.y, recomp_camera.z);
         submit(&kokiri_pdata, 1u);
         jo_3d_pop_matrix();
+        field_haze_draw();
         return;
     }
     /* Geometry/fog depend on the camera. Unaccepted actor-order experiments
      * are excluded from normal builds. */
-    if (forest_prepared && prepared_x == demo_camera.x &&
-        prepared_y == demo_camera.y && prepared_z == demo_camera.z &&
-        prepared_yaw == demo_yaw && prepared_pitch == demo_pitch
+    if (forest_prepared && prepared_x == recomp_camera.x &&
+        (forest_scene != SCENE_SPOT00 ||
+         (prepared_link_x==recomp_link.x && prepared_link_z==recomp_link.z)) &&
+        prepared_y == recomp_camera.y && prepared_z == recomp_camera.z &&
+        prepared_yaw == recomp_yaw && prepared_pitch == recomp_pitch
 #ifdef KOKIRI_STREAM_ROOMS
         && !forest_lod_changed()
 #endif
@@ -1691,14 +1760,18 @@ void                kokiri_scene_draw(void)
     }
     forest_reused = false;
     frame_timer_begin(FRAME_PHASE_DEPTH);
-    kokiri_camera_sincos(demo_yaw, &sine, &cosine);
+    kokiri_camera_sincos(recomp_yaw, &sine, &cosine);
+    /* Field fade starts ahead of Link, not the raised/rotating camera.
+     * Q8 trig keeps this bounded 32-bit; visibility retains eye depths. */
+    if (forest_scene==SCENE_SPOT00)
+        fog_offset=field_fade_offset(sine,cosine);
 #ifdef KOKIRI_STREAM_ROOMS
     for (i=0;i<forest_object_count;++i) {
         const kokiri_object *b = &kokiri_bounds[i];
-        int dx = b->minimum[0] > demo_camera.x ? b->minimum[0]-demo_camera.x :
-                 b->maximum[0] < demo_camera.x ? demo_camera.x-b->maximum[0] : 0;
-        int dz = b->minimum[2] > demo_camera.z ? b->minimum[2]-demo_camera.z :
-                 b->maximum[2] < demo_camera.z ? demo_camera.z-b->maximum[2] : 0;
+        int dx = b->minimum[0] > recomp_camera.x ? b->minimum[0]-recomp_camera.x :
+                 b->maximum[0] < recomp_camera.x ? recomp_camera.x-b->maximum[0] : 0;
+        int dz = b->minimum[2] > recomp_camera.z ? b->minimum[2]-recomp_camera.z :
+                 b->maximum[2] < recomp_camera.z ? recomp_camera.z-b->maximum[2] : 0;
         object_visible[i] = (int64_t)dx*dx+(int64_t)dz*dz <= FOREST_FAR*FOREST_FAR;
     }
     forest_lod_changed();
@@ -1712,8 +1785,8 @@ void                kokiri_scene_draw(void)
     }
 #endif
     for (i = 0; i < forest_vertex_count; ++i) {
-        int x = (kokiri_pdata.pntbl[i][0] >> 16) - demo_camera.x;
-        int z = (kokiri_pdata.pntbl[i][2] >> 16) - demo_camera.z;
+        int x = (kokiri_pdata.pntbl[i][0] >> 16) - recomp_camera.x;
+        int z = (kokiri_pdata.pntbl[i][2] >> 16) - recomp_camera.z;
         forest_depth[i] = (short)(((int64_t)x * sine + (int64_t)z * cosine) >> 16);
     }
     frame_timer_end(FRAME_PHASE_DEPTH);
@@ -1760,9 +1833,9 @@ void                kokiri_scene_draw(void)
         ** transformed and submitted every frame for SGL to reject. Using the
         ** FARTHEST vertex keeps any polygon with a vertex still in front,
         ** including one straddling the camera plane. */
-        if (farthest < 0 || nearest > FOREST_FAR
+        if (farthest < 0 || nearest > ((forest_mesh[i] & FOREST_FACE_LANDMARK) ? FIELD_LANDMARK_FAR : FOREST_FAR)
 #ifdef KOKIRI_STREAM_ROOMS
-            || !object_visible[kokiri_objects[i]]
+            || (!(forest_mesh[i] & FOREST_FACE_LANDMARK) && !object_visible[kokiri_objects[i]])
 #endif
         ) {
             do {
@@ -1779,9 +1852,9 @@ void                kokiri_scene_draw(void)
                     if (d2 > farthest) farthest = d2;
                     if (d3 > farthest) farthest = d3;
                 }
-            } while (farthest < 0 || nearest > FOREST_FAR
+            } while (farthest < 0 || nearest > ((forest_mesh[visible] & FOREST_FACE_LANDMARK) ? FIELD_LANDMARK_FAR : FOREST_FAR)
 #ifdef KOKIRI_STREAM_ROOMS
-                     || !object_visible[kokiri_objects[visible]]
+                     || (!(forest_mesh[visible] & FOREST_FACE_LANDMARK) && !object_visible[kokiri_objects[visible]])
 #endif
             );
             if (i == visible) break;
@@ -1817,10 +1890,10 @@ void                kokiri_scene_draw(void)
                     if (z < low_z) low_z = z;
                     if (z > high_z) high_z = z;
                 }
-                dx = demo_camera.x < low_x ? low_x - demo_camera.x :
-                     demo_camera.x > high_x ? demo_camera.x - high_x : 0;
-                dz = demo_camera.z < low_z ? low_z - demo_camera.z :
-                     demo_camera.z > high_z ? demo_camera.z - high_z : 0;
+                dx = recomp_camera.x < low_x ? low_x - recomp_camera.x :
+                     recomp_camera.x > high_x ? recomp_camera.x - high_x : 0;
+                dz = recomp_camera.z < low_z ? low_z - recomp_camera.z :
+                     recomp_camera.z > high_z ? recomp_camera.z - high_z : 0;
                 if ((int64_t)dx * dx + (int64_t)dz * dz > 1310 * 1310 ||
                     nearest >= FOREST_FOG_END) {
                     attr->dir = (attr->dir & ~7u) | 4;
@@ -1841,19 +1914,25 @@ void                kokiri_scene_draw(void)
             ** them. A marked plane at or above the eye keeps SORT_CEN: a deck
             ** seen from below must still be able to occlude him. Baked Y is
             ** negated, so world height is -y. */
-            if (forest_mesh[i] & 2) {
+            if (forest_mesh[i] & FOREST_FACE_LANDMARK) {
+                /* CEN sums four Q16 depths and overflows beyond 8192.
+                 * MIN uses one bounded depth and retains world occlusion. */
+                attr->sort = (attr->sort & ~3u) | SORT_MIN;
+            } else if (forest_mesh[i] & 2) {
                 int plane = -(kokiri_pdata.pntbl[
                                   kokiri_pdata.pltbl[i].Vertices[0]][1] >> 16);
                 attr->sort = (attr->sort & ~3u) |
-                             (plane < demo_camera.y - 8 ? SORT_MAX : SORT_CEN);
+                             (plane < recomp_camera.y - 8 ? SORT_MAX : SORT_CEN);
             } else
                 attr->sort = (attr->sort & ~3u) | SORT_CEN;
 #ifdef DOSEI_ACTOR_ORDER_PROBE
             /* Only the parked command-order experiment consumes this tag. */
             attr->gstb = (unsigned short)(i + 1);
 #endif
-            if (tile < forest_tile_count && (attr->dir & 7) != 4 &&
-                nearest < tile_depth[tile]) tile_depth[tile] = nearest;
+            if (tile < forest_tile_count && (attr->dir & 7) != 4) {
+                int fog_depth = (forest_mesh[i] & FOREST_FACE_LANDMARK) ? 0 : nearest+fog_offset;
+                if (fog_depth < tile_depth[tile]) tile_depth[tile] = fog_depth;
+            }
 #ifdef DOSEI_WARP_PROBE
             {
                 const unsigned short *v = kokiri_pdata.pltbl[i].Vertices;
@@ -1872,9 +1951,9 @@ void                kokiri_scene_draw(void)
                 ** side whose forward distance happened to be tiny, which is
                 ** not what the near view shows. */
                 for (corner = 0; corner < 4; ++corner) {
-                    int dx = (kokiri_pdata.pntbl[v[corner]][0] >> 16) - demo_camera.x;
-                    int dy = -(kokiri_pdata.pntbl[v[corner]][1] >> 16) - demo_camera.y;
-                    int dz = (kokiri_pdata.pntbl[v[corner]][2] >> 16) - demo_camera.z;
+                    int dx = (kokiri_pdata.pntbl[v[corner]][0] >> 16) - recomp_camera.x;
+                    int dy = -(kokiri_pdata.pntbl[v[corner]][1] >> 16) - recomp_camera.y;
+                    int dz = (kokiri_pdata.pntbl[v[corner]][2] >> 16) - recomp_camera.z;
                     int ax = dx < 0 ? -dx : dx, ay = dy < 0 ? -dy : dy;
                     int az = dz < 0 ? -dz : dz, hi, mid, lo, estimate;
                     hi = ax > ay ? ax : ay; if (az > hi) hi = az;
@@ -1905,7 +1984,8 @@ void                kokiri_scene_draw(void)
             }
 #endif
             attr->atrb &= ~MESHon;
-            if ((forest_mesh[i] & 1) || nearest > FOREST_FAR * 7 / 8)
+            if ((forest_mesh[i] & 1) ||
+                (!(forest_mesh[i] & FOREST_FACE_LANDMARK) && nearest+fog_offset > FOREST_MESH_START))
                 attr->atrb |= MESHon;
             /* Record the closest DISTANCE-stippled polygon, with enough to
              * identify it: vertex ids pin the exact surface where a shared
@@ -1934,7 +2014,7 @@ void                kokiri_scene_draw(void)
      * nearby floor simply because the same tile occurs on a distant wall. */
     for (i = 0; i < forest_tile_count; ++i) {
         int amount;
-        const unsigned char *rg, *blue;
+        const unsigned char *red, *green;
         volatile unsigned short *palette =
             (volatile unsigned short *)(forest_palette + i * 32);
         /* Invisible tiles retain their last palette. Recompute on re-entry,
@@ -1948,23 +2028,24 @@ void                kokiri_scene_draw(void)
                       (FOREST_FOG_END - FOREST_FOG_START);
         if (tile_fog[i] == amount) continue;
         tile_fog[i] = (unsigned char)amount;
-        rg = fog_channel[0][amount];
-        blue = fog_channel[1][amount];
+        red = fog_channel[0][amount];
+        green = fog_channel[1][amount];
         for (j = 0; j < 16; ++j) {
             unsigned short source = kokiri_cluts[i][j];
             int r = source & 31, g = (source >> 5) & 31, b = (source >> 10) & 31;
             if (!source) { palette[j] = 0; continue; }
-            r = rg[r];
-            g = rg[g];
-            b = blue[b];
+            r = red[r];
+            g = green[g];
+            b = (b*(16-amount) + ((forest_ground_colour >> 10) & 31)*amount) >> 4;
             palette[j] = (unsigned short)(0x8000 | r | (g << 5) | (b << 10));
         }
     }
     frame_timer_end(FRAME_PHASE_FOG);
     forest_prepared = true;
-    prepared_x = demo_camera.x; prepared_y = demo_camera.y;
-    prepared_z = demo_camera.z; prepared_yaw = demo_yaw;
-    prepared_pitch = demo_pitch; prepared_visible = visible;
+    prepared_x = recomp_camera.x; prepared_y = recomp_camera.y;
+    prepared_link_x=recomp_link.x;prepared_link_z=recomp_link.z;
+    prepared_z = recomp_camera.z; prepared_yaw = recomp_yaw;
+    prepared_pitch = recomp_pitch; prepared_visible = visible;
 prepared:
     kokiri_rejected = 0;
     kokiri_accepted_mask = 0;
@@ -1973,6 +2054,7 @@ prepared:
     frame_timer_end(FRAME_PHASE_PREP);
     submit(&kokiri_pdata, 1u);
     kokiri_pdata.nbPolygon = forest_polygon_count;
+    field_haze_draw();
 }
 
 /* A twelve-sided circular contact disk per visible character. SGL queues pointers,
@@ -2016,7 +2098,7 @@ void                kokiri_link_draw(int x, int y, int z, int yaw)
     ** coordinates reach this matrix as (x, -y, z) -- the same convention the
     ** camera translation in main.c already uses. The caller's yaw is binang;
     ** Jo's matrix helpers take degrees. */
-    /* link_points is already posed: demo_update() does it as part of the 30 Hz
+    /* link_points is already posed: recomp_update() does it as part of the 30 Hz
     ** step, not here. Skinning mid-draw competed with the field and flickered
     ** the screen edges. */
     jo_3d_push_matrix();
@@ -2042,7 +2124,7 @@ void                kokiri_link_draw(int x, int y, int z, int yaw)
         if (!save_state.link_age && save_state.equip_shield == EQUIP_VALUE_SHIELD_MIRROR) visible_gear |= 0x40000u;
         /* Player_SetModels: a sheathed sword rides on the back with the shield
          * (sword+shield-on-back variant) until a swing or guard draws them. */
-        bool stowed = ocarina || !demo_sword_out();
+        bool stowed = ocarina || !recomp_sword_out();
         bool sword = (visible_gear & GP_SWORD) != 0, shield = (gameplay.equipped & GP_SHIELD) != 0;
         bool gear = gear_ready;   /* adult hero gear meshes uploaded this room */
         if (stowed) visible_gear |= 0x80000u;
@@ -2225,7 +2307,7 @@ void                kokiri_navi_draw(int x, int y, int z)
     unsigned int colour = navi_colour();     /* attention_colour_t */
     /* NPC 1, ENEMY 2; PLAYER and OTHER (green, no set yet) draw white/blue. */
     if (colour > 2u) colour = 0;
-    fairy_draw(x, y, z, demo_world_clock(), 0,
+    fairy_draw(x, y, z, recomp_world_clock(), 0,
                navi_glow_pixels ? (const unsigned int *)0 : fairy_glow, colour);
     /* EffectSsKiraKira: a 28-unit quad x scale 1000 / 10000 = 2.8 units
     ** over 8 texels, billboarded and turned by its yaw. */
@@ -2269,9 +2351,9 @@ static void         item_billboard(unsigned int sprite, int x, int y, int z)
     SPR_ATTR attr = SPR_ATTRIBUTE(0, No_Palet, No_Gouraud, ECdis,
                                   sprNoflip | FUNC_Sprite);
     int32_t sine, cosine;
-    kokiri_camera_sincos(demo_yaw, &sine, &cosine);
-    if ((((int64_t)(x - demo_camera.x) * sine +
-          (int64_t)(z - demo_camera.z) * cosine) >> 16) > FOREST_FAR)
+    kokiri_camera_sincos(recomp_yaw, &sine, &cosine);
+    if ((((int64_t)(x - recomp_camera.x) * sine +
+          (int64_t)(z - recomp_camera.z) * cosine) >> 16) > FOREST_FAR)
         return;
     pos[0] = x * 65536;
     pos[1] = -y * 65536;
@@ -2301,13 +2383,13 @@ void kokiri_drop_draw(unsigned int item, int x, int y, int z, unsigned int tick)
 /* Item held up during get-item text; chests use original animated models. */
 void                kokiri_items_draw(unsigned int tick)
 {
-    if (!demo_chest_opening() && gameplay.get_item && gameplay.get_item != GP_GET_CONTAINER && gameplay.get_item != GP_GET_CHEST_ITEM) {
+    if (!recomp_chest_opening() && gameplay.get_item && gameplay.get_item != GP_GET_CONTAINER && gameplay.get_item != GP_GET_CHEST_ITEM) {
         unsigned int sprite = gameplay.get_item == GP_SWORD ? item_sprite[0] :
             gameplay.get_item == GP_SHIELD ? item_sprite[1] :
             gameplay.get_item == GP_GET_NUT ? drop_sprite[1] :
             gameplay.get_item == GP_GET_STICK ? drop_sprite[2] : drop_sprite[0];
-        item_billboard(sprite, demo_link.x,
-                       demo_link.y - DEMO_LINK_EYE_HEIGHT + 70, demo_link.z);
+        item_billboard(sprite, recomp_link.x,
+                       recomp_link.y - RECOMP_LINK_EYE_HEIGHT + 70, recomp_link.z);
     }
 }
 
@@ -2320,9 +2402,9 @@ void                kokiri_boulder_draw(void)
     int32_t x, y, z, sine, cosine;
     if (!gameplay_boulder_body(kokiri_scene_room(), &x, &y, &z))
         return;
-    kokiri_camera_sincos(demo_yaw, &sine, &cosine);
-    if ((((int64_t)(x - demo_camera.x) * sine +
-          (int64_t)(z - demo_camera.z) * cosine) >> 16) > FOREST_FAR)
+    kokiri_camera_sincos(recomp_yaw, &sine, &cosine);
+    if ((((int64_t)(x - recomp_camera.x) * sine +
+          (int64_t)(z - recomp_camera.z) * cosine) >> 16) > FOREST_FAR)
         return;
     jo_3d_push_matrix();
     jo_3d_translate_matrix((int)x, (int)-y, (int)z);
@@ -2363,7 +2445,7 @@ void kokiri_flame_draw(int32_t x,int32_t y,int32_t z,unsigned tick)
     };
     static PDATA mesh={points,8,item_polys,2,attrs};
     unsigned i;int32_t sn,cs;
-    kokiri_camera_sincos(demo_yaw,&sn,&cs);
+    kokiri_camera_sincos(recomp_yaw,&sn,&cs);
     for(i=0;i<8;++i) {
         int k=i%4,width=i<4?7:4,height=i<4?22+(tick%4):14;
         int side=k==1?-width:k==3?width:0;
@@ -2383,7 +2465,7 @@ void                kokiri_nut_draw(void)
         int32_t base[3], tip[3];
         if (gameplay_blade_points(base, tip)) {
             item_rod(base, tip, 1);
-            if(player_items_burning())kokiri_flame_draw(tip[0],tip[1],tip[2],demo_world_clock());
+            if(player_items_burning())kokiri_flame_draw(tip[0],tip[1],tip[2],recomp_world_clock());
         }
     }
     /* En_Arrow ARROW_SEED draws gEffSparklesDL (28-unit quad) at scale
@@ -2395,7 +2477,7 @@ void                kokiri_nut_draw(void)
         unsigned item = player_items_body(i, &x, &y, &z);
         if (!item) continue;
         if (item == PLAYER_ITEM_SEED && sparkle_ready) {
-            world_sparkle(x, y, z, 114688, (ANGLE)(demo_world_clock() * 4000u));
+            world_sparkle(x, y, z, 114688, (ANGLE)(recomp_world_clock() * 4000u));
             continue;
         }
         a[0]=b[0]=x; a[2]=b[2]=z; a[1]=y-2; b[1]=y+2;
@@ -2436,7 +2518,7 @@ unsigned int kokiri_scene_room(void)
 static void rupee_world(int x, int y, int z, unsigned int room,
                         unsigned int value, unsigned int age, unsigned int tick)
 {
-    int dx = x - demo_camera.x, dz = z - demo_camera.z;
+    int dx = x - recomp_camera.x, dz = z - recomp_camera.z;
     FIXED pos[5];
     SPR_ATTR attr = SPR_ATTRIBUTE(0, No_Palet, No_Gouraud, ECdis,
                                   sprNoflip | FUNC_Sprite);
@@ -2473,7 +2555,7 @@ static void core_drops_draw(unsigned int tick)
     int i, n = oot_core_view(8 /* ACTORCAT_MISC */, core_view, 24);
     for (i = 0; i < n; ++i) {
         const OotCoreActorView *a = &core_view[i];
-        int dx = a->x - demo_camera.x, dz = a->z - demo_camera.z;
+        int dx = a->x - recomp_camera.x, dz = a->z - recomp_camera.z;
         if (a->id != OOT_ACTOR_EN_ITEM00 || !(a->flags & OOT_CORE_VIEW_DRAWN)) continue;
         if (dx * dx + dz * dz > FOREST_FAR * FOREST_FAR) continue;
         kokiri_drop_draw((unsigned int)(a->params & 0xFF), a->x, a->y + 14, a->z, tick);
@@ -2485,7 +2567,7 @@ static void core_grass_draw(void)
     int i, n = oot_core_view(6 /* ACTORCAT_PROP */, core_view, 24);
     for (i = 0; i < n; ++i) {
         const OotCoreActorView *a = &core_view[i];
-        int32_t dx = a->x - demo_camera.x, dz = a->z - demo_camera.z;
+        int32_t dx = a->x - recomp_camera.x, dz = a->z - recomp_camera.z;
         FIXED pos[5];
         SPR_ATTR attr = SPR_ATTRIBUTE(0, No_Palet, No_Gouraud, ECdis,
                                       sprNoflip | FUNC_Sprite);
@@ -2580,8 +2662,8 @@ void                kokiri_grass_draw(void)
 #endif
     for (i = 0; i < KOKIRI_GRASS_COUNT; ++i) {
         const kokiri_prop_t *grass = &kokiri_grass[i];
-        int32_t dx = grass->x - demo_camera.x;
-        int32_t dz = grass->z - demo_camera.z;
+        int32_t dx = grass->x - recomp_camera.x;
+        int32_t dz = grass->z - recomp_camera.z;
         FIXED pos[5];
         SPR_ATTR attr = SPR_ATTRIBUTE(0, No_Palet, No_Gouraud, ECdis,
                                       sprNoflip | FUNC_Sprite);
@@ -2657,7 +2739,7 @@ static void         menu_quad(unsigned int sprite, int x, int y, int side)
  * and cutscene views differ. */
 int                 kokiri_hud_depth(int above)
 {
-    return (int)(demo_screen_distance() >> KOKIRI_ZDSP_LEVEL) + above;
+    return (int)(recomp_screen_distance() >> KOKIRI_ZDSP_LEVEL) + above;
 }
 
 static FIXED        hud_sprite_depth(int above)
@@ -2931,7 +3013,7 @@ void kokiri_cutscene_effects_draw(void)
         int x = cutscene_actor_channel_x(8);
         int y = cutscene_actor_channel_y(8);
         int z = cutscene_actor_channel_z(8);
-            fairy_draw(x, y, z, demo_clock(), 0, fairy_glow, 0);
+            fairy_draw(x, y, z, recomp_clock(), 0, fairy_glow, 0);
     }
     if (count) {
         /* Original raindrop triangle (gameplay_keep/gRaindropVtx), scaled
@@ -2947,19 +3029,19 @@ void kokiri_cutscene_effects_draw(void)
         static PDATA data = {points,3,&polygon,1,&attr};
         int32_t sy, cy, sp, cp;
         uint32_t random = cutscene_frame() * 1664525u + 1013904223u;
-        kokiri_camera_sincos(demo_yaw, &sy, &cy);
-        kokiri_camera_sincos(demo_pitch, &sp, &cp);
+        kokiri_camera_sincos(recomp_yaw, &sy, &cy);
+        kokiri_camera_sincos(recomp_pitch, &sp, &cp);
         for (i = 0; i < count; ++i) {
             int x, y, z;
             random = random * 1664525u + 1013904223u;
-            x = demo_camera.x + (int)(((int64_t)sy * cp * 50) >> 32) + (int)(random % 100) - 70;
+            x = recomp_camera.x + (int)(((int64_t)sy * cp * 50) >> 32) + (int)(random % 100) - 70;
             random = random * 1664525u + 1013904223u;
-            y = demo_camera.y + (int)(((int64_t)sp * 50) >> 16) + (int)(random % 100) - 70;
+            y = recomp_camera.y + (int)(((int64_t)sp * 50) >> 16) + (int)(random % 100) - 70;
             random = random * 1664525u + 1013904223u;
-            z = demo_camera.z + (int)(((int64_t)cy * cp * 50) >> 32) + (int)(random % 100) - 70;
+            z = recomp_camera.z + (int)(((int64_t)cy * cp * 50) >> 32) + (int)(random % 100) - 70;
             slPushMatrix();
             slTranslate(x * 65536, -y * 65536, z * 65536);
-            slRotY((ANGLE)demo_yaw);
+            slRotY((ANGLE)recomp_yaw);
             submit(&data, 0);
             slPopMatrix();
         }

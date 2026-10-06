@@ -17,7 +17,7 @@
 #define MESHon 1
 #define SORT_MAX 2
 #define SORT_CEN 3
-#define DEMO_LINK_EYE_HEIGHT 90
+#define RECOMP_LINK_EYE_HEIGHT 90
 typedef int32_t FIXED;
 typedef struct { int32_t norm[3]; unsigned short Vertices[4]; int id; } POLYGON;
 typedef struct { unsigned short texno, atrb, gstb; unsigned char sort; int id; } ATTR;
@@ -29,12 +29,12 @@ static short forest_depth[32], tile_depth[8];
 static unsigned char tile_fog[8], forest_mesh[8], palette_bytes[256];
 static unsigned char *forest_palette = palette_bytes;
 static unsigned short kokiri_cluts[8][16];
-static struct { int x, y, z; } demo_camera;
-static struct { int x, y, z; } demo_link;
-static bool demo_link_active, prepared_link_active;
+static struct { int x, y, z; } recomp_camera;
+static struct { int x, y, z; } recomp_link;
+static bool recomp_link_active, prepared_link_active;
 static int prepared_link_x, prepared_link_y, prepared_link_z;
-static unsigned short demo_yaw;
-static int demo_pitch;
+static unsigned short recomp_yaw;
+static int recomp_pitch;
 static bool forest_prepared;
 static int prepared_x, prepared_y, prepared_z, prepared_pitch;
 static unsigned short prepared_yaw;
@@ -51,8 +51,8 @@ static void submit(PDATA *p, unsigned bit) { (void)bit; captured=p->nbPolygon; }
 void reset_scene(void) {
     forest_fog_init();
     forest_prepared = false;
-    demo_camera.x=demo_camera.y=demo_camera.z=demo_pitch=demo_yaw=0;
-    demo_link.x=0; demo_link.y=90; demo_link.z=100; demo_link_active=true;
+    recomp_camera.x=recomp_camera.y=recomp_camera.z=recomp_pitch=recomp_yaw=0;
+    recomp_link.x=0; recomp_link.y=90; recomp_link.z=100; recomp_link_active=true;
     for (unsigned i=0; i<8; ++i) {
         kokiri_pdata.pltbl[i].id=i;
         kokiri_pdata.attbl[i].id=i;
@@ -81,12 +81,12 @@ void set_floor_footprint(int id) {
     kokiri_pdata.pntbl[id*4+2][2]=110*65536;
     kokiri_pdata.pntbl[id*4+3][2]=110*65536;
 }
-void set_link_x(int x) { demo_link.x=x; }
+void set_link_x(int x) { recomp_link.x=x; }
 unsigned visible_count(void) { return captured; }
 int fog_level(int id) { return tile_fog[id]; }
-void set_camera_z(int z) { demo_camera.z=z; }
-void set_link_feet(int y) { demo_link.y=y+90; }
-void set_link_active(int active) { demo_link_active=active; }
+void set_camera_z(int z) { recomp_camera.z=z; }
+void set_link_feet(int y) { recomp_link.y=y+90; }
+void set_link_active(int active) { recomp_link_active=active; }
 void set_surface(int id, int y, int normal_y) {
     forest_prepared=false;
     kokiri_pdata.pltbl[id].norm[1]=normal_y;

@@ -30,7 +30,7 @@
 
 typedef enum
 {
-    FRAME_PHASE_MOVEMENT = 0,   /* demo_update: input, collision, gravity */
+    FRAME_PHASE_MOVEMENT = 0,   /* recomp_update: input, collision, gravity */
     FRAME_PHASE_SKINNING,       /* link_anim_pose */
     FRAME_PHASE_SCENE,          /* forest culling and submission */
     FRAME_PHASE_LINK,           /* Link submission */

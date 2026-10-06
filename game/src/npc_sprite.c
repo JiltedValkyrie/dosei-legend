@@ -4,7 +4,7 @@
 #include "npc_sprite.h"
 #include "kokiri_sgl.h"
 #include "gameplay.h"
-#include "demo.h"
+#include "recomp.h"
 #include "kokiri_camera.h"
 
 #define U16(s, o) ((unsigned int)((s)[o] << 8 | (s)[(o) + 1]))
@@ -54,16 +54,16 @@ int npc_sprite_in_view(int x, int y, int z, unsigned int radius)
     static int32_t sy, cy, sp, cp;
     static uint16_t yaw, pitch;
     static int valid;
-    int h, right, depth, up, limit, distance = demo_screen_distance();
+    int h, right, depth, up, limit, distance = recomp_screen_distance();
     last_depth = 32767;
-    x -= demo_camera.x; y -= demo_camera.y; z -= demo_camera.z;
+    x -= recomp_camera.x; y -= recomp_camera.y; z -= recomp_camera.z;
     /* Keep every intermediate in signed 32-bit. Large/unusual views are left
      * to SGL instead of risking a false rejection or a wide-math fallback. */
     if (x < -32767 || x > 32767 || y < -32767 || y > 32767 ||
         z < -32767 || z > 32767 || radius > 1024 || distance > 4096 || distance < 1)
         return 1;
-    if (!valid || yaw != (uint16_t)demo_yaw || pitch != (uint16_t)demo_pitch) {
-        yaw = (uint16_t)demo_yaw; pitch = (uint16_t)demo_pitch; valid = 1;
+    if (!valid || yaw != (uint16_t)recomp_yaw || pitch != (uint16_t)recomp_pitch) {
+        yaw = (uint16_t)recomp_yaw; pitch = (uint16_t)recomp_pitch; valid = 1;
         kokiri_camera_sincos(yaw, &sy, &cy);
         kokiri_camera_sincos(pitch, &sp, &cp);
         sy /= 256; cy /= 256; sp /= 256; cp /= 256;
@@ -97,7 +97,7 @@ void npc_sprite_draw(const unsigned char *spr, npc_sprite_inst_t *inst, unsigned
     if (!npc_sprite_shadow_off) kokiri_actor_shadow(x,y,z,U16(spr,4)*U16(spr,0x10)/1024+4);
     /* phi: camera seen from the actor's frame, 0 = in front (bake view()).
     ** Sign confirmed in Kronos 2026-10-03. */
-    uint16_t phi = (uint16_t)(yaw - gameplay_facing(demo_camera.x - x, demo_camera.z - z));
+    uint16_t phi = (uint16_t)(yaw - gameplay_facing(recomp_camera.x - x, recomp_camera.z - z));
     unsigned int d8 = ((phi + 0x1000u) >> 13) & 7, dir = d8 <= 4 ? d8 : 8 - d8;
     unsigned int pose;
     /* Distance LOD: full rate near, half rate past 500 units, pose frozen past
@@ -137,8 +137,8 @@ void npc_sprite_draw(const unsigned char *spr, npc_sprite_inst_t *inst, unsigned
          * Slide a near anchor out along the view ray to just past the cut and
          * grow the scale so it keeps its size; then cap the projected height
          * (~900 px) so a huge close sprite cannot wrap VDP1 coordinates. */
-        int dist = demo_screen_distance(), near = dist / 8 + 6, depth = last_depth;
-        int32_t cx = demo_camera.x, cy = demo_camera.y, cz = demo_camera.z;
+        int dist = recomp_screen_distance(), near = dist / 8 + 6, depth = last_depth;
+        int32_t cx = recomp_camera.x, cy = recomp_camera.y, cz = recomp_camera.z;
         int32_t ay = y + (int16_t)U16(spr, 0x0E) / 16, k = 256, scale = (int32_t)U16(spr, 0x10) * 256, px;
         if (depth < 4) depth = 4;
         if (depth < near) {

@@ -42,6 +42,7 @@ class TraversalCamera(unittest.TestCase):
     @classmethod
     def tearDownClass(cls): cls.tmp.cleanup()
     def setUp(self):
+        self.lib.player_camera_experiment_reset()
         self.lib.oot_follow_set_adult(False)
         self.lib.oot_follow_set_legacy(False)
         self.camera=Camera();self.follow=follow.Follow()
@@ -70,6 +71,77 @@ class TraversalCamera(unittest.TestCase):
         self.info=(C.c_uint16*len(triangles))(*[i for _,i in triangles])
         self.mesh=bg.Mesh(self.tris,len(triangles),self.info,None,0,None,0,None,0,None,0)
         self.lib.bg_scene_set(C.byref(self.mesh))
+    def test_only_regular_and_overhead_views_remain(self):
+        for _ in range(3):
+            self.assertEqual(self.lib.player_camera_experiment_cycle(),1)
+            self.step()
+            self.assertEqual(self.yaw.value,32768)
+            self.assertEqual(self.eye.x,self.player.x)
+            self.assertEqual(self.eye.z,self.player.z+600)
+            self.assertEqual(self.eye.y,self.player.y-90+44+360)
+            self.assertEqual(self.lib.player_camera_experiment_cycle(),0)
+            self.step()
+            self.assertLess(self.eye.y,self.player.y+200)
+
+    def test_scene_default_resets_override_and_pending_turn(self):
+        self.lib.player_camera_scene_default(True)
+        self.lib.player_camera_orbit_turn(1)
+        self.step()
+        self.lib.player_camera_scene_default(False)
+        self.assertFalse(self.lib.player_camera_orbit_active())
+        self.step()
+        self.assertLess(self.eye.y,self.player.y+200)
+        self.lib.player_camera_scene_default(True)
+        self.step()
+        self.assertEqual(self.yaw.value,32768)
+        self.assertEqual(self.eye.z,self.player.z+600)
+
+    def test_first_raised_camera_quarter_turns_orbit_link(self):
+        self.lib.player_camera_experiment_cycle()
+        eyes=[]
+        for i in range(4):
+            self.step();eyes.append((self.eye.x-self.player.x,self.eye.z-self.player.z))
+            self.assertEqual(self.yaw.value,(32768+i*16384)&65535)
+            self.lib.player_camera_orbit_turn(1)
+            for _ in range(16): self.step()
+        self.assertEqual(len(set(eyes)),4)
+        self.step();self.assertEqual((self.eye.x-self.player.x,self.eye.z-self.player.z),eyes[0])
+        self.lib.player_camera_orbit_turn(-1)
+        for _ in range(16): self.step()
+        self.assertEqual((self.eye.x-self.player.x,self.eye.z-self.player.z),eyes[3])
+
+    def test_orbit_eases_in_and_out_and_keeps_radius(self):
+        self.lib.player_camera_experiment_cycle()
+        self.step()
+        self.lib.player_camera_orbit_turn(1)
+        angles=[32768]
+        for _ in range(16):
+            self.step()
+            angles.append(self.yaw.value)
+            self.assertAlmostEqual((self.eye.x**2+self.eye.z**2)**0.5,600,delta=2)
+        speeds=[b-a for a,b in zip(angles,angles[1:])]
+        self.assertTrue(all(v>0 for v in speeds))
+        self.assertLess(speeds[0],speeds[7])
+        self.assertLess(speeds[-1],speeds[8])
+        self.assertEqual(angles[-1],49152)
+        self.step();self.assertEqual(self.yaw.value,49152)
+
+    def test_rapid_reverse_waits_for_turn_without_snapping(self):
+        self.lib.player_camera_experiment_cycle()
+        self.lib.player_camera_orbit_turn(1)
+        for _ in range(8): self.step()
+        self.assertEqual(self.yaw.value,40960)
+        self.lib.player_camera_orbit_turn(-1)
+        self.step()
+        self.assertGreater(self.yaw.value,40960)
+        for _ in range(23): self.step()
+        self.assertEqual(self.yaw.value,32768)
+        self.lib.player_camera_orbit_turn(1)
+        self.step()
+        self.lib.player_camera_experiment_reset()
+        self.lib.player_camera_experiment_cycle()
+        self.step();self.assertEqual(self.yaw.value,32768)
+
     def test_normal_camera_is_unchanged(self):
         reference=follow.Follow();eye=follow.Position();yaw=C.c_uint16();pitch=C.c_int32()
         for i in range(100):

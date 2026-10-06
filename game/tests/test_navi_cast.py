@@ -25,9 +25,3 @@ class NaviCast(unittest.TestCase):
         self.assertEqual([r[4] for r in rows],[2,3,4,5,6,7,8,0])
         self.assertIn((-641,120,454,29855,4),rows)
         self.assertIn((-638,1,-165,25304,8),rows)
-        for row in rows:
-            b=(ROOT/'build/generated/npcs'/('NPC%02d.ANM'%row[4])).read_bytes()
-            _,vertices,poses,ticks=struct.unpack_from('>4I',b)
-            for x,y,z in struct.iter_unpack('>3h',b[16+2*ticks:]):
-                self.assertLess(x*x+(y-40*64)**2+z*z,(80*64)**2,
-                    'source pose must leave 20 units of culling sphere for tracking')

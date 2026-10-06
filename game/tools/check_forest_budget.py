@@ -150,8 +150,8 @@ def check(root=ROOT):
         # Three larvae can share uploaded artwork but submit three meshes.
         draw_names=['DTDOOR'] + (['GOHMA','GOMALAR','GOMALAR','GOMALAR','BOSSHRT','BLUEWARP'] if room==1 else [])
         geometry=[struct.unpack_from('>8I',(cd/(name+'.BIN')).read_bytes())[2:4] for name in draw_names]
-        vertices+=value('LINK_VERTEX_COUNT')+sum(g[0] for g in geometry)
-        polygons+=value('LINK_POLYGON_COUNT')+sum(g[1] for g in geometry)
+        vertices+=6+value('LINK_VERTEX_COUNT')+sum(g[0] for g in geometry)
+        polygons+=2+value('LINK_POLYGON_COUNT')+sum(g[1] for g in geometry)
         if vertices>3200 or polygons>3750:
             raise ValueError('%s: boss geometry exceeds SGL capacity (%d vertices, %d polygons)'%(path.name,vertices,polygons))
         print('%s: conservative room + Link + boss/minions/rewards: %d vertices, %d polygons'%(path.name,vertices,polygons))
@@ -183,8 +183,8 @@ def check(root=ROOT):
         used=resident+budget.bank_bytes(pixels,tiles)+sum(c[0] for c in costs)
         slots=1+link_slots+budget.RUNTIME_SPRITE_SLOTS+tiles+sum(c[1] for c in costs)
         geometry=[(4,1) if (cd/(n+'.SPR')).exists() else struct.unpack_from('>8I',(cd/(n+'.BIN')).read_bytes())[2:4] for n in drawn]
-        vertices+=value('LINK_VERTEX_COUNT')+sum(g[0] for g in geometry)
-        polygons+=value('LINK_POLYGON_COUNT')+sum(g[1] for g in geometry)
+        vertices+=6+value('LINK_VERTEX_COUNT')+sum(g[0] for g in geometry)
+        polygons+=2+value('LINK_POLYGON_COUNT')+sum(g[1] for g in geometry)
         if used>budget.VDP1_USER_AREA or slots>budget.MAX_SPRITE_SLOTS or vertices>3200 or polygons>3750:
             raise ValueError('%s: story budget overflow: %d bytes, %d slots, %d vertices, %d polygons'%(path.name,used,slots,vertices,polygons))
         print('%s: story + Link: %d B spare; %d slots; %d vertices, %d polygons'%(path.name,budget.VDP1_USER_AREA-used,slots,vertices,polygons))

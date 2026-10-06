@@ -1,4 +1,4 @@
-/* Host adapter for src/navi.c: the same sine basis demo_camera.c uses. */
+/* Host adapter for src/navi.c: the same sine basis recomp_camera.c uses. */
 #include <math.h>
 #include <stdint.h>
 

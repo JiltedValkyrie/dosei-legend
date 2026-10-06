@@ -20,7 +20,7 @@ class DrawWait(unittest.TestCase):
         fixture = '''
 #include <stdbool.h>
 static unsigned int reads, ready_at, tick, step;
-unsigned int demo_clock(void) { unsigned int now=tick; tick+=step; return now; }
+unsigned int recomp_clock(void) { unsigned int now=tick; tick+=step; return now; }
 static unsigned int status(void) { ++reads; return ready_at && reads>=ready_at ? 2 : 0; }
 #define JO_VDP1_EDSR status()
 '''

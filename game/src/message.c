@@ -31,7 +31,7 @@ message_state_t     message_state;
 /* Characters typed per cutscene tick. At 20 Hz this is close to the rate the
 ** original draws at, and it is what makes a page readable: the page's own
 ** timer does not start until the last character is on screen. */
-#define MESSAGE_REVEAL_RATE 2
+#define MESSAGE_REVEAL_RATE 4
 
 static unsigned int page_length(void);
 

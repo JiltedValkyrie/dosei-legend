@@ -28,7 +28,7 @@ static struct { unsigned short sound_frame,frame; unsigned int id;
  const cutscene_cue_t *actor_cues[10]; int actor_pos[10][3];
  int sound_bridge_angle,sound_navi_y,sound_eye[3];
  bool sound_hooves,sound_navi_falling,sound_eye_valid; } state;
-static struct { int x,y,z; } demo_camera;
+static struct { int x,y,z; } recomp_camera;
 static int plays[12], stops[7], bridge;
 void action_audio_opening_play(unsigned int s,unsigned int c,bool loop){ ++plays[s]; }
 void action_audio_opening_stop(unsigned int c){ ++stops[c]; }

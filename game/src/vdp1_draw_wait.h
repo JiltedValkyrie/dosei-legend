@@ -1,7 +1,7 @@
 #ifndef DOSEI_VDP1_DRAW_WAIT_H
 #define DOSEI_VDP1_DRAW_WAIT_H
 #include <jo/jo.h>
-#include "demo.h"
+#include "recomp.h"
 
 /* slSynch starts the next VDP1 draw before returning to the game callback.
  * Sampling CEF once here can therefore reject every bank change forever.
@@ -10,11 +10,11 @@
  */
 static inline bool vdp1_wait_for_draw_end(void)
 {
-    unsigned int start = demo_clock();
+    unsigned int start = recomp_clock();
     unsigned int polls = 1048576;
     do {
         if (JO_VDP1_EDSR & 2) return true;
-        if (demo_clock() - start >= 2) return false;
+        if (recomp_clock() - start >= 2) return false;
     } while (--polls);
     return false;
 }

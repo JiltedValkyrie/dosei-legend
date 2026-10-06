@@ -30,7 +30,7 @@ bool kokiri_collision_jump(const camera_position_t *position, int32_t *velocity_
         int32_t *remainder_q8);
 
 /*
- * World-collision contract (DEMO_PLAN M1): OoT BgCheck queries that report
+ * World-collision contract (RECOMP_PLAN M1): OoT BgCheck queries that report
  * WHAT was hit -- polygon, owner, raw SurfaceType -- not just a height.
  *
  * Positions are FEET, in world units (OoT source space, Y up). The older

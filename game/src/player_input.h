@@ -10,7 +10,7 @@
 **
 ** This layer is deliberately platform-free: it takes a snapshot of held
 ** normalized CAMERA_* bits plus latched press edges, and produces the decisions
-** gameplay needs. demo.c owns sampling (VBlank) and the fixed step; this file
+** gameplay needs. recomp.c owns sampling (VBlank) and the fixed step; this file
 ** owns nothing but the mapping, so the host tests exercise the real code.
 **
 ** The N64 reference is the manual at game/docs/refs: C is FOUR C BUTTONS, not
@@ -86,6 +86,8 @@ typedef struct
     bool                diagnostics_toggled;
     bool                camera_swap_toggled;
     bool                map_toggled;          /* L edge outside menus/view */
+    bool                camera_experiment_toggled; /* L+R+B, also on Clean */
+    int8_t              camera_orbit_turn; /* Z edge: +1 reverse orbit, -1 with B */
 }                       player_input_t;
 
 /* Look-camera aim rates, per 30 Hz step. These are deltas only: the bounds are
@@ -97,6 +99,7 @@ typedef struct
 #define PLAYER_LOOK_PITCH_SPEED 280
 
 void    player_input_reset(void);
+void player_input_set_orbit(bool active);
 /* C-Up camera owns axes until an exit action; L no longer enables free look. */
 void player_input_set_view_look(bool active);
 /* Binding steals its original action only in gameplay; menu controls stay fixed. */

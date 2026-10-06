@@ -532,10 +532,10 @@ class DiagnosticsChord(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.demo = (ROOT / 'src' / 'demo.c').read_text()
+        cls.recomp = (ROOT / 'src' / 'recomp.c').read_text()
         cls.main = (ROOT / 'src' / 'main.c').read_text()
         # The chord moved into the control-mapping layer with the 2026-09-18
-        # remap; demo.c only applies the decision now.
+        # remap; recomp.c only applies the decision now.
         cls.input = (ROOT / 'src' / 'player_input.c').read_text()
 
     def test_chord_still_detects_both_shoulders(self):

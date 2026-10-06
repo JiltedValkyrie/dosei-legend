@@ -1,6 +1,6 @@
 """Drive the real game_mode.c transition table on the host.
 
-game_mode.c replaces the `title_visible`/`file_select_visible` pair demo.c used
+game_mode.c replaces the `title_visible`/`file_select_visible` pair recomp.c used
 to carry. What is worth protecting is not that the enum exists but that the
 edges are the ones the game actually takes: the opening cutscene chains four
 scenes through CUTSCENE -> LOADING -> CUTSCENE, and nothing else in the game

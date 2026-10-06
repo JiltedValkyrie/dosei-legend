@@ -6,7 +6,7 @@
 #include "npc_sprite.h"
 #include "cutscene.h"
 #include "kokiri_sgl.h"
-#include "demo.h"
+#include "recomp.h"
 static actor_mesh_t *body,*aura,*triforce,*jewel;
 static unsigned char *ganon,*horse;
 static npc_sprite_inst_t ganon_inst,horse_inst;

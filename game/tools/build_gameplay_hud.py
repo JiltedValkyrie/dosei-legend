@@ -7,15 +7,17 @@ from PIL import Image, ImageDraw
 X, Y, W, H = 152, 0, 152, 64
 CELL_LIMIT = 0x4000
 ITEM_PATCH_CELLS = [(y,x) for y in range(2,8) for x in range(9,19)]
+WEAPON_PATCH_CELLS = [(y,x) for y in range(2,7) for x in range(1,5)]
 
 
 def make_images(oot, analog=False, mode="saturn", citems=None,
-                empty_buttons=False, overlay_only=False):
+                empty_buttons=False, overlay_only=False, weapon=1):
     root = Path(oot) / 'extracted/ntsc-1.2/assets/textures'
     def tex(group, name):
         return Image.open(root / group / name).convert('RGBA')
     circle = tex('parameter_static', 'gButtonBackgroundTex.ia8.png')
-    sword = tex('icon_item_static', 'gItemIconSwordKokiriTex.rgba32.png')
+    sword_name = ('Kokiri', 'Master', 'Biggoron')[weapon-1] if 1 <= weapon <= 3 else None
+    sword = tex('icon_item_static', 'gItemIconSword%sTex.rgba32.png' % sword_name) if sword_name else None
     def tint(im, rgb):
         out = im.copy()
         out.putdata([(r * rgb[0] // 255, r * rgb[1] // 255,
@@ -57,7 +59,7 @@ def make_images(oot, analog=False, mode="saturn", citems=None,
             for navi in range(2):
                 im = Image.new('RGBA', (W,H))
                 place(im, tint(circle, (0,150,0)).resize((28,28), Image.Resampling.NEAREST), 160,17)
-                if owned:
+                if owned and sword is not None:
                     place(im, sword.resize((26,26), Image.Resampling.LANCZOS), 161,18)
                 label(im, 'B' if mode in ('n64','gamecube') else 'Q' if mode=='playstation' else 'X', 171,47)
                 place(im, tint(circle,(90,90,255)),186,9)
@@ -119,6 +121,8 @@ def encode(images):
 
 def build(oot, out_cd, out_gen):
     from build_health_hud import build as build_health
+    out_cd, out_gen = Path(out_cd),Path(out_gen)
+    out_cd.mkdir(parents=True,exist_ok=True); out_gen.mkdir(parents=True,exist_ok=True)
     build_health(oot, out_cd)
     images = make_images(oot)
     # Each preset contributes only changed label cells, never duplicate full maps.
@@ -129,8 +133,16 @@ def build(oot, out_cd, out_gen):
     # exponential map for every assignment (and supporting all inventory slots).
     background = make_images(oot,citems=(0,0,0),empty_buttons=True)[0]
     navi_overlay = make_images(oot,citems=(0,0,0),overlay_only=True)[1]
+    # Replace the whole weapon button plus its control label. Including the
+    # label preserves every preset; old Kokiri hilt pixels cannot survive when
+    # the equipped sword changes. Share cells, never duplicate action maps.
+    # The rightmost cell overlaps the A artwork. Keep all eight action
+    # captions so replacing a sword cannot erase the edge of Talk/Open/etc.
+    # Only X/B/Q weapon labels differ here; analog and C labels are outside.
+    weapons = [im for m in ('saturn','n64','playstation') for w in range(4)
+               for im in make_images(oot,mode=m,weapon=w)[16:32:2]]
     blob, palette, all_maps = encode([im for group in variants for im in group] +
-                                     [background,navi_overlay])
+                                     [background,navi_overlay] + weapons)
     maps = all_maps[:32]
     # Includes C header, sword label (two rows), and action label (two rows).
     patch_cells = [(y,x) for y in range(2) for x in range(11,15)] + [(5,2),(6,2),(5,6),(6,6)]
@@ -139,14 +151,15 @@ def build(oot, out_cd, out_gen):
         for owned in range(2):
             mapping = all_maps[mode*32 + owned*16]
             patches.append([mapping[y*(W//8)+x] for y,x in patch_cells])
-    out_cd, out_gen = Path(out_cd),Path(out_gen)
-    out_cd.mkdir(parents=True,exist_ok=True); out_gen.mkdir(parents=True,exist_ok=True)
     (out_cd/'BUTTONS.BIN').write_bytes(blob)
     map_words = [v for mapping in maps for v in mapping] + [v for patch in patches for v in patch]
     item_offset = len(map_words)
-    map_words += [mapping[y*(W//8)+x] for mapping in all_maps[320:]
+    map_words += [mapping[y*(W//8)+x] for mapping in all_maps[320:322]
                   for y,x in ITEM_PATCH_CELLS]
-    if len(map_words)*2 > 0x3000: raise ValueError('HUD maps collide with composed C-item banks')
+    weapon_offset = len(map_words)
+    map_words += [mapping[y*(W//8)+x] for mapping in all_maps[322:]
+                  for y,x in WEAPON_PATCH_CELLS]
+    if len(map_words)*2 > 0x3800: raise ValueError('HUD maps collide with composed C-item banks')
     (out_cd/'BUTTONS.MAP').write_bytes(struct.pack('>%dH'%len(map_words),*map_words))
     h = ['/* Generated original OoT graphics with Saturn control labels. */',
          '#ifndef GAMEPLAY_HUD_DATA_H','#define GAMEPLAY_HUD_DATA_H',
@@ -158,6 +171,10 @@ def build(oot, out_cd, out_gen):
          '#define HUD_ITEM_OFFSET %d' % item_offset,
          '#define HUD_NAVI_OFFSET %d' % (item_offset+len(ITEM_PATCH_CELLS)),
          '#define HUD_ITEM_COUNT %d' % len(ITEM_PATCH_CELLS),
+         '#define HUD_WEAPON_OFFSET %d' % weapon_offset,
+         '#define HUD_WEAPON_COUNT %d' % len(WEAPON_PATCH_CELLS),
+         'static const unsigned short hud_weapon_positions[] = {%s};' %
+             ','.join(str(y*64+x+X//8) for y,x in WEAPON_PATCH_CELLS),
          '#define HUD_ITEM_W 10', '#define HUD_ITEM_X 9', '#define HUD_ITEM_Y 2',
          'static const unsigned short hud_item_positions[] = {%s};' %
              ','.join(str(y*64+x+X//8) for y,x in ITEM_PATCH_CELLS),

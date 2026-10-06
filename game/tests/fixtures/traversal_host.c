@@ -1,6 +1,6 @@
 /* Host adapters for traversal tests: the real collision, movement basis,
 ** departure rules and animation state are compiled in; only the SGL trig the
-** Saturn gets from demo_camera.c is replaced here. */
+** Saturn gets from recomp_camera.c is replaced here. */
 #include <math.h>
 #include <stdint.h>
 

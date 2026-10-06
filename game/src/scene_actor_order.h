@@ -94,9 +94,9 @@ static void actor_order_prepare(int x, int y, int z, int yaw)
     unsigned int i, k;
     scene_order_context *ctx=&scene_order_frame;
     ctx->valid=true;
-    ctx->camera[0]=demo_camera.x;
-    ctx->camera[1]=-demo_camera.y;
-    ctx->camera[2]=demo_camera.z;
+    ctx->camera[0]=recomp_camera.x;
+    ctx->camera[1]=-recomp_camera.y;
+    ctx->camera[2]=recomp_camera.z;
     ctx->feet_y=-y;
     jo_3d_push_matrix();
     slUnitMatrix(0);

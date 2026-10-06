@@ -99,9 +99,9 @@ class Camera:
     def __init__(self, cam, dist):
         self.x, self.y, self.z = cam['x'], cam['y'], cam['z']
         pitch = -(cam['pitch'] if cam['pitch'] < 0x8000 else cam['pitch'] - 0x10000)
-        self.p = -pitch * math.pi / 32768       # RotX(-demo_pitch)
+        self.p = -pitch * math.pi / 32768       # RotX(-recomp_pitch)
         yaw = cam['yaw'] & 0xFFFF
-        self.yw = -yaw * math.pi / 32768        # RotY(-demo_yaw)
+        self.yw = -yaw * math.pi / 32768        # RotY(-recomp_yaw)
         self.dist = dist
 
     def view(self, v):

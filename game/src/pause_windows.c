@@ -6,7 +6,7 @@
 #include "gameplay.h"
 #include "save_state.h"
 #include "ram_cart.h"
-#include "demo.h"
+#include "recomp.h"
 #include "sgl_registers.h"
 #include "pause_cursor_data.h"
 #include "dungeon_map_data.h"
@@ -24,6 +24,7 @@ static unsigned phase, started;
 static bool failed, active;
 static unsigned int cycles[4];
 static const unsigned char *icons;
+static unsigned equipment_key, equipment_upgrades;
 
 static unsigned icon_u16(const unsigned char *p) { return (unsigned)p[0]*256u+p[1]; }
 static const unsigned char *icon_record(unsigned item)
@@ -33,6 +34,13 @@ static const unsigned char *icon_record(unsigned item)
 const char *pause_windows_item_name(unsigned item)
 {
     const unsigned char *p=icon_record(item);
+    static const char *const equipment_names[12] = {
+        "Kokiri Sword", "Master Sword", "Biggoron's Sword",
+        "Deku Shield", "Hylian Shield", "Mirror Shield",
+        "Kokiri Tunic", "Goron Tunic", "Zora Tunic",
+        "Kokiri Boots", "Iron Boots", "Hover Boots"
+    };
+    if (p && item>=0x3b && item<=0x46) return equipment_names[item-0x3b];
     return p ? (const char *)p : "";
 }
 static unsigned equipment_item(unsigned slot)
@@ -51,6 +59,23 @@ static unsigned equipment_item(unsigned slot)
     if (save_tunic_unlocked(1)) owned|=0x400;
     if (save_tunic_unlocked(2)) owned|=0x200;
     return owned&(1u<<(row*4+col-1)) ? 0x3b+row*3+col-1 : 255;
+}
+static bool equipment_matches_age(unsigned slot)
+{
+    unsigned row=slot/4,col=slot%4;
+    if (slot>=16) return false;
+    if (!col) return true; /* upgrade icon already follows the source age */
+    if (row==0) return col==1 ? save_state.link_age!=0 : save_state.link_age==0;
+    if (row==1) return col==2 || (col==1 ? save_state.link_age!=0 : save_state.link_age==0);
+    if (row==3) return col==1 || save_state.link_age==0;
+    /* Project cosmetic tunics are intentionally available in both ages. */
+    return true;
+}
+static unsigned equipment_inventory_key(void)
+{
+    return save_state.source_equipment | ((unsigned)save_state.owned_sword<<16) |
+        ((unsigned)save_state.owned_shield<<20) | ((unsigned)save_state.link_age<<24) |
+        ((unsigned)save_tunic_unlocked(1)<<25) | ((unsigned)save_tunic_unlocked(2)<<26);
 }
 const char *pause_windows_selection_name(void)
 {
@@ -234,6 +259,26 @@ void pause_windows_print(int x,int y,const char *text)
         ++x;
     }
 }
+void pause_windows_print_centered(int y,const char *text)
+{
+    /* Info panel spans x 88..231; centre on x 160. Restore the whole old
+     * 28-cell field so a shorter name erases the previous one. */
+    const unsigned short *data=cache();
+    const unsigned char *font=(const unsigned char *)data+PAGE_BYTES;
+    int len=0,left,x,yy;
+    if (!pause_windows_text_ready() || !data || y<0 || y>232) return;
+    while (len<28 && text[len]) ++len;
+    left=160-len*4;
+    for (yy=0;yy<8;++yy) for (x=48;x<272;++x) {
+        unsigned colour=data[(y+yy)*320+x];
+        int i=x-left;
+        if (i>=0 && i<len*8) {
+            unsigned c=(unsigned char)text[i>>3];
+            if (c<128 && (font[c*8+yy] & (0x80u>>(i&7)))) colour=0xFFFF;
+        }
+        pixel(x,y+yy,colour);
+    }
+}
 static void stamp_icon(unsigned item,unsigned left,unsigned top,unsigned width,unsigned height,bool dim)
 {
     const unsigned char *p=icon_record(item);
@@ -263,7 +308,7 @@ static void compose_inventory(unsigned page)
         if (save_state.quest_items&(1u<<i)) stamp_icon(icon_u16(q),q[2],q[3],q[4],q[5],false);
     }
     else if (page==PAUSE_EQUIPMENT) for (i=0;i<16;++i)
-        stamp_icon(equipment_item(i),i%4 ? 142+(i%4)*32 : 48,64+(i/4)*32,28,28,false);
+        stamp_icon(equipment_item(i),i%4 ? 142+(i%4)*32 : 48,64+(i/4)*32,28,28,!equipment_matches_age(i));
 }
 static bool load_page(int key)
 {
@@ -271,6 +316,9 @@ static bool load_page(int key)
     name[5]+=key/32; name[6]="0123456789ABCDEF"[key%32];
     failed=!read_file(name,cache(),PAGE_BYTES);
     if (!failed) compose_inventory(key/32);
+    if (key/32==PAUSE_EQUIPMENT) {
+        equipment_key=equipment_inventory_key();equipment_upgrades=save_state.source_upgrades;
+    }
     loaded=key; drawn=-1;
     return !failed;
 }
@@ -300,11 +348,16 @@ bool pause_windows_update(void)
     int cursor=s->save_prompt ? s->save_choice : s->cursor[s->page];
     int stamp=cursor+(gameplay.equipped<<8)+(s->system_confirm<<16)+(save_state.tunic<<12);
     if (page==PAUSE_EQUIPMENT) stamp^=(save_state.equip_sword<<20)|(save_state.equip_shield<<24)|(save_state.boots<<28);
-    unsigned now=demo_clock(),t;
+    unsigned now=recomp_clock(),t;
     if (page==PAUSE_ITEMS) stamp=cursor | (save_state.c_items[0]<<5) | (save_state.c_items[1]<<11) | (save_state.c_items[2]<<17);
     if (failed) return false;
     if (!active && !begin()) { failed=true; return false; }
     if (loaded<0) { if (!load_page(key)) goto fail; }
+    /* Recompose only when owned items or age change. Cursor and equipped
+     * frames still repaint from the cache without another disc read. */
+    if (!phase && loaded==key && page==PAUSE_EQUIPMENT &&
+        (equipment_key!=equipment_inventory_key() || equipment_upgrades!=save_state.source_upgrades))
+        if (!load_page(key)) goto fail;
     if (!phase && key!=loaded) {
         if (key/32!=loaded/32 && page!=PAUSE_SAVE && loaded/32!=PAUSE_SAVE && !s->system_confirm) {
             int from=loaded/32==PAUSE_EXTRA ? 4 : loaded/32;
@@ -317,7 +370,7 @@ bool pause_windows_update(void)
     if (phase && t>=12) {
         if (phase==1) {
             if (!load_page(key)) goto fail;
-            phase=2; started=demo_clock(); t=0;
+            phase=2; started=recomp_clock(); t=0;
         } else { phase=0; t=0; }
     }
     if (phase==1) { transform(t); return !failed; }

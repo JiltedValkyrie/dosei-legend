@@ -17,7 +17,7 @@ class LedgeTalk(unittest.TestCase):
             text = path.read_text()
             start = text.index(signature)
             return text[start:text.index('\n}', start) + 2]
-        preflight = extract(ROOT / 'src/demo.c', 'static bool ledge_claims_interact(')
+        preflight = extract(ROOT / 'src/recomp.c', 'static bool ledge_claims_interact(')
         selector = extract(ROOT / 'src/player_bg.c', 'player_ledge_act_t  player_ledge_action(')
         code = '''
 #include "player_bg.h"

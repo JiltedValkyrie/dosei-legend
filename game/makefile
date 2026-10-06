@@ -82,7 +82,7 @@ JO_MAX_FS_BACKGROUND_JOBS = 2
 # must live in work RAM and is what caps polygons per frame.
 # Resident opening sound control uses a few more bytes of work RAM; large
 # scene allocations already use the expansion cart.
-# Demo plan M0 (2026-09-25): actor pool + collide + area SFX code took ~4.7 KB
+# Recomp plan M0 (2026-09-25): actor pool + collide + area SFX code took ~4.7 KB
 # below the boundary. Known arena demand stays ~32 KB (collision index 16 KB,
 # largest camera track ~13 KB, small blocks); 52 KB keeps >1.5x that.
 # Header-complete rebuild + permanent shot skip crossed the normal boundary
@@ -93,7 +93,7 @@ JO_MAX_FS_BACKGROUND_JOBS = 2
 # added in ram_cart_claim_second_bank); total malloc capacity unchanged.
 JO_GLOBAL_MEMORY_SIZE_FOR_MALLOC ?= 39936
 
-SRCS = src/main.c src/ram_cart.c src/game_mode.c src/message.c src/cutscene.c src/cutscene_actor.c src/save_state.c src/item_drop.c src/world_props.c src/world_signs.c src/world_props_draw.c src/actor_sys.c src/attention.c src/karebaba.c src/karebaba_draw.c src/game_over.c src/collide.c src/save_file.c src/save_device.c src/ui_preferences.c src/file_select.c src/scene_flow.c src/kokiri_sgl.c ../shared/lib/music/music.c src/music_banks.c src/demo.c src/navi.c src/player_input.c src/gameplay.c src/dialogue_text.c src/text_pool.c src/minimap.c src/health_hud.c src/pause_windows.c src/pause_window_state.c src/cdda.c src/music_songs.c src/action_audio.c src/demo_camera.c src/demo_collision.c src/demo_follow.c src/link_anim.c src/link_anim_state.c src/player_air.c src/player_bg.c src/player_climb.c src/player_crawl.c src/frame_timer.c build/generated/kokiri_scene.c build/generated/kokiri_textures.c build/generated/link_scene.c build/generated/link_textures.c build/generated/link_clips.c build/generated/scene_table.c build/generated/kokiri_actors.c build/generated/kokiri_dialogue.c build/generated/cutscenes.c
+SRCS = src/main.c src/ram_cart.c src/game_mode.c src/message.c src/cutscene.c src/cutscene_actor.c src/save_state.c src/item_drop.c src/world_props.c src/world_signs.c src/world_props_draw.c src/actor_sys.c src/attention.c src/karebaba.c src/karebaba_draw.c src/game_over.c src/collide.c src/save_file.c src/save_device.c src/ui_preferences.c src/file_select.c src/scene_flow.c src/kokiri_sgl.c ../shared/lib/music/music.c src/music_banks.c src/recomp.c src/navi.c src/player_input.c src/gameplay.c src/dialogue_text.c src/text_pool.c src/minimap.c src/health_hud.c src/pause_windows.c src/pause_window_state.c src/cdda.c src/music_songs.c src/action_audio.c src/recomp_camera.c src/recomp_collision.c src/recomp_follow.c src/link_anim.c src/link_anim_state.c src/player_air.c src/player_bg.c src/player_climb.c src/player_crawl.c src/frame_timer.c build/generated/kokiri_scene.c build/generated/kokiri_textures.c build/generated/link_scene.c build/generated/link_textures.c build/generated/link_clips.c build/generated/scene_table.c build/generated/kokiri_actors.c build/generated/kokiri_dialogue.c build/generated/cutscenes.c
 override ASSETS_DIR = ./build/cd
 
 JO_ENGINE_SRC_DIR = ../../joengine/jo_engine
@@ -156,8 +156,8 @@ endif
 .PHONY: perf_mode_check
 # kokiri_sgl.o carries the warp probe, so it must recompile too or a
 # probe build could linger in a later normal disc.
-$(OBJDIR)/main.o $(OBJDIR)/demo.o $(OBJDIR)/kokiri_sgl.o: perf_mode_check
-$(OBJDIR)/main.o $(OBJDIR)/demo.o $(OBJDIR)/kokiri_sgl.o $(OBJDIR)/frame_timer.o: src/frame_timer.h
+$(OBJDIR)/main.o $(OBJDIR)/recomp.o $(OBJDIR)/kokiri_sgl.o: perf_mode_check
+$(OBJDIR)/main.o $(OBJDIR)/recomp.o $(OBJDIR)/kokiri_sgl.o $(OBJDIR)/frame_timer.o: src/frame_timer.h
 $(OBJDIR)/kokiri_sgl.o: src/scene_actor_order.h src/actor_order.h src/sgl_order_queue.h
 
 # --- keep build products inside this project -------------------------------
@@ -244,6 +244,7 @@ $(OOT_CORE_OBJDIR):
 $(OOT_CORE_OBJDIR)/%.o: %.cpp oot-core/include/fx.h oot-core/include/oot_prelude.h oot-core/include/oot_core_bench.h oot-core/include/oot_core_api.h oot-core/include/oot_core_host.h | $(OOT_CORE_OBJDIR)
 	$(OOT_CORE_CXX) $(OOT_CORE_CXXFLAGS) -c $< -o $@
 $(OOT_CORE_OBJDIR)/bridge_message.o: build/oot-core/ocarina_restrictions.inc
+$(OOT_CORE_OBJDIR)/oot_core_api.o: build/oot-core/environment_clock.inc build/oot-core/environment_player_gate.inc oot-core/include/oot_scene_blob.h
 $(OOT_CORE_OBJDIR)/z_bgcheck.o: oot-core/include/bgcheck_bounds.h
 $(OOT_CORE_OBJDIR)/bridge_player.o: oot-core/include/bgcheck_bounds.h
 build/oot-core/oot-core.elf: $(OOT_CORE_OBJS) build/oot-core/sources.mk oot-core/oot-core.ld build/oot-core/obj_syms.ld build/oot-core/msg_syms.ld
@@ -321,22 +322,22 @@ $(OBJDIR)/3d.o: src/quads_low.c $(JO_ENGINE_SRC_DIR)/3d.c src/ram_low.h | $(OBJD
 $(OBJDIR)/%.o: src/%.c src/video_mode.h | $(OBJDIR)
 	$(CC) $< $(DFLAGS) $(CCFLAGS) $(_CCFLAGS) -MMD -MP -MF $(@:.o=.d) -MT $@ -o $@
 
-$(OBJDIR)/demo_camera.o: ../shared/lib/camera/kokiri_camera.c ../shared/lib/camera/kokiri_camera.h ../shared/lib/collision/kokiri_collision.h
-$(OBJDIR)/demo_follow.o: ../shared/lib/camera/oot_follow.c ../shared/lib/camera/oot_follow.h ../shared/lib/camera/kokiri_camera.h
-$(OBJDIR)/demo_collision.o: ../shared/lib/collision/kokiri_collision.c ../shared/lib/collision/kokiri_collision.h
-$(OBJDIR)/demo.o: build/generated/texture_probe.h build/generated/title_paths.h src/input_edge.h
+$(OBJDIR)/recomp_camera.o: ../shared/lib/camera/kokiri_camera.c ../shared/lib/camera/kokiri_camera.h ../shared/lib/collision/kokiri_collision.h
+$(OBJDIR)/recomp_follow.o: ../shared/lib/camera/oot_follow.c ../shared/lib/camera/oot_follow.h ../shared/lib/camera/kokiri_camera.h
+$(OBJDIR)/recomp_collision.o: ../shared/lib/collision/kokiri_collision.c ../shared/lib/collision/kokiri_collision.h
+$(OBJDIR)/recomp.o: build/generated/texture_probe.h build/generated/title_paths.h src/input_edge.h
 # Red Book track numbers/names come from assets/audio/cdda_tracks.json.
 $(OBJDIR)/cdda.o $(OBJDIR)/music_songs.o: build/generated/cdda_tracks.h
-$(OBJDIR)/music_songs.o $(OBJDIR)/demo.o $(OBJDIR)/main.o $(OBJDIR)/cutscene.o: build/generated/song_ids.h
+$(OBJDIR)/music_songs.o $(OBJDIR)/recomp.o $(OBJDIR)/main.o $(OBJDIR)/cutscene.o: build/generated/song_ids.h
 $(OBJDIR)/music_songs.o: build/generated/song_routes.inc
 $(OBJDIR)/cutscene.o $(OBJDIR)/kokiri_sgl.o: src/vdp1_draw_wait.h
 $(OBJDIR)/main.o $(OBJDIR)/kokiri_sgl.o: build/generated/kokiri_scene.h build/generated/link_scene.h build/generated/vdp1_layout.h
-$(OBJDIR)/kokiri_sgl.o $(OBJDIR)/kokiri_actors.o $(OBJDIR)/gameplay.o $(OBJDIR)/demo.o $(OBJDIR)/main.o $(OBJDIR)/kokiri_dialogue.o $(OBJDIR)/dialogue_text.o: build/generated/kokiri_actors.h build/generated/kokiri_dialogue.h src/gameplay.h
+$(OBJDIR)/kokiri_sgl.o $(OBJDIR)/kokiri_actors.o $(OBJDIR)/gameplay.o $(OBJDIR)/recomp.o $(OBJDIR)/main.o $(OBJDIR)/kokiri_dialogue.o $(OBJDIR)/dialogue_text.o: build/generated/kokiri_actors.h build/generated/kokiri_dialogue.h src/gameplay.h
 # The skinner and its clip tables are generated by build_link_model.py --animate.
 $(OBJDIR)/link_anim.o $(OBJDIR)/link_anim_state.o $(OBJDIR)/kokiri_sgl.o: build/generated/link_clips.h build/generated/link_scene.h
 $(OBJDIR)/kokiri_sgl.o: build/generated/link_equipment.h
 # Cutscene tables are generated by build_cutscenes.py from the decomp data.
-$(OBJDIR)/message.o $(OBJDIR)/cutscene.o $(OBJDIR)/cutscenes.o $(OBJDIR)/demo.o $(OBJDIR)/main.o: build/generated/cutscenes.h src/message.h src/cutscene.h
+$(OBJDIR)/message.o $(OBJDIR)/cutscene.o $(OBJDIR)/cutscenes.o $(OBJDIR)/recomp.o $(OBJDIR)/main.o: build/generated/cutscenes.h src/message.h src/cutscene.h
 $(OBJDIR)/minimap.o $(OBJDIR)/main.o: build/generated/minimap_data.h src/minimap.h
 $(OBJDIR)/minimap.o: build/generated/gameplay_hud_data.h src/gameplay_hud_state.h
 
@@ -396,7 +397,7 @@ clean:
 	$(RM) $(OBJDIR) $(TARGET) $(TARGET1) $(TARGET2) $(TARGET3) $(MPFILE) build/cd/0.bin
 
 $(OBJDIR)/action_audio.o: build/generated/action_audio_data.h build/generated/opening_audio_data.h
-$(OBJDIR)/action_audio.o $(OBJDIR)/demo.o $(OBJDIR)/main.o: src/action_audio.h
+$(OBJDIR)/action_audio.o $(OBJDIR)/recomp.o $(OBJDIR)/main.o: src/action_audio.h
 $(OBJDIR)/action_audio.o: ../shared/lib/music/music.h src/gameplay.h
 
 $(OBJDIR)/pause_windows.o $(OBJDIR)/gameplay.o: src/pause_window_state.h

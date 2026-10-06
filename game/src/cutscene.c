@@ -4,7 +4,7 @@
 #include "../../shared/lib/collision/div32.h"   /* 32-bit divides, no ___divdi3 */
 #include "asset_loading.h"
 #include "cutscene.h"
-#include "demo.h"
+#include "recomp.h"
 #include "tree_mouth.h"
 #include "emerald_story.h"
 #include "story_route.h"
@@ -15,6 +15,7 @@
 #include "music_banks.h"
 #include "music_songs.h"
 #include "save_state.h"
+#include "oot_core_host.h"
 #include "scene_flow.h"
 #include "kokiri_sgl.h"
 #include "cutscene_actor.h"
@@ -255,6 +256,8 @@ bool cutscene_start(unsigned int id)
         state.scene_loaded = kokiri_scene_load_bank(STORY_BANK_NAVI, 0);
         if (state.scene_loaded && id == CUTSCENE_NAVI_FLY)
             state.scene_loaded = npc_draw_load_navi();
+        if (state.scene_loaded)
+            state.scene_loaded = kokiri_opening_cache_meshes((cs->frames + 99u) / 100u);
     } else if (cs->scene == CUTSCENE_SCENE_LINK_HOME) {
         cutscene_actors_free();
         /* Moving house cameras use SKYBOX_HOUSE_LINK, not the fixed JPEG. */
@@ -388,11 +391,11 @@ static void update_fade(const cutscene_t *cs)
 
 static void apply_camera(const cutscene_point_t *point)
 {
-    demo_camera.x = point->x;
-    demo_camera.y = point->y;
-    demo_camera.z = point->z;
-    demo_yaw = (uint16_t)point->yaw;
-    demo_pitch = point->pitch;
+    recomp_camera.x = point->x;
+    recomp_camera.y = point->y;
+    recomp_camera.z = point->z;
+    recomp_yaw = (uint16_t)point->yaw;
+    recomp_pitch = point->pitch;
 }
 
 static void step_sounds(void)
@@ -439,7 +442,7 @@ static void step_sounds(void)
         if (ganon && ganon->id == 2 && state.frame == (unsigned int)ganon->start + 25)
             action_audio_opening_play(OPENING_DUST, 6, false);
     } else if (state.id == CUTSCENE_NAVI_FLY) {
-        int32_t eye[3] = {demo_camera.x, demo_camera.y, demo_camera.z};
+        int32_t eye[3] = {recomp_camera.x, recomp_camera.y, recomp_camera.z};
         unsigned int sum = 0, speed = 0;
         for (i = 0; i < 3; ++i) {
             int delta = state.sound_eye_valid ? eye[i] - state.sound_eye[i] : 0;
@@ -551,9 +554,26 @@ static void update_misc(const cutscene_t *cs)
     unsigned int i;
     (void)cs;
     if (state.flash > 10) state.flash -= 10; else state.flash = 0;
+#if CUTSCENE_TIME_COUNT > 0
+    for (i = 0; i < CUTSCENE_TIME_COUNT; ++i) {
+        const cutscene_time_t *event = &cutscene_times[i];
+        if (event->scene == state.id && event->frame == state.frame) {
+            save_state.day_time = event->value;
+            oot_core_clock_reset(event->value);
+        }
+    }
+#endif
     for (i = 0; i < CUTSCENE_MISC_COUNT; ++i) {
         const cutscene_misc_t *event = &cutscene_misc[i];
-        if (event->scene != state.id || state.frame != event->start) continue;
+        if (event->scene != state.id) continue;
+        /* z_demo.c: this command runs throughout its range. An equal start
+         * and end keeps running; preserve the source's u16 wrap before clamp. */
+        if (event->kind == 6 && state.frame >= event->start &&
+            (state.frame < event->end || event->end == event->start)) {
+            save_state.day_time = (uint16_t)(save_state.day_time + 30);
+            if (save_state.day_time >= 51883u) save_state.day_time = 51882u;
+        }
+        if (state.frame != event->start) continue;
         if (event->kind == 0) state.rain = 20;
         else if (event->kind == 1) state.flash = 100;
         else if (event->kind == 2) state.bridge_start = state.frame;
@@ -857,7 +877,7 @@ bool cutscene_link_visible(void)
 static int32_t link_position(unsigned axis)
 {
     const cutscene_cue_t *cue=current_cue();
-    int32_t base=axis==0?demo_link.x:axis==1?demo_link.y-DEMO_LINK_EYE_HEIGHT:demo_link.z;
+    int32_t base=axis==0?recomp_link.x:axis==1?recomp_link.y-RECOMP_LINK_EYE_HEIGHT:recomp_link.z;
     if(cue) {
         int32_t start=axis==0?cue->x:axis==1?cue->y:cue->z;
         int32_t end=axis==0?cue->ex:axis==1?cue->ey:cue->ez;
@@ -879,7 +899,7 @@ uint16_t cutscene_link_yaw(void)
 {
     const cutscene_cue_t *cue = current_cue();
 
-    return (cue ? cue->yaw : demo_link_yaw);
+    return (cue ? cue->yaw : recomp_link_yaw);
 }
 
 /* LinkAnimation advances 1.5 source frames per 20 Hz tick (R_UPDATE_RATE

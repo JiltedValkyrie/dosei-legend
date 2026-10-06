@@ -21,6 +21,7 @@
 **   CRAM 768..783         map palette (NBG2 palette 0 at CRAM offset 3)
 **   CRAM 784..799         marker palette (sprite colour bank 0x300)
 **   CRAM 800..815         gameplay buttons (NBG2 palette 2)
+**   CRAM 848..943         C-item icons (NBG2 palettes 5..10: bank*3+slot)
 **   Sprite priority 1     marker sprites (PR bit in the colour bank)
 **   Cart carve            MINIMAP.BIN (ram_cart.h RAM_CART_MINIMAP_*)
 */

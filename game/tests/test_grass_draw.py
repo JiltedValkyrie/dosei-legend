@@ -30,7 +30,7 @@ typedef struct { Uint16 texno, atrb; } SPR_ATTR;
 #define FOREST_FAR 1310
 #define FAIRY_COLMODE_RGB 5
 #define FALSE 0
-static struct { int x,y,z; } demo_camera;
+static struct { int x,y,z; } recomp_camera;
 static int forest_room;
 static unsigned int grass_sprite=42, kokiri_rejected, cut, count;
 static FIXED positions[32][5];
@@ -44,7 +44,7 @@ static int slPutSprite(FIXED *p, SPR_ATTR *a, int angle) {
 '''
         wrapper='''
 unsigned int draw_grass(int room, unsigned int removed, int x, int z) {
- forest_room=room; cut=removed; count=0; demo_camera.x=x; demo_camera.z=z;
+ forest_room=room; cut=removed; count=0; recomp_camera.x=x; recomp_camera.z=z;
  kokiri_grass_draw(); return count;
 }
 int coordinate(unsigned int i, unsigned int axis) { return positions[i][axis]; }

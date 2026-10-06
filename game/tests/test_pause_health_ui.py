@@ -42,11 +42,12 @@ class Assets(unittest.TestCase):
                 self.assertEqual(a[3],b[3])
                 self.assertLessEqual(max(abs(a[c]-b[c]) for c in range(3)),8)
 
-    def test_owned_gear_only_changes_its_slot(self):
-        empty = pause.page_image(OOT, 3)
-        sword = pause.page_image(OOT, 3, gear=1)
-        self.assertEqual(empty.crop((174,96,202,124)).tobytes(), sword.crop((174,96,202,124)).tobytes())
-        self.assertNotEqual(empty.crop((174,64,202,92)).tobytes(), sword.crop((174,64,202,92)).tobytes())
+    def test_equipment_background_never_bakes_child_starter_gear(self):
+        # Owned icons belong to the live inventory, including adult/new-file
+        # selection. Legacy preview arguments must not leave child icons behind.
+        empty = pause.page_image(OOT, 3, dynamic=True).tobytes()
+        for gear in (0, 1, 3, 15):
+            self.assertEqual(empty, pause.page_image(OOT, 3, gear=gear).tobytes())
 
     def test_backdrop_keeps_transparent_checkerboard(self):
         blob=pause.pack(pause.page_image(OOT,3,gear=3))

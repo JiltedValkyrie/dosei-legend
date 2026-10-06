@@ -84,6 +84,45 @@ class PlayerControls(unittest.TestCase):
         self.assertFalse(self.lib.control_jump())
         self.assertTrue(self.lib.control_interact())
 
+    def test_camera_chord_once_and_partial_release_does_not_cancel_or_guard(self):
+        self.lib.control_sample(L|R|B)
+        self.lib.control_step(True)
+        self.assertTrue(self.lib.control_camera_experiment())
+
+        for held in (L|R|B, L|R|B, R|B, B, 0):
+            self.lib.control_sample(held)
+            self.lib.control_step(True)
+            self.assertFalse(self.lib.control_camera_experiment())
+            self.assertFalse(self.lib.control_cancel())
+            self.assertFalse(self.lib.control_shield())
+            self.assertFalse(self.lib.control_map_toggle())
+        self.lib.control_sample(L|R|B)
+        self.lib.control_step(True)
+        self.assertTrue(self.lib.control_camera_experiment())
+
+    def test_orbit_z_edges_and_reverse_do_not_target_or_cancel(self):
+        self.lib.player_input_set_orbit(True)
+        for keys,direction in ((Z,1),(Z,0),(0,0),(B|Z,-1),(B|Z,0),(B,0),(0,0)):
+            self.lib.control_sample(keys);self.lib.control_step(True)
+            self.assertEqual(self.lib.control_orbit_turn(),direction)
+            self.assertFalse(self.lib.control_cancel())
+            self.assertFalse(self.lib.control_target_held())
+
+    def test_camera_chord_short_tap_latched_but_menu_and_title_discarded(self):
+        self.lib.control_sample(L|R|B)
+        self.lib.control_sample(0)
+        self.lib.control_step(True)
+        self.assertTrue(self.lib.control_camera_experiment())
+        self.lib.control_sample(L|R|B)
+        self.lib.control_step(False)
+        self.lib.control_sample(0)
+        self.lib.control_step(True)
+        self.assertFalse(self.lib.control_camera_experiment())
+        self.lib.player_input_set_dialogue(True)
+        self.lib.control_sample(L|R|B)
+        self.lib.control_step(True)
+        self.assertFalse(self.lib.control_camera_experiment())
+
     def test_custom_jump_and_reset_default_do_not_change_target_hold(self):
         self.lib.player_input_set_jump_button(C)
         self.hold(Z | C)
@@ -721,10 +760,10 @@ class PlayerControls(unittest.TestCase):
             self.assertGreater(len(rounded_headings), 1)
             self.assertGreater(max(rounded_headings) - min(rounded_headings), 3000)
 
-    def test_demo_faces_input_not_quantized_displacement(self):
-        text = (ROOT / 'src/demo.c').read_text()
-        self.assertNotIn('kokiri_camera_facing(demo_link.x - step_x', text)
-        self.assertIn('player_input_motion(&input, demo_yaw, &demo_link_yaw,', text)
+    def test_recomp_faces_input_not_quantized_displacement(self):
+        text = (ROOT / 'src/recomp.c').read_text()
+        self.assertNotIn('kokiri_camera_facing(recomp_link.x - step_x', text)
+        self.assertIn('player_input_motion(&input, recomp_yaw, &recomp_link_yaw,', text)
         self.assertIn('walk && roll_speed <= 0 &&', text)
 
     # --- shoulders never orbit -------------------------------------------
@@ -752,16 +791,16 @@ class PlayerControls(unittest.TestCase):
 
     # --- source guards ----------------------------------------------------
 
-    def test_jump_is_wired_to_y_not_a_in_demo(self):
-        text = (ROOT / 'src/demo.c').read_text()
+    def test_jump_is_wired_to_y_not_a_in_recomp(self):
+        text = (ROOT / 'src/recomp.c').read_text()
         self.assertNotIn('JO_KEY_A', text)
         self.assertIn('if (in_gameplay && input.jump) jump_pending = true;',
                       text)
 
     def test_pending_actions_are_recorded_not_substituted(self):
-        text = (ROOT / 'src/demo.c').read_text()
-        self.assertIn('++demo_interact_requests', text)
-        self.assertIn('++demo_attack_requests', text)
+        text = (ROOT / 'src/recomp.c').read_text()
+        self.assertIn('++recomp_interact_requests', text)
+        self.assertIn('++recomp_attack_requests', text)
 
     def test_diagnostics_chord_is_gated_out_of_the_clean_build(self):
         text = (ROOT / 'src/player_input.c').read_text()

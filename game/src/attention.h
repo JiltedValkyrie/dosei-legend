@@ -23,7 +23,7 @@
 
 /* Platform hook: BgCheck_CameraLineTest1 from a to b (walls, floors,
 ** ceilings, one-face; camera-ignored polys skipped), minus polys that
-** SurfaceType_IsIgnoredByProjectiles. demo.c on Saturn, stub on host. */
+** SurfaceType_IsIgnoredByProjectiles. recomp.c on Saturn, stub on host. */
 bool        attention_sight_blocked(const int32_t a[3], const int32_t b[3]);
 
 /* Platform hook: Attention_ActorOnScreen through the live camera: focus

@@ -42,7 +42,7 @@ HEIGHT = 240
 
 
 def rgb555(rgb):
-    """Big-endian Saturn RGB555, matching build_demo_assets.py.
+    """Big-endian Saturn RGB555, matching build_recomp_assets.py.
 
     Bit 15 marks a visible pixel; pure black is left fully clear so it reads as
     transparent, which is the convention the title artwork already uses.

@@ -1,4 +1,4 @@
-"""World-collision contract (DEMO_PLAN M1): KBG2 files, surface bits, queries.
+"""World-collision contract (RECOMP_PLAN M1): KBG2 files, surface bits, queries.
 
 Drives the real shared/lib/collision/kokiri_collision.c through ctypes against
 the real Kokiri Forest S1.COL and the real Obj_Oshihiki push-block mesh

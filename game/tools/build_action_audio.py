@@ -47,7 +47,7 @@ EFFECTS = (
 HALF_RATE = ('voice', 'climb', 'navi_dash', 'shield', 'equip',
              'wall_hit', 'reflect', 'nut_break')
 
-# Per-area SFX banks (demo plan M0). Core = ACTIONS.PCM, resident in every
+# Per-area SFX banks (recomp plan M0). Core = ACTIONS.PCM, resident in every
 # gameplay scene (Link, UI, Navi, rupee). Area sounds live in one swappable
 # bank loaded right after the core on scene load; bank 0 is "no area sounds".
 # A sound may appear in several banks. Scenes pick a bank by `sfx` in

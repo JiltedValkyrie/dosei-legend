@@ -19,11 +19,11 @@ import unittest
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 GCC = pathlib.Path('C:/msys64/mingw64/bin/gcc.exe')
 
-SAVE_FILE_PAYLOAD_BYTES = 2424
+SAVE_FILE_PAYLOAD_BYTES = 2432
 SAVE_FILE_V4_PAYLOAD_BYTES = 298
 SAVE_FILE_V2_PAYLOAD_BYTES = 290
 SAVE_FILE_BYTES = 8 + SAVE_FILE_PAYLOAD_BYTES + 2
-SAVE_FILE_VERSION = 12
+SAVE_FILE_VERSION = 13
 
 SAVE_FILE_OK = 0
 SAVE_FILE_EMPTY = 1
@@ -78,6 +78,8 @@ class SaveFile(unittest.TestCase):
         cls.lib.sf_unpack.argtypes = [ctypes.c_char_p, ctypes.c_uint]
         cls.lib.sf_fingerprint.restype = ctypes.c_uint
         cls.lib.sf_quest_items.restype = ctypes.c_uint
+        cls.lib.sf_total_days.restype=cls.lib.sf_bgs_day_count.restype=ctypes.c_uint
+        cls.lib.sf_set_days.argtypes=[ctypes.c_uint,ctypes.c_uint]
         # These return C `bool`. Without an explicit restype ctypes reads the
         # full 32-bit return register, and GCC leaves the masked flag value in
         # its upper bits -- so a cleared flag can read back as a large nonzero
@@ -119,6 +121,32 @@ class SaveFile(unittest.TestCase):
         self.assertTrue(self.lib.sf_world_defaults())
         self.assertEqual(self.unpack(block), SAVE_FILE_OK)
         self.assertTrue(self.lib.sf_world_matches())
+
+    def test_saved_day_counters_round_trip_and_frontend_reset(self):
+        self.lib.sf_set_days(0x76543210,0x87654321)
+        block=self.pack()
+        self.assertEqual(block[-10:-2],bytes.fromhex('7654321087654321'))
+        self.lib.save_new_game()
+        self.assertEqual(self.lib.sf_total_days(),0)
+        self.assertEqual(self.lib.sf_bgs_day_count(),0)
+        self.assertEqual(self.unpack(block),SAVE_FILE_OK)
+        self.assertEqual(self.lib.sf_total_days(),0x76543210)
+        self.assertEqual(self.lib.sf_bgs_day_count(),0x87654321)
+
+    def test_all_old_versions_default_day_counters_without_touching_old_fields(self):
+        sizes={2:290,3:295,4:298,5:301,6:301,7:302,8:304,9:336,10:338,11:2423,12:2424}
+        self.lib.sf_set_world()
+        current=self.pack()
+        for version,size in sizes.items():
+            with self.subTest(version=version):
+                block=current[:8+size];block[5]=version
+                checksum=self.lib.sf_checksum(bytes(block[8:]),size)
+                block+=bytes((checksum>>8,checksum&255))
+                self.lib.sf_set_days(999,888)
+                self.assertEqual(self.unpack(block),SAVE_FILE_OK)
+                self.assertEqual(self.lib.sf_total_days(),0)
+                self.assertEqual(self.lib.sf_bgs_day_count(),0)
+                if version>=11:self.assertTrue(self.lib.sf_world_matches())
 
     def test_max_tokens_unlock_cosmetics_and_survive_save_without_collecting_skulls(self):
         self.lib.save_test_max_gear()

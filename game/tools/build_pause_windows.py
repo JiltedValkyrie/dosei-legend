@@ -69,13 +69,8 @@ def page_image(oot, page, gear=0, stick=False, emerald=False, slingshot=False, n
         icon('gItemIconSlingshotTex',66,96)
     if page==0 and ocarina:
         icon('gItemIconOcarinaFairyTex',98,96)
-    if page==3 and not dynamic:
-        if gear&1: icon('gItemIconSwordKokiriTex',174,64)
-        if gear&2: icon('gItemIconShieldDekuTex',174,96)
-        icon('gItemIconTunicKokiriTex',174,128)
-        if gear&4: icon('gItemIconTunicZoraTex',238,128)
-        if gear&8: icon('gItemIconTunicGoronTex',206,128)
-        icon('gItemIconBootsKokiriTex',174,160)
+    # Equipment is always a blank background. The live source-owned inventory
+    # supplies its icons; no alternate/preview bake may freeze child gear here.
     if page==2 and emerald:
         icon('gQuestIconKokiriEmeraldTex',182,168,20)
     if page==1:

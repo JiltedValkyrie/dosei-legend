@@ -172,8 +172,7 @@ SEQUENCES['NA_BGM_SPIRITUAL_STONE']='STONE'
 # absence is a decision on the record rather than an oversight.
 IGNORED = ('CS_UNK_DATA_LIST', 'CS_UNK_DATA',
            'CS_RUMBLE_CONTROLLER_LIST', 'CS_RUMBLE_CONTROLLER',
-           'CS_LIGHT_SETTING_LIST', 'CS_LIGHT_SETTING',
-           'CS_TIME_LIST', 'CS_TIME')
+           'CS_LIGHT_SETTING_LIST', 'CS_LIGHT_SETTING')
 
 CALL = re.compile(r'(CS_[A-Z0-9_]+)\s*\(')
 
@@ -311,7 +310,7 @@ def bake_shot(eye_spline, at_spline, frames):
 
 def look_angles(eye, at):
     """Integer yaw/pitch in 65536 units, matching the runtime camera's
-    convention (see demo.c: pitch is negated relative to OoT's)."""
+    convention (see recomp.c: pitch is negated relative to OoT's)."""
     dx, dy, dz = at[0] - eye[0], at[1] - eye[1], at[2] - eye[2]
     flat = math.hypot(dx, dz)
     yaw = round(math.atan2(dx, dz) * 65536 / math.tau)
@@ -328,6 +327,16 @@ def clamp16(value, what):
 
 # ---- turning one file into a cutscene ---------------------------------------
 
+def cutscene_time(hour, minute):
+    """CutsceneCmd_SetTime uses separate f32 truncations and minute + 1."""
+    def f32(value):
+        return struct.unpack('f', struct.pack('f', value))[0]
+    divisor = f32(1440 / 65536)
+    hours = int(f32(f32(hour * 60) / divisor))
+    minutes = int(f32((minute + 1) / divisor))
+    return (hours + minutes) & 65535
+
+
 def read_cutscene(entry):
     """Parse one .csdata.inc.c into {frames, camera track, events}."""
     calls = parse_calls(entry['path'],entry.get('symbol'))
@@ -337,7 +346,7 @@ def read_cutscene(entry):
     out = dict(key=entry['key'], scene=entry['scene'], header_frames=0,
                frames=0, track=[], text=[], actor_cues=[], player_cues=[],
                transitions=[], music=[], destination=None, stop_frame=None,
-               ignored=set(), misc=[])
+               ignored=set(), misc=[], times=[])
 
     eye_shots, at_shots, pending = [], [], None
     actor_channels, current_channel = [], 0
@@ -361,6 +370,9 @@ def read_cutscene(entry):
         elif name == 'CS_TEXT':
             out['text'].append(dict(id=number(args[0]), start=number(args[1]),
                                     end=number(args[2])))
+        elif name == 'CS_TIME':
+            out['times'].append(dict(start=number(args[1]),
+                                     value=cutscene_time(number(args[3]), number(args[4]))))
         elif name == 'CS_TEXT_NONE':
             out['text'].append(dict(id=None, start=number(args[0]),
                                     end=number(args[1])))
@@ -441,6 +453,8 @@ def cutscene_length(out, eye_shots, at_shots):
     for item in out['actor_cues'] + out['player_cues']:
         ends.append(item['end'])
     for item in out['music']:
+        ends.append(item['start'])
+    for item in out.get('times', []):
         ends.append(item['start'])
     for shot in eye_shots + at_shots:
         ends.append(shot['end'])
@@ -537,7 +551,7 @@ def bake_camera(eye_shots, at_shots, frames, scene=None):
                       clamp16(eye[2], 'eye z'), yaw,
                       # look_angles() already returns the RENDERER's
                       # convention -- positive is up, measured from eye to at.
-                      # demo.c negates a bgCam pitch because OoT *stores* one
+                      # recomp.c negates a bgCam pitch because OoT *stores* one
                       # the other way round; negating this one too pointed
                       # every shot at the ground and put the camera under the
                       # floor for the whole dream.
@@ -801,6 +815,14 @@ def emit(cutscenes, header_path, source_path, cd_dir, messages):
           'extern const cutscene_misc_t cutscene_misc[CUTSCENE_MISC_COUNT];']
     c += ['const cutscene_misc_t cutscene_misc[CUTSCENE_MISC_COUNT] = {']
     c += ['    {%d,%d,%d,%d},' % e for e in events]
+    c += ['};', '']
+    times = [(i, e['start'], e['value'])
+             for i, cs in enumerate(cutscenes) for e in cs.get('times', [])]
+    h += ['typedef struct { unsigned short scene, frame, value; } cutscene_time_t;',
+          '#define CUTSCENE_TIME_COUNT %d' % len(times),
+          'extern const cutscene_time_t cutscene_times[CUTSCENE_TIME_COUNT];']
+    c += ['const cutscene_time_t cutscene_times[CUTSCENE_TIME_COUNT] = {']
+    c += ['    {%d,%d,%d},' % e for e in times]
     c += ['};', '']
     h += ['#endif']
     for index, cs in enumerate(cutscenes):

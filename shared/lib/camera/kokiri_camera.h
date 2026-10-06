@@ -31,7 +31,7 @@
 #define CAMERA_PITCH_LIMIT 14500
 void kokiri_camera_sincos(uint16_t yaw, int32_t *sine, int32_t *cosine);
 /* Heading of a movement delta, atan2(dx, dz) in this basis. Supplied by the
- * platform (demo_camera.c on Saturn, libm in the host tests). */
+ * platform (recomp_camera.c on Saturn, libm in the host tests). */
 uint16_t kokiri_camera_facing(int32_t dx, int32_t dz);
 void kokiri_camera_reset_actor_motion(void);
 /* Persistent grounded locomotion speed for the actor path. false = run (the

@@ -3,7 +3,7 @@
 #include <jo/jo.h>
 #include "minimap.h"
 #include "minimap_data.h"
-#include "demo.h"
+#include "recomp.h"
 #include "cutscene.h"
 #include "gameplay.h"
 #include "kokiri_sgl.h"
@@ -33,14 +33,16 @@ static int              hud_variant = -1;
 static gameplay_hud_blink_t hud_blink;
 static uint32_t         hud_items_key = ~0u, hud_actions_key = ~0u;
 static unsigned         hud_item_front;
+/* NBG2 palette nibble per composed C-item cell, per bank. */
+static unsigned char    hud_item_palette[2][HUD_ITEM_COUNT];
 
-/* Button cells reserve 16 KB at 0x25E44000. Label maps occupy at most 12 KB.
+/* Button cells reserve 16 KB at 0x25E44000. Label maps occupy at most 14 KB.
  * Four composed C banks (two assignments x two Navi states) fit the freed
  * map space; source item pixels use B0 slack beyond the heart banks. Pause
  * backs up/restores all these B0 regions. No runtime allocation required. */
 #define HUD_NAMES ((volatile unsigned short *)0x25E48000u)
-#define HUD_NAMES_CAPACITY 0x3000u
-#define HUD_ITEM_CELLS ((volatile unsigned short *)0x25E4B000u)
+#define HUD_NAMES_CAPACITY 0x3800u
+#define HUD_ITEM_CELLS ((volatile unsigned short *)0x25E4B800u)
 #define HUD_ITEM_BANK_WORDS 1024u
 #define HUD_ICON_ATLAS ((volatile unsigned short *)0x25E52000u)
 static bool hud_file(const char *name, unsigned bytes, volatile unsigned short *dst)
@@ -89,49 +91,129 @@ static void hud_item_pixel(volatile unsigned short *cells,unsigned x,unsigned y,
     cells[at]=(unsigned short)((word&~(15u<<shift))|(colour<<shift));
 }
 
+static const unsigned char hud_item_at[3][2]={{25,18},{3,2},{47,2}};
+typedef struct {
+    const volatile unsigned char *record[3];
+    unsigned short rgb[3][16];
+} hud_item_art_t;
+
+static unsigned hud_source_index(unsigned tile,unsigned x,unsigned y)
+{
+    const volatile unsigned short *source=(const volatile unsigned short *)HUD_VRAM_CELLS;
+    return (source[tile*16+(y&7)*2+(x&7)/4]>>((3-(x&3))*4))&15;
+}
+
+/* Composed RGB555|0x8000 of one item-region pixel; 0 = transparent. Later
+ * slots overwrite earlier ones, and Navi's overlay sits on top. */
+static unsigned hud_item_rgb(const hud_item_art_t *art,unsigned px,unsigned py,bool navi)
+{
+    unsigned cell=(py/8)*HUD_ITEM_W+px/8, slot, index, colour;
+    if (navi && (index=hud_source_index(HUD_NAMES[HUD_NAVI_OFFSET+cell],px,py)))
+        return 0x8000u|(hud_palette[index]&0x7FFFu);
+    index=hud_source_index(HUD_NAMES[(HUD_ITEM_Y+cell/HUD_ITEM_W)*HUD_MAP_W+
+                                     HUD_ITEM_X+cell%HUD_ITEM_W],px,py);
+    colour=index ? 0x8000u|(hud_palette[index]&0x7FFFu) : 0;
+    for (slot=0; slot<3; ++slot) {
+        unsigned x=px-hud_item_at[slot][0], y=py-hud_item_at[slot][1], sample;
+        if (!art->record[slot] || x>=26 || y>=26) continue;
+        sample=(y*28/26)*28+x*28/26;
+        index=(art->record[slot][32+sample/2]>>(sample&1 ? 0 : 4))&15;
+        if (index) colour=0x8000u|art->rgb[slot][index];
+        else {
+            index=hud_source_index(HUD_NAMES[HUD_ITEM_OFFSET+cell],px,py);
+            colour=index ? 0x8000u|(hud_palette[index]&0x7FFFu) : 0;
+        }
+    }
+    return colour;
+}
+
+static unsigned hud_rgb_distance(unsigned a,unsigned b)
+{
+    int r=(int)(a&31)-(int)(b&31), g=(int)((a>>5)&31)-(int)((b>>5)&31);
+    int bl=(int)((a>>10)&31)-(int)((b>>10)&31);
+    return (unsigned)(r*r+g*g+bl*bl);
+}
+
+static unsigned hud_overlap(unsigned a,unsigned b)
+{
+    /* Cell [a,a+8) against icon [b,b+26). */
+    unsigned lo=a>b ? a : b, hi=a+8<b+26 ? a+8 : b+26;
+    return hi>lo ? hi-lo : 0;
+}
+
 /* Compose both Navi phases off-screen, then publish their bank on success.
  * The key includes actual ItemIds: an upgraded ocarina or filled bottle can
- * change its picture without changing the assigned inventory slot. */
+ * change its picture without changing the assigned inventory slot.
+ * Each icon gets its own NBG2 palette (5..10: bank*3+slot), built from the
+ * colours of the cells it covers, so it keeps the menu icon's colours
+ * instead of snapping to the shared button palette. */
 static void hud_items_compose(uint32_t items)
 {
-    static const unsigned char positions[3][2]={{25,18},{3,2},{47,2}};
-    const volatile unsigned short *source=(const volatile unsigned short *)HUD_VRAM_CELLS;
-    unsigned back=hud_item_front^1u, cell, word, slot, x, y, index;
+    volatile unsigned short *cram=(volatile unsigned short *)JO_VDP2_CRAM;
+    unsigned back=hud_item_front^1u, cell, slot, i, j, x, y, phase;
     volatile unsigned short *dst=HUD_ITEM_CELLS+back*2u*HUD_ITEM_BANK_WORDS;
-    volatile unsigned short *navi=dst+HUD_ITEM_BANK_WORDS;
-    for (cell=0; cell<HUD_ITEM_COUNT; ++cell) {
-        unsigned map=(HUD_ITEM_Y+cell/HUD_ITEM_W)*HUD_MAP_W+HUD_ITEM_X+cell%HUD_ITEM_W;
-        unsigned tile=HUD_NAMES[map];
-        for (word=0; word<16; ++word) dst[cell*16+word]=source[tile*16+word];
-    }
+    unsigned char owner[HUD_ITEM_COUNT];
+    hud_item_art_t art;
     for (slot=0; slot<3; ++slot) {
-        unsigned item=(items>>(slot*8))&255, palette[16];
-        const volatile unsigned char *record;
-        if (item>=PAUSE_ICON_COUNT) continue;
-        record=(const volatile unsigned char *)HUD_ICON_ATLAS+
-            PAUSE_ICON_META+item*PAUSE_ICON_RECORD+32;
-        palette[0]=0;
-        for (index=1; index<16; ++index)
-            palette[index]=hud_icon_colour(((unsigned)record[index*2]<<8)|record[index*2+1]);
-        for (y=0; y<26; ++y) for (x=0; x<26; ++x) {
-            unsigned px=positions[slot][0]+x, py=positions[slot][1]+y;
-            unsigned at=(py/8)*HUD_ITEM_W+px/8;
-            unsigned tile=HUD_NAMES[HUD_ITEM_OFFSET+at];
-            unsigned shift=(3-(px&3))*4;
-            unsigned background=(source[tile*16+(py&7)*2+(px&7)/4]>>shift)&15;
-            unsigned sample=(y*28/26)*28+x*28/26;
-            index=(record[32+sample/2]>>(sample&1 ? 0 : 4))&15;
-            hud_item_pixel(dst,px,py,index ? palette[index] : background);
-        }
+        unsigned item=(items>>(slot*8))&255;
+        art.record[slot]=item<PAUSE_ICON_COUNT ? (const volatile unsigned char *)HUD_ICON_ATLAS+
+            PAUSE_ICON_META+item*PAUSE_ICON_RECORD+32 : 0;
+        for (i=0; art.record[slot] && i<16; ++i)
+            art.rgb[slot][i]=(((unsigned)art.record[slot][i*2]<<8)|art.record[slot][i*2+1])&0x7FFFu;
     }
+    /* A cell takes the palette of the icon covering most of it; 3 = none. */
     for (cell=0; cell<HUD_ITEM_COUNT; ++cell) {
-        unsigned tile=HUD_NAMES[HUD_NAVI_OFFSET+cell];
-        for (word=0; word<16; ++word) {
-            unsigned overlay=source[tile*16+word], composed=dst[cell*16+word];
-            for (index=0; index<16; index+=4)
-                if (overlay&(15u<<index)) composed=(composed&~(15u<<index))|(overlay&(15u<<index));
-            navi[cell*16+word]=(unsigned short)composed;
+        unsigned best=0;
+        owner[cell]=3;
+        for (slot=0; slot<3; ++slot) {
+            unsigned area=hud_overlap((cell%HUD_ITEM_W)*8,hud_item_at[slot][0])*
+                          hud_overlap((cell/HUD_ITEM_W)*8,hud_item_at[slot][1]);
+            if (art.record[slot] && area>best) { best=area; owner[cell]=(unsigned char)slot; }
         }
+        hud_item_palette[back][cell]=owner[cell]<3 ? (unsigned char)(5u+back*3u+owner[cell]) : 2u;
+    }
+    for (slot=0; slot<4; ++slot) {
+        unsigned short colour[64], count[64];
+        unsigned n=0;
+        if (slot<3) {
+            /* Distinct colours of both phases: <= 3 icons x 15 + 15 HUD. */
+            for (cell=0; cell<HUD_ITEM_COUNT; ++cell) if (owner[cell]==slot)
+                for (y=0; y<8; ++y) for (x=0; x<8; ++x) for (phase=0; phase<2; ++phase) {
+                    unsigned c=hud_item_rgb(&art,(cell%HUD_ITEM_W)*8+x,(cell/HUD_ITEM_W)*8+y,phase);
+                    if (!c) continue;
+                    c&=0x7FFFu;
+                    for (i=0; i<n && colour[i]!=c; ++i) {}
+                    if (i==n) { if (n==64) continue; colour[n]=(unsigned short)c; count[n++]=0; }
+                    if (count[i]<0xFFFFu) ++count[i];
+                }
+            /* Merge the closest pair into its more common colour until 15. */
+            while (n>15) {
+                unsigned a=0, b=1, best=~0u;
+                for (i=0; i<n; ++i) for (j=i+1; j<n; ++j) {
+                    unsigned d=hud_rgb_distance(colour[i],colour[j]);
+                    if (d<best) { best=d; a=i; b=j; }
+                }
+                if (count[b]>count[a]) colour[a]=colour[b];
+                count[a]=(unsigned short)(count[a]+count[b]>0xFFFFu ? 0xFFFFu : count[a]+count[b]);
+                colour[b]=colour[--n]; count[b]=count[n];
+            }
+            cram[768u+(5u+back*3u+slot)*16u]=0;
+            for (i=0; i<15; ++i) cram[768u+(5u+back*3u+slot)*16u+1u+i]=i<n ? colour[i] : 0;
+        }
+        for (cell=0; cell<HUD_ITEM_COUNT; ++cell) if (owner[cell]==slot)
+            for (phase=0; phase<2; ++phase) for (y=0; y<8; ++y) for (x=0; x<8; ++x) {
+                unsigned px=(cell%HUD_ITEM_W)*8+x, py=(cell/HUD_ITEM_W)*8+y;
+                unsigned c=hud_item_rgb(&art,px,py,phase), index=0;
+                if (c && slot==3) index=hud_icon_colour(c&0x7FFFu);
+                else if (c) {
+                    unsigned best=~0u;
+                    for (i=0; i<n; ++i) {
+                        unsigned d=hud_rgb_distance(c,colour[i]);
+                        if (d<best) { best=d; index=i+1; }
+                    }
+                }
+                hud_item_pixel(dst+phase*HUD_ITEM_BANK_WORDS,px,py,index);
+            }
     }
     hud_item_front=back;
 }
@@ -156,8 +238,10 @@ static void hud_visibility(int variant)
     unsigned int x, y;
     bool analog = jo_is_pad1_available() && jo_is_input_analog(0);
     unsigned preset = ui_labels() * 2 + analog;
+    unsigned weapon = variant >= 0 && (variant & 16) && save_state.equip_sword <= 3u
+        ? save_state.equip_sword : 0u;
     uint32_t actions=0, items=0;
-    int key = variant < 0 ? -1 : variant + preset * 32;
+    int key = variant < 0 ? -1 : variant + preset * 32 + weapon * 320;
     volatile uint16_t *map = (volatile uint16_t *)MINIMAP_VRAM_MAP;
     unsigned int base = (HUD_VRAM_CELLS - MINIMAP_VRAM_MAP) / 32u;
     for (x=0; x<3; ++x) {
@@ -180,12 +264,16 @@ static void hud_visibility(int variant)
         unsigned patch = HUD_PATCH_OFFSET + (preset * 2 + !!(variant & 16)) * HUD_PATCH_COUNT;
         for (x=0; x<HUD_PATCH_COUNT; ++x)
             map[hud_patch_positions[x]] = 0x2000u | (base + HUD_NAMES[patch+x]);
+        unsigned label = preset >= 8u ? 2u : preset >= 4u ? 1u : 0u;
+        patch = HUD_WEAPON_OFFSET + ((label * 4 + weapon) * 8 + ((variant >> 1) & 7)) * HUD_WEAPON_COUNT;
+        for (x=0; x<HUD_WEAPON_COUNT; ++x)
+            map[hud_weapon_positions[x]] = 0x2000u | (base + HUD_NAMES[patch+x]);
     }
     if (variant >= 0) {
         unsigned patch=((uintptr_t)HUD_ITEM_CELLS-MINIMAP_VRAM_MAP)/32u+
             (hud_item_front*2u+(variant&1))*HUD_ITEM_BANK_WORDS/16u;
         for (x=0; x<HUD_ITEM_COUNT; ++x)
-            map[hud_item_positions[x]] = 0x2000u | (patch+x);
+            map[hud_item_positions[x]] = (uint16_t)((hud_item_palette[hud_item_front][x]<<12) | (patch+x));
     }
     hud_variant = key;
 }
@@ -325,15 +413,15 @@ void    minimap_session_reset(void)
 ** (z_parameter.c minimapAlpha), the title and cutscenes never show it. */
 static bool shown(void)
 {
-    return row && !hidden && demo_link_active && !demo_title_is_visible() &&
-           !demo_file_select_is_visible() && !cutscene_is_playing() &&
+    return row && !hidden && recomp_link_active && !recomp_title_is_visible() &&
+           !recomp_file_select_is_visible() && !cutscene_is_playing() &&
            !gameplay_is_talking() && !gameplay_is_paused();
 }
 
 uint32_t minimap_layer_flags(void)
 {
     static bool pause_visible;
-    if (gameplay_is_paused() && demo_link_active) {
+    if (gameplay_is_paused() && recomp_link_active) {
         pause_visible = true;
         return pause_windows_update() ? NBG0ON : 0;
     }
@@ -342,19 +430,19 @@ uint32_t minimap_layer_flags(void)
         minimap_scene(row ? row->save_scene : ~0u);
         pause_visible = false;
     }
-    bool visible = hud_ready && demo_link_active && !demo_title_is_visible() &&
-        !demo_file_select_is_visible() && !cutscene_is_playing() &&
+    bool visible = hud_ready && recomp_link_active && !recomp_title_is_visible() &&
+        !recomp_file_select_is_visible() && !cutscene_is_playing() &&
         !gameplay_is_talking() && !gameplay_is_paused();
-    bool navi = gameplay_hud_blink(&hud_blink, demo_clock(), gameplay.navi_calling, visible);
+    bool navi = gameplay_hud_blink(&hud_blink, recomp_clock(), gameplay.navi_calling, visible);
     bool carrying = world_props_carrying();
     unsigned int action = gameplay_hud_action(
-        demo_enter_prompt(),
+        recomp_enter_prompt(),
         !carrying && (gameplay.chest_prompt >= 0 || dungeon_doors_prompt()),
         gameplay.shop_prompt || gameplay.prompt >= 0,
         world_signs_near(),
-        !carrying && (world_props_near_liftable() || demo_push_prompt()),
-        demo_lift_hold_actionable(),
-        demo_lift_throw_ready());
+        !carrying && (world_props_near_liftable() || recomp_push_prompt()),
+        recomp_lift_hold_actionable(),
+        recomp_lift_throw_ready());
 #ifdef DOSEI_HIRES
     /* Existing NBG2 HUD remains standard-only until doubled cells are baked. */
     return 0;
@@ -414,7 +502,7 @@ void    minimap_draw(int32_t x, int32_t z, uint16_t yaw)
             marker(MINIMAP_DOT_FRAME, px, py);
         }
 #ifndef DOSEI_CLEAN_TEST
-        /* The M2c nutsball launcher (demo.c nut_test_emitter), a stand-in
+        /* The M2c nutsball launcher (recomp.c nut_test_emitter), a stand-in
         ** Deku Scrub at the first Kokiri grass tuft: always marked. */
         if (row->save_scene == SAVE_SCENE_KOKIRI_FOREST) {
             world_to_map(kokiri_grass[0].x, kokiri_grass[0].z, &px, &py);

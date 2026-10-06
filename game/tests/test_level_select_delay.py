@@ -15,10 +15,10 @@ class LevelSelectDelay(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.tmp = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
-        demo = (ROOT / 'src/demo.c').read_text()
-        start = demo.index('static void __attribute__((optimize("Os"))) file_select_tick(void)')
+        recomp = (ROOT / 'src/recomp.c').read_text()
+        start = recomp.index('static void __attribute__((optimize("Os"))) file_select_tick(void)')
         # Compile the actual menu branch, stopping before ordinary save slots.
-        branch = demo[start:demo.index('    menu_step = menu_dx = menu_dy = menu_page = 0;', start)]
+        branch = recomp[start:recomp.index('    menu_step = menu_dx = menu_dy = menu_page = 0;', start)]
         source = r'''
 #include <stdbool.h>
 #include "level_select.h"

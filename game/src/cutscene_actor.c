@@ -10,7 +10,7 @@
 #include "cutscene.h"
 #include "kokiri_sgl.h"
 #include "vdp1_layout.h"
-#include "demo.h"
+#include "recomp.h"
 #include "actor_mesh.h"
 #include "npc_pose.h"
 #include "npc_sprite.h"
@@ -693,7 +693,7 @@ void cutscene_gate_fire_draw(void)
         frame->nbPolygon = 1;
         jo_3d_push_matrix();
         jo_3d_translate_matrix(i ? -260 : 260, -128, 690);
-        slRotY((ANGLE)(demo_yaw + 0x8000u));
+        slRotY((ANGLE)(recomp_yaw + 0x8000u));
         kokiri_submit_pdata(frame);
         jo_3d_pop_matrix();
     }

@@ -102,7 +102,7 @@ class LocomotionTiming(unittest.TestCase):
         self.assertEqual(self.lib.edge_consume(), 1)
 
     def test_start_no_longer_uses_ephemeral_edge(self):
-        text = (ROOT / 'src/demo.c').read_text()
+        text = (ROOT / 'src/recomp.c').read_text()
         self.assertNotIn('jo_is_pad1_key_down(JO_KEY_START)', text)
         self.assertIn('input_edge_sample(&start_edge', text)
         self.assertIn('input_edge_consume(&start_edge', text)
@@ -121,11 +121,11 @@ class LocomotionTiming(unittest.TestCase):
         and the D-pad and nothing on the screen could be chosen -- while the
         screen itself still drew correctly, which made it look like a menu bug.
 
-        This is a source check because the wiring lives in demo.c, which has no
+        This is a source check because the wiring lives in recomp.c, which has no
         host harness; the player_input side is covered in test_player_controls.
         """
-        text = (ROOT / 'src/demo.c').read_text()
-        self.assertIn('demo_link_active || file_select_visible ||', text)
+        text = (ROOT / 'src/recomp.c').read_text()
+        self.assertIn('recomp_link_active || file_select_visible ||', text)
         self.assertIn('game_mode() == GAME_MODE_CUTSCENE', text)
         # They must also claim the pad, or B toggles walk/run instead of
         # cancelling, and A would not advance cutscene text boxes.
@@ -238,7 +238,7 @@ class LocomotionTiming(unittest.TestCase):
 
     def test_input_heading_is_measured_against_links_facing(self):
         # A direction is only "forward" when it points where Link is facing;
-        # demo.c compares this heading with his yaw.
+        # recomp.c compares this heading with his yaw.
         heading = ctypes.c_uint16()
         UP, DOWN, LEFT = 0x1000, 0x2000, 0x4000
         self.assertTrue(self.lib.kokiri_camera_input_heading(0, UP,
@@ -278,7 +278,7 @@ class LocomotionTiming(unittest.TestCase):
             self.assertEqual(getattr(p, 'x' if axis == 'z' else 'z'), 0, yaw)
 
     def test_a_press_claimed_by_the_world_never_also_rolls(self):
-        text = (ROOT / 'src/demo.c').read_text()
+        text = (ROOT / 'src/recomp.c').read_text()
         claim = text.split('roll_pending = interact_pending', 1)[1].split(';', 1)[0]
         for event in ('GP_EVENT_TALK_OPEN', 'GP_EVENT_PICKUP',
                       'GP_EVENT_MENU_OPEN', 'GP_EVENT_EQUIP'):
@@ -333,7 +333,7 @@ class LocomotionTiming(unittest.TestCase):
         self.assertEqual(events,[(1,1<<17),(6,1<<15)])
 
     def test_r_does_not_reach_gameplay_orbit(self):
-        text = (ROOT / 'src/demo.c').read_text()
+        text = (ROOT / 'src/recomp.c').read_text()
         mask = text.split('uint16_t walk = buttons &', 1)[1].split(';', 1)[0]
         self.assertNotIn('CAMERA_R', mask.replace('CAMERA_RIGHT', ''))
 

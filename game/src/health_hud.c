@@ -2,7 +2,7 @@
 #include "health_hud.h"
 #include "health_hud_state.h"
 #include "save_state.h"
-#include "demo.h"
+#include "recomp.h"
 
 /* B0: independent of map, button and pause cells. Source images also live in
  * VDP2 RAM so neither the sprite table nor scarce work RAM holds the atlas. */
@@ -43,7 +43,7 @@ bool __attribute__((optimize("Os"))) health_hud_init(void)
 void health_hud_draw(bool visible)
 {
     unsigned health = save_state.health, capacity = save_state.health_capacity / 16;
-    unsigned pulse = (demo_clock() / 3) % 10, size, heart, x, y, i;
+    unsigned pulse = (recomp_clock() / 3) % 10, size, heart, x, y, i;
     static const unsigned char sample11[11]={0,1,2,4,5,7,8,10,11,13,14};
     unsigned char sample[16];
     int key;

@@ -10,7 +10,7 @@
 #include "kokiri_actors.h"
 #include "kokiri_sgl.h"
 #include "save_state.h"
-#include "demo.h"
+#include "recomp.h"
 #include "scene_flow.h"
 #include "world_prop_assets.h"
 #include "kokiri_scene.h"
@@ -134,7 +134,7 @@ bool world_props_draw_load(unsigned int scene)
     if(scene==SAVE_SCENE_DEKU_TREE_BOSS &&
        (!(boss_heart=actor_mesh_load_static("BOSSHRT.BIN")) ||
         !(blue_warp=actor_mesh_load_static("BLUEWARP.BIN"))))return false;
-    last_tick=demo_world_clock();return true;
+    last_tick=recomp_world_clock();return true;
 }
 bool world_props_draw_upload(void)
 {
@@ -205,7 +205,7 @@ void world_props_draw(unsigned int tick)
     if(sign[0] && !(dosei_draw_mask & 2)) {
         for(i=0;i<KOKIRI_SIGN_COUNT;++i) {
             const kokiri_prop_t *s=&kokiri_signs[i];
-            int dx=s->x-demo_link.x,dz=s->z-demo_link.z;
+            int dx=s->x-recomp_link.x,dz=s->z-recomp_link.z;
             if(s->room==kokiri_scene_room() && dx>-1000 && dx<1000 && dz>-1000 && dz<1000)
                 draw_sign(world_signs_parts(i),s->x,s->y,s->z,kokiri_sign_yaws[i],false);
         }
@@ -215,7 +215,7 @@ void world_props_draw(unsigned int tick)
     }
     if(boss_heart){int32_t p[3];uint16_t yaw;
         if(gameplay.get_item==GP_GET_CONTAINER)
-            actor_mesh_draw_static(boss_heart,demo_link.x,demo_link.y-DEMO_LINK_EYE_HEIGHT+70,demo_link.z,(uint16_t)(tick*512));
+            actor_mesh_draw_static(boss_heart,recomp_link.x,recomp_link.y-RECOMP_LINK_EYE_HEIGHT+70,recomp_link.z,(uint16_t)(tick*512));
         else if(gohma_reward_body(0,p,&yaw))actor_mesh_draw_static(boss_heart,p[0],p[1],p[2],yaw);
         if(gohma_reward_body(1,p,&yaw))actor_mesh_draw_static(blue_warp,p[0],p[1]+1,p[2],0);
     }
@@ -243,7 +243,7 @@ void world_props_draw(unsigned int tick)
     }
     for(i=0;hint_ball && i<HINTNUTS_BALLS;++i) {
         int32_t p[3];uint16_t roll;if(!hintnuts_ball(i,p,&roll))continue;
-        jo_3d_push_matrix();jo_3d_translate_matrix(p[0],-p[1],p[2]);slRotY(demo_yaw);slRotZ(roll);
+        jo_3d_push_matrix();jo_3d_translate_matrix(p[0],-p[1],p[2]);slRotY(recomp_yaw);slRotZ(roll);
         actor_mesh_draw_static(hint_ball,0,0,0,0);jo_3d_pop_matrix();
     }
     for(i=0;baba_head && i<DEKUBABA_MAX;++i) {
@@ -330,7 +330,7 @@ void world_props_draw(unsigned int tick)
         const kokiri_chest_t *c=&kokiri_chests[i];
         unsigned int frame;int32_t focus[3];
         if(c->scene!=save_state.scene_id || c->room!=(scene_flow_is_interior() ? 0 : kokiri_scene_room())) continue;
-        if(demo_chest_index()==(int)i)chest_age[i]=(uint16_t)(demo_chest_frame()*9/2);
+        if(recomp_chest_index()==(int)i)chest_age[i]=(uint16_t)(recomp_chest_frame()*9/2);
         else if(gameplay_chest_opened(i) && chest_age[i]<WORLD_CHEST_FRAMES*3)
             chest_age[i]=(uint16_t)(chest_age[i]+delta);
         frame=chest_age[i]/3;

@@ -2,6 +2,74 @@
 #include "kokiri_camera.h"
 #pragma GCC optimize("Os")
 
+static unsigned char experiment;
+static uint16_t orbit_yaw = 32768, orbit_start;
+static signed char orbit_pending, orbit_direction;
+static unsigned char orbit_frame;
+bool player_camera_orbit_active(void) { return experiment==1; }
+void player_camera_orbit_turn(int direction)
+{
+    if (experiment != 1 || !direction) return;
+    /* Bounded queue: rapid taps retain complete cardinal turns. */
+    if (direction > 0 && orbit_pending < 4) ++orbit_pending;
+    if (direction < 0 && orbit_pending > -4) --orbit_pending;
+}
+static void orbit_step(void)
+{
+    int32_t t, curve;
+    if (!orbit_direction) {
+        if (!orbit_pending) return;
+        orbit_direction = orbit_pending > 0 ? 1 : -1;
+        orbit_pending -= orbit_direction;
+        orbit_start = orbit_yaw;
+        orbit_frame = 0;
+    }
+    /* Cubic Hermite smoothstep, Q8: zero slope at both ends, 16 fixed
+     * camera steps (~0.53 s at 30 Hz). Largest product is 16,777,216. */
+    t = ++orbit_frame * 16;
+    curve = t*t*(768-2*t)/1024; /* 16384 * (3u^2 - 2u^3). */
+    orbit_yaw = (uint16_t)(orbit_start + orbit_direction*curve);
+    if (orbit_frame == 16) orbit_direction = 0;
+}
+unsigned player_camera_experiment_cycle(void)
+{
+    /* Leave a cardinal heading when switching away mid-turn. */
+    if (orbit_direction) orbit_yaw=(uint16_t)(orbit_start+orbit_direction*16384);
+    orbit_direction=orbit_pending=orbit_frame=0;
+    experiment^=1;
+    return experiment;
+}
+void player_camera_experiment_reset(void)
+{
+    experiment=0; orbit_yaw=32768;
+    orbit_direction=orbit_pending=orbit_frame=0;
+}
+
+void player_camera_scene_default(bool overhead)
+{
+    player_camera_experiment_reset();
+    experiment=overhead ? 1 : 0;
+}
+
+static void experiment_eye(const camera_position_t *player, camera_position_t *eye,
+                           uint16_t *yaw, int32_t *pitch)
+{
+    const int back=600, rise=360;
+    *eye=*player;
+    eye->y+=oot_follow_scale.height-OOT_CAM_PLAYER_ORIGIN+rise;
+    eye->z+=back;
+    *yaw=32768; /* Fixed north; movement still uses the actual camera yaw. */
+    if (experiment==1) {
+        int32_t s,c;
+        orbit_step();
+        *yaw=orbit_yaw;
+        kokiri_camera_sincos(*yaw,&s,&c);
+        eye->x-=s*back/65536;
+        eye->z=player->z-c*back/65536;
+    }
+    *pitch=-(int16_t)kokiri_camera_facing(rise,back);
+}
+
 static int32_t ease(int32_t from, int32_t to)
 {
     int32_t step = (to - from) / 6;
@@ -107,6 +175,13 @@ void player_camera_update(player_camera_t *camera, oot_follow_t *follow,
     unsigned mode, const camera_position_t *player, uint16_t facing, bool moving,
     camera_position_t *eye, uint16_t *yaw, int32_t *pitch)
 {
+    /* Deliberately unobstructed survey views: ordinary arm clipping would
+     * pull these back against the very ground being compared. Link's own
+     * collision is unaffected. Traversal and first-person retain their views. */
+    if (experiment && mode == PLAYER_CAMERA_NORMAL) {
+        experiment_eye(player,eye,yaw,pitch);
+        return;
+    }
     oot_follow_profile_t profile = {oot_follow_scale.y_offset, OOT_CAM_PITCH_TARGET, 18, 0};
     camera_position_t anchor = *player;
     int32_t target;

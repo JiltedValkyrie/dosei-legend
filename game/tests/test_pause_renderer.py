@@ -89,7 +89,7 @@ static const char *scene_name(unsigned scene) {return scene==85 ? "Kokiri Forest
 static void slZoomNbg0(int x,int y) {zx=x;zy=y;}
 static void slScrPosNbg0(int x,int y) {sx=x;sy=y;}
 static void slScrWindow0(int a,int b,int c,int d) {wl=a;wt=b;wr=c;wb=d;}
-static unsigned demo_clock(void) {return now;}
+static unsigned recomp_clock(void) {return now;}
 void *ram_cart_fixed(unsigned offset,unsigned bytes) {return offset+bytes<=sizeof(cart) ? cart+offset : 0;}
 '''
         post=r'''
@@ -122,6 +122,10 @@ int pixel_at(int x,int y) {return cell((y/8)*40+x/8)[(y&7)*8+(x&7)];}
 void full_inventory(void) {save_test_max_gear();}
 void region(unsigned scene) {entry.oot_scene=scene;}
 void age(unsigned child) {save_state.link_age=!!child;}
+void era_kit(unsigned child,unsigned all) {save_new_game();if(all)save_test_max_gear();save_set_link_age(child);}
+unsigned gear_item(unsigned slot) {return equipment_item(slot);}
+unsigned gear_age(unsigned slot) {return equipment_matches_age(slot);}
+void gear_cursor(unsigned slot) {gameplay.pause_window.cursor[PAUSE_EQUIPMENT]=slot;}
 void missing_atlas(void) {atlas_ready=false;}
 int cached_at(int x,int y) {return cache()[y*320+x];}
 int item_frame_slot(unsigned action) {return save_c_item_inventory_slot(action);}
@@ -133,6 +137,7 @@ int item_frame_slot(unsigned action) {return save_c_item_inventory_slot(action);
                         '-I'+str(ROOT/'src'),'-I'+str(ROOT/'build/generated'),str(src),str(ROOT/'src/save_state.c'),'-o',str(dll)],check=True,env=env)
         cls.lib=ctypes.CDLL(str(dll))
         cls.lib.pause_windows_item_name.restype=ctypes.c_char_p
+        cls.lib.pause_windows_selection_name.restype=ctypes.c_char_p
     @classmethod
     def tearDownClass(cls):cls.tmp.cleanup()
     def setUp(self):self.lib.reset()
@@ -206,6 +211,16 @@ int item_frame_slot(unsigned action) {return save_c_item_inventory_slot(action);
         self.lib.pause_windows_print(0,0,b'\x80')
         self.assertEqual(self.lib.pixel_at(0,0),0x8030)
         self.assertEqual(self.lib.value(8),n)
+    def test_item_name_centres_in_info_panel(self):
+        self.lib.step(0,0);self.lib.step(1,0)
+        bg=[self.lib.pixel_at(x,y) for x in range(48,272) for y in range(204,212)]
+        self.lib.pause_windows_print_centered(204,b'MM')
+        lit={(x,y) for i,(x,y) in enumerate((x,y) for x in range(48,272) for y in range(204,212))
+             if self.lib.pixel_at(x,y)!=bg[i]}
+        self.assertTrue(lit)
+        self.assertTrue(all(152<=x<168 for x,y in lit))
+        self.lib.pause_windows_print_centered(204,b'')
+        self.assertEqual([self.lib.pixel_at(x,y) for x in range(48,272) for y in range(204,212)],bg)
     def test_all_items_and_quest_bits_render_from_source_save(self):
         self.lib.full_inventory()
         self.assertEqual(self.lib.step(0,0),1)
@@ -246,6 +261,37 @@ int item_frame_slot(unsigned action) {return save_c_item_inventory_slot(action);
         self.assertEqual(self.lib.untouched(),1)
         self.lib.step(1,1);self.lib.step(13,1)
         self.assertEqual(self.lib.untouched(),1)
+    def test_adult_starter_inventory_names_icons_and_equipped_frames(self):
+        self.lib.era_kit(0,0);self.lib.step(0,3)
+        self.assertEqual([self.lib.gear_item(s) for s in (1,2,5,6)],[255,0x3c,255,0x3f])
+        for slot,name in [(2,b'Master Sword'),(6,b'Hylian Shield')]:
+            self.lib.gear_cursor(slot);self.lib.step(slot,3)
+            self.assertEqual(self.lib.pause_windows_selection_name(),name)
+            x,y=206,64+(slot//4)*32
+            self.assertGreater(len({self.lib.cached_at(x+dx,y+dy) for dx in range(28) for dy in range(28)}),2)
+            # Source equipped cyan corners enclose the adult column.
+            self.assertTrue(any(self.lib.pixel_at(205+dx,y-1+dy)==0x83ff
+                                for dx in range(29) for dy in range(29)))
+        self.assertEqual(self.lib.value(8),2) # no disc read while selecting gear
+
+    def test_owned_child_gear_stays_visible_but_dim_for_adult(self):
+        self.lib.era_kit(0,1);self.lib.step(0,3)
+        self.assertEqual([self.lib.gear_item(s) for s in (1,2,5,6)],[0x3b,0x3c,0x3e,0x3f])
+        self.assertEqual([self.lib.gear_age(s) for s in (1,2,5,6)],[0,1,0,1])
+        for slot in (1,5):
+            x,y=174,64+(slot//4)*32
+            colours={self.lib.cached_at(x+dx,y+dy) for dx in range(28) for dy in range(28)}-{0x8033}
+            self.assertGreater(len(colours),1)
+            self.assertTrue(all((c&31)==((c>>5)&31)==((c>>10)&31) for c in colours))
+
+    def test_age_and_ownership_changes_refresh_equipment_cache(self):
+        self.lib.era_kit(1,0);self.lib.step(0,3)
+        self.assertEqual(self.lib.gear_item(2),255)
+        self.lib.era_kit(0,0);self.lib.step(1,3)
+        self.lib.gear_cursor(2);self.lib.step(2,3)
+        self.assertEqual(self.lib.pause_windows_selection_name(),b'Master Sword')
+        self.assertEqual(self.lib.value(8),3) # one refresh after ownership changes
+        self.assertEqual(len({self.lib.cached_at(174+x,64+y) for x in range(28) for y in range(28)}),1)
     def test_fast_page_changes_queue_without_painting_wrong_page_text(self):
         self.lib.step(0,0);self.lib.step(1,1);self.lib.step(13,1)
         self.lib.step(14,2)

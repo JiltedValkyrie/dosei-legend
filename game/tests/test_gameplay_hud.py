@@ -21,6 +21,24 @@ GCC = Path('C:/msys64/mingw64/bin/gcc.exe')
 
 @unittest.skipUnless((OOT/'extracted/ntsc-1.2').exists(), 'local extracted artwork required')
 class HudAssets(unittest.TestCase):
+    def test_sword_replacement_preserves_all_action_and_item_pixels(self):
+        for mode in ('saturn','xbox','n64','gamecube','playstation'):
+            for analog in (False,True):
+                baseline = hud.make_images(OOT,analog=analog,mode=mode)
+                crops = []
+                for weapon in range(4):
+                    images = hud.make_images(OOT,analog=analog,mode=mode,weapon=weapon)
+                    crops.append(images[16].crop((8,16,40,56)).tobytes())
+                    for variant in (16,17,18,30,31):
+                        patch = images[variant & ~1]
+                        actual = baseline[variant].copy()
+                        for y,x in hud.WEAPON_PATCH_CELLS:
+                            box=(x*8,y*8,x*8+8,y*8+8)
+                            actual.paste(patch.crop(box),box)
+                        self.assertEqual(actual.tobytes(),images[variant].tobytes(),
+                                         (mode,analog,weapon,variant))
+                self.assertEqual(len(set(crops)),4)
+
     def test_assigned_items_replace_arrows_without_touching_action_or_labels(self):
         empty = hud.make_images(OOT)
         for assignment in range(64):

@@ -15,20 +15,20 @@ GCC = Path('C:/msys64/mingw64/bin/gcc.exe')
 class TitleFlights(unittest.TestCase):
     def test_all_flights_travel_without_heading_snaps_or_floor_bob(self):
         subprocess.run([os.sys.executable, str(ROOT/'tools/build_title_paths.py')], check=True)
-        source = (ROOT/'src/demo.c').read_text()
+        source = (ROOT/'src/recomp.c').read_text()
         function = source[source.index('static void title_showcase_camera'):source.index('static bool recover_link')]
         adapter = '''
 #include <stdint.h>
 #include "title_paths.h"
-struct { int32_t x,y,z; } demo_camera;
-uint16_t demo_yaw;
-int32_t demo_pitch;
+struct { int32_t x,y,z; } recomp_camera;
+uint16_t recomp_yaw;
+int32_t recomp_pitch;
 '''
         adapter += function + '''
 void sample(unsigned int tick, int *out) {
  title_showcase_camera(tick);
- out[0]=demo_camera.x; out[1]=demo_camera.y; out[2]=demo_camera.z;
- out[3]=demo_yaw; out[4]=demo_pitch;
+ out[0]=recomp_camera.x; out[1]=recomp_camera.y; out[2]=recomp_camera.z;
+ out[3]=recomp_yaw; out[4]=recomp_pitch;
 }
 int shots(void) { return TITLE_SHOT_COUNT; }
 int duration(void) { return TITLE_SHOT_TICKS; }

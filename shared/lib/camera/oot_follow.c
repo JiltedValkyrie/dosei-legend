@@ -476,7 +476,7 @@ void            oot_follow_update_profile(oot_follow_t *camera,
     place(camera, player, eye_out, profile->y_offset);
     *yaw_out = camera->yaw;
     /* Negated: kokiri_camera_update() adds CAMERA_PITCH_SPEED for Up, so a
-    ** positive demo_pitch looks UP. The eye has been raised above the player,
+    ** positive recomp_pitch looks UP. The eye has been raised above the player,
     ** so the view has to look DOWN by the same angle for the at-point to stay
     ** on him. Getting this sign wrong puts Link off the bottom of the screen,
     ** which is why the previous camera avoided pitch entirely. */

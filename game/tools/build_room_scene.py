@@ -223,6 +223,8 @@ def emit_rooms(args, head, actor, normal):
                 stale = [out / asset_names.room_asset(scene_id, room_id, ext) for ext in ('MSH', 'TEX')]
                 for path in stale:
                     path.unlink(missing_ok=True)
+                from field_retopo import record
+                record('stm', build_document())
                 result = field.bake(args.oot, args.rom_dir, head, actor, owl_actor,
                                     build_document(),
                                     out / asset_names.room_asset(scene_id, room_id, 'STM'),

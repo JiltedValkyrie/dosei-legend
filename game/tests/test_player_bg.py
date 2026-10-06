@@ -813,7 +813,7 @@ class PlayerBg(unittest.TestCase):
         self.pos.z += (lz * (int(cos / 256)) - lx * (int(sin / 256))) // 65536
 
     def test_grab_pull_up_and_let_go_end_clear_of_the_wall(self):
-        """demo.c's order, on the real collision: grab from a 250 jump, pull
+        """recomp.c's order, on the real collision: grab from a 250 jump, pull
         up onto the ledge; grab again and let go back to the ground."""
         for pull in (True, False):
             with self.subTest(pull=pull):

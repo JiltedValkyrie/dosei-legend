@@ -164,9 +164,9 @@ class RuntimeRoundTrips(unittest.TestCase):
         folder=Path(cls.tmp.name)
         flow=(ROOT/'src/scene_flow.c').read_text()
         flow=flow[flow.index('static bool     inside_triangle('):flow.index('\n/*\n** END OF FILE',flow.index('static bool     inside_triangle('))]
-        demo=(ROOT/'src/demo.c').read_text()
-        start=demo.index('static bool __attribute__((optimize("Os"))) take_door(void)')
-        demo=demo[start:demo.index('\n/* Area themes',start)]
+        recomp=(ROOT/'src/recomp.c').read_text()
+        start=recomp.index('static bool __attribute__((optimize("Os"))) take_door(void)')
+        recomp=recomp[start:recomp.index('\n/* Area themes',start)]
         pre=r'''
 #include <stdint.h>
 #include <stdbool.h>
@@ -174,17 +174,17 @@ class RuntimeRoundTrips(unittest.TestCase):
 #define SCENE_DOOR_COUNT 2
 #define SCENE_ENTRANCE_COUNT 2
 #define SCENE_DOOR_HEIGHT 60
-#define DEMO_LINK_EYE_HEIGHT 90
+#define RECOMP_LINK_EYE_HEIGHT 90
 #define GAME_MODE_LOADING 2
 #define GAME_MODE_PLAY 1
+#define OOT_CORE_TRANSITION_RELOAD 65536
 typedef struct {int16_t x[3],z[3],y;uint8_t scene,target,spawn,keep_music;uint16_t entrance;uint32_t layers;}scene_door_t;
-typedef struct {unsigned char save_scene,spawns;}scene_entry_t;
+typedef struct {unsigned char save_scene,spawns,oot_scene;}scene_entry_t;
 typedef struct {unsigned char target,spawn,keep_music;}scene_entrance_t;
 static scene_door_t scene_doors[2]={{{-30,30,0},{-10,-10,40},0,0,1,0,1,0,15},{{-30,30,0},{-10,-10,40},0,1,0,0,0,1,15}};
-static scene_entry_t scene_entries[2]={{0,1},{1,1}};
+static scene_entry_t scene_entries[2]={{0,1,0},{1,1,1}};
 static scene_entrance_t scene_entrances[2]={{1,0,1},{0,0,0}};
-static struct {int32_t x,y,z;}demo_link;
-static unsigned short demo_link_yaw;
+static struct {int32_t x,y,z;}recomp_link;
 static struct {uint8_t scene_id,entrance;uint16_t source_entrance;
     unsigned day_time,link_age,keys,flags;}save_state;
 static bool loaded=true,door_armed,can_exit=true;
@@ -192,6 +192,8 @@ static unsigned current_scene,music_count,loads,messages,active_layer,fail_load;
 static unsigned attempts,resets,errors,mode,placed_scene,placed_spawn,collision_scene,pixels_scene,actor_scene;
 static int script=-1;
 static unsigned oot_core_scene_layer(void){return active_layer;}
+static unsigned oot_core_destination_layer(unsigned){return active_layer;}
+static void oot_core_cancel_transition_time(void){}
 static int oot_core_transition_request(bool consume){int old=script;if(consume)script=-1;return old;}
 static bool dungeon_doors_exit_allowed(int32_t,int32_t,int32_t){return can_exit;}
 static void game_mode_set(int next){mode=next;}
@@ -204,11 +206,9 @@ static bool scene_flow_load(unsigned s,unsigned){
     door_armed=false;++loads;return true;
 }
 static const scene_entry_t*scene_flow_entry(void){return &scene_entries[current_scene];}
-static void kokiri_camera_sincos(unsigned,int32_t*s,int32_t*c){*s=0;*c=65536;}
-static void kokiri_collision_move(void*,int32_t,int32_t,int32_t z){demo_link.z+=z;}
 static void gameplay_actor_message(unsigned){++messages;}
 static void scene_music(void){++music_count;}
-static void place_at_spawn(unsigned s,unsigned p){placed_scene=s;placed_spawn=p;demo_link.x=demo_link.z=0;demo_link.y=90;}
+static void place_at_spawn(unsigned s,unsigned p){placed_scene=s;placed_spawn=p;recomp_link.x=recomp_link.z=0;recomp_link.y=90;}
 static void gameplay_reset(void){++resets;}
 static void jo_core_error(const char*){++errors;}
 static bool scene_flow_is_interior(void){return false;}
@@ -217,8 +217,8 @@ static void story_route_arrive(unsigned){}
 '''
         post=r'''
 extern "C" {
-void reset_routes(){current_scene=music_count=loads=messages=active_layer=0;attempts=resets=errors=0;collision_scene=pixels_scene=actor_scene=0;mode=GAME_MODE_PLAY;placed_scene=placed_spawn=255;save_state={0,0,0x155,0xc123,0,3,0x12345678};door_armed=false;can_exit=true;fail_load=0;script=-1;scene_doors[0].target=1;scene_entrances[0].target=1;demo_link.x=demo_link.z=0;demo_link.y=90;}
-int go(int x,int y,int z){demo_link.x=x;demo_link.y=y+90;demo_link.z=z;return take_door();}
+void reset_routes(){current_scene=music_count=loads=messages=active_layer=0;attempts=resets=errors=0;collision_scene=pixels_scene=actor_scene=0;mode=GAME_MODE_PLAY;placed_scene=placed_spawn=255;save_state={0,0,0x155,0xc123,0,3,0x12345678};door_armed=false;can_exit=true;fail_load=0;script=-1;scene_doors[0].target=1;scene_entrances[0].target=1;recomp_link.x=recomp_link.z=0;recomp_link.y=90;}
+int go(int x,int y,int z){recomp_link.x=x;recomp_link.y=y+90;recomp_link.z=z;return take_door();}
 unsigned here(){return current_scene;}
 unsigned music_calls(){return music_count;}
 unsigned load_calls(){return loads;}
@@ -241,7 +241,7 @@ int pending(){return script;}
 unsigned saved_source_entrance(){return save_state.source_entrance;}
 }
 '''
-        source=folder/'routes.cpp';source.write_text(pre+flow+demo+post)
+        source=folder/'routes.cpp';source.write_text(pre+flow+recomp+post)
         dll=folder/('routes.dll' if os.name=='nt' else 'routes.so')
         env=dict(os.environ,PATH=str(Path(GXX).parent)+os.pathsep+os.environ.get('PATH',''))
         subprocess.run([GXX,'-std=c++11','-shared','-O2','-Wall','-Wextra','-Werror',str(source),'-o',str(dll)],check=True,env=env)
@@ -249,7 +249,10 @@ unsigned saved_source_entrance(){return save_state.source_entrance;}
 
     @classmethod
     def tearDownClass(cls):cls.tmp.cleanup()
-    def setUp(self):self.lib.reset_routes()
+    def setUp(self):
+        self.lib.reset_routes()
+        self.lib.go(10000,0,10000) # leave any prior test's refusal neighbourhood
+        self.lib.reset_routes()
 
     def test_twenty_roundtrips_keep_music_and_block_spawn_bounce(self):
         g=self.lib
@@ -298,6 +301,16 @@ unsigned saved_source_entrance(){return save_state.source_entrance;}
         self.assertEqual(g.pending(),-1);self.assertEqual(g.music_calls(),0)
         g.request(9999);self.assertTrue(g.go(0,0,-200))
         self.assertEqual(g.pending(),-1);self.assertEqual(g.message_calls(),2)
+
+    def test_missing_exit_does_not_reopen_until_leaving_neighbourhood(self):
+        g=self.lib;g.missing_target();g.go(0,0,-100)
+        self.assertTrue(g.go(0,0,0))
+        for _ in range(60):self.assertFalse(g.go(0,0,0))
+        self.assertEqual(g.message_calls(),1)
+        g.go(0,0,-100);self.assertFalse(g.go(0,0,0))
+        g.request(9999);self.assertFalse(g.go(0,0,0));self.assertEqual(g.pending(),-1)
+        g.go(0,0,-700);self.assertTrue(g.go(0,0,0))
+        self.assertEqual(g.message_calls(),2)
 
     def test_entrance_group_uses_age_time_variant_but_base_bgm_policy(self):
         g=self.lib;g.layer(1);g.request(0)

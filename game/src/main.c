@@ -1,7 +1,7 @@
 /*
 ** Isolated Jo Engine / SGL Kokiri Forest viewer.
 **
-** Title-demo bring-up: textured forest, automatic yaw and baseline SCSP score.
+** Title-recomp bring-up: textured forest, automatic yaw and baseline SCSP score.
 ** Title artwork, controls and source-space collision are connected. This is not
 ** a renderer-only performance comparison with the libyaul baseline.
 **
@@ -22,7 +22,7 @@
 #include "story_route.h"
 #include "emerald_story.h"
 #include "action_audio.h"
-#include "demo.h"
+#include "recomp.h"
 #include "karebaba.h"
 #include "skulltula.h"
 #include "wall_skull.h"
@@ -65,7 +65,7 @@
 ** from x=-300,z=0 and derives y from the floor plus EYE_HEIGHT (90). Replaying
 ** that search over FOREST.BIN's 1692 collision triangles lands on ring 0 with
 ** floor y=1, giving (-300, 91, 0) -- the pose the handoff documents. The
-** demo now derives this spawn and raises it 24 units through collision.
+** recomp now derives this spawn and raises it 24 units through collision.
 **
 ** Facing: at yaw 0 the baseline's Y-rotation matrix is identity and it uses
 ** the rotated z as depth (kokiri_scene.c:160-171), so yaw 0 looks along +Z.
@@ -137,7 +137,7 @@ static bool __attribute__((optimize("Os"))) dialogue_text_load(void)
             table_file_load("GOHMAPOS.BIN", RAM_LOW(RAM_LOW_GOHMA_POSES_OFFSET),
                            RAM_LOW_GOHMA_POSES_BYTES, gohma_bind) &&
             text_file_load("TITLEPTH.BIN", RAM_CART_TITLEPTH_OFFSET,
-                           RAM_CART_TITLEPTH_BYTES, demo_title_paths_bind));
+                           RAM_CART_TITLEPTH_BYTES, recomp_title_paths_bind));
 }
 
 /* oot-core: decomp code in OOTCORE.BIN (oot_core_host.c); the header gives
@@ -155,19 +155,19 @@ static void texture_probe(void)
     int distance = step < 180 ? 500 - (int)step * 2 : 140;
     int turn = step < 180 ? 0 : ((int)step - 270) * 20;
     probe_stage = phase / 120;
-    demo_link_active = false;
-    demo_pitch = 0;
+    recomp_link_active = false;
+    recomp_pitch = 0;
     if (phase < 360) {
-        demo_camera.x = PROBE_GROUND_X;
-        demo_camera.y = PROBE_GROUND_Y + 110;
-        demo_camera.z = PROBE_GROUND_Z - distance;
-        demo_yaw = (uint16_t)turn;
+        recomp_camera.x = PROBE_GROUND_X;
+        recomp_camera.y = PROBE_GROUND_Y + 110;
+        recomp_camera.z = PROBE_GROUND_Z - distance;
+        recomp_yaw = (uint16_t)turn;
     } else {
         distance += 200;
-        demo_camera.x = PROBE_TREE_X;
-        demo_camera.y = PROBE_TREE_Y;
-        demo_camera.z = PROBE_TREE_Z + distance;
-        demo_yaw = (uint16_t)(32768 + turn);
+        recomp_camera.x = PROBE_TREE_X;
+        recomp_camera.y = PROBE_TREE_Y;
+        recomp_camera.z = PROBE_TREE_Z + distance;
+        recomp_yaw = (uint16_t)(32768 + turn);
     }
     slScrAutoDisp(NBG0ON);
     debug_visible = true;
@@ -176,16 +176,16 @@ static void texture_probe(void)
 
 /* The live projection's screen distance (pixels), one choice for the
 ** renderer and attention's on-screen test. */
-int32_t             demo_screen_distance(void)
+int32_t             recomp_screen_distance(void)
 {
     if(story_owl_talking())return story_owl_screen_distance();
     if (cutscene_screen_distance() > 0)
         return (int32_t)cutscene_screen_distance();
     if (kokiri_scene_backdrop_active() && scene_flow_entry()->cam_dist > 0)
         return (int32_t)scene_flow_entry()->cam_dist;
-    if (demo_view_first_person()) return 290; /* Subj3: 45 degree FOV. */
+    if (recomp_view_first_person()) return 290; /* Subj3: 45 degree FOV. */
     if (scene_flow_pivot()) return 208; /* Camera_Unique7: 60 degree FOV. */
-    return demo_title_is_visible() ? 180 : SCREEN_DISTANCE;
+    return recomp_title_is_visible() ? 180 : SCREEN_DISTANCE;
 }
 
 /* Text diagnostics are cold glue, not geometry. Keep their code compact. */
@@ -202,14 +202,15 @@ static void __attribute__((optimize("Os"))) diagnostic_overlay(void)
                   kokiri_scene_vram_percent(), cpu);
     }
     /* Last text writer: available on Clean, title, menus and cutscenes too.
-     * demo_clock is normalized to 60 Hz, independent of rendering rate/PAL.
+     * recomp_clock is normalized to 60 Hz, independent of rendering rate/PAL.
      * Require release after firing so a long hold cannot toggle repeatedly. */
     {
         static unsigned int hold_start;
         static bool holding, latched, visible;
-        unsigned int now = demo_clock();
+        unsigned int now = recomp_clock();
         bool chord = jo_is_pad1_available() &&
-            jo_is_pad1_key_pressed(JO_KEY_L) && jo_is_pad1_key_pressed(JO_KEY_R);
+            jo_is_pad1_key_pressed(JO_KEY_L) && jo_is_pad1_key_pressed(JO_KEY_R) &&
+            !jo_is_pad1_key_pressed(JO_KEY_B);
         if (!chord) holding = latched = false;
         else if (!holding) { holding = true; hold_start = now; }
         else if (!latched && now - hold_start >= 60u) {
@@ -246,7 +247,7 @@ static void __attribute__((optimize("Os"))) diagnostic_overlay(void)
     }
 }
 
-static void         viewer_draw(void)
+static void __attribute__((optimize("Os"))) viewer_draw(void)
 {
     if (!scene_ready)
     {
@@ -260,7 +261,7 @@ static void         viewer_draw(void)
     ** Keeping the matrix free of reflections is what lets the generated face
     ** normals stay meaningful, which Single_Plane culling depends on. */
     /* Source yaw rotates (x,z) to (cx-sz,sx+cz). Use a proper rotation
-    ** in baked-Y space; no runtime reflection. The demo's 60 Hz clock keeps
+    ** in baked-Y space; no runtime reflection. The recomp's 60 Hz clock keeps
     ** the original 90 angle units/tick pan independent of render rate. */
     /* The gap since the previous callback returned is Jo's slSynch wait plus
     ** whatever the engine does between callbacks: the part of the frame this
@@ -270,16 +271,16 @@ static void         viewer_draw(void)
     frame_timer_sample_vdp1();
     frame_timer_frame_begin();
     frame_timer_begin(FRAME_PHASE_MOVEMENT);
-    demo_update();
-    if (!demo_code_fanfare_active() && !kokiri_scene_update()) {
+    recomp_update();
+    if (!recomp_code_fanfare_active() && !kokiri_scene_update()) {
         scene_ready = false;
         jo_printf(2, 2, "room load FAILED");
         return;
     }
 #if defined(DOSEI_PERF_PROBE) && DOSEI_PERF_PROBE == 1
     /* Repeatable no-input render baseline. Never enabled in normal builds. */
-    demo_camera.x = -300; demo_camera.y = 141; demo_camera.z = -260;
-    demo_yaw = 0; demo_pitch = 0;
+    recomp_camera.x = -300; recomp_camera.y = 141; recomp_camera.z = -260;
+    recomp_yaw = 0; recomp_pitch = 0;
 #endif
 #if defined(DOSEI_PERF_PROBE) && DOSEI_PERF_PROBE == 5
     /* Warp A/B: one fixed pose facing the long room-0 wall quad
@@ -289,29 +290,29 @@ static void         viewer_draw(void)
     /* Pin Link where the moving capture showed the offending wall quad
     ** filling the near view and let the real follow camera settle behind him,
     ** so split-off and split-on discs render the same gameplay view. */
-    if (demo_link_active && !demo_title_is_visible() && !cutscene_is_playing()) {
-        demo_link.x = -43; demo_link.y = 90; demo_link.z = -14;
-        demo_link_yaw = 16384;
+    if (recomp_link_active && !recomp_title_is_visible() && !cutscene_is_playing()) {
+        recomp_link.x = -43; recomp_link.y = 90; recomp_link.z = -14;
+        recomp_link_yaw = 16384;
         /* Astra's settled gap pose, camera included: the follow camera reaches
         ** a different yaw when Link is simply placed here, so the eye is
         ** pinned too rather than approximated. */
-        demo_camera.x = -139; demo_camera.y = 71; demo_camera.z = -90;
-        demo_yaw = 9356; demo_pitch = 0;
+        recomp_camera.x = -139; recomp_camera.y = 71; recomp_camera.z = -90;
+        recomp_yaw = 9356; recomp_pitch = 0;
     }
 #endif
 #if defined(DOSEI_PERF_PROBE) && DOSEI_PERF_PROBE == 3
     /* Actor inspection only: original animations, slowly orbiting camera.
      * No controller injection or focus needed. Never in a normal disc. */
-    if (demo_link_active) {
+    if (recomp_link_active) {
         int32_t sine, cosine;
-        unsigned int tick = demo_clock();
-        demo_yaw = (uint16_t)(32768u + ((tick / 180) % 4) * 8192u);
-        kokiri_camera_sincos(demo_yaw, &sine, &cosine);
-        demo_camera.x = demo_link.x - (int32_t)(((int64_t)sine * 155) >> 16);
-        demo_camera.z = demo_link.z - (int32_t)(((int64_t)cosine * 155) >> 16);
-        demo_camera.y = demo_link.y - DEMO_LINK_EYE_HEIGHT + 77;
-        demo_pitch = -1820;
-        demo_link_yaw = 0;
+        unsigned int tick = recomp_clock();
+        recomp_yaw = (uint16_t)(32768u + ((tick / 180) % 4) * 8192u);
+        kokiri_camera_sincos(recomp_yaw, &sine, &cosine);
+        recomp_camera.x = recomp_link.x - (int32_t)(((int64_t)sine * 155) >> 16);
+        recomp_camera.z = recomp_link.z - (int32_t)(((int64_t)cosine * 155) >> 16);
+        recomp_camera.y = recomp_link.y - RECOMP_LINK_EYE_HEIGHT + 77;
+        recomp_pitch = -1820;
+        recomp_link_yaw = 0;
         {
             unsigned int gear = (tick / 180) % 4;
             unsigned int clip = !(gear & GP_SWORD) ? LINK_CLIP_IDLE : LINK_CLIP_SLASH;
@@ -335,7 +336,7 @@ static void         viewer_draw(void)
     /* A cutscene shot has its own field of view, baked to a screen distance
      * because the SH-2 has no tangent. Holding the gameplay 240 for every shot
      * framed the whole dream far too wide. */
-    slSetScreenDist((FIXED)(demo_screen_distance() << 16));
+    slSetScreenDist((FIXED)(recomp_screen_distance() << 16));
     /* Near rejection at screen distance >> level; see KOKIRI_ZDSP_LEVEL. */
     slZdspLevel(KOKIRI_ZDSP_LEVEL);
     music_menu_duck(gameplay_is_paused());
@@ -372,9 +373,9 @@ static void         viewer_draw(void)
     slScale(toFIXED(-1), toFIXED(1), toFIXED(1));
 #endif
     slRotZ((ANGLE)(0u - cutscene_camera_roll()));
-    slRotX((ANGLE)(0u-demo_pitch));
-    slRotY((ANGLE)(0u-demo_yaw));
-    jo_3d_translate_matrix(-demo_camera.x, demo_camera.y, -demo_camera.z);
+    slRotX((ANGLE)(0u-recomp_pitch));
+    slRotY((ANGLE)(0u-recomp_yaw));
+    jo_3d_translate_matrix(-recomp_camera.x, recomp_camera.y, -recomp_camera.z);
     frame_timer_begin(FRAME_PHASE_SCENE);
 #if !defined(DOSEI_PERF_PROBE) || DOSEI_PERF_PROBE != 3
     /* A prerendered interior IS its backdrop: it has no geometry, and the
@@ -436,7 +437,7 @@ static void         viewer_draw(void)
         }
     }
 
-    if (!demo_slingshot_aiming()) link_anim_first_person(false);
+    if (!recomp_slingshot_aiming()) link_anim_first_person(false);
     if (cutscene_is_playing()) {
         /* A cutscene places and poses Link itself, from its own player cues:
          * asleep in bed for the narration, sitting up when Navi wakes him.
@@ -448,24 +449,24 @@ static void         viewer_draw(void)
                              cutscene_link_z(), cutscene_link_yaw());
             frame_timer_end(FRAME_PHASE_LINK);
         }
-    } else if (demo_link_active && !demo_title_is_visible() && demo_slingshot_aiming()) {
+    } else if (recomp_link_active && !recomp_title_is_visible() && recomp_slingshot_aiming()) {
         /* Slingshot aim draws no Link: the first-person arm never showed and
          * was removed (human, 2026-10-01). A VDP2 crosshair marks the aim. */
-    } else if (demo_link_active && !demo_title_is_visible() && !demo_first_person() &&
-               !demo_shop_browsing()) {
+    } else if (recomp_link_active && !recomp_title_is_visible() && !recomp_first_person() &&
+               !recomp_shop_browsing()) {
         frame_timer_begin(FRAME_PHASE_LINK);
         /* shape.yOffset: a ledge step-up draws him from where he stood
          * while the actor is already on the ledge. */
-        if(demo_chest_opening()) {
-            link_anim_pose(LINK_CLIP_CHEST_OPEN,demo_chest_frame(),0);
+        if(recomp_chest_opening()) {
+            link_anim_pose(LINK_CLIP_CHEST_OPEN,recomp_chest_frame(),0);
         } else if (gameplay.get_item) {
             unsigned int frame = gameplay.get_item_age * 2u / 3u;
             if (frame >= LINK_FRAMES_GET_ITEM) frame = LINK_FRAMES_GET_ITEM - 1;
             link_anim_pose(LINK_CLIP_GET_ITEM, frame, 0);
         }
-        kokiri_link_draw(demo_link.x, demo_link.y - DEMO_LINK_EYE_HEIGHT +
+        kokiri_link_draw(recomp_link.x, recomp_link.y - RECOMP_LINK_EYE_HEIGHT +
                          link_anim_y_offset_q8() / 256,
-                         demo_link.z, demo_link_yaw);
+                         recomp_link.z, recomp_link_yaw);
         link_anim_trail_draw();
         frame_timer_end(FRAME_PHASE_LINK);
         /* Link's own fairy, drawn with him and only with him: the title
@@ -485,20 +486,20 @@ static void         viewer_draw(void)
         (save_state.scene_id == SAVE_SCENE_KOKIRI_FOREST || oot_core_owns_kokiri_props())) {
         /* With the decomp playing, these draw its En_Kusa/En_Item00 in any scene. */
         kokiri_grass_draw();
-        kokiri_rupees_draw(demo_world_clock());
+        kokiri_rupees_draw(recomp_world_clock());
         if (save_state.scene_id == SAVE_SCENE_KOKIRI_FOREST) kokiri_boulder_draw();
     }
-    if (demo_link_active && !demo_title_is_visible() &&
+    if (recomp_link_active && !recomp_title_is_visible() &&
           (!cutscene_is_playing() || cutscene_is_in_scene())) {
         kokiri_nut_draw();
         kokiri_babas_draw();
-        npc_draw(demo_world_clock());
-        story_route_draw(demo_world_clock());
-        kokiri_items_draw(demo_world_clock());
-        kokiri_fairies_draw(demo_world_clock());
+        npc_draw(recomp_world_clock());
+        story_route_draw(recomp_world_clock());
+        kokiri_items_draw(recomp_world_clock());
+        kokiri_fairies_draw(recomp_world_clock());
     }
 #endif
-    if (!cutscene_is_playing() && (!demo_link_active || demo_title_is_visible()))
+    if (!cutscene_is_playing() && (!recomp_link_active || recomp_title_is_visible()))
         action_audio_navi_flight(0, false);
     if (cutscene_is_playing() && !cutscene_hides_scene())
         kokiri_cutscene_effects_draw();
@@ -544,9 +545,9 @@ static void         viewer_draw(void)
 #ifdef DOSEI_OOT_CORE
     {
         static bool ocarina_hint;
-        bool active=(oot_core_ocarina_state()&1u) && !gameplay.paused && !demo_title_is_visible();
-        if (active) jo_printf(4,27,"A + D-Pad: Notes   B: Stop");
-        else if (ocarina_hint) jo_printf(4,27,"                          ");
+        bool active=(oot_core_ocarina_state()&1u) && !gameplay.paused && !recomp_title_is_visible();
+        if (active && !ocarina_hint) jo_printf(4,27,"A + D-Pad: Notes   B: Stop");
+        else if (!active && ocarina_hint) jo_printf(4,27,"                          ");
         ocarina_hint=active;
     }
 #endif
@@ -555,32 +556,32 @@ static void         viewer_draw(void)
     if (!gameplay_blocks_world() && !cutscene_is_playing()) viewer_hud();
     {
         static bool skip_was_visible;
-        bool visible = demo_skip_prompt();
+        bool visible = recomp_skip_prompt();
         if (visible)
             jo_printf(6, 3, "Skip? Press %s Again", ui_button_label(UI_KEY_START, false));
         else if (skip_was_visible)
             jo_printf(6, 3, "                       ");
         skip_was_visible = visible;
     }
-    if (!demo_title_is_visible() && !demo_file_select_is_visible() &&
+    if (!recomp_title_is_visible() && !recomp_file_select_is_visible() &&
         !cutscene_is_playing())
     {
         if (!gameplay_blocks_world() && !gameplay.dead) {
             int32_t x,y; bool locked; unsigned kind;
-            if (demo_slingshot_aiming()) {
+            if (recomp_slingshot_aiming()) {
                 /* VDP2 text-layer crosshair: cell (20,15) covers pixels
                  * 160-167 x 120-127, glyph centre ~3 px off screen centre. */
                 jo_printf(20, 15, "+");
                 aim_dot_shown = true;
-            } else if (demo_target_marker(&x,&y,&locked,&kind))
+            } else if (recomp_target_marker(&x,&y,&locked,&kind))
                 kokiri_lock_reticle_draw(x,y,kind);
         }
-        if (aim_dot_shown && !demo_slingshot_aiming()) {
+        if (aim_dot_shown && !recomp_slingshot_aiming()) {
             jo_printf(20, 15, " ");
             aim_dot_shown = false;
         }
         kokiri_rupee_hud_draw();
-        minimap_draw(demo_link.x, demo_link.z, demo_link_yaw);
+        minimap_draw(recomp_link.x, recomp_link.z, recomp_link_yaw);
     }
     diagnostic_overlay();
     frame_timer_frame_end();
@@ -659,8 +660,8 @@ static void __attribute__((optimize("Os"))) cutscene_fade(void)
 static unsigned int cutscene_text_colour(unsigned int colour)
 {
     switch (colour) {
-        /* The Blue font palette is bright cyan while cutscene text is active. */
-        case CUTSCENE_COLOUR_BLUE: return JO_COLOR_INDEX_Blue;
+        /* Blue source emphasis becomes readable yellow on the dark panel. */
+        case CUTSCENE_COLOUR_BLUE: return JO_COLOR_INDEX_Yellow;
         case CUTSCENE_COLOUR_RED:  return JO_COLOR_INDEX_Red;
         default:                   return JO_COLOR_INDEX_White;
     }
@@ -824,110 +825,29 @@ static void __attribute__((optimize("Os"))) cutscene_text(void)
 #define DIALOGUE_PAD_PX 4
 #define DIALOGUE_NAME_OFFSET_PX 4
 
-/* Bold speaker names. The SGL text font's half-width kana cells (0xA1..)
-** are never printed by this game; the first time a name is shown, each Latin
-** letter it needs gets a 1-pixel right-smeared copy across two cells,
-** shifted down four pixels to leave a four-pixel gap before the body.
-** Cells are located through the map entries slPrint just wrote (256-colour,
-** 1-word, 32-byte units from the B1 cell base pause_windows restores), and
-** the scheme self-checks: the source must contain ink and the unused kana
-** destination must be blank. An occupied destination falls back to plain. */
-#define BOLD_CELLS  ((volatile uint8_t *)0x25E60000u)
-#define BOLD_FIRST  0xA1u
-#define BOLD_LAST   0xDFu
-static uint8_t      bold_code[128];     /* ASCII -> kana slot, 0 = none yet */
-static unsigned int bold_next = BOLD_FIRST;
-static unsigned int bold_used_end = BOLD_FIRST;
-static bool         bold_failed;
-
-static volatile uint8_t *text_cell(unsigned int x, unsigned int y)
+/* All dialogue uses the retained SGL font. Thicken ASCII once at boot;
+ * palette variants share these glyphs, and pause restores the same font VRAM. */
+static void __attribute__((optimize("Os"))) dialogue_font_init(void)
 {
-    volatile uint16_t *map = (volatile uint16_t *)slLocate(x, y);
-    return BOLD_CELLS + (unsigned int)(*map & 0x3FFu) * 32u;
-}
-
-static bool         cell_blank(volatile const uint8_t *c)
-{
-    unsigned int i;
-    for (i = 0; i < 64; ++i) if (c[i]) return false;
-    return true;
-}
-
-/* A font glyph: some ink, and one ink colour only. Anything else means the
-** cell arithmetic does not point at the font; never write then. */
-static bool         cell_glyph(volatile const uint8_t *c)
-{
-    unsigned int i, ink = 0;
-    for (i = 0; i < 64; ++i) {
-        if (!c[i]) continue;
-        if (ink && c[i] != ink) return false;
-        ink = c[i];
+    unsigned ch, y, x;
+    for (ch=33;ch<127;++ch) {
+        char text[2]={(char)ch,0};
+        volatile uint16_t *map;
+        volatile uint8_t *cell;
+        jo_printf(0,31,"%s",text);
+        map=(volatile uint16_t *)slLocate(0,31);
+        cell=(volatile uint8_t *)0x25E60000u+(*map&0x3ffu)*32u;
+        for (y=0;y<8;++y)
+            for (x=7;x>0;--x)
+                if (!cell[y*8+x]) cell[y*8+x]=cell[y*8+x-1];
     }
-    return ink != 0;
+    jo_printf(0,31," ");
 }
-
-static volatile uint8_t *probe_cell(unsigned int x, unsigned int y, unsigned int code)
+static void print_bold(unsigned int x, unsigned int y, const char *text)
 {
-    char probe[2] = { (char)code, 0 };
-    jo_printf((int)x, (int)y, "%s", probe);
-    return text_cell(x, y);
+    jo_printf((int)x,(int)y,"%-38s",text);
 }
 
-static void __attribute__((optimize("Os"))) print_bold(unsigned int x, unsigned int y, const char *name)
-{
-    char out[40], lower[40];
-    unsigned int i;
-    /* Reuse our cells per name: two cells per distinct character give a
-     * four-pixel vertical offset without scrolling the HUD/text layer. */
-    for (i = 0; i < sizeof(bold_code); ++i) bold_code[i] = 0;
-    bold_next = BOLD_FIRST;
-    jo_set_printf_color_index(JO_COLOR_INDEX_White);
-    for (i = 0; name[i] && i + 1 < sizeof(out); ++i) {
-        unsigned char c = (unsigned char)name[i];
-        out[i] = (char)c;
-        lower[i] = ' ';
-        if (bold_failed || c < 0x21 || c > 0x7E) continue;
-        if (!bold_code[c]) {
-            volatile const uint8_t *src;
-            volatile uint8_t *dst, *bottom;
-            unsigned int k;
-            if (bold_next + 1 > BOLD_LAST) continue;
-            src = probe_cell(0, 31, c);
-            dst = probe_cell(0, 31, bold_next);
-            bottom = probe_cell(0, 31, bold_next + 1);
-            if (!cell_blank(probe_cell(0, 31, ' ')) || !cell_glyph(src) ||
-                (bold_next >= bold_used_end &&
-                 (!cell_blank(dst) || !cell_blank(bottom))) ||
-                src == dst || src == bottom || dst == bottom ||
-                dst == probe_cell(0, 31, bold_next & 0x7Fu) ||
-                bottom == probe_cell(0, 31, (bold_next + 1) & 0x7Fu)) {
-                bold_failed = true;
-                continue;
-            }
-            for (k = 0; k < 64; ++k) {
-                dst[k] = 0;
-                bottom[k] = 0;
-            }
-            for (k = 0; k < 64; ++k) {
-                unsigned int shifted = k + DIALOGUE_NAME_OFFSET_PX * 8;
-                uint8_t ink = src[k] ? src[k] : ((k & 7) ? src[k - 1] : 0);
-                if (shifted < 64) dst[shifted] = ink;
-                else bottom[shifted - 64] = ink;
-            }
-            bold_code[c] = (uint8_t)bold_next;
-            bold_next += 2;
-            if (bold_next > bold_used_end) bold_used_end = bold_next;
-        }
-        out[i] = (char)bold_code[c];
-        lower[i] = (char)(bold_code[c] + 1);
-    }
-    out[i] = lower[i] = 0;
-    jo_printf((int)x, (int)y, "%-38s", out);
-    jo_printf((int)x, (int)y + 1, "%-38s", lower);
-}
-
-/* Only changed retained rows touch the VDP2 map. In particular, holding a
- * long page must not blank and repaint it during active scanout. */
 static uint32_t dialogue_row_hash(const char *text, unsigned marker)
 {
     uint32_t hash = 2166136261u ^ marker;
@@ -945,8 +865,8 @@ static void __attribute__((optimize("Os"))) dialogue_box(void)
     /* Title flythrough and the file select have no interaction. Clear retained
      * VDP2 text too, so returning here cannot leave an old prompt or page on
      * screen -- and so a stale prompt cannot print over the file list. */
-    if (gameplay_is_paused() || demo_title_is_visible() || demo_file_select_is_visible() ||
-        cutscene_is_playing() || demo_chest_opening()) {
+    if (gameplay_is_paused() || recomp_title_is_visible() || recomp_file_select_is_visible() ||
+        cutscene_is_playing() || recomp_chest_opening()) {
         if (was_talking) {
             for (i = 0; i < DIALOGUE_ROWS; ++i)
                 jo_printf(0, DIALOGUE_ROW + i, "%-40s", "");
@@ -958,6 +878,7 @@ static void __attribute__((optimize("Os"))) dialogue_box(void)
         was_talking = false;   /* the decomp box owns the rows now */
         return;
     }
+    if (oot_core_npc_text(0)) { was_talking=false; return; }
     if (!gameplay_is_talking()) {
         if (was_talking) {
             for (i = 0; i < DIALOGUE_ROWS; ++i)
@@ -1118,10 +1039,12 @@ static void __attribute__((optimize("Os"))) inventory_menu(void)
     {
         const pause_window_state_t *p = &gameplay.pause_window;
         const char *name = "";
+        bool floor_hint = p->page == PAUSE_MAP && !p->save_prompt &&
+            (save_state.scene_id == SAVE_SCENE_DEKU_TREE || save_state.scene_id == SAVE_SCENE_DEKU_TREE_BOSS);
         if (!p->save_prompt) name=pause_windows_selection_name();
-        pause_windows_printf(6, 25, "%-28.28s", name);
-        if (p->page == PAUSE_MAP && !p->save_prompt &&
-            (save_state.scene_id == SAVE_SCENE_DEKU_TREE || save_state.scene_id == SAVE_SCENE_DEKU_TREE_BOSS)) {
+        /* Centre in the baked info panel: y 196..219, map page 204..227. */
+        pause_windows_print_centered(p->page == PAUSE_MAP ? (floor_hint ? 206 : 212) : 204, name);
+        if (floor_hint) {
             pause_windows_printf(4,27,"[%s]: Floor  Blue: visited",ui_button_label(UI_KEY_DPAD,false));
         }
         if (p->page == PAUSE_ITEMS && !p->save_prompt) {
@@ -1138,10 +1061,10 @@ static void __attribute__((optimize("Os"))) inventory_menu(void)
         if (p->page==PAUSE_QUEST && !p->save_prompt)
             pause_windows_printf(10,12,"%3u",save_skull_count());
     }
-    /* Backup writes remain the real demo/save-device path. */
+    /* Backup writes remain the real recomp/save-device path. */
     if (gameplay.pause_window.save_prompt) {
         pause_windows_printf(6,20,"%-28s",save_scene_name(save_state.scene_id));
-        int report = demo_save_report();
+        int report = recomp_save_report();
         pause_windows_printf(6, 22, "%-28s", !save_device_ready() ? save_device_error() :
             report < 0 ? "" : report ? "SAVED" : save_device_error());
     }
@@ -1170,13 +1093,13 @@ static void __attribute__((optimize("Os"))) viewer_hud(void)
     return;
 #endif
     static unsigned int last_refresh;
-    unsigned int now = demo_clock();
-    /* L+R, latched in demo_update() so the chord is read with the rest of the
+    unsigned int now = recomp_clock();
+    /* L+R, latched in recomp_update() so the chord is read with the rest of the
     ** input and consumes both buttons. A is deliberately not used here: it is
     ** reserved for the action button, and the g/L/d readout below is the only
     ** evidence for the unexplained rolling, so it has to stay reachable. */
-    if (demo_diagnostics_toggled) {
-        demo_diagnostics_toggled = false;
+    if (recomp_diagnostics_toggled) {
+        recomp_diagnostics_toggled = false;
         debug_visible = !debug_visible;
         jo_clear_screen();
         last_refresh = now - 15;
@@ -1216,10 +1139,10 @@ static void __attribute__((optimize("Os"))) viewer_hud(void)
                   (int)(music_transition_frames() * 1000 / 60),
                   (int)(music_worst_stall() * 1000 / 60),
                   music_failed() ? " FAIL" : "");
-        if (demo_link_active)
+        if (recomp_link_active)
             jo_printf(0, 1, "L %d,%d,%d yaw %d   ",
-                      (int)demo_link.x, (int)demo_link.y, (int)demo_link.z,
-                      (int)demo_link_yaw);
+                      (int)recomp_link.x, (int)recomp_link.y, (int)recomp_link.z,
+                      (int)recomp_link_yaw);
         /* Exact heap (dosei_heap_profile, M2a): work-RAM zone 0 live/peak
         ** bytes incl. headers, cart zones' summed peak KB, failed allocations.
         ** The SDK's jo_memory_usage_percent mixes zones and is not used. */
@@ -1247,8 +1170,8 @@ static void __attribute__((optimize("Os"))) viewer_hud(void)
              * 4 climb/ledge/bonk, 8 air, 16 world blocked, 32 swing,
              * 64 guard, 128 indoors, 256 floor, 512 pose) and pose id. */
             jo_printf(0, 4, "pend a%d x%d c%d ev%03x/%u   ",
-                      (int)demo_interact_requests, (int)demo_attack_requests,
-                      (int)demo_last_c_button, demo_evade_gates, demo_evade_pose);
+                      (int)recomp_interact_requests, (int)recomp_attack_requests,
+                      (int)recomp_last_c_button, recomp_evade_gates, recomp_evade_pose);
             /* Gear/target/sword readout. sw and sh are owned+equipped, tgt is
              * the locked kokiri_npcs index, sg the swing steps left with a '*'
              * while the blade is live, cut the tufts cleared so far. */
@@ -1362,12 +1285,12 @@ static void __attribute__((optimize("Os"))) viewer_hud(void)
 #endif
     jo_printf(0, 1, "verts %d tris %d tiles %d",
               KOKIRI_VERTEX_COUNT, KOKIRI_POLYGON_COUNT, KOKIRI_TILE_COUNT);
-    jo_printf(0, 2, "cam %d,%d,%d pan %d   ", (int)demo_camera.x, (int)demo_camera.y, (int)demo_camera.z,
-              (int)demo_yaw);
-    if (demo_link_active)
-        jo_printf(0, 8, "link %d,%d,%d yaw %d  ", (int)demo_link.x,
-                  (int)(demo_link.y - DEMO_LINK_EYE_HEIGHT), (int)demo_link.z,
-                  (int)demo_link_yaw);
+    jo_printf(0, 2, "cam %d,%d,%d pan %d   ", (int)recomp_camera.x, (int)recomp_camera.y, (int)recomp_camera.z,
+              (int)recomp_yaw);
+    if (recomp_link_active)
+        jo_printf(0, 8, "link %d,%d,%d yaw %d  ", (int)recomp_link.x,
+                  (int)(recomp_link.y - RECOMP_LINK_EYE_HEIGHT), (int)recomp_link.z,
+                  (int)recomp_link_yaw);
     else
         jo_printf(0, 8, "link: press %-10s", ui_button_label(UI_KEY_START, false));
     /* jo_3d_get_polygon_count() reports SGL's TotalPolygons, i.e. polygons
@@ -1390,7 +1313,7 @@ static void __attribute__((optimize("Os"))) viewer_hud(void)
               music_failed() ? " FAILED" : "");
     jo_printf(0, 7, "total refusals %d    ", (int)rejected_total);
     jo_printf(0, 9, "collision index %s   ",
-              demo_collision_indexed ? "ON" : "off (full scan)");
+              recomp_collision_indexed ? "ON" : "off (full scan)");
 }
 
 /*
@@ -1412,7 +1335,7 @@ static void __attribute__((optimize("Os"))) file_select_screen(void)
     static bool   was_open;
     unsigned int  row;
 
-    if (!demo_file_select_is_visible()) {
+    if (!recomp_file_select_is_visible()) {
         if (was_visible) {
             for (row = 0; row < FS_ROWS; ++row)
                 jo_printf(0, (int)(FS_ROW + row), "                                      ");
@@ -1526,6 +1449,7 @@ void __attribute__((optimize("Os"))) jo_main(void)
     /* Low RAM is not boot-cleared. Initialize before any scene/actor reads. */
     save_new_game();
     jo_core_init(JO_COLOR_Black);
+    dialogue_font_init();
     frame_timer_init();
 #ifdef DOSEI_HIRES
     /* VDP2 samples the existing title/font at half rate vertically. */
@@ -1612,7 +1536,7 @@ void __attribute__((optimize("Os"))) jo_main(void)
         jo_printf(2, 26, "no backup memory: cannot save");
 
     scene_ready = kokiri_scene_load();
-    scene_ready = scene_ready && demo_init();
+    scene_ready = scene_ready && recomp_init();
     field_music_init();
     music_ready = scene_ready && music_init_with_scratch(music_song_bank(NA_BGM_TITLE),
         ram_cart_fixed(RAM_CART_LOAD_SCRATCH_OFFSET, RAM_CART_LOAD_SCRATCH_BYTES),

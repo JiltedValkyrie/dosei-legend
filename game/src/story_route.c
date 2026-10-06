@@ -5,7 +5,7 @@
 #include "npc_sprite.h"
 #include "actor_sys.h"
 #include "cutscene.h"
-#include "demo.h"
+#include "recomp.h"
 #include "gameplay.h"
 #include "game_mode.h"
 #include "save_state.h"
@@ -85,13 +85,13 @@ void story_route_step(void)
         a=actor_spawn(&owl_profile,SAVE_SCENE_HYRULE_FIELD,ACTOR_ROOM_NONE,4284,182,7877,0,0x4c);
         if(a){owl_handle=actor_handle(a);a->attention=ATTN_POI;a->range=ATTN_RANGE_6;a->focus[1]=110;a->arrow_y=5;}
     }
-    dx=demo_link.x-owl_x/256;dz=demo_link.z-owl_z/256;
+    dx=recomp_link.x-owl_x/256;dz=recomp_link.z-owl_z/256;
     if(owl_phase==1 && !gameplay_blocks_world() && !cutscene_is_playing() &&
        dx>-360 && dx<360 && dz>-360 && dz<360 && dx*dx+dz*dz<360*360) {
         if(gameplay_actor_message(0x2064)) {
             save_set_event_chk_inf(EVENTCHKINF_MET_FIELD_OWL);
-            owl_phase=2;music_play(NA_BGM_OWL);talk_started=demo_clock();talk_camera_step=~0u;
-            talk_eye[0]=demo_camera.x;talk_eye[1]=demo_camera.y;talk_eye[2]=demo_camera.z;
+            owl_phase=2;music_play(NA_BGM_OWL);talk_started=recomp_clock();talk_camera_step=~0u;
+            talk_eye[0]=recomp_camera.x;talk_eye[1]=recomp_camera.y;talk_eye[2]=recomp_camera.z;
             talk_at[0]=owl_x/256;talk_at[1]=owl_y/256+80;talk_at[2]=owl_z/256;
 
         }
@@ -148,13 +148,13 @@ void story_route_draw(unsigned tick)
 void story_owl_camera(void)
 {
     int32_t eye[3],at[3],s,c,dx,dz;
-    unsigned elapsed=(demo_clock()-talk_started)/3,i;
+    unsigned elapsed=(recomp_clock()-talk_started)/3,i;
     int ex,ez,ax,az;
     if(!story_owl_talking())return;
     if(elapsed<30) {
-        ex=-30;ez=-20;ax=50;az=140;kokiri_camera_sincos(demo_link_yaw,&s,&c);
-        eye[0]=at[0]=demo_link.x;eye[2]=at[2]=demo_link.z;
-        eye[1]=demo_link.y-DEMO_LINK_EYE_HEIGHT+10;at[1]=demo_link.y-DEMO_LINK_EYE_HEIGHT+100;
+        ex=-30;ez=-20;ax=50;az=140;kokiri_camera_sincos(recomp_link_yaw,&s,&c);
+        eye[0]=at[0]=recomp_link.x;eye[2]=at[2]=recomp_link.z;
+        eye[1]=recomp_link.y-RECOMP_LINK_EYE_HEIGHT+10;at[1]=recomp_link.y-RECOMP_LINK_EYE_HEIGHT+100;
     } else {
         ex=20;ez=120;ax=-10;az=10;kokiri_camera_sincos(owl_yaw,&s,&c);
         eye[0]=at[0]=owl_x/256;eye[2]=at[2]=owl_z/256;
@@ -166,9 +166,9 @@ void story_owl_camera(void)
         talk_camera_step=elapsed;
         for(i=0;i<3;++i){talk_eye[i]+=(eye[i]-talk_eye[i])/5;talk_at[i]+=(at[i]-talk_at[i])/5;}
     }
-    demo_camera.x=talk_eye[0];demo_camera.y=talk_eye[1];demo_camera.z=talk_eye[2];
+    recomp_camera.x=talk_eye[0];recomp_camera.y=talk_eye[1];recomp_camera.z=talk_eye[2];
     dx=talk_at[0]-talk_eye[0];dz=talk_at[2]-talk_eye[2];
-    demo_yaw=collide_heading(dx,dz);
-    demo_pitch=-(int16_t)collide_heading(talk_at[1]-talk_eye[1],collide_isqrt((uint32_t)(dx*dx+dz*dz)));
+    recomp_yaw=collide_heading(dx,dz);
+    recomp_pitch=-(int16_t)collide_heading(talk_at[1]-talk_eye[1],collide_isqrt((uint32_t)(dx*dx+dz*dz)));
 }
-unsigned story_owl_screen_distance(void){return (demo_clock()-talk_started)/3<30?120:257;}
+unsigned story_owl_screen_distance(void){return (recomp_clock()-talk_started)/3<30?120:257;}

@@ -32,6 +32,7 @@ bool            kokiri_scene_update(void);
 /* Preload forest-flight banks into the required RAM cart before playback. */
 bool            kokiri_opening_cache_load(void);
 void            kokiri_opening_cache_free(void);
+bool            kokiri_opening_cache_meshes(unsigned int rooms);
 
 /** @brief VDP1 bytes consumed, valid after kokiri_scene_load(). */
 unsigned int    kokiri_scene_vram_used(void);

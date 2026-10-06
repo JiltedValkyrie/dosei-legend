@@ -22,7 +22,10 @@ class ShotSkip(unittest.TestCase):
 #include "cutscenes.h"
 #include "skip_input.h"
 #include "action_audio.h"
+#include "asset_names.h"
 #include "save_state.h"
+save_state_t save_state;
+static void oot_core_clock_reset(unsigned value) { (void)value; }
 static skip_input_t input;
 void sample(int active,int held,unsigned tick,unsigned shot) {
  skip_input_sample(&input,active,held,tick,shot);
@@ -205,7 +208,7 @@ int value(int which) { switch(which) {
         self.assertEqual(self.lib.value(5), 0)    # no opening flag written
         self.assertEqual(self.lib.value(21), 1)   # its track is freed
         self.assertEqual(self.lib.value(20), 1)   # back to GAME_MODE_PLAY
-        # The flag survives the finish: demo.c reads it on the frame it sees
+        # The flag survives the finish: recomp.c reads it on the frame it sees
         # cutscene_finished() to know the world behind it is still standing.
         self.assertEqual(self.lib.value(22), 1)
 

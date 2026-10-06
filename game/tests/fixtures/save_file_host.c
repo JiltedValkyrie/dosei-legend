@@ -53,6 +53,9 @@ void sf_set_health(int health, int capacity)
     save_state.health_capacity = (uint16_t)capacity;
 }
 int sf_health(void) { return save_state.health; }
+void sf_set_days(unsigned total,unsigned bgs) { save_state.total_days=total;save_state.bgs_day_count=bgs; }
+unsigned sf_total_days(void) { return save_state.total_days; }
+unsigned sf_bgs_day_count(void) { return save_state.bgs_day_count; }
 void sf_resume_remap(void) { save_resume_remap(); }
 unsigned int sf_checksum(const unsigned char *p, unsigned int n) { return save_file_checksum(p, n); }
 

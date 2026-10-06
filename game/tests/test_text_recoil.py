@@ -1,4 +1,4 @@
-"""Execute demo.c recoil functions with a text box owning the world."""
+"""Execute recomp.c recoil functions with a text box owning the world."""
 import ctypes
 import os
 from pathlib import Path
@@ -11,7 +11,7 @@ GCC = Path('C:/msys64/mingw64/bin/gcc.exe')
 @unittest.skipUnless(GCC.exists(), 'host compiler required')
 class Recoil(unittest.TestCase):
     def test_text_blocks_damage_and_weapon_recoil(self):
-        source = (ROOT/'src/demo.c').read_text()
+        source = (ROOT/'src/recomp.c').read_text()
         def function(name):
             start = source.index('static void '+name+'(void)')
             end = source.index('\n}', start)+2
@@ -20,7 +20,7 @@ class Recoil(unittest.TestCase):
 #include <stdint.h>
 #include <stdbool.h>
 struct {int knock_speed, knock_yaw, lunge_q16, swing_count;} gameplay;
-static int blocked, moves, demo_link, demo_link_yaw;
+static int blocked, moves, recomp_link, recomp_link_yaw;
 static int knock_rx, knock_rz, attack_carry_x_q8, attack_carry_z_q8;
 static unsigned attack_root_clip, attack_root_swing;
 static int32_t attack_root_prev[3];

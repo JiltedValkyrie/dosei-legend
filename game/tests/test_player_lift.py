@@ -135,7 +135,7 @@ class PlayerLift(unittest.TestCase):
 
     def test_hold_releases_push_state_so_legs_animate(self):
         """The regression: holding must not pin Link in PUSH, which blocks
-        locomotion in demo.c and freezes the legs while he slides."""
+        locomotion in recomp.c and freezes the legs while he slides."""
         self.held()
         self.assertEqual(self.p.phase, self.LIFT_HOLD)
         self.assertNotEqual(self.lib.link_anim_state(), self.LINK_STATE_PUSH)

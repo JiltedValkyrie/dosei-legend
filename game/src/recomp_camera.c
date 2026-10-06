@@ -1,6 +1,6 @@
 #include <jo/jo.h>
 #include "../../shared/lib/camera/kokiri_camera.c"
-#include "demo.h"
+#include "recomp.h"
 #include "collide.h"
 #include "kokiri_collision.h"
 
@@ -43,11 +43,11 @@ void collide_world_push(actor_t *a, int32_t dx, int32_t dz)
 {
     camera_position_t p;
     p.x = a->x;
-    p.y = a->y + DEMO_LINK_EYE_HEIGHT;
+    p.y = a->y + RECOMP_LINK_EYE_HEIGHT;
     p.z = a->z;
     kokiri_collision_move_actor(&p, dx, 0, dz);
     a->x = p.x;
-    a->y = p.y - DEMO_LINK_EYE_HEIGHT;
+    a->y = p.y - RECOMP_LINK_EYE_HEIGHT;
     a->z = p.z;
 }
 

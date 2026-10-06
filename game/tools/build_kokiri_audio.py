@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build separate Kokiri Forest SCSP assets, without changing the active demo.
+"""Build separate Kokiri Forest SCSP assets, without changing the active recomp.
 
 Input is the same local US 1.2 extraction used by the title player. Sequence 60
 uses soundfont 15; normal fresh playback starts at SEQ_0000 and loops to

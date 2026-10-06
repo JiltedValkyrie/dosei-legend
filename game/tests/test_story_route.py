@@ -20,9 +20,9 @@ class StoryRoute(unittest.TestCase):
 typedef struct {int x,y,z;} camera_position_t;
 typedef struct {int dummy;} actor_mesh_t;
 static actor_t actor;
-static camera_position_t demo_link,demo_camera;
-static unsigned demo_link_yaw;
-#define DEMO_LINK_EYE_HEIGHT 90
+static camera_position_t recomp_link,recomp_camera;
+static unsigned recomp_link_yaw;
+#define RECOMP_LINK_EYE_HEIGHT 90
 static unsigned cs,playing,starts,fail_load,fail_start,errors,clock_tick,song,flaps;
 static struct {bool talking;} gameplay;
 static unsigned char sheets[8],live[8];
@@ -51,14 +51,14 @@ static bool gameplay_blocks_world(void){return gameplay.talking;}
 static bool gameplay_is_talking(void){return gameplay.talking;}
 static bool gameplay_actor_message(unsigned id){(void)id;gameplay.talking=true;return true;}
 static void music_play(unsigned s){song=s;}
-static unsigned demo_clock(void){return clock_tick;}
+static unsigned recomp_clock(void){return clock_tick;}
 static void jo_core_error(const char *s){(void)s;++errors;}
 static void action_audio_owl_flap(void){++flaps;}
 static void kokiri_camera_sincos(unsigned y,int32_t *s,int32_t *c){(void)y;*s=0;*c=65536;}
 static void npc_smooth_step(int16_t *v,int16_t t,int a,int b,int c){(void)a;(void)b;(void)c;*v=t;}
 '''
   post=r'''
-void reset(void){story_route_free();save_new_game();cs=playing=starts=fail_load=fail_start=errors=clock_tick=song=flaps=0;gameplay.talking=false;memset(&actor,0,sizeof(actor));demo_link=(camera_position_t){4284,90,7600};}
+void reset(void){story_route_free();save_new_game();cs=playing=starts=fail_load=fail_start=errors=clock_tick=song=flaps=0;gameplay.talking=false;memset(&actor,0,sizeof(actor));recomp_link=(camera_position_t){4284,90,7600};}
 int load(int scene,int fail){fail_load=fail;save_state.scene_id=scene;return story_route_load(scene);}
 void arrive(int spawn,int fail){fail_start=fail;story_route_arrive(spawn);}
 void finish(void){playing=0;story_route_finish();}

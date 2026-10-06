@@ -51,7 +51,7 @@ static bool ready=true;
 static int last_key=-2;
 static unsigned front,tick;
 static struct {unsigned health,health_capacity;} save_state;
-static unsigned demo_clock(void) {return tick;}
+static unsigned recomp_clock(void) {return tick;}
 '''+(ROOT/'src/health_hud_state.h').read_text()+draw+r'''
 int main(void) {
     unsigned i,previous;

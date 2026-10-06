@@ -28,7 +28,7 @@ class Preferences(unittest.TestCase):
     def setUpClass(cls):
         cls.tmp = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
         audio = (ROOT.parent/'shared/lib/music/music.c').read_text()
-        demo = (ROOT/'src/demo.c').read_text()
+        recomp = (ROOT/'src/recomp.c').read_text()
         src = '''#include <stdbool.h>
 #include <stdint.h>
 static unsigned short regs[32][16];
@@ -50,11 +50,11 @@ unsigned reg(unsigned s,unsigned o) { return SLOT(s,o); }
 void fade(unsigned v) { volume=v; }
 unsigned fade_level(void) { return volume; }
 static unsigned clock_now; static bool paused;
-unsigned demo_clock(void) { return clock_now; }
+unsigned recomp_clock(void) { return clock_now; }
 bool gameplay_is_paused(void) { return paused; }
 void clock_feed(unsigned now,bool p) { clock_now=now; paused=p; }
 '''
-        src += function(demo,'demo_world_clock')
+        src += function(recomp,'recomp_world_clock')
         c = Path(cls.tmp.name,'prefs.c'); c.write_text(src)
         dll = c.with_suffix('.dll')
         env = dict(os.environ, PATH=str(GCC.parent)+os.pathsep+os.environ.get('PATH',''))
@@ -129,16 +129,16 @@ void clock_feed(unsigned now,bool p) { clock_now=now; paused=p; }
 
     def test_world_animation_clock_freezes_without_catchup(self):
         self.lib.clock_feed(100,False)
-        first = self.lib.demo_world_clock()
+        first = self.lib.recomp_world_clock()
         self.lib.clock_feed(105,False)
-        self.assertEqual(self.lib.demo_world_clock(),first+5)
+        self.assertEqual(self.lib.recomp_world_clock(),first+5)
         self.lib.clock_feed(110,True)
-        frozen = self.lib.demo_world_clock()
+        frozen = self.lib.recomp_world_clock()
         self.lib.clock_feed(999,True)
-        self.assertEqual(self.lib.demo_world_clock(),frozen)
+        self.assertEqual(self.lib.recomp_world_clock(),frozen)
         self.lib.clock_feed(1000,False)
-        self.assertEqual(self.lib.demo_world_clock(),frozen)
+        self.assertEqual(self.lib.recomp_world_clock(),frozen)
         self.lib.clock_feed(1005,False)
-        self.assertEqual(self.lib.demo_world_clock(),frozen+5)
+        self.assertEqual(self.lib.recomp_world_clock(),frozen+5)
 
 if __name__ == '__main__': unittest.main()

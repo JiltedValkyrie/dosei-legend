@@ -84,7 +84,7 @@ class PlayerClimb(bgt.PlayerBg):
         lib.player_climb_start_walk_off.argtypes = [P(Climb), P(Hit), P(ctypes.c_uint16)]
         lib.link_anim_move_clip.restype = ctypes.c_uint
 
-    # -- harness: demo.c's order ----------------------------------------------
+    # -- harness: recomp.c's order ----------------------------------------------
     def start_world(self, *parts):
         self.world(ground(), *parts, surfaces=SURFACES)
         self.climb = Climb()

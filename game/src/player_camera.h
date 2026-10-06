@@ -8,6 +8,12 @@ typedef struct {
     bool initialized, returning;
 } player_camera_t;
 void player_camera_reset(player_camera_t *camera);
+/* Regular/overhead toggle. Scene entry restores its preferred view. */
+unsigned player_camera_experiment_cycle(void);
+void player_camera_experiment_reset(void);
+void player_camera_scene_default(bool overhead);
+bool player_camera_orbit_active(void);
+void player_camera_orbit_turn(int direction);
 /* Apply the same wall/floor/ceiling arm constraint on spawn and each update. */
 void player_camera_constrain(const oot_follow_t *follow,
     const camera_position_t *player, int32_t at_y, camera_position_t *eye,

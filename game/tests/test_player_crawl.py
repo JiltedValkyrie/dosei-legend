@@ -82,7 +82,7 @@ class ForestCrawlspace(bgt.PlayerBg):
         return False
 
     def crawl_step(self, stick_y):
-        """demo.c's order: the action on last step's wall, then the move."""
+        """recomp.c's order: the action on last step's wall, then the move."""
         lib = self.lib
         feet = self.feet()
         lib.player_crawl_update(ctypes.byref(self.crawl), stick_y, self.last_wall,

@@ -34,7 +34,7 @@ int32_t  navi_z(void);
 
 /*
 ** True for the one step Navi breaks into a dash to catch up -- source plays
-** NA_SE_EV_FAIRY_DASH here. demo.c consumes this immediately through the
+** NA_SE_EV_FAIRY_DASH here. recomp.c consumes this immediately through the
 ** resident gameplay sample on Navi's dedicated SCSP slot.
 */
 bool     navi_dash_started(void);

@@ -39,7 +39,7 @@ typedef struct { Uint16 texno, atrb; } SPR_ATTR;
 #define JO_TV_HEIGHT_2 120
 #endif
 gameplay_t gameplay;
-static struct { int x,y,z; } demo_camera;
+static struct { int x,y,z; } recomp_camera;
 static int forest_room;
 static unsigned int rupee_sprite[3]={40,41,42}, digit_sprite[10]={50,51,52,53,54,55,56,57,58,59};
 static unsigned int kokiri_rejected, count, hud_count;
@@ -66,7 +66,7 @@ static int slDispSpriteHV(FIXED *p, SPR_ATTR *a, int angle) {
         wrapper = r"""
 void reset(void) { memset(&gameplay,0,sizeof(gameplay)); count=hud_count=0; }
 int draw(int room, int x, int z, unsigned int removed) {
- forest_room=room; demo_camera.x=x; demo_camera.z=z; gameplay.rupee_taken=removed;
+ forest_room=room; recomp_camera.x=x; recomp_camera.z=z; gameplay.rupee_taken=removed;
  count=0; kokiri_rupees_draw(0); return count;
 }
 void drop(unsigned int i, unsigned int value, unsigned int age) {

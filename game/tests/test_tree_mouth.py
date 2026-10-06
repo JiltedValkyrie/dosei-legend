@@ -15,7 +15,7 @@ class TreeMouth(unittest.TestCase):
         source=(ROOT/'src/tree_mouth.c').read_text(encoding='utf-8').replace('#include <jo/jo.h>','').replace('#include "kokiri_sgl.h"','')
         pre=r'''#include <string.h>
 #include "actor_sys.h"
-#include "demo.h"
+#include "recomp.h"
 #include "gameplay.h"
 #include "save_state.h"
 #include "cutscene.h"
@@ -24,12 +24,12 @@ static actor_t actor;
 static unsigned clock_tick,room=1,frame,csid,starts,flags;
 static bool playing;
 static bg_vec_t placed;
-camera_position_t demo_link;
-uint16_t demo_link_yaw;
+camera_position_t recomp_link;
+uint16_t recomp_link_yaw;
 gameplay_t gameplay;
 save_state_t save_state;
 unsigned kokiri_scene_room(void) {return room;}
-unsigned demo_clock(void) {return clock_tick;}
+unsigned recomp_clock(void) {return clock_tick;}
 void action_audio_tree_open(void) {}
 void jo_core_error(const char *s) {(void)s;}
 bool gameplay_blocks_world(void) {return false;}
@@ -38,9 +38,9 @@ bool cutscene_is_in_scene(void) {return true;}
 unsigned cutscene_id(void) {return csid;}
 unsigned cutscene_frame(void) {return frame;}
 bool cutscene_start_in_scene(unsigned id) {csid=id;playing=true;++starts;return true;}
-int32_t cutscene_link_x(void) {return demo_link.x;}
-int32_t cutscene_link_y(void) {return demo_link.y-DEMO_LINK_EYE_HEIGHT;}
-int32_t cutscene_link_z(void) {return demo_link.z;}
+int32_t cutscene_link_x(void) {return recomp_link.x;}
+int32_t cutscene_link_y(void) {return recomp_link.y-RECOMP_LINK_EYE_HEIGHT;}
+int32_t cutscene_link_z(void) {return recomp_link.z;}
 uint16_t cutscene_link_yaw(void) {return 0;}
 bool save_get_event_chk_inf(unsigned f) {return (flags&(1u<<f))!=0;}
 void save_set_event_chk_inf(unsigned f) {flags|=1u<<f;}
@@ -56,7 +56,7 @@ void bg_dyna_remove(unsigned id) {(void)id;}
 void bg_dyna_set(unsigned id,const bg_vec_t *p,uint16_t yaw,int32_t scale) {(void)id;(void)yaw;(void)scale;placed=*p;}
 '''
         post=r'''
-void reset(void) {tree_mouth_reset();flags=clock_tick=starts=frame=0;room=1;playing=false;gameplay.target=0;save_state.scene_id=SAVE_SCENE_KOKIRI_FOREST;demo_link.x=2800;demo_link.y=90;demo_link.z=-600;}
+void reset(void) {tree_mouth_reset();flags=clock_tick=starts=frame=0;room=1;playing=false;gameplay.target=0;save_state.scene_id=SAVE_SCENE_KOKIRI_FOREST;recomp_link.x=2800;recomp_link.y=90;recomp_link.z=-600;}
 void tick(void) {clock_tick+=3;tree_mouth_step();}
 void finish(void) {playing=false;}
 void target(void) {gameplay.target=1;}

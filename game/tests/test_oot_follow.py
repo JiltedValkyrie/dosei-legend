@@ -241,7 +241,7 @@ class OotFollowCamera(unittest.TestCase):
             cam, eye, _yaw, _pitch = self.run_steps(200, moving=moving)
             depth = math.hypot(eye.x, eye.z)
             for height, part in ((0, 'feet'), (LINK_HEIGHT, 'head')):
-                point_y = height - EYE_HEIGHT     # relative to demo_link.y
+                point_y = height - EYE_HEIGHT     # relative to recomp_link.y
                 angle = -_pitch * 2 * math.pi / 65536
                 dy = eye.y - point_y
                 view_y = dy * math.cos(angle) - depth * math.sin(angle)
@@ -431,7 +431,7 @@ class CameraStepTiming(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.source = (ROOT / 'src' / 'demo.c').read_text()
+        cls.source = (ROOT / 'src' / 'recomp.c').read_text()
 
     def step_loop(self):
         body = self.source.split('while (steps--) {', 1)[1]

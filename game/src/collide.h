@@ -112,7 +112,7 @@
 ** whole live window every step, so no step can tunnel past a target. */
 typedef enum { COLSHAPE_CYLINDER, COLSHAPE_CAPSULE, COLSHAPE_SECTOR } collide_shape_t;
 
-/* Platform heading helper (atan2(dx, dz) as binang). Saturn: demo_camera.c. */
+/* Platform heading helper (atan2(dx, dz) as binang). Saturn: recomp_camera.c. */
 uint16_t collide_heading(int32_t dx, int32_t dz);
 
 typedef struct collider collider_t;

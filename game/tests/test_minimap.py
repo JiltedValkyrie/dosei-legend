@@ -121,10 +121,10 @@ class CheatSession(unittest.TestCase):
                 end += 1
             return source[start:end]
         # Compile the real state functions and the real VBlank Start routing.
-        demo = (ROOT/'src/demo.c').read_text()
-        start = demo.index('static void demo_vblank(void)')
-        body = demo.index('{', start)+1
-        prefix = demo[body:demo.index('    skip_input_sample(',body)]
+        recomp = (ROOT/'src/recomp.c').read_text()
+        start = recomp.index('static void recomp_vblank(void)')
+        body = recomp.index('{', start)+1
+        prefix = recomp[body:recomp.index('    skip_input_sample(',body)]
         src = '#include "cheat_code.h"\n#include "input_edge.h"\n'
         src += 'void minimap_cheat_refill_reset(void); static cheat_code_t cheat, refill_cheat; static volatile bool enemy_dots,chime,refill_pending;\n'
         src += '\n'.join(function(n) for n in ('minimap_cheat_sample', 'minimap_session_reset',
@@ -132,7 +132,7 @@ class CheatSession(unittest.TestCase):
                                               'minimap_cheat_refill_take', 'minimap_cheat_refill_reset'))
         src += '\nstatic input_edge_t start_edge; static uint16_t pad;\n'
         src += 'static bool jo_is_pad1_available(void) { return true; }\n'
-        src += 'static uint16_t demo_pad_snapshot(void) { return pad; }\n'
+        src += 'static uint16_t recomp_pad_snapshot(void) { return pad; }\n'
         src += 'int tick(unsigned held) { pad=held;'+prefix+'return input_edge_consume(&start_edge); }\n'
         c = pathlib.Path(cls.tmp.name)/'session.c'
         c.write_text(src)

@@ -8,7 +8,7 @@
 #include "kokiri_actors.h"
 #include "kokiri_sgl.h"
 #include "gameplay.h"
-#include "demo.h"
+#include "recomp.h"
 #include "asset_loading.h"
 #include "scene_flow.h"
 #include "collide.h"
@@ -92,7 +92,7 @@ void npc_draw_free(void)
     shop_cursor_loaded = shop_cursor_ready = false;
     uploaded = 0;
     gameplay_npc_turns_reset();
-    previous_step = demo_world_clock() / 3;
+    previous_step = recomp_world_clock() / 3;
 }
 
 static bool load_sprite(unsigned int model)
@@ -223,21 +223,21 @@ static bool upload_visible(unsigned int visible, unsigned int generation)
  * RotY(-yaw), translate, on SGL (x,-y,z) coordinates. */
 static bool shop_project(int32_t x, int32_t y, int32_t z, int *sx, int *sy)
 {
-    int32_t s, c, dx = x - demo_camera.x, dy = demo_camera.y - y, dz = z - demo_camera.z;
+    int32_t s, c, dx = x - recomp_camera.x, dy = recomp_camera.y - y, dz = z - recomp_camera.z;
     int32_t vx, vz, vy, depth;
     if (dx < -32767 || dx > 32767 || dy < -32767 || dy > 32767 ||
         dz < -32767 || dz > 32767) return false;
-    kokiri_camera_sincos((uint16_t)(0u - (uint16_t)demo_yaw), &s, &c);
+    kokiri_camera_sincos((uint16_t)(0u - (uint16_t)recomp_yaw), &s, &c);
     s /= 256; c /= 256;
     vx = (c * dx + s * dz) / 256;
     vz = (c * dz - s * dx) / 256;
-    kokiri_camera_sincos((uint16_t)(0u - (uint16_t)demo_pitch), &s, &c);
+    kokiri_camera_sincos((uint16_t)(0u - (uint16_t)recomp_pitch), &s, &c);
     s /= 256; c /= 256;
     vy = (c * dy - s * vz) / 256;
     depth = (s * dy + c * vz) / 256;
     if (depth <= 8) return false;
-    *sx = -vx * demo_screen_distance() / depth;
-    *sy = vy * demo_screen_distance() / depth;
+    *sx = -vx * recomp_screen_distance() / depth;
+    *sy = vy * recomp_screen_distance() / depth;
     return true;
 }
 
@@ -325,8 +325,8 @@ void npc_draw(unsigned int tick)
     for (i = 0; i < KOKIRI_NPC_COUNT; ++i) {
         int32_t dx, dz, distance;
         if (!gameplay_npc_present(i)) continue;
-        dx = gameplay_npc_x(i) - demo_link.x;
-        dz = gameplay_npc_z(i) - demo_link.z;
+        dx = gameplay_npc_x(i) - recomp_link.x;
+        dz = gameplay_npc_z(i) - recomp_link.z;
         /* EnKo sInteractInfo / EnMd_UpdateAlphaByDistance / EnSa_Update.
          * Interiors always show their whole cast. Fade interpolation is
          * separate from this visibility bound. */
@@ -349,7 +349,7 @@ void npc_draw(unsigned int tick)
         visible |= 1u << NPC_SHOPKEEPER;
     if (!upload_visible(visible, generation)) return;
     interior_mask_draw();
-    if (demo_shop_browsing()) actor_mesh_draw_static(counter, 0, 0, 0, 0);
+    if (recomp_shop_browsing()) actor_mesh_draw_static(counter, 0, 0, 0, 0);
     world_props_draw(tick);
     actor_mesh_draw_static(shelves, SHOP_SHELVES_X, SHOP_SHELVES_Y, SHOP_SHELVES_Z, 0);
     if (shelves) {
@@ -388,11 +388,11 @@ bool npc_draw_load_navi(void)
 static bool navi_in_view(const navi_npc_t *p)
 {
     int32_t sy,cy,sp,cp;
-    int x=p->x-demo_camera.x, y=p->y+40-demo_camera.y, z=p->z-demo_camera.z;
+    int x=p->x-recomp_camera.x, y=p->y+40-recomp_camera.y, z=p->z-recomp_camera.z;
     int horizontal,depth,right,up;
     int distance=(int)cutscene_screen_distance();
-    kokiri_camera_sincos(demo_yaw,&sy,&cy);
-    kokiri_camera_sincos(demo_pitch,&sp,&cp);
+    kokiri_camera_sincos(recomp_yaw,&sy,&cy);
+    kokiri_camera_sincos(recomp_pitch,&sp,&cp);
     sy /= 256; cy /= 256; sp /= 256; cp /= 256;
     horizontal=(x*sy+z*cy)/256;
     right=(-x*cy+z*sy)/256;
@@ -410,7 +410,7 @@ void npc_draw_navi(unsigned int frame)
     unsigned int i, people = 0, visible = 0;
     for (i = 0; i < NAVI_NPC_COUNT; ++i) {
         const navi_npc_t *p = &navi_npcs[i];
-        int dx = demo_camera.x-p->x, dy = demo_camera.y-p->y, dz = demo_camera.z-p->z;
+        int dx = recomp_camera.x-p->x, dy = recomp_camera.y-p->y, dz = recomp_camera.z-p->z;
         int radius = p->model == 0 ? 1600 : p->model == 7 ? 960 : 720;
         if (dx < -radius || dx > radius || dy < -radius || dy > radius ||
             dz < -radius || dz > radius || dx*dx+dy*dy+dz*dz > radius*radius) continue;
