@@ -17,4 +17,4 @@ for mode in fx hw; do
     PATH=/c/msys64/mingw64/bin:$PATH $CXX $OOT_CORE_CXXFLAGS $extra -O2 $SRCS -o "$OUT/math_probe_$mode.exe"
     PATH=/c/msys64/mingw64/bin:$PATH "$OUT/math_probe_$mode.exe" > "$OUT/math_probe_$mode.txt"
 done
-python "$HERE/compare_probe.py" "$OUT/math_probe_hw.txt" "$OUT/math_probe_fx.txt"
+${PY:-python3} "$HERE/compare_probe.py" "$OUT/math_probe_hw.txt" "$OUT/math_probe_fx.txt"

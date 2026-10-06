@@ -85,13 +85,13 @@ struct CollisionPoly { uint16_t flags_vIA,flags_vIB,vIC; };
 #define COLPOLY_VTX_INDEX(x) ((x)&8191)
 ''' + '#include "' + (ROOT / 'oot-core/include/bgcheck_bounds.h').as_posix() + '"\n' + r'''
 int main() {
-    assert(OotCore_BgInt(Fx(-32768.5)) == -32768);
+    assert(OotCore_BgInt(Fx(-32768.5)) == -32767); /* Q16.16 saturates */
     assert(OotCore_BgInt(Fx(-1.999)) == -1);
     assert(OotCore_BgInt(Fx(-0.001)) == 0);
     assert(OotCore_BgInt(Fx(32767.999)) == 32767);
-    assert(OotCore_BgInt(Fx(40000.5)) == 40000);
-    assert(OotCore_BgInt(Fx(-40000.5)) == -40000);
-    assert(OotCore_BgInt(Fx(1e11)) == 2147483647);
+    assert(OotCore_BgInt(Fx(40000.5)) == 32767);
+    assert(OotCore_BgInt(Fx(-40000.5)) == -32767);
+    assert(OotCore_BgInt(Fx(1e11)) == 32767);
     Vec3s v[3] = {{-32768,-100,-200},{32767,100,-200},{0,0,200}};
     CollisionPoly p={0x4000,0x2001,2};
     assert(OotCore_BgPolyNear(&p,v,-32768.9,-100.9,-200.9,0.9,7));
@@ -148,6 +148,11 @@ int main() {
         # Hold every pre-existing backend fix equal. Only compare the new pass.
         base = importer.fix_macros('src/code/z_bgcheck.c', bg_source, stats)
         variants = [base, importer.fix_bgcheck_bounds('src/code/z_bgcheck.c', base, stats)]
+        # Fx32 range rewrites apply to both sides (headers are imported with them).
+        variants = [importer.fix_stored_squares('src/code/z_bgcheck.c',
+                        importer.fix_cross_products('src/code/z_bgcheck.c',
+                            importer.fix_rand_ranges('src/code/z_bgcheck.c', v, stats), stats), stats)
+                    for v in variants]
         self.assertEqual(stats['problems'], [])
         outputs = []
         with tempfile.TemporaryDirectory() as folder:
@@ -170,7 +175,8 @@ int main() {
                 variant = importer.fix_float_literals(variant, stats)
                 variant = importer.fix_mtxf(variant, stats)
                 variant = variant.replace('sqrtf(', 'OotProbe_Sqrt(')
-                variant = '#include "ultra64.h"\nf32 OotProbe_Sqrt(f32);\n' + variant
+                variant = ('#include "ultra64.h"\nf32 OotProbe_Sqrt(f32);\n'
+                           'f32 OotProbe_Sqrt(const FxSqExpr&);\nf32 OotProbe_Sqrt(const FxSq&);\n' + variant)
                 cpp = p / ('bg%d.cpp' % index)
                 cpp.write_text(variant, encoding='utf-8')
                 obj = p / ('bg%d.o' % index)

@@ -13,13 +13,38 @@
 
 #if !OOT_CORE_HWFLOAT
 #include "fx.h"
+#include "fx_sq.h"
+#define OOT_SQ(x) OotSq(x)
+#define OOT_IS_ZERO(f) OotIsZero(f)
+#define OOT_Q15_NORMAL(n) OotFx_Q15Normal(n)
 #define float Fx
 #define double Fx
 /* The importer wraps every floating literal: FXL(0.5f) is an Fx constant. */
 #define FXL(lit) (Fx(lit))
 #else
 #define FXL(lit) (lit)
+#define OOT_SQ(x) ((x) * (x))
+#define OOT_IS_ZERO(f) (fabsf(f) < 0.008f)
+#define OOT_Q15_NORMAL(n) ((n) * COLPOLY_NORMAL_FRAC)
+typedef float FxSq;
+#define OotFx_Det2(a, b, c, d) (((a) * (b)) - ((c) * (d)))
+#define OotFx_ScaleWrap16(x, K) ((short)(long)((x) * ((K) / 65536.0f)))
+#define OotFx_DotRatio2(a, b, c, d) ((((a) * (c)) + ((b) * (d))) / (((c) * (c)) + ((d) * (d))))
+#define OotFx_Cross3(ax, ay, az, bx, by, bz, rx, ry, rz)                                        \
+    (*(rx) = ((ay) * (bz)) - ((az) * (by)), *(ry) = ((az) * (bx)) - ((ax) * (bz)), \
+     *(rz) = ((ax) * (by)) - ((ay) * (bx)))
+#define OotFx_DotRatio3(ax, ay, az, bx, by, bz) \
+    ((((ax) * (bx)) + ((ay) * (by)) + ((az) * (bz))) / (((bx) * (bx)) + ((by) * (by)) + ((bz) * (bz))))
 #endif
+
+/* Importer fix_rand_ranges targets (oot_rand.cpp): random ranges past Fx. */
+long OotRand_ZeroOneTimes(unsigned long n); /* s32(u32) */
+long OotRand_CenteredTimes(unsigned long n);
+/* Bounded XZ segment-vs-circle roots for the cylinder quadratics (importer
+ * rewrites in sys_math3d.c / z_collision_check.c; oot_math.cpp, both modes).
+ * Returns 0 (no side hit), 1 (tangent) or 2; fracA = larger root. */
+long OotFx_LineVsCircleXZ(float ax, float az, float dx, float dz, float r, float* fracA, float* fracB);
+float OotFx_RadSqDiffXZ(float ax, float az, float r); /* |a|^2 - r^2, as (|a| - r)(|a| + r) */
 
 /*
  * C `c ? a : b` with mixed int/Fx operands converts to float; in C++ the

@@ -477,7 +477,13 @@ SKIP_TOKEN = re.compile(r'"(?:\\.|[^"\\\n])*"|\'(?:\\.|[^\'\\\n])*\'|//[^\n]*|/\
 DIRECTIVE = re.compile(r'^[ \t]*#[ \t]*(include|pragma|line|error|warning)\b[^\n]*$', re.M)
 
 
-def fix_float_literals(text, stats):
+# Q16.16 Fx (Wave 0) saturates at +/-32767.99998. Source literals past that
+# are listed in import_report.txt for the range audit (each needs a bounded
+# helper or a source-backed reason the saturated value is harmless).
+FX_LIMIT = 32768.0
+
+
+def fix_float_literals(text, stats, rel=''):
     out = []
     pos = 0
     skips = sorted([m.span() for m in SKIP_TOKEN.finditer(text)] +
@@ -486,7 +492,15 @@ def fix_float_literals(text, stats):
     def wrap(chunk):
         def sub(m):
             stats['fxl'] += 1
-            return f'FXL({m.group(0)})'
+            lit = m.group(0)
+            if rel.endswith('.c') and not rel.endswith('.inc.c'):
+                try:
+                    value = abs(float(lit.rstrip('fFlL')))
+                except ValueError:
+                    value = 0.0
+                if value >= FX_LIMIT:
+                    stats.setdefault('fx_range', []).append(f'{rel}: {lit}')
+            return f'FXL({lit})'
         return FLOAT_LIT.sub(sub, chunk)
     for start, end in skips:
         if start < pos:
@@ -498,6 +512,66 @@ def fix_float_literals(text, stats):
     return ''.join(out)
 
 
+# Q16.16 Fx (Wave 0): random binangle ranges such as Rand_ZeroOne() * 65534.0f
+# or Rand_CenteredFloat(0x10000) saturate at 32767 and halve the angle range.
+# Rewrite them to 32-bit integer helpers (oot_rand.cpp) that consume the same
+# single Rand_Next() draw, so the RNG sequence is unchanged.
+RAND_RANGE = re.compile(
+    r'Rand_ZeroOne\(\)\s*\*\s*(0x[0-9A-Fa-f]+|\d+(?:\.\d*)?f?)(?![\w.])'
+    r'|Rand_(ZeroFloat|CenteredFloat)\(\s*(0x[0-9A-Fa-f]+|\d+(?:\.\d*)?f?)\s*\)')
+
+
+def fix_rand_ranges(rel, text, stats):
+    if not rel.endswith('.c') or rel.endswith('.inc.c'):
+        return text
+
+    def number(lit):
+        if lit.lower().startswith('0x'):
+            return int(lit, 16)
+        return float(lit.rstrip('fF'))
+
+    def sub(m):
+        lit = m.group(1) or m.group(3)
+        value = number(lit)
+        if value < FX_LIMIT or value != int(value) or value > 0x20000:
+            return m.group(0)
+        stats['macros'] += 1
+        helper = 'OotRand_CenteredTimes' if m.group(2) == 'CenteredFloat' else 'OotRand_ZeroOneTimes'
+        return f'{helper}({int(value)})'
+    return RAND_RANGE.sub(sub, text)
+
+
+# Q16.16 Fx (Wave 0): sys_math3d 2D cross products of coordinates (triangle
+# point tests, determinants) overflow 32767; route them to the bounded
+# shared-shift helpers in oot_math.cpp (fx_sq.h). Float build: same formula.
+CROSS_PRODUCT = re.compile(r'\(\(([^()]+)\) \* \(([^()]+)\)\) - \(\(([^()]+)\) \* \(([^()]+)\)\)')
+
+
+# Q16.16 Fx (Wave 0): every decomp `f32 <name>Sq` (field, local, parameter,
+# return, pointer) holds a squared distance. Retype it to FxSq (fx_sq.h) so
+# it keeps scaled terms and converts to plain Fx only explicitly.
+STORED_SQUARE = re.compile(r'\bf32(\s*\*?\s*)(\w*Sq)\b')
+
+
+def fix_stored_squares(rel, text, stats):
+    if not (rel.endswith('.h') or (rel.endswith('.c') and not rel.endswith('.inc.c'))):
+        return text
+    text, n = STORED_SQUARE.subn(lambda m: 'FxSq' + m.group(1) + m.group(2), text)
+    stats['macros'] += n
+    stats['stored_squares'] = stats.get('stored_squares', 0) + n
+    return text
+
+
+def fix_cross_products(rel, text, stats):
+    if rel != 'src/code/sys_math3d.c':
+        return text
+    text, n = CROSS_PRODUCT.subn(lambda m: 'OotFx_Det2(%s, %s, %s, %s)' % m.groups(), text)
+    if n != 12:
+        stats['problems'].append(f'{rel}: expected 12 cross products, found {n}')
+    stats['macros'] += n
+    return text
+
+
 MACRO_REWRITES = {
     'include/z_math.h': [
         ('#define ABS(x) ((x) >= 0 ? (x) : -(x))', '#define ABS(x) OOT_SEL((x) >= 0, (x), -(x))'),
@@ -505,6 +579,19 @@ MACRO_REWRITES = {
          '#define CLAMP(x, min, max) OOT_SEL((x) < (min), (min), OOT_SEL((x) > (max), (max), (x)))'),
         ('#define CLAMP_MAX(x, max) ((x) > (max) ? (max) : (x))', '#define CLAMP_MAX(x, max) OOT_SEL((x) > (max), (max), (x))'),
         ('#define CLAMP_MIN(x, min) ((x) < (min) ? (min) : (x))', '#define CLAMP_MIN(x, min) OOT_SEL((x) < (min), (min), (x))'),
+        # 32-bit Fx (Wave 0): squares stay pending terms (fx_sq.h) so hypot
+        # and square comparisons scale instead of saturating past 181 units.
+        ('#define SQ(x) ((x)*(x))', '#define SQ(x) OOT_SQ(x)'),
+        ('#define IS_ZERO(f) (fabsf(f) < 0.008f)', '#define IS_ZERO(f) OOT_IS_ZERO(f)'),
+        # Binangle conversions wrap through s32 -> s16 on N64; Fx saturates.
+        ('#define DEG_TO_BINANG(degrees) (s16)TRUNCF_BINANG((degrees) * (0x8000 / 180.0f))',
+         '#define DEG_TO_BINANG(degrees) OotFx_ScaleWrap16((degrees), 0xB60B61u)'),
+        ('#define RAD_TO_BINANG(radians) (s16)TRUNCF_BINANG((radians) * (0x8000 / M_PI))',
+         '#define RAD_TO_BINANG(radians) OotFx_ScaleWrap16((radians), 0x28BE60DCu)'),
+        ('#define SQXZ(vec) ((vec).x * (vec).x + (vec).z * (vec).z)',
+         '#define SQXZ(vec) (SQ((vec).x) + SQ((vec).z))'),
+        ('#define SQXYZ(vec) ((vec).x * (vec).x + (vec).y * (vec).y + (vec).z * (vec).z)',
+         '#define SQXYZ(vec) (SQ((vec).x) + SQ((vec).y) + SQ((vec).z))'),
     ],
     'include/ultra64/gbi.h': [
         ('#define MAX(a, b) ((a) > (b) ? (a) : (b))', '#define MAX(a, b) OOT_SEL((a) > (b), (a), (b))'),
@@ -528,6 +615,66 @@ MACRO_REWRITES = {
     # Fx keeps 16 fraction bits: a tiny reciprocal (1/|n| ~ 1e-4) loses
     # ~6%. Divide by the magnitude instead (same math, exact enough).
     'src/code/sys_math3d.c': [
+        ('    return sqrt(Math3D_Vec3fMagnitudeSq(vec));',
+         '    return sqrtf(SQXYZ(*vec)); /* Fx32: scaled hypot, no stored square */'),
+        ('    perpendicularRatio = (((x0 - x1) * xDiff) + (y0 - y1) * yDiff) / distSq;',
+         '    perpendicularRatio = OotFx_DotRatio2(x0 - x1, y0 - y1, xDiff, yDiff); /* Fx32 range */'),
+        # Fx32: 3D cross product with one shared shift (dynamic poly normals).
+        ('''    ret->x = (a->y * b->z) - (a->z * b->y);
+    ret->y = (a->z * b->x) - (a->x * b->z);
+    ret->z = (a->x * b->y) - (a->y * b->x);''',
+         '''    OotFx_Cross3(a->x, a->y, a->z, b->x, b->y, b->z, &ret->x, &ret->y, &ret->z); /* Fx32 */'''),
+        # Fx32: a sign test, not a product (tiny distances underflow to 0).
+        ('    if ((pointADist * pointBDist) > 0.0f) {',
+         '    if (((pointADist > 0.0f) && (pointBDist > 0.0f)) || ((pointADist < 0.0f) && (pointBDist < 0.0f))) {'),
+        # Fx32: projection ratios (a . d) / |d|^2 with coordinate-sized terms.
+        ('''    t = (((pos->x - line->point.x) * line->dir.x) + ((pos->y - line->point.y) * line->dir.y) +
+         ((pos->z - line->point.z) * line->dir.z)) /
+        dirVectorLengthSq;''',
+         '''    t = OotFx_DotRatio3(pos->x - line->point.x, pos->y - line->point.y, pos->z - line->point.z,
+                        line->dir.x, line->dir.y, line->dir.z); /* Fx32 range */'''),
+        ('''    temp_f0_2 = ((((sphere->center.x - line->a.x) * lineDiff.x) + ((sphere->center.y - line->a.y) * lineDiff.y)) +
+                 ((sphere->center.z - line->a.z) * lineDiff.z)) /
+                lineLenSq;''',
+         '''    temp_f0_2 = OotFx_DotRatio3(sphere->center.x - line->a.x, sphere->center.y - line->a.y,
+                                sphere->center.z - line->a.z, lineDiff.x, lineDiff.y, lineDiff.z); /* Fx32 */'''),
+        # Fx32: the XZ side quadratic squares squared coordinates; bounded roots.
+        ('''    radSqDiff = SQXZ(cylToPtA) - cylRadiusSq;
+    if (!IS_ZERO(2.0f * SQXZ(ptAToPtB))) {
+        dot2AB = 2.0f * DOTXZ(ptAToPtB, cylToPtA);
+        if (SQ(dot2AB) < 4.0f * SQXZ(ptAToPtB) * radSqDiff) {
+            // Line's closest xz-approach is outside cylinder. No intersections.
+            return 0;
+        }
+        if (SQ(dot2AB) - (4.0f * SQXZ(ptAToPtB) * radSqDiff) > zero) {
+            sideIntA = sideIntB = 1;
+        } else {
+            // Line is tangent in xz-plane. At most 1 side intersection.
+            sideIntA = 1;
+            sideIntB = 0;
+        }
+        distCent2 = sqrtf(SQ(dot2AB) - (4.0f * SQXZ(ptAToPtB) * radSqDiff));
+        if (sideIntA == 1) {
+            // fraction of length along AB for side intersection closer to A
+            fracA = (distCent2 - dot2AB) / (2.0f * SQXZ(ptAToPtB));
+        }
+        if (sideIntB == 1) {
+            // fraction of length along AB for side intersection closer to B
+            fracB = (-dot2AB - distCent2) / (2.0f * SQXZ(ptAToPtB));
+        }
+''',
+         '''    radSqDiff = OotFx_RadSqDiffXZ(cylToPtA.x, cylToPtA.z, cyl->radius); /* Fx32 */
+    if (!IS_ZERO(2.0f * SQXZ(ptAToPtB))) {
+        /* Fx32: same roots from closest approach and half chord. */
+        s32 sides = OotFx_LineVsCircleXZ(cylToPtA.x, cylToPtA.z, ptAToPtB.x, ptAToPtB.z, cyl->radius,
+                                         &fracA, &fracB);
+        if (sides == 0) {
+            // Line's closest xz-approach is outside cylinder. No intersections.
+            return 0;
+        }
+        sideIntA = 1;
+        sideIntB = sides == 2;
+'''),
         ('''        normMagInv = 1.0f / normMagnitude;
         *nx = normal.x * normMagInv;
         *ny = normal.y * normMagInv;
@@ -546,6 +693,10 @@ MACRO_REWRITES = {
     # imported has a NULL profile. Spawning it must fail like an overlay
     # that cannot load, never call through NULL.
     'src/code/z_actor.c': [
+        # Fx32: the stored square scales by (1 - 0.8 w) instead of subtracting.
+        ('''            adjDistSq =
+                actor->xyzDistToPlayerSq - actor->xyzDistToPlayerSq * 0.8f * ((0x4000 - yawTempAbs) * (1.0f / 0x8000));''',
+         '''            adjDistSq = actor->xyzDistToPlayerSq * (1.0f - 0.8f * ((0x4000 - yawTempAbs) * (1.0f / 0x8000)));'''),
         ('''        ACTOR_DEBUG_PRINTF(T("オーバーレイではありません\\n", "Not an overlay\\n"));
 
         profile = overlayEntry->profile;''',
@@ -605,6 +756,42 @@ MACRO_REWRITES = {
         ('#include "z_en_arrow.h"', '#include "z_en_arrow.h"\n#include "sprite_actor.h"'),
         ('SkelAnime_Init(play, &this->skelAnime, &gArrowSkel, &gArrow2_Anim, NULL, NULL, 0);',
          'OotCore_SpriteInitFlex(play, &this->skelAnime, NULL, &gArrow2_Anim, NULL, NULL, 0); /* oot-core */'),
+        ('        scale = Math3D_Vec3fMagnitudeSq(&posDiffLastFrame);',
+         '        scale = (f32)Math3D_Vec3fMagnitudeSq(&posDiffLastFrame); /* Fx32: one frame of motion, < 181 */'),
+    ],
+    # Fx32: the same XZ side quadratic as Math3D_CylVsLineSeg.
+    'src/code/z_collision_check.c': [
+        ('''    radSqDiff = SQXZ(actorToItem) - SQ(radius);
+    if (!IS_ZERO(SQXZ(itemStep))) {
+        actorDotItemXZ = (2.0f * itemStep.x * actorToItem.x) + (2.0f * itemStep.z * actorToItem.z);
+        if (SQ(actorDotItemXZ) < (4.0f * SQXZ(itemStep) * radSqDiff)) {
+            return 0;
+        }
+        if (SQ(actorDotItemXZ) - (4.0f * SQXZ(itemStep) * radSqDiff) > zero) {
+            intersect1 = intersect2 = true;
+        } else {
+            intersect1 = true;
+            intersect2 = false;
+        }
+        closeDist = sqrtf(SQ(actorDotItemXZ) - (4.0f * SQXZ(itemStep) * radSqDiff));
+        if (intersect1 == true) {
+            frac1 = (closeDist - actorDotItemXZ) / (2.0f * SQXZ(itemStep));
+        }
+        if (intersect2 == true) {
+            frac2 = (-actorDotItemXZ - closeDist) / (2.0f * SQXZ(itemStep));
+        }
+''',
+         '''    radSqDiff = OotFx_RadSqDiffXZ(actorToItem.x, actorToItem.z, radius); /* Fx32 */
+    if (!IS_ZERO(SQXZ(itemStep))) {
+        /* Fx32: same roots from closest approach and half chord. */
+        s32 sides = OotFx_LineVsCircleXZ(actorToItem.x, actorToItem.z, itemStep.x, itemStep.z, radius,
+                                         &frac1, &frac2);
+        if (sides == 0) {
+            return 0;
+        }
+        intersect1 = true;
+        intersect2 = sides == 2;
+'''),
     ],
     'src/code/z_effect_soft_sprite.c': [
         ('''                 "EffectSoftSprite2_makeEffect(): Not an overlay.\\n"));
@@ -615,9 +802,42 @@ MACRO_REWRITES = {
             return;
         }'''),
     ],
+    # Fx32 range audit (import_report FX RANGE): 65536.0f saturates, so these
+    # constants must be single literals / wrapping binangle conversions.
+    'src/code/sys_matrix.c': [
+        ('* (1 / 65536.0f);', '* 1.52587890625e-05f; /* Fx32: 1 / 65536 as one literal */'),
+    ],
+    'src/overlays/actors/ovl_En_Md/z_en_md.c': [
+        ('Math_FAtan2F(pathDiffX, pathDiffZ) * (65536.0f / (2 * M_PI))',
+         'RAD_TO_BINANG(Math_FAtan2F(pathDiffX, pathDiffZ)) /* Fx32 */'),
+    ],
+    # Fx32: 1 / subdivLength (~1/750 in Field) is ~87 raw in Q16, 0.5% off:
+    # position -> subdivision lookup drifted ~30 units from the registered
+    # boundaries and lost floors there. Divide by the length instead.
+    'src/code/z_bgcheck.c': [
+        ('* colCtx->subdivLengthInv.x', '/ colCtx->subdivLength.x'),
+        ('* colCtx->subdivLengthInv.y', '/ colCtx->subdivLength.y'),
+        ('* colCtx->subdivLengthInv.z', '/ colCtx->subdivLength.z'),
+    ],
+    # Fx32: 1.0f / SHT_MAX is not a folded constant in Fx (a runtime divide
+    # per use) and truncates to 2 raw; OOT_Q15_NORMAL rounds with shifts.
+    'include/bgcheck.h': [
+        ('#define COLPOLY_GET_NORMAL(n) ((n)*COLPOLY_NORMAL_FRAC)',
+         '#define COLPOLY_GET_NORMAL(n) OOT_Q15_NORMAL(n)'),
+    ],
+    # Fx32: angle * (0x7FFF / M_PI) past pi wraps on N64 (s16 store).
+    'src/code/sys_math.c': [
+        ('    return sins((s16)(angle * (0x7FFF / M_PI))) * SHT_MINV;',
+         '    return sins(OotFx_ScaleWrap16(angle, 0x28BE0F5Fu)) * SHT_MINV;'),
+        ('    return coss((s16)(angle * (0x7FFF / M_PI))) * SHT_MINV;',
+         '    return coss(OotFx_ScaleWrap16(angle, 0x28BE0F5Fu)) * SHT_MINV;'),
+    ],
     # English only (gSaveContext.language = LANGUAGE_ENG): the Japanese
     # entry table would be 17 KB of blob for text that is never shown.
     'src/code/z_message.c': [
+        ('CHECK_BTN_ALL(input->press.button, BTN_B) && !msgCtx->textUnskippable',
+         'CHECK_BTN_ANY(input->press.button, BTN_A | BTN_B) /* fill current page only */'),
+
         ('player->naviActor->flags |= ACTOR_FLAG_TALK_OFFER_AUTO_ACCEPTED;',
          'if (player->naviActor != NULL) player->naviActor->flags |= ACTOR_FLAG_TALK_OFFER_AUTO_ACCEPTED; /* C Navi */'),
         ('''    /* Present */ DEFINE_MESSAGE_JPN(textId, type, yPos, jpnMessage, nesMessage, gerMessage, fraMessage)
@@ -782,7 +1002,10 @@ def fixup(rel, text, stats):
     text = fix_macros(rel, text, stats)
     text = fix_sprite_actors(rel, text, stats)
     text = fix_bgcheck_bounds(rel, text, stats)
-    text = fix_float_literals(text, stats)
+    text = fix_rand_ranges(rel, text, stats)
+    text = fix_cross_products(rel, text, stats)
+    text = fix_stored_squares(rel, text, stats)
+    text = fix_float_literals(text, stats, rel)
     return fix_mtxf(text, stats)
 
 
@@ -891,6 +1114,9 @@ def main():
         ' must be converted to Fx offline before use.',
         'sources: ' + ', '.join(SOURCES),
     ] + [f'PROBLEM: {p}' for p in stats['problems']]
+    fx_range = stats.get('fx_range', [])
+    report.append(f'Fx range audit: {len(fx_range)} source literals >= {FX_LIMIT:.0f} saturate in Q16.16')
+    report += [f'  FX RANGE: {r}' for r in fx_range]
     syms, missing = message_symbols(args.oot)
     write_if_changed(args.out / 'msg_syms.ld', syms)
     report.append(f'message symbols: {syms.count(chr(10)) - 1}, NES ids not in ROM table: {len(missing)}'

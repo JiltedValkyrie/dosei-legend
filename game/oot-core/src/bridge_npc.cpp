@@ -23,7 +23,7 @@ static s32 sprite_q8(f32 value) {
     return (s32)(value * 256.0f);
 #else
     static_assert(FX_FRAC == 16, "sprite clock ABI expects Q16 Fx storage");
-    return (s32)value.v / 256;
+    return value.v / 256;
 #endif
 }
 static f32 sprite_frame(s32 value) {

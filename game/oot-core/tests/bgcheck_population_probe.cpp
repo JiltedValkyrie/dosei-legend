@@ -24,6 +24,18 @@ f32 OotProbe_Sqrt(f32 value) {
     return sqrtf(value);
 }
 
+#if !OOT_CORE_HWFLOAT
+/* Fx32: pending squares (SQ sums) and stored squares keep their scaled root. */
+f32 OotProbe_Sqrt(const FxSqExpr& value) {
+    sSqrt++;
+    return sqrtf(value);
+}
+f32 OotProbe_Sqrt(const FxSq& value) {
+    sSqrt++;
+    return sqrtf(value);
+}
+#endif
+
 static s32 PolyIndex(CollisionPoly* poly) {
     return poly == NULL ? -1 : poly - sPlay.colCtx.colHeader->polyList;
 }

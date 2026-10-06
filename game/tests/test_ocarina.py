@@ -223,12 +223,12 @@ int main(void) {
 #include <stdint.h>
 #include <stddef.h>
 typedef uint16_t u16;typedef uint8_t u8;typedef int32_t s32;typedef uint32_t u32;
-typedef struct { u32 lo,hi; } f32;
+typedef struct { s32 v; } f32; /* Fx: one Q16.16 word */
 #define OOT_CORE_HWFLOAT 0
 #define FX_FRAC 16
 #define static_assert _Static_assert
 static f32 fixed(int whole,unsigned fraction) {
-    return (f32){((u32)whole<<16)|fraction,whole<0 ? 0xffffffffu : 0};
+    return (f32){(s32)(((u32)whole<<16)|fraction)};
 }
 ''' + graphics.function(ROOT/'oot-core/include/bgcheck_bounds.h','static inline s32 OotCore_BgInt(') + r'''
 enum {ACTORCAT_NPC=4,ACTOR_EN_SA=0x46,UPG_STRENGTH=0,

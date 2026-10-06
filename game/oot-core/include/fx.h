@@ -1,63 +1,64 @@
 /*
  * Fx: fixed-point stand-in for N64 `float` on the FPU-less SH-2.
  *
- * Storage is int64 with 24 fraction bits (Q39.24). The decomp freely builds
- * floats far beyond s16 range (Rand_ZeroOne() * 0xFFFF angles, squared
- * distances ~1e8), so a 32-bit Q16.16 saturates in ordinary gameplay code.
- * 16 fraction bits also proved too coarse: reciprocals such as 1/|normal|
- * (~1e-4) lost 6% (host probe, Math3D_DefPlane). Q39.24 gives range +/-5e11
- * and 6e-8 steps; Rand_ZeroOne's 23 mantissa bits map exactly.
+ * Storage is ONE signed 32-bit word, Q16.16 (2026-10-05, Wave 0). Human rule
+ * (narrowed 2026-10-06): stored values 32-bit, no software 64-bit helpers or
+ * soft-float; the native dmuls.l product (MACH:MACL) is allowed for speed.
+ * Multiply = dmuls.l + xtrct; division stays 32-bit (out of line).
  *
- * Cost control: operands are split at 32 bits. Both small -> one SH-2
- * dmuls.l; one small -> two; otherwise four. Division uses int64.
+ * Range is +/-32767.99998. Results past it SATURATE to +/-FX_MAX (symmetric,
+ * so negation never overflows). Saturation is an overflow guard only; it is
+ * not a substitute for range-correct logic. Values the decomp builds past
+ * this range (squared distances, 0xFFFF random angles) need their own
+ * bounded helpers (see Wave 0 plan, range audit) rather than relying on it.
+ * Precision is 1/65536; approximation is allowed by the human rule.
  *
  * Semantics follow C float rules the decomp relies on:
- *   - implicit conversion to integers truncates toward zero, then narrows
- *     (matches MIPS trunc.w.s + halfword store for out-of-range values);
- *   - mixed Fx/integer arithmetic promotes the integer to Fx.
+ *   - implicit conversion to integers truncates toward zero, then narrows;
+ *   - mixed Fx/integer arithmetic promotes the integer to Fx, except that
+ *     Fx * int and Fx / int skip the rescale (exact integer scaling).
  *
  * The prelude macro-renames `float`/`double` to Fx AFTER this header, so the
  * hardware types are spelled with decltype here. Constructors from float are
  * constexpr: literals fold at compile time and must never emit soft-float
  * calls on target (verify with objdump: no __addsf3, __muldf3 etc.).
+ *
+ * Host overflow audit: build with -DFX_SAT_AUDIT and define
+ * `void fx_sat_hit(void* site)`; every saturation reports its caller.
  */
 #ifndef OOT_CORE_FX_H
 #define OOT_CORE_FX_H
 
 typedef decltype(0.0f) fx_hwfloat;
 typedef decltype(0.0) fx_hwdouble;
-typedef long long fx_raw;
+typedef int fx_raw;           /* 32 bits on SH-2 and on the host */
+typedef unsigned int fx_uraw;
 
-/* 16 (2026-10-03, was 24): every normal game value (positions up to
- * +/-32767, speeds, scales) then fits 32 bits and multiplies with one
- * dmuls.l. At 24 any value over 128 took the 4-multiply slow path. */
-#ifndef FX_FRAC
 #define FX_FRAC 16
-#endif
 #define FX_ONE ((fx_raw)1 << FX_FRAC)
-/* -Os outlined every Fx op (bench 2026-10-02: ~250 cycles per mul-add, all
- * in calls to fx_mul/__ashldi3/__ashiftrt). Hot ops are forced inline. */
+#define FX_MAX ((fx_raw)0x7FFFFFFF)
+/* -Os outlined every Fx op (bench 2026-10-02). Hot ops are forced inline. */
 #define FX_INL __attribute__((always_inline))
 
-/* 64-bit shifts by the fraction width built from 32-bit halves: GCC emits
- * libgcc calls for 64-bit shifts on SH-2. Constant-evaluable. */
-static constexpr FX_INL fx_raw fx_join(long hi, unsigned long lo) {
-    return (fx_raw)(((unsigned long long)(unsigned long)hi << 32) | lo);
-}
-static constexpr FX_INL fx_raw fx_shl_frac(fx_raw r) {
-    return fx_join((long)(((unsigned long)(r >> 32) << FX_FRAC) | ((unsigned long)r >> (32 - FX_FRAC))),
-                   (unsigned long)r << FX_FRAC);
-}
-static constexpr FX_INL fx_raw fx_sar_frac(fx_raw r) {
-    /* hi >> FRAC without __ashiftrt calls: SH-2 has no shad. For 16 the
-     * signed shift is shlr16 + exts.w, for 24 shlr16/shlr8 + exts.b. */
-#if FX_FRAC == 16
-    return fx_join((long)(short)((unsigned long)(r >> 32) >> 16),
-                   ((unsigned long)(r >> 32) << 16) | ((unsigned long)r >> 16));
+#if defined(FX_SAT_AUDIT)
+void fx_sat_hit(void* site);
+#define FX_SAT_NOTE() (__builtin_is_constant_evaluated() ? (void)0 : fx_sat_hit(__builtin_return_address(0)))
 #else
-    return fx_join((long)(signed char)((unsigned long)(r >> 32) >> FX_FRAC),
-                   ((unsigned long)(r >> 32) << (32 - FX_FRAC)) | ((unsigned long)r >> FX_FRAC));
+#define FX_SAT_NOTE() ((void)0)
 #endif
+
+/* Signed saturation of a magnitude with a sign. */
+static constexpr FX_INL fx_raw fx_sat(bool neg) {
+    return FX_SAT_NOTE(), neg ? -FX_MAX : FX_MAX;
+}
+static constexpr FX_INL fx_raw fx_signed(fx_uraw mag, bool neg) {
+    return mag > (fx_uraw)FX_MAX ? fx_sat(neg) : (neg ? -(fx_raw)mag : (fx_raw)mag);
+}
+static constexpr FX_INL fx_uraw fx_abs_u(fx_raw v) {
+    return v < 0 ? (fx_uraw)0 - (fx_uraw)v : (fx_uraw)v;
+}
+static constexpr FX_INL int fx_clz(fx_uraw v) {
+    return v ? __builtin_clz(v) : 32;
 }
 
 template <class T> struct fx_is_int { static constexpr bool value = false; };
@@ -70,19 +71,39 @@ template <bool B, class T = void> struct fx_enable_if {};
 template <class T> struct fx_enable_if<true, T> { typedef T type; };
 #define FX_IF_INT(T, R) typename fx_enable_if<fx_is_int<T>::value, R>::type
 
+/* Integer -> magnitude clamped to 31 bits (wider/unsigned sources compare
+ * only; the decomp's own s64 values are its business, not Fx's). */
+template <class T> static constexpr FX_INL fx_uraw fx_int_mag(T i, bool* neg) {
+    *neg = ((T)-1 < (T)0) && i < (T)0;
+    if (*neg) {
+        /* int's INT_MIN negates to FX_MAX + 1, which callers saturate. */
+        return (sizeof(T) > 4 && i < -(T)FX_MAX) ? (fx_uraw)FX_MAX + 1u : (fx_uraw)0 - (fx_uraw)(fx_raw)i;
+    }
+    return (sizeof(T) >= 4 && i > (T)FX_MAX) ? (fx_uraw)FX_MAX + 1u : (fx_uraw)i;
+}
+
+/* Compile-time float -> Q16.16, truncating toward zero, saturating. Must
+ * stay always_inline: an outlined copy runs soft-double for every literal. */
+static constexpr FX_INL fx_raw fx_from_double(fx_hwdouble d) {
+    return d * (fx_hwdouble)FX_ONE >= (fx_hwdouble)FX_MAX ? FX_MAX
+         : d * (fx_hwdouble)FX_ONE <= -(fx_hwdouble)FX_MAX ? -FX_MAX
+         : (fx_raw)(d * (fx_hwdouble)FX_ONE);
+}
+
 struct Fx {
     fx_raw v;
 
     Fx() = default;
-    constexpr Fx(fx_hwfloat f) : v((fx_raw)((fx_hwdouble)f * (fx_hwdouble)FX_ONE)) {}
-    constexpr Fx(fx_hwdouble d) : v((fx_raw)(d * (fx_hwdouble)FX_ONE)) {}
+    constexpr FX_INL Fx(fx_hwfloat f) : v(fx_from_double((fx_hwdouble)f)) {}
+    constexpr FX_INL Fx(fx_hwdouble d) : v(fx_from_double(d)) {}
     template <class T, class = FX_IF_INT(T, void)>
-    constexpr FX_INL Fx(T i)
-        : v(sizeof(T) > 4 ? (fx_raw)i * FX_ONE
-            : (sizeof(T) == 4 && (T)-1 > (T)0)
-                ? fx_join((long)((unsigned long)i >> (32 - FX_FRAC)), (unsigned long)i << FX_FRAC)
-                : fx_join((long)i >> (32 - FX_FRAC), (unsigned long)(long)i << FX_FRAC)) {}
+    constexpr FX_INL Fx(T i) : v(from_int(i)) {}
 
+    template <class T> static constexpr FX_INL fx_raw from_int(T i) {
+        bool neg = false;
+        fx_uraw m = fx_int_mag(i, &neg);
+        return m > 0x7FFFu ? fx_sat(neg) : (neg ? -(fx_raw)(m << FX_FRAC) : (fx_raw)(m << FX_FRAC));
+    }
     static constexpr FX_INL Fx raw(fx_raw r) {
         Fx x{};
         x.v = r;
@@ -90,165 +111,153 @@ struct Fx {
     }
 
     /* Float->int truncates toward zero, like C/MIPS trunc.w.s. */
-    constexpr FX_INL fx_raw trunc() const { return v >= 0 ? fx_sar_frac(v) : -fx_sar_frac(-v); }
+    constexpr FX_INL fx_raw trunc() const { return v >= 0 ? v >> FX_FRAC : -(fx_raw)(fx_abs_u(v) >> FX_FRAC); }
     template <class T, class = FX_IF_INT(T, void)>
     constexpr operator T() const { return (T)trunc(); }
     /* Host reference/debug only: never call on target hot paths. */
     explicit constexpr operator fx_hwfloat() const { return (fx_hwfloat)((fx_hwdouble)v / (fx_hwdouble)FX_ONE); }
 
-    constexpr Fx operator-() const { return raw(-v); }
+    constexpr Fx operator-() const { return raw(v < -FX_MAX ? FX_MAX : -v); }
     constexpr Fx operator+() const { return *this; }
     constexpr bool operator!() const { return v == 0; }
 };
 
-static constexpr FX_INL bool fx_fits32(fx_raw r) { return (long)(r >> 32) == ((long)r >> 31); }
+/* a + b, saturating. Overflow iff both operands share a sign the sum lacks. */
+static constexpr FX_INL fx_raw fx_add_raw(fx_raw a, fx_raw b) {
+    fx_raw r = (fx_raw)((fx_uraw)a + (fx_uraw)b);
+    return (((a ^ r) & (b ^ r)) < 0) ? fx_sat(a < 0) : (r < -FX_MAX ? -FX_MAX : r);
+}
+static constexpr FX_INL fx_raw fx_sub_raw(fx_raw a, fx_raw b) {
+    return fx_add_raw(a, b < -FX_MAX ? FX_MAX : -b);
+}
 
+/*
+ * |a| * |b| >> 16 from 16-bit halves: each partial product is 16x16 -> 32,
+ * so no 64-bit value or MACH:MACL pair exists. Saturates past FX_MAX.
+ */
+static constexpr FX_INL fx_uraw fx_mulq_u(fx_uraw ua, fx_uraw ub) {
+    fx_uraw ah = ua >> 16, al = ua & 0xFFFFu, bh = ub >> 16, bl = ub & 0xFFFFu;
+    fx_uraw hh = ah * bh;
+    if (hh > 0x7FFFu) {
+        return (fx_uraw)FX_MAX + 1u;
+    }
+    fx_uraw r = hh << 16;
+    fx_uraw m = ah * bl;          /* ah < 2^15: m < 2^31, r + m < 2^32 */
+    r += m;
+    m = al * bh;
+    r += m;
+    if (r < m) {
+        return (fx_uraw)FX_MAX + 1u;
+    }
+    m = (al * bl) >> 16;
+    r += m;
+    return r < m ? (fx_uraw)FX_MAX + 1u : r;
+}
+static constexpr FX_INL fx_raw fx_mul_fold(fx_raw a, fx_raw b) {
+    return fx_signed(fx_mulq_u(fx_abs_u(a), fx_abs_u(b)), (a < 0) != (b < 0));
+}
+/* Runtime divides stay out of line (oot_math.cpp): inlined split-multiply
+ * saturation cost ~90 KB of blob. Multiply is the inline dmuls.l below. */
+fx_raw OotFx_Mul(fx_raw a, fx_raw b);
+fx_raw OotFx_MulInt(fx_raw a, fx_uraw ub, bool nb);
+fx_raw OotFx_Div(fx_raw a, fx_raw b);
+fx_raw OotFx_DivInt(fx_raw a, fx_uraw ub, bool nb);
+fx_raw OotFx_IntDiv(fx_uraw ua, bool na, fx_raw b);
 #if defined(__sh__)
-/* SH-2 dmuls.l: signed 32x32 -> 64 in MACH:MACL, no libgcc call. */
-static inline FX_INL fx_raw fx_dmuls(long a, long b) {
-    long hi, lo;
-    __asm__("dmuls.l %2,%3\n\tsts mach,%0\n\tsts macl,%1" : "=r"(hi), "=r"(lo) : "r"(a), "r"(b) : "mach", "macl");
-    return fx_join(hi, (unsigned long)lo);
+/* Native SH-2 multiply (human 2026-10-06: allowed, speed wins): dmuls.l puts
+ * the product in MACH:MACL, xtrct takes its middle 32 bits (product >> 16).
+ * MACH beyond a sign-extended 16-bit value means the result left Fx: saturate.
+ * Stored values stay 32-bit; no libgcc helper. */
+static inline FX_INL fx_raw fx_mul_hw(fx_raw a, fx_raw b) {
+    fx_raw hi, mid;
+    __asm__("dmuls.l %2,%3\n\tsts mach,%0\n\tsts macl,%1\n\txtrct %0,%1"
+            : "=&r"(hi), "=&r"(mid) : "r"(a), "r"(b) : "mach", "macl");
+    return (fx_uraw)(hi + 0x8000) > 0xFFFFu ? fx_sat(hi < 0) : (mid < -FX_MAX ? -FX_MAX : mid);
 }
-#define FX_RT_ONLY() (!__builtin_is_constant_evaluated())
+/* a * b without rescale: MACH must be MACL's sign extension. */
+static inline FX_INL fx_raw fx_muli_hw(fx_raw a, fx_raw b) {
+    fx_raw hi, lo;
+    __asm__("dmuls.l %2,%3\n\tsts mach,%0\n\tsts macl,%1"
+            : "=&r"(hi), "=&r"(lo) : "r"(a), "r"(b) : "mach", "macl");
+    return hi != (lo >> 31) ? fx_sat(hi < 0) : (lo < -FX_MAX ? -FX_MAX : lo);
+}
 #else
-static inline fx_raw fx_dmuls(long a, long b) { return (fx_raw)a * b; }
-#define FX_RT_ONLY() false
-#endif
-
-/* |a| * b where b fits 32 bits: two 32x32->64 multiplies. */
-static constexpr fx_raw fx_mul_wide32(fx_raw a, long b) {
-    unsigned long long ua = a < 0 ? -(unsigned long long)a : (unsigned long long)a;
-    long long hi = (long long)(long)(ua >> 32) * b;            /* weight 2^32 */
-    long long lo_u = (long long)((unsigned long long)(unsigned long)ua * (unsigned long long)(b < 0 ? -(long long)b : b));
-    long long lo = b < 0 ? -lo_u : lo_u;
-    fx_raw r = (fx_raw)(hi * ((fx_raw)1 << (32 - FX_FRAC))) + (lo >> FX_FRAC);
-    return a < 0 ? -r : r;
+/* Host reference of the same hardware product. */
+static inline fx_raw fx_mul_hw(fx_raw a, fx_raw b) {
+    long long p = ((long long)a * b) >> 16;
+    return p > FX_MAX ? fx_sat(false) : p < -FX_MAX ? fx_sat(true) : (fx_raw)p;
 }
-
-/* Rare wide cases stay out of line (code size); the 32x32 path is inline. */
-static constexpr Fx fx_mul_slow(Fx a, Fx b, bool sa, bool sb);
-
-static constexpr FX_INL Fx fx_mul(Fx a, Fx b) {
-    bool sa = fx_fits32(a.v), sb = fx_fits32(b.v);
-    if (__builtin_expect(sa && sb, 1)) {
-        if (FX_RT_ONLY()) {
-            return Fx::raw(fx_sar_frac(fx_dmuls((long)a.v, (long)b.v)));
-        }
-        return Fx::raw(((fx_raw)(long)a.v * (long)b.v) >> FX_FRAC);
-    }
-    return fx_mul_slow(a, b, sa, sb);
-}
-
-static constexpr Fx fx_mul_slow(Fx a, Fx b, bool sa, bool sb) {
-    if (sb) {
-        return Fx::raw(fx_mul_wide32(a.v, (long)b.v));
-    }
-    if (sa) {
-        return Fx::raw(fx_mul_wide32(b.v, (long)a.v));
-    }
-    /* Both large: middle bits of the 128-bit product. */
-    bool neg = (a.v < 0) != (b.v < 0);
-    unsigned long long ua = a.v < 0 ? -(unsigned long long)a.v : (unsigned long long)a.v;
-    unsigned long long ub = b.v < 0 ? -(unsigned long long)b.v : (unsigned long long)b.v;
-    unsigned long long al = (unsigned long)ua, ah = ua >> 32;
-    unsigned long long bl = (unsigned long)ub, bh = ub >> 32;
-    unsigned long long r = ((ah * bh) << (64 - FX_FRAC)) + ((ah * bl + al * bh) << (32 - FX_FRAC)) +
-                           ((al * bl) >> FX_FRAC);
-    return Fx::raw(neg ? -(fx_raw)r : (fx_raw)r);
-}
-
-#if defined(__sh__) && !defined(OOT_CORE_NO_DIVU)
-/*
- * SH-2 on-chip divider: signed 64/32 -> 32 in ~39 cycles, vs hundreds for
- * libgcc __divdi3. Register use follows SaturnMath++ (MIT, (c) 2024 Roberto
- * Daniel Alves Duarte, impl/fxp.hpp AsyncDivSet): DVSR, DVDNTH, then writing
- * DVDNTL starts the divide; reading DVDNTL waits for the quotient.
- * Not interrupt-safe if an interrupt handler also uses the divider.
- */
-/* GCC 9+ has __builtin_is_constant_evaluated; Jo's Linux GCC 8.2 does not.
- * There, a compile-time-constant operand pair keeps the pure path. */
-#if __GNUC__ >= 9
-#define FX_RUNTIME(a, b) (!__builtin_is_constant_evaluated())
-#else
-#define FX_RUNTIME(a, b) (!(__builtin_constant_p(a) && __builtin_constant_p(b)))
-#endif
-#define FX_DVSR (*(volatile long*)0xFFFFFF00UL)
-#define FX_DVDNTH (*(volatile long*)0xFFFFFF10UL)
-#define FX_DVDNTL (*(volatile long*)0xFFFFFF14UL)
-static inline fx_raw fx_divu64_32(fx_raw n, long d) {
-    FX_DVSR = d;
-    FX_DVDNTH = (long)(n >> 32);
-    FX_DVDNTL = (long)(unsigned long)n;
-    return (fx_raw)FX_DVDNTL;
+static inline fx_raw fx_muli_hw(fx_raw a, fx_raw b) {
+    long long p = (long long)a * b;
+    return p > FX_MAX ? fx_sat(false) : p < -FX_MAX ? fx_sat(true) : (fx_raw)p;
 }
 #endif
+static constexpr FX_INL fx_raw fx_mul_raw(fx_raw a, fx_raw b) {
+    return __builtin_is_constant_evaluated() ? fx_mul_fold(a, b) : fx_mul_hw(a, b);
+}
 
-static inline int fx_bits64(unsigned long long v) {
-    unsigned long hi = (unsigned long)(v >> 32);
-    return hi ? 64 - __builtin_clz(hi) : ((unsigned long)v ? 32 - __builtin_clz((unsigned long)v) : 0);
+/* |a| * |b| as integers (no rescale), saturating; 16-bit halves again. */
+static constexpr FX_INL fx_uraw fx_muli_u(fx_uraw ua, fx_uraw ub) {
+    fx_uraw ah = ua >> 16, al = ua & 0xFFFFu, bh = ub >> 16, bl = ub & 0xFFFFu;
+    if (ah && bh) {
+        return (fx_uraw)FX_MAX + 1u;
+    }
+    fx_uraw cross = ah * bl + al * bh;  /* one term is zero */
+    if (cross > 0x7FFFu) {
+        return (fx_uraw)FX_MAX + 1u;
+    }
+    fx_uraw lo = al * bl, r = (cross << 16) + lo;
+    return r < lo ? (fx_uraw)FX_MAX + 1u : r;
 }
 
 /*
- * |a| * 2^24 / |b| (ua, ub > 0) as one 64/32 divide: the divisor is cut to
- * 31 bits and the numerator scaled so the quotient fits 31 bits, then the
- * result is shifted back. >= 30 significant bits (relative error ~2^-29);
- * exact when nothing is dropped (divisor < 2^31, quotient < 2^31). Most
- * game values (positions in the thousands are > 2^31 in Q24) missed the old
- * hardware path, which required b.v to fit 32 bits.
+ * n * 2^e / d for magnitudes (d > 0), truncated, saturating at FX_MAX + 1.
+ * The numerator is pre-shifted as far as 32 bits allow; the remaining e bits
+ * come from remainder steps, each a 32/32 divide. Exact (truncated) result.
  */
-static inline fx_raw fx_div_norm(unsigned long long ua, unsigned long long ub) {
-    int k = fx_bits64(ub) - 31;
-    if (k < 0) k = 0;
-    unsigned long d = (unsigned long)(ub >> k);
-    int s = FX_FRAC - k;                                       /* N = ua * 2^s */
-    /* Low estimate of quotient bits over 31; one direct check fixes it up, so
-     * no bit is dropped when the quotient really fits. */
-    int e = fx_bits64(ua) + s - (32 - __builtin_clz(d)) - 31;
-    if (e < 0) e = 0;
-    unsigned long long n = s - e >= 0 ? ua << (s - e) : ua >> (e - s);
-    if ((n >> 31) >= d) {
-        e++;
-        n = s - e >= 0 ? ua << (s - e) : ua >> (e - s);
+static constexpr fx_uraw fx_div_u(fx_uraw n, int e, fx_uraw d) {
+    if (d > (fx_uraw)FX_MAX) {
+        d = (fx_uraw)FX_MAX;        /* keeps clz(d) >= 1 for the steps below */
     }
-#if defined(__sh__) && !defined(OOT_CORE_NO_DIVU)
-    unsigned long long q = (unsigned long)fx_divu64_32((fx_raw)n, (long)d);
-#else
-    unsigned long long q = n / d;
-#endif
-    return (fx_raw)(q << e);
-}
-
-/* Inline so constant/constant (e.g. 1.0f / SHT_MAX) folds at compile time. */
-static constexpr Fx fx_div(Fx a, Fx b) {
-    if (b.v == 0) {
-        /* N64 float gives +/-inf; keep the sign with a huge value. */
-        return Fx::raw(a.v < 0 ? -((fx_raw)1 << 62) : ((fx_raw)1 << 62));
+    int s = fx_clz(n);
+    if (s > e) {
+        s = e;
     }
-    fx_raw ua = a.v < 0 ? -a.v : a.v;
-    if (!__builtin_is_constant_evaluated()) {
-        if (ua == 0) {
-            return Fx::raw(0);
+    fx_uraw num = n << s;
+    fx_uraw q = num / d, r = num % d;
+    int t = e - s;
+    while (t > 0) {
+        int k = fx_clz(d);          /* r < d, so r << k fits */
+        if (k > t) {
+            k = t;
         }
-        fx_raw q = fx_div_norm((unsigned long long)ua, (unsigned long long)(b.v < 0 ? -b.v : b.v));
-        return Fx::raw(((a.v < 0) != (b.v < 0)) ? -q : q);
+        if (q > ((fx_uraw)FX_MAX >> k)) {
+            return (fx_uraw)FX_MAX + 1u;
+        }
+        r <<= k;
+        q = (q << k) + r / d;
+        r = r % d;
+        t -= k;
     }
-    if (ua < ((fx_raw)1 << (62 - FX_FRAC))) {
-        return Fx::raw(fx_shl_frac(a.v) / b.v);
+    return q;
+}
+static constexpr fx_raw fx_div_fold(fx_raw a, fx_raw b) {
+    bool neg = (a < 0) != (b < 0);
+    if (b == 0) {
+        /* N64 float gives +/-inf; keep the sign with the largest value. */
+        return a < 0 ? -FX_MAX : FX_MAX;
     }
-    /* Huge numerator: pre-shift as far as it fits, finish after dividing. */
-    int s = 0;
-    while (s < FX_FRAC && ua < ((fx_raw)1 << 61)) {
-        ua <<= 1;
-        s++;
-    }
-    return Fx::raw(((a.v * ((fx_raw)1 << s)) / b.v) * ((fx_raw)1 << (FX_FRAC - s)));
+    return a == 0 ? 0 : fx_signed(fx_div_u(fx_abs_u(a), FX_FRAC, fx_abs_u(b)), neg);
 }
 
-static constexpr FX_INL Fx operator+(Fx a, Fx b) { return Fx::raw(a.v + b.v); }
-static constexpr FX_INL Fx operator-(Fx a, Fx b) { return Fx::raw(a.v - b.v); }
-static constexpr FX_INL Fx operator*(Fx a, Fx b) { return fx_mul(a, b); }
-static constexpr FX_INL Fx operator/(Fx a, Fx b) { return fx_div(a, b); }
+static constexpr FX_INL fx_raw fx_div_raw(fx_raw a, fx_raw b) {
+    return __builtin_is_constant_evaluated() ? fx_div_fold(a, b) : OotFx_Div(a, b);
+}
+
+static constexpr FX_INL Fx operator+(Fx a, Fx b) { return Fx::raw(fx_add_raw(a.v, b.v)); }
+static constexpr FX_INL Fx operator-(Fx a, Fx b) { return Fx::raw(fx_sub_raw(a.v, b.v)); }
+static constexpr FX_INL Fx operator*(Fx a, Fx b) { return Fx::raw(fx_mul_raw(a.v, b.v)); }
+static constexpr Fx operator/(Fx a, Fx b) { return Fx::raw(fx_div_raw(a.v, b.v)); }
 constexpr FX_INL bool operator<(Fx a, Fx b) { return a.v < b.v; }
 constexpr FX_INL bool operator>(Fx a, Fx b) { return a.v > b.v; }
 constexpr FX_INL bool operator<=(Fx a, Fx b) { return a.v <= b.v; }
@@ -256,12 +265,42 @@ constexpr FX_INL bool operator>=(Fx a, Fx b) { return a.v >= b.v; }
 constexpr FX_INL bool operator==(Fx a, Fx b) { return a.v == b.v; }
 constexpr FX_INL bool operator!=(Fx a, Fx b) { return a.v != b.v; }
 
-/* Fx raw * integer (no rescale): dmuls.l when both fit 32 bits. */
+/* Fx raw * integer (no rescale). */
 template <class T> static constexpr FX_INL fx_raw fx_mul_int(fx_raw a, T b) {
-    if (FX_RT_ONLY() && sizeof(T) <= 4 && !(sizeof(T) == 4 && (T)-1 > (T)0) && fx_fits32(a)) {
-        return fx_dmuls((long)a, (long)b);
+    bool nb = false;
+    fx_uraw ub = fx_int_mag(b, &nb);
+    if (__builtin_is_constant_evaluated()) {
+        return fx_signed(fx_muli_u(fx_abs_u(a), ub), (a < 0) != nb);
     }
-    return a * (fx_raw)b;
+    if (ub <= (fx_uraw)FX_MAX) {            /* every s32/int16/char operand */
+        return fx_muli_hw(a, nb ? -(fx_raw)ub : (fx_raw)ub);
+    }
+    return OotFx_MulInt(a, ub, nb);
+}
+/* Fx / integer: divide the raw value directly (exact, no saturated Fx(b)). */
+template <class T> static constexpr fx_raw fx_div_int(fx_raw a, T b) {
+    bool nb = false;
+    fx_uraw ub = fx_int_mag(b, &nb);
+    if (ub == 0) {
+        return a < 0 ? -FX_MAX : FX_MAX;
+    }
+    /* Out of line at runtime: a constant divisor would otherwise become a
+     * dmulu.l reciprocal multiply (64-bit product). */
+    return __builtin_is_constant_evaluated() ? fx_signed(fx_abs_u(a) / ub, (a < 0) != nb)
+                                             : OotFx_DivInt(a, ub, nb);
+}
+/* integer / Fx: |i| * 2^32 / |b.v| without first saturating Fx(i). */
+template <class T> static constexpr fx_raw fx_int_div(T a, fx_raw b) {
+    bool na = false;
+    fx_uraw ua = fx_int_mag(a, &na);
+    if (b == 0) {
+        return na ? -FX_MAX : FX_MAX;
+    }
+    if (ua == 0) {
+        return 0;
+    }
+    return __builtin_is_constant_evaluated() ? fx_signed(fx_div_u(ua, 2 * FX_FRAC, fx_abs_u(b)), na != (b < 0))
+                                             : OotFx_IntDiv(ua, na, b);
 }
 
 /* Mixed Fx/integer: exact-match templates beat the builtin int operators that
@@ -273,7 +312,7 @@ template <class T> static constexpr FX_INL fx_raw fx_mul_int(fx_raw a, T b) {
 FX_MIXED(+, a + Fx(b), Fx(a) + b)
 FX_MIXED(-, a - Fx(b), Fx(a) - b)
 FX_MIXED(*, Fx::raw(fx_mul_int(a.v, b)), Fx::raw(fx_mul_int(b.v, a)))
-FX_MIXED(/, a / Fx(b), Fx(a) / b)
+FX_MIXED(/, Fx::raw(fx_div_int(a.v, b)), Fx::raw(fx_int_div(a, b.v)))
 #undef FX_MIXED
 #define FX_MIXED_CMP(op)                                                                       \
     template <class T> static constexpr FX_INL FX_IF_INT(T, bool) operator op(Fx a, T b) { return a op Fx(b); } \
@@ -293,15 +332,15 @@ FX_HW(<, bool) FX_HW(>, bool) FX_HW(<=, bool) FX_HW(>=, bool) FX_HW(==, bool) FX
 static constexpr FX_INL Fx& operator+=(Fx& a, Fx b) { return a = a + b; }
 static constexpr FX_INL Fx& operator-=(Fx& a, Fx b) { return a = a - b; }
 static constexpr FX_INL Fx& operator*=(Fx& a, Fx b) { return a = a * b; }
-static constexpr FX_INL Fx& operator/=(Fx& a, Fx b) { return a = a / b; }
+static constexpr Fx& operator/=(Fx& a, Fx b) { return a = a / b; }
 /* int op= Fx: C computes in float then truncates back. */
 template <class T> static constexpr FX_INL FX_IF_INT(T, T&) operator+=(T& a, Fx b) { return a = (T)(Fx(a) + b); }
 template <class T> static constexpr FX_INL FX_IF_INT(T, T&) operator-=(T& a, Fx b) { return a = (T)(Fx(a) - b); }
 template <class T> static constexpr FX_INL FX_IF_INT(T, T&) operator*=(T& a, Fx b) { return a = (T)(Fx(a) * b); }
-template <class T> static constexpr FX_INL FX_IF_INT(T, T&) operator/=(T& a, Fx b) { return a = (T)(Fx(a) / b); }
-static constexpr FX_INL Fx& operator++(Fx& a) { return a.v += FX_ONE, a; }
-static constexpr FX_INL Fx& operator--(Fx& a) { return a.v -= FX_ONE, a; }
-static constexpr FX_INL Fx operator++(Fx& a, int) { Fx o = a; a.v += FX_ONE; return o; }
-static constexpr FX_INL Fx operator--(Fx& a, int) { Fx o = a; a.v -= FX_ONE; return o; }
+template <class T> static constexpr FX_IF_INT(T, T&) operator/=(T& a, Fx b) { return a = (T)(Fx(a) / b); }
+static constexpr FX_INL Fx& operator++(Fx& a) { return a.v = fx_add_raw(a.v, FX_ONE), a; }
+static constexpr FX_INL Fx& operator--(Fx& a) { return a.v = fx_sub_raw(a.v, FX_ONE), a; }
+static constexpr FX_INL Fx operator++(Fx& a, int) { Fx o = a; ++a; return o; }
+static constexpr FX_INL Fx operator--(Fx& a, int) { Fx o = a; --a; return o; }
 
 #endif

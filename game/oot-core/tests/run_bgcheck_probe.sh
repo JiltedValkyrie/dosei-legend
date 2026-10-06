@@ -18,9 +18,18 @@ SRCS="$D/src/code/z_bgcheck.cpp $D/src/code/sys_math3d.cpp $D/src/code/TwoHeadAr
  $D/src/code/sys_math.cpp $D/src/code/sys_math_atan.cpp $D/src/libc64/math64.cpp $D/src/libultra/gu/sins.cpp \
  $D/src/libultra/gu/coss.cpp $GAME/oot-core/src/oot_math.cpp $GAME/oot-core/src/oot_rand.cpp $SCENE $HERE/bgcheck_probe.cpp"
 for mode in fx hw; do
-    extra=""
-    [ $mode = hw ] && extra="-DOOT_CORE_HWFLOAT=1"
-    $CXX $OOT_CORE_CXXFLAGS $extra -O1 $SAN $SRCS -o "$OUT/bgcheck_probe_$mode" $LDX
-    "$OUT/bgcheck_probe_$mode" > "$OUT/bgcheck_probe_$mode.txt" || echo "$mode probe crashed"
+    # PROBE_SCENE=SCENE_HYRULE_FIELD selects that scene's BgCheck memSize.
+    extra="${PROBE_SCENE:+-DPROBE_SCENE=$PROBE_SCENE}"
+    [ $mode = hw ] && extra="$extra -DOOT_CORE_HWFLOAT=1"
+    # FX_SAT_AUDIT=1: report every saturating Fx call site of the Fx build.
+    audit=""
+    [ $mode = fx ] && [ -n "$FX_SAT_AUDIT" ] && { extra="$extra -DFX_SAT_AUDIT -fno-inline-functions -fno-optimize-sibling-calls"; audit="$HERE/fx_sat_audit.cpp"; }
+    $CXX $OOT_CORE_CXXFLAGS $extra -O1 $SAN $SRCS $audit -o "$OUT/bgcheck_probe_$mode" $LDX
+    "$OUT/bgcheck_probe_$mode" > "$OUT/bgcheck_probe_$mode.txt" 2> "$OUT/bgcheck_probe_$mode.err" || echo "$mode probe crashed"
+    if [ -n "$audit" ]; then
+        grep '^FXSAT' "$OUT/bgcheck_probe_$mode.err" | sort -k3 -n -r | while read -r _ pc n; do
+            echo "FXSAT $n $(addr2line -f -C -e "$OUT/bgcheck_probe_$mode" "$pc" | paste -sd' ')"
+        done
+    fi
 done
 ${PY:-python3} "$HERE/compare_probe.py" "$OUT/bgcheck_probe_hw.txt" "$OUT/bgcheck_probe_fx.txt"

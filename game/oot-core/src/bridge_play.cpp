@@ -198,7 +198,7 @@ u32 Quake_SetPerturbations(s16 index, s16 y, s16 x, s16 fov, s16 roll) { /* STUB
 u32 Quake_SetDuration(s16 index, s16 duration) { /* STUB */
     return 0;
 }
-void Rumble_Request(f32 distSq, u8 sourceStrength, u8 duration, u8 decreaseRate) { /* STUB */
+void Rumble_Request(FxSq distSq, u8 sourceStrength, u8 duration, u8 decreaseRate) { /* STUB */
 }
 
 /* ---- z_camera.c / z_onepointdemo.c: the C camera owns the view ---- */

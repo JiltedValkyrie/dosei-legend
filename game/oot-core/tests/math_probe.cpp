@@ -46,7 +46,9 @@ int main() {
         sprintf(name, "SinF(%ld)", (long)i);
         OUT(name, Math_SinF(r));
     }
-    static const s32 sq[] = { 0, 1, 2, 3, 10, 100, 1000, 12345, 30000, 1000000, 100000000 };
+    /* Q16.16 Fx holds +/-32767: larger sqrtf inputs are not representable
+     * (squares past that use the scaled SQ() hypot, checked below). */
+    static const s32 sq[] = { 0, 1, 2, 3, 10, 100, 1000, 12345, 30000 };
     for (u32 i = 0; i < ARRAY_COUNT(sq); i++) {
         sprintf(name, "sqrtf(%ld)", (long)sq[i]);
         OUT(name, sqrtf((f32)sq[i]));
@@ -68,9 +70,14 @@ int main() {
     OUT("Vec3f_DistXZ", Math_Vec3f_DistXZ(&a, &b));
     OUTI("Vec3f_Yaw", Math_Vec3f_Yaw(&a, &b));
     OUTI("Vec3f_Pitch", Math_Vec3f_Pitch(&a, &b));
-    OUT("Math3D_Vec3fDistSq", Math3D_Vec3fDistSq(&a, &b));
+    /* Stored squares are FxSq (scaled terms): read back through sqrtf. */
+    OUT("sqrt(Math3D_Vec3fDistSq)", sqrtf(Math3D_Vec3fDistSq(&a, &b)));
+    OUT("DistSq<SQ(3300)", (f32)(Math3D_Vec3fDistSq(&a, &b) < SQ(FXL(3300.0f))));
+    OUT("DistSq<SQ(3200)", (f32)(Math3D_Vec3fDistSq(&a, &b) < SQ(FXL(3200.0f))));
     OUT("Math3D_Vec3f_DistXYZ", Math3D_Vec3f_DistXYZ(&a, &b));
     OUT("Math3D_Vec3fMagnitude", Math3D_Vec3fMagnitude(&b));
+    OUT("hypot(3000,4000,1200)", sqrtf(SQ(FXL(3000.0f)) + SQ(FXL(4000.0f)) + SQ(FXL(1200.0f))));
+    OUT("SQ(500)>SQ(300)+SQ(350)", (f32)(SQ(FXL(500.0f)) > SQ(FXL(300.0f)) + SQ(FXL(350.0f))));
 
     Vec3f p0 = { FXL(0.0f), FXL(0.0f), FXL(0.0f) };
     Vec3f p1 = { FXL(100.0f), FXL(10.0f), FXL(0.0f) };
@@ -109,7 +116,8 @@ int main() {
     }
     for (s32 i = 0; i < 16; i++) {
         sprintf(name, "Rand_ZeroOne*0xFFFF->s16[%ld]", (long)i);
-        OUTI(name, (s16)(Rand_ZeroOne() * 0xFFFF));
+        /* Imported code reaches this through importer fix_rand_ranges. */
+        OUTI(name, (s16)OotRand_ZeroOneTimes(0xFFFF));
     }
     return 0;
 }
