@@ -189,6 +189,11 @@ MY_OBJS = $(patsubst %.c,$(OBJDIR)/%.o,$(notdir $(SRCS)))
 # (build.sh does). Flags mirror oot-core/oot-core-flags.sh. See
 # docs/OOT_CORE_PIPELINE_PLAN.md and docs/BUILD.md.
 OOT_CORE ?= 0
+# OOT_CORE changes ram_cart.h carves and many #ifdefs: a flip must recompile
+# every game object (2026-10-05: a stale non-core ram_cart.o in an OOT_CORE=1
+# image refused the OOTCORE carve, "oc load failed f 0").
+OOT_CORE_STAMP = build/generated/oot_core_mode.stamp
+$(shell mkdir -p build/generated; [ "$$(cat $(OOT_CORE_STAMP) 2>/dev/null)" = "$(OOT_CORE)" ] || echo "$(OOT_CORE)" > $(OOT_CORE_STAMP))
 ifeq ($(OOT_CORE),1)
 ifeq ($(OS),Windows_NT)
 # Jo's Windows SDK has no C++ front end; use the sibling sh2eb-elf g++.
@@ -293,7 +298,7 @@ endif
 # Header layout changes must rebuild every consumer (save v2 otherwise wrote
 # 300 bytes into a stale 220-byte stack buffer). makefile bootstraps .d files
 # for existing objects and also invalidates compiled configuration changes.
-$(MY_OBJS): build/generated/toolchain.stamp makefile
+$(MY_OBJS): build/generated/toolchain.stamp makefile $(OOT_CORE_STAMP)
 -include $(MY_OBJS:.o=.d)
 
 # The parent expanded $(TARGET)'s prerequisites from its own OBJS while reading
