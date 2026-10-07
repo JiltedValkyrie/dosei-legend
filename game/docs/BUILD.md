@@ -580,3 +580,32 @@ checks pass; this is not target/runtime acceptance. Size growth is not yet attri
     single functions need the header: test_graphics_backend.run_c adds it;
     custom harnesses (cutscene parity, item aim) include it explicitly.
     Audit both ELFs with tools/audit_oot_core_wide.py (dmuls allowed).
+84. **Player migration SH-2 audit is WSL-only.** `TARGET=1 OOT=/mnt/d/.../oot
+    bash oot-core/tests/check_player_migration.sh` uses Linux sh-elf 9.3
+    (`SH_ELF_LINUX` overrides) and compares against `build/obj-clean/oot-core`
+    (build Clean first or pass `--live`). Write WSL helper scripts with LF
+    endings: a CRLF `.sh` fails on `$'\r'`. Git Bash `python3` may be the
+    Windows Store stub (permission denied): use `python` there.
+    Optional `player_migration_symbols.py --gc-ld <toolchain>/bin/sh-elf-ld
+    --nm <toolchain>/bin/sh-elf-nm --size <toolchain>/bin/sh-elf-size
+    --out build/player-migration/memory.json` measures isolated relocatable
+    section-GC and header-unassigned Low RAM gaps. This is not a resolved link
+    or runtime-free-memory reading. Overlay entry symbols are C++ mangled;
+    rooting `_Player_Update` would silently omit the real function without the
+    tool's explicit root checks. Gameplay roots still retain native Player_Draw.
+85. **Standalone Player GC omits newly retained engine dependencies.** Run
+    `OOT=/mnt/d/.../oot bash oot-core/tests/measure_player_placement.sh` after
+    the target gate. It rebuilds bridge copies without duplicate definitions,
+    retains all current core objects + Player + libgcc, then adds real source
+    animation headers. Only `build/player-migration/placement` is written.
+    Baseline size must match the existing ELF. This is a relocatable lower-bound
+    probe; missing engine/skeleton/frame implementations remain unresolved.
+    Original three-region capacity already fails by 3,884 B. Proposed retired
+    music/fairy reservations add 24 KiB without shrinking heap; actual linker
+    partitioning, per-region loading/zeroing and final fit remain unimplemented.
+86. **Shell/compile traps in host probes.** `export OOT=/x DOSEI_OOT=$OOT`
+    expands `$OOT` before it is set: DOSEI_OOT ends up empty and the importer
+    silently falls back to the Windows path. Use two exports. The core flags
+    start with `-x c++`, which also swallows following `.o` files: put
+    `-x none` before objects. Host `s32` is 64-bit `long` on Linux; give
+    C headers `int`-based int32_t, never `s32`.

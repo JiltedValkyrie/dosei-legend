@@ -67,6 +67,8 @@ class Workshop:
         for variable in (self.query, self.kind, self.pub_state):
             variable.trace_add('write', lambda *_: self.render_rows())
         self.tree.bind('<<TreeviewSelect>>', lambda _: self.select())
+        self.tree.bind('<Button-3>', self.asset_menu)
+        self.asset_popup = tk.Menu(self.tree, tearoff=False)
         targets = ttk.Frame(outer)
         targets.pack(fill='x', pady=(12, 6))
         ttk.Label(targets, text='Game room:').pack(side='left', padx=(0, 8))
@@ -211,6 +213,84 @@ class Workshop:
         except queue.Empty:
             pass
         self.root.after(100, self.poll)
+
+    def asset_menu(self, event):
+        row = self.tree.identify_row(event.y)
+        if row:
+            self.tree.selection_set(row)
+            self.tree.focus(row)
+            self.select()
+        try:
+            entry = self.selected()
+        except ValueError:
+            entry = None
+        export_ok = bool(entry and asset_catalog.can_export(entry))
+        import_ok = bool(entry and (entry['exportable'] or asset_catalog.can_replace(entry)))
+        self.asset_popup.delete(0, 'end')
+        self.asset_popup.add_command(label='Export mesh (OBJ / MTL / textures)...',
+            state='normal' if export_ok else 'disabled', command=self.export_selected)
+        self.asset_popup.add_command(label='Import / replace this mesh...',
+            state='normal' if import_ok else 'disabled', command=self.import_selected)
+        self.asset_popup.add_separator()
+        self.asset_popup.add_command(label='Open asset folder', command=self.open_asset_folder)
+        try:
+            self.asset_popup.tk_popup(event.x_root, event.y_root)
+        finally:
+            self.asset_popup.grab_release()
+        return 'break'
+
+    def export_selected(self):
+        try:
+            entry = self.selected()
+        except ValueError as exc:
+            messagebox.showerror('Export', str(exc), parent=self.root)
+            return
+        if entry['exportable']:
+            self.export()
+            return
+        if not asset_catalog.obj_file(entry):
+            messagebox.showerror('Export', 'Select a mesh OBJ or a supported KFR1 mesh.', parent=self.root)
+            return
+        path = filedialog.asksaveasfilename(parent=self.root, title='Export ' + entry['name'],
+            initialdir=str(entry['path'].parent), initialfile=entry['name'], defaultextension='.obj',
+            filetypes=[('Wavefront OBJ', '*.obj')])
+        if not path:
+            return
+        try:
+            written = asset_catalog.copy_mesh_bundle(entry['path'], path)
+        except (OSError, ValueError) as exc:
+            messagebox.showerror('Export', str(exc), parent=self.root)
+            return
+        self.status.set('Exported ' + path)
+        messagebox.showinfo('Mesh workshop', 'Exported:\n' + '\n'.join(str(p) for p in written), parent=self.root)
+
+    def import_selected(self):
+        try:
+            entry = self.selected()
+        except ValueError as exc:
+            messagebox.showerror('Import', str(exc), parent=self.root)
+            return
+        if entry['exportable'] and not asset_catalog.obj_file(entry):
+            self.import_mesh()
+            return
+        if not asset_catalog.can_replace(entry):
+            messagebox.showerror('Import', 'Import replaces a Workspace, Source, or Shared OBJ.', parent=self.root)
+            return
+        path = filedialog.askopenfilename(parent=self.root, title='Import OBJ over ' + entry['name'],
+            filetypes=[('Wavefront OBJ', '*.obj')])
+        if not path:
+            return
+        if not messagebox.askyesno('Replace mesh', 'Overwrite this OBJ and copy its MTL and textures beside it?\n\n' + entry['source'],
+                                   parent=self.root):
+            return
+        try:
+            written = asset_catalog.copy_mesh_bundle(path, entry['path'])
+        except (OSError, ValueError) as exc:
+            messagebox.showerror('Import', str(exc), parent=self.root)
+            return
+        self.status.set('Replaced ' + entry['source'])
+        self.refresh()
+        messagebox.showinfo('Mesh workshop', 'Replaced:\n' + '\n'.join(str(p) for p in written), parent=self.root)
 
     def export(self):
         try: entry = self.selected()

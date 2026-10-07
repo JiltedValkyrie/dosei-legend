@@ -60,7 +60,7 @@ int fade(int cx,int cz,int lx,int lz,int s,int c,int depth){
 }
 void draw(int scene,int x,int y,int z,int yaw){
     forest_scene=scene;recomp_link.x=x;recomp_link.y=y;recomp_link.z=z;recomp_yaw=yaw;
-    recomp_camera.x=x;recomp_camera.y=y;recomp_camera.z=z;
+    recomp_camera.x=x+100;recomp_camera.y=y+300;recomp_camera.z=z-600;
     calls=depth=0;field_haze_draw();
 }
 int value(int key){
@@ -98,7 +98,7 @@ int value(int key){
         self.assertEqual(self.lib.value(8),1|32)
         self.assertEqual(self.lib.value(9),256|128|64)
 
-    def test_camera_translation_yaw_and_pitch_keep_curtain_fixed(self):
+    def test_world_curtain_follows_link_yaw_but_not_camera_pitch(self):
         for yaw in (0,16384,32768,49152):
             self.lib.draw(10,6000,450,-4000,yaw)
             self.assertEqual([self.lib.value(i)//65536 for i in (3,4,5)],[6000,-450,-4000])
@@ -110,16 +110,14 @@ int value(int key){
             for angle in (-8192,0,8192):
                 self.lib.pitch(angle)
                 self.lib.draw(10,6000,450,-4000,yaw)
-                self.assertEqual(self.lib.value(100),angle)
+                self.assertEqual(self.lib.value(100),0)
                 pitch=angle*math.tau/65536
                 y,z=vertices[0][1:]
-                # Billboard pitch followed by inverse view pitch cancels.
-                wy=y*math.cos(pitch)-z*math.sin(pitch)
-                wz=y*math.sin(pitch)+z*math.cos(pitch)
-                vy=wy*math.cos(pitch)+wz*math.sin(pitch)
-                vz=-wy*math.sin(pitch)+wz*math.cos(pitch)
+                # Upright world geometry receives normal view pitch.
+                vy=y*math.cos(pitch)+z*math.sin(pitch)
+                vz=-y*math.sin(pitch)+z*math.cos(pitch)
                 rows.append(120+240*vy/vz)
-            self.assertAlmostEqual(max(rows),min(rows))
+            self.assertGreater(max(rows)-min(rows),100)
             self.lib.pitch(0)
 
     def test_each_panel_has_visible_corners_at_normal_camera_pitch(self):

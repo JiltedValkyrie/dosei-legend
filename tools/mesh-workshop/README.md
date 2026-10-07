@@ -51,7 +51,11 @@ Search matches path, type, location, publish state/date and assigned room names;
 multiple words all match.
 Choose a type or publish state to narrow the list. Click any column heading
 to sort; click again to reverse it. Bytes sort numerically. Scrollbars cover
-long lists/paths. Open asset folder opens Explorer at the selected file.
+long lists/paths. Right-click a row for **Export mesh** and **Import / replace**.
+An OBJ row saves that OBJ plus its MTL, diffuse images, and same-stem JSON.
+Import overwrites a Workspace, Source, or Shared OBJ after you confirm.
+A KFR1 row still uses Export OBJ and Store edited OBJ. Open asset folder
+opens Explorer at the selected file.
 
 Publishing updates room_imports.json and records a UTC date, the input OBJ's
 hash, and hashes of all installed mesh/material/texture files in the same
@@ -74,8 +78,9 @@ versions. The record covers installed dependencies; source OBJ hashes do not
 track later changes to external source MTL/texture files. Published means ready
 for the next Clean build, not proof that the currently running disc includes it.
 
-Every file type is browsable. Export OBJ remains limited to supported KFR1
-meshes; room publishing remains limited to edited OBJ bundles and the four
+Every file type is browsable. KFR1 Export OBJ stays limited to those meshes.
+OBJ rows export a copy of the bundle. Room publishing stays limited to edited
+OBJ bundles and the four
 registered room targets. The browser does not claim to publish animations,
 enemies, collision or triggers. Select a published asset with one assigned
 room to automatically select that target; you can then choose another room.
@@ -150,3 +155,13 @@ Clean build dialog. Mesh Workshop remains the asset inventory/whole-room tool.
 
 See [Map Workshop guide](../map-workshop/README.md) or press F1 inside the editor
 for controls, save/build workflow, supported formats and current limitations.
+
+## Link meshes (reference exports)
+
+Run `python game/tools/export_link_workshop.py` (needs the verified US 1.2 ROM in
+the decomp `baseroms/ntsc-1.2`). It writes textured OBJs from Link's real display
+lists, posed in the idle frame, to `workspace/meshes/link/<child|adult>/<kind>/`
+(body, swords, sheaths, shields, boots, tools, gauntlets, hands, masks). Pick
+type **Link (Child)** or **Link (Adult)** in the type filter. The game build does
+not read these files; bunny-hood ears and the hookshot reticle use runtime
+matrices, so they export at their limb base.

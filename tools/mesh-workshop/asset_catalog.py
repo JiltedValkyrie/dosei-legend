@@ -1,6 +1,7 @@
 """Local project asset inventory and verified mesh publication history."""
 import hashlib
 import json
+import shutil
 from pathlib import Path
 
 from mesh_assets import PROJECT, read_mesh
@@ -12,6 +13,13 @@ def sha(path):
 
 def classify(path, magic):
     ext = path.suffix.lower()
+    # Link exports (game/tools/export_link_workshop.py): one type per age so
+    # the type filter finds every body/sword/shield/boot/tool mesh at once.
+    parts = [p.casefold() for p in path.parts]
+    if ext == '.obj' and 'meshes' in parts and 'link' in parts:
+        age = parts[parts.index('link') + 1] if parts.index('link') + 1 < len(parts) else ''
+        if age in ('child', 'adult'):
+            return f'Link ({age.title()})'
     if magic == b'KFR1': return 'Mesh'
     if magic == b'KRM1' or ext == '.msh': return 'Room mesh'
     if ext in ('.obj', '.fbx', '.gltf', '.glb', '.dae'): return 'Mesh'
@@ -96,6 +104,71 @@ def catalog(project=PROJECT):
             publication='Missing', published_at=max(s['published_at'] for s in states),
             targets=', '.join(sorted(s['room'] for s in states))))
     return entries
+
+
+def obj_file(entry):
+    path = entry.get('path')
+    return bool(path and Path(path).suffix.lower() == '.obj' and Path(path).is_file())
+
+
+def can_export(entry):
+    return bool(entry.get('exportable') or obj_file(entry))
+
+
+def can_replace(entry):
+    return obj_file(entry) and entry.get('origin') in ('Workspace', 'Source', 'Shared')
+
+
+def mesh_bundle(obj_path):
+    """OBJ plus the MTL, diffuse images, and same-stem JSON sidecars beside it."""
+    obj_path = Path(obj_path)
+    files = [obj_path]
+    mtls = []
+    for line in obj_path.read_text(encoding='utf-8', errors='replace').splitlines():
+        if line.lower().startswith('mtllib '):
+            for name in line.split()[1:]:
+                mtl = (obj_path.parent / name).resolve()
+                if mtl.is_file() and obj_path.parent.resolve() in mtl.parents:
+                    mtls.append(mtl)
+    files.extend(mtls)
+    for mtl in mtls:
+        for line in mtl.read_text(encoding='utf-8', errors='replace').splitlines():
+            parts = line.split()
+            if len(parts) >= 2 and parts[0].lower() == 'map_kd':
+                image = (mtl.parent / parts[-1]).resolve()
+                if image.is_file() and mtl.parent.resolve() in image.parents:
+                    files.append(image)
+    for extra in obj_path.parent.glob(obj_path.stem + '*.json'):
+        if extra.is_file():
+            files.append(extra.resolve())
+    unique = []
+    seen = set()
+    for path in files:
+        path = path.resolve()
+        if path not in seen:
+            seen.add(path)
+            unique.append(path)
+    return unique
+
+
+def copy_mesh_bundle(src, dest):
+    """Copy an OBJ bundle to dest. Sidecars keep their names beside the new OBJ."""
+    src, dest = Path(src), Path(dest)
+    if src.resolve() == dest.resolve():
+        raise ValueError('Choose a different file. This OBJ is already here.')
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    written = [dest]
+    shutil.copy2(src, dest)
+    for path in mesh_bundle(src):
+        if path.resolve() == src.resolve():
+            continue
+        target = dest.parent / path.name
+        if target.resolve() == path.resolve():
+            written.append(target)
+            continue
+        shutil.copy2(path, target)
+        written.append(target)
+    return written
 
 
 def select_rows(entries, query='', kind='All types', status='All states', sort='source', reverse=False):

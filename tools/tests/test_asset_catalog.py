@@ -37,6 +37,16 @@ class AssetCatalogTests(unittest.TestCase):
     def rows(self):
         return assets.catalog(self.game)
 
+    def test_link_exports_are_categorised_by_age(self):
+        root = Path('workspace/meshes/link')
+        self.assertEqual(assets.classify(root / 'child/swords/kokiri_sword_in_hand.obj', b'# Ex'),
+                         'Link (Child)')
+        self.assertEqual(assets.classify(root / 'adult/boots/iron_boot_left.obj', b'# Ex'),
+                         'Link (Adult)')
+        self.assertEqual(assets.classify(root / 'adult/boots/iron_boot_left_m0.png', b'PNG!'),
+                         'Texture')
+        self.assertEqual(assets.classify(Path('workspace/meshes/room.obj'), b'# Ex'), 'Mesh')
+
     def test_publication_and_timestamp_are_recorded_not_file_mtime(self):
         rows = self.rows()
         mesh = next(r for r in rows if r['path'] == self.obj)
@@ -60,6 +70,28 @@ class AssetCatalogTests(unittest.TestCase):
         self.assertEqual(missing['publication'], 'Missing')
         self.assertEqual(missing['id'], before['id'])
         self.assertEqual(next(r for r in rows if r['path'] == self.obj)['publication'], 'Missing')
+
+    def test_obj_bundle_export_copies_mtl_texture_and_json(self):
+        folder = self.repo / 'workspace/meshes/link/adult/body'
+        folder.mkdir(parents=True)
+        obj = folder / 'adult_link.obj'
+        obj.write_text('mtllib adult_link.mtl\nusemtl body\n')
+        (folder / 'adult_link.mtl').write_text('newmtl body\nmap_Kd adult_link.png\n')
+        (folder / 'adult_link.png').write_bytes(b'png')
+        (folder / 'adult_link.actor.json').write_text('{}')
+        (folder / 'other.png').write_bytes(b'no')
+        dest = self.repo / 'out' / 'hero.obj'
+        written = assets.copy_mesh_bundle(obj, dest)
+        self.assertEqual(dest.read_text(), obj.read_text())
+        self.assertEqual((dest.parent / 'adult_link.mtl').read_text().split()[-1], 'adult_link.png')
+        self.assertEqual((dest.parent / 'adult_link.png').read_bytes(), b'png')
+        self.assertTrue((dest.parent / 'adult_link.actor.json').is_file())
+        self.assertFalse((dest.parent / 'other.png').exists())
+        self.assertEqual(len(written), 4)
+        row = dict(path=obj, exportable=False, origin='Workspace')
+        self.assertTrue(assets.can_export(row))
+        self.assertTrue(assets.can_replace(row))
+        self.assertFalse(assets.can_replace(dict(path=obj, exportable=False, origin='Generated')))
 
     def test_source_edit_does_not_mark_unchanged_installed_copy_modified(self):
         self.input.write_text('new edit')

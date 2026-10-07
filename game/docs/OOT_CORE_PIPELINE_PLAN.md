@@ -1,6 +1,173 @@
 # Plan: bulk decomp pipeline ("oot-core" on Saturn)
 
+Astra shim review (2026-10-06; source inspection, tests not rerun):
+The isolated shim/proxy implementation and integer bounding-center importer fix
+are present. Reported 177-row host comparison is not live integration acceptance.
+Before Player cutover, initialize the proxy DynaPolyActor.transformFlags using
+the proper core flags/initializer: registration currently stores only the private
+Proxy.transform byte. api_dyna_carry reads that byte and calls carry helpers
+straight away, but the real DynaPolyActor_TransformCarriedActor path reads
+actor.transformFlags, currently zero. Test carry through the normal core actor
+path as well as the C shim. Choose one frame-boundary owner and test actual order.
+
+Budget the full replacement storage, not only the retired C allocations:
+sProxies[BG_ACTOR_MAX] contains full DynaPolyActor and CollisionHeader objects,
+plus source vertices/polys/surfaces, the core transformed pool, shim conversion
+scratch/surface scratch, camera views, code and stack. The 192-triangle cap alone
+is not a memory-fit proof. Scene teardown/reload must reset both shim ownership
+and core proxy/water bookkeeping before core IDs can be reused; SetPlay currently
+only changes the pointer. Cover a scene round trip, not just remove/re-register.
+The remaining Fx corner fall-through and line miss remain explicit regressions.
+Continue isolated caller ports/resolved linking; no Clean or runtime claim here.
+
+
+Astra follow-up collision review (2026-10-06, source inspection only):
+The probe now feeds identical coordinates to C and core and checks input identity
+between Fx and float runs. The owner-local dynamic polygon index now subtracts
+polyStartIndex; the real-matrix dyna probe covers two owners, removal and slot
+reuse. These earlier source-review gaps are closed. Reported Fx/float residuals:
+floor 0, wall 7, ceiling 0, line 3; no numerical/runtime equivalence claimed.
+Normal-first plane arithmetic and direct dyna-normal division are importer fixes
+that affect the next live core rebuild. No new Clean build or runtime acceptance.
+
+Remaining focused checks: preserve the one Fx line miss as a regression case
+and classify its gameplay significance; validate transformed slopes and moving
+platform contact during proxy integration. The flat-normal test currently allows
+normal.y >= 32700 and distance +/-2, rather than asserting exact flat normals.
+compare_bg_port.py is a diagnostic report: exit zero checks identical inputs,
+not absence of collision differences. Host reports are not target timing evidence.
+Continue C shim, dynamic proxies and caller ports toward the real resolved link;
+retain current Saturn behavior inventory and include adapter/storage peaks.
+
+Cache handle/manifest/reservation fixes are reported implemented and host-tested;
+the earlier Ready-loop gap review is historical, not the current implementation.
+The 64 KB cutscene result covers cutscene-exclusive Link clips only. Common
+Player call-graph reach (~400 clips) does not prove simultaneous need. Determine
+state/cue/branch-specific animation requirements and account for every actual
+participant before claiming a full cutscene set fits. Preserve whole-cutscene
+preloading/pinning and zero per-shot loads. Common set/CD servicing/start gates
+and actual runtime peaks remain open.
+
+
+Historical Astra demand-cache review (2026-10-06; superseded by handle fixes):
+Cache/rollback are isolated prototypes, not completed production demand loading.
+Common-set selection, actual cutscene dependency manifests, CD/audio servicing
+and real Player start gates remain open. Continue independent collision API/ports
+and resolved-link work, but close these cache issues before playback integration:
+- Ready requests members individually and pins only after all report ready.
+  Completed members of a pending set remain evictable. Reserve/admit the entire
+  deduplicated set and protect it during loading; use an owned request handle
+  with one acquire/release lifecycle, cancellation and no repeat-pin leaks.
+- NO_SPACE must distinguish temporary contention from impossible admission.
+  A clip/set larger than the arena, or more than 64 cache entries, cannot become
+  ready by waiting; the current loop can evict/reload members indefinitely.
+  Preflight actual bytes/slack/entry limits, existing pins and fragmentation.
+  Return explicit cannot-fit for intrinsically oversized sets; solve the whole
+  cutscene budget before playback. Never stream per shot to escape this failure.
+- Init lacks a manifest-length argument and does not validate clip offsets,
+  monotonic ranges or archive bounds before Request sizes/starts a read. Add
+  length-aware, overflow-safe archive-index validation before mutating cache state.
+Required focused regressions: impossible whole set, pending-set members surviving
+unrelated pressure, repeated polling/cancel/release and malformed manifest ranges.
+Streaming 510 clips serially through 48 KB proves eviction/decoding, not that any
+complete real cutscene fits; test real whole-cutscene manifests before acceptance.
+
+
+Human cutscene-loading clarification (2026-10-06): preload and validate ALL
+animations for the entire cutscene before playback, across every shot, participant,
+reachable branch and uninterrupted chained segment. Pin the complete set until
+playback/return transition finishes. No per-shot animation loads or mid-playback
+loading stalls. Budget the full cutscene set; solve capacity before starting,
+never by interrupting shots. Runtime implementation remains pending.
+
+
+Current animation directive (human, 2026-10-06): demand-load only clips needed
+for current play or an upcoming requested action/cutscene. Keep common responsive
+moves ready; prefetch rare clips before action/cutscene start, pin all consumers,
+and evict unreferenced clips within a bounded cache. A cold clip is a load request,
+not a missing-asset error. Never skip gameplay or start cue clocks without data.
+This supersedes all-clips-resident and scene-load-only animation restrictions.
+Detailed contract: PLAYER_MIGRATION.md, "Demand-loaded Player animation".
+Request/cache/readiness implementation and memory/latency verification remain
+pending; existing whole-bank measurements are historical comparison baselines.
+Continue isolated Player/collision integration with this revised frame-bank plan.
+
+
+Astra integration review (2026-10-06): GO for isolated collision API/ports and
+resolved linking. Scene-pack rollback by reloading the old pack from CD during
+the same loading screen is approved. Stop Player/animation consumers, unregister
+old pack slots before overwriting, retain old scene/pack identity and state, and
+publish new state only after complete load/validation. On new-pack failure,
+restore/revalidate the old pack and matching state before resuming. If restoration
+also fails, stay out of gameplay and report a recoverable loading error or safe
+error screen; never resume with missing/stale animation pointers. The newer
+demand-loading directive governs animation I/O and action-start gating.
+Use the strict bank as reference; cutscene-only relaxation remains unproven.
+
+Source-review blockers before adapter acceptance: PlayerFrameBank_Register
+currently validates shallow offsets/counts, not full decoder input. Validate
+stride/block size, kept-frame counts, widths/shifts, all block/stream extents and
+padding with overflow-safe range checks; reject duplicate IDs and unintended
+resident/scene collisions before publishing slots. Add malformed-block checks
+that prove slots unchanged and decoding cannot divide by zero/read out of bounds.
+The claim "validates a whole bank" is not yet supported by this implementation.
+Same-sized chunks alone do not prove equal fragmentation: match lifetime/order,
+headers/alignment, load scratch and largest-free-block needs. Partition report is
+not a resolved-link fit; account for frame decoder, loader and all new adapters
+in their actual regions. Low-RAM versus cart speed is unmeasured here, not an
+established slower/faster result. No production cutover or new runtime acceptance.
+
+
+Current migration handoff (human, 2026-10-06): delta blocks, per-channel shifts
+and spawn-proven scene packs are measured. Worst scene 688,068 B vs LINKANIM
+423,472 B. No fit. Loader and Player cutover stay blocked. C decoder matched
+509 clips / 16,837 frames. Details in ASTRA_HANDOFF_2026-10-05.md.
+
+Curtain correction (human, 2026-10-06): restore the world-space behavior from
+before vertical locking. Curtain anchors to Link, follows camera yaw, and stays
+upright; camera pitch/height move it naturally on screen. Two-panel geometry
+and map/time tint retained. Four focused host checks pass. Requested WSL Clean
+quick build passes: usual ISO/CUE rebuilt, .bss 0x06083f10, 240 B below SGL.
+Log: build/curtain-world-restore.log. Human visual acceptance remains open.
+Removal and vertically locked restoration superseded.
+
 ## NEXT SESSION: mandatory Link migration (human, 2026-10-06)
+
+Claude integration step 1 (2026-10-06): strict bank (uncertain clips strict) worst
+scene 554,668 B; placed into real old allocations, worst pack fits. Two-pack
+rollback does not fit (reload-from-disc rollback proposed). Frame-bank adapter,
+region loader (both host-tested, isolated) and 5-region partition (2,514 B
+main free) done; 110 collision call sites listed. Next: core collision API +
+port non-Player callers, then resolved build. See PLAYER_MIGRATION.md.
+
+Claude (2026-10-06, Codex out): proxies use real transformFlags + core carry path;
+one frame-step owner; scene reset restores water + clears proxies; replacement
+memory ~19.4 KB measured. Host tests pass; 2 tracked Fx cases open. Next: port
+callers onto bg_core_shim, then real link. Nothing live yet.
+
+Claude (2026-10-06): fixed frame-bank precision search (blame per channel)
+and action-specific anchors. Worst scene 552,756 B strict / 531,876 B with
+action context, vs old same-stage 553,142 B (LINKANIM + C collision). Fit
+needs C collision callers moved to core bgcheck. Next: sections + loader.
+
+
+Astra combined memory follow-up: real core+Player dependencies, libgcc and 521
+source animation headers retain 659,244 B after temporary duplicate-owner removal.
+Baseline is exactly 501,840 B like existing ELF; combined wide audit passes.
+Core + two large Low RAM gaps is 3,884 B short before missing dependencies.
+Selected design adds retired music/fairy cart reservations (24 KiB): five resident
+regions totaling 679,936 B, 20,692 B unallocated before remaining hooks, skeletons,
+frame backing and alignment. No heap shrink or C-Link-retirement memory credit.
+Claude sized hooks + real skeletons: 8,884 B, ~11,808 B left (estimates).
+Frame bank measured: 2.26 MB raw/age vs 423 KB bank; no fit. Shared-bank
+prototype (trigger residency, FK-checked reduction): peak 1.24/1.01/0.91 MB at
+0.5/1/2 world-unit anchor tolerance; still no fit. Packed bank v1 (real
+bytes, C round trip, source weapon/shield/foot anchors, 0.5 units): resident
+688,548 B, transition peak 737,644 B vs 423,472 B; no fit yet. Decide frame
+reduction (8-bit angles, per-scene cutscene clips, half rate + morph), then
+partition sections and add versioned
+multi-region loading; fit requires a resolved link. See PLAYER_MIGRATION.md.
+No live build, allocation change or runtime acceptance.
 
 Replace handwritten C Link with real core/decomp Player. Required next
 implementation priority, not a benchmark-dependent choice. Preserve all Saturn
@@ -17,8 +184,21 @@ unchanged static triangles; it passes only Y rotation/uniform X scale and omits
 water/camera data and rider feedback. Keep it temporary and avoid redundant
 transforms without breaking rider history. Profile total collision/update cost
 and memory to guide core optimization; neither implementation is presumed faster.
-Documentation/source review only in this task; no Player migration, new test,
-build or runtime acceptance. Handoff for Claude is recorded; start unconfirmed.
+Migration staging started by Codex on `oot-core`, preserving latest main through
+fast-forward. See [PLAYER_MIGRATION.md](PLAYER_MIGRATION.md) for the initial
+behavior/test inventory, owner map and exact blockers. Real z_player_call,
+z_player_lib and z_player are staged through the production fixups in an isolated
+build directory. WSL syntax passes all three after source-scoped enum/Fx and
+scaled rumble repairs. Two focused tests pass, including 102,000 actual-Fx32
+rumble ticks matching source pulse timing. Claude (2026-10-06): last three Fx
+range literals fixed (exact turn ratio, world-space hookshot reticle reach);
+5 tests pass. `TARGET=1 check_player_migration.sh` compiles all three as
+isolated SH-2 objects: 0 wide/soft-float helpers, 151,049 B vs 87,984 B carve
+headroom (NO FIT, upper bound), 9 duplicate owners, 713 unresolved (521 anims,
+144 Link assets, 2 tables, 46 engine functions). Follow-up GC/layout evidence
+above now guides the five-region resident design and remaining dependency sizing
+before actual section partitioning, loader integration and live owner retirement.
+C remains the live owner; no live link, disc change or runtime acceptance.
 Earlier checkpoints below retain their evidence and gaps, not scheduling priority.
 
 Camera defaults / fixed sky curtain (2026-10-06, source only): Hyrule Field

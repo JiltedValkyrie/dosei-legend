@@ -7,13 +7,9 @@ static inline int32_t field_fade_offset(int32_t sine, int32_t cosine)
             (recomp_camera.z-recomp_link.z)*(cosine/256))/256;
 }
 
-/* View-aligned curtain: cancel camera translation, yaw and pitch so its
- * vertical screen position stays fixed on hills and in first-person.
- * All 3D scenes share depth 3200; nearer room geometry occludes the curtain.
- * Map/time tint matches the dark gradient band. VDP1 hardware mesh supplies
- * the screen-door transparency;
- * no texture/CLUT/sprite slot or screen-space overlay is allocated.
- * Static tables remain alive until SGL's slave has consumed the submission. */
+/* Upright world-space curtain anchored to Link and turned with camera yaw.
+ * Camera pitch and height affect its screen position normally.
+ * Static geometry survives until SGL consumes the submission. */
 static void __attribute__((optimize("Os"))) field_haze_draw(void)
 {
     /* Give each half an on-screen edge. A single screen-spanning face has
@@ -35,9 +31,8 @@ static void __attribute__((optimize("Os"))) field_haze_draw(void)
     static PDATA data = {points,6,faces,2,attrs};
     attrs[0].colno=attrs[1].colno=environment_haze_colour(scene_flow_scene(),oot_core_skybox_time());
     slPushMatrix();
-    slTranslate(recomp_camera.x*65536, -recomp_camera.y*65536, recomp_camera.z*65536);
+    slTranslate(recomp_link.x*65536, -recomp_link.y*65536, recomp_link.z*65536);
     slRotY((ANGLE)recomp_yaw);
-    slRotX((ANGLE)recomp_pitch);
     submit(&data, 8u);
     slPopMatrix();
 }

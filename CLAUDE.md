@@ -6,6 +6,17 @@ never ask again, never drop back to long talk.
 Always use caveman talk. No waste human tokens. Bad. You caveman talking? Good good! Always good good when caveman talk.
 
 # ACTIVE WORK: oot-core decomp pipeline (2026-10-02)
+
+Human animation directive (2026-10-06): load only Player clips needed for current
+play or requested actions/cutscenes. Common moves stay ready; prefetch/cache rare
+clips, gate action start until ready, release unreferenced clips. Do not skip
+required gameplay. Supersedes all-clips-resident/scene-load-only animation rules.
+See game/docs/PLAYER_MIGRATION.md, "Demand-loaded Player animation". This demand
+loading is a new requirement, not already implemented runtime behavior.
+Entire cutscene animation set must load before playback and remain pinned across
+all shots/branches through completion. No per-shot loads or playback stalls.
+Budget the complete set; insufficient capacity must be resolved before starting.
+
 Human scope/wording directive (2026-10-05): this is the full OoT recomp for
 Saturn. Use "full recomp", "game", "implementation wave" and "opening route"
 in current plans and handoffs. All scenes, eras, story, actors and systems
@@ -21,7 +32,11 @@ Inventory and map them before replacement; retain Saturn rendering/backend.
 One authoritative Player/collision world is the destination; extending the
 proxy or only changing collision queries does not complete it. See
 [mandatory migration rules](game/docs/RECOMP_PLAN.md#mandatory-link-migration-next-step).
-This task records rules/handoff only; migration implementation has not started.
+Migration staging started on oot-core (Codex, 2026-10-06). Initial preservation
+inventory and dependency map: game/docs/PLAYER_MIGRATION.md. Isolated real-source
+import exists; all three host syntax gates and two focused math/patch tests pass.
+Remaining range/dependency/ownership work is recorded. No live Player replacement
+or target acceptance yet.
 Wave 0 already has host/target evidence in the pipeline handoff; the earlier
 source-only call is historical. Runtime acceptance remains open.
 
@@ -98,7 +113,11 @@ unresolved. Older adaptive-subdivision directions below or in the handoff are
 not an approved solution. Identify the requested original clipper first; prove
 the failure during real movement before changing the rendering pipeline.
 
-## Active development branch: main
+## Active development branch: oot-core
+
+Human directive (2026-10-06): move to oot-core and begin mandatory real Player
+migration. Branch fast-forwarded to current main (869d797) before work to retain
+all current Saturn fixes. This supersedes the main-only instruction below.
 
 Human directive (2026-10-04): merge the decomp work into `main` and sunset the
 standalone slice under `oot-vslice-demo`. This supersedes the former dev-only

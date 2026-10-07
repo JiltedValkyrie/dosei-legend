@@ -19,6 +19,7 @@ Anything the fixups cannot handle must be listed in the import report, not
 hand-patched in the generated tree.
 """
 import argparse
+import hashlib
 import json
 import pathlib
 import re
@@ -855,6 +856,49 @@ MACRO_REWRITES = {
         ('* colCtx->subdivLengthInv.x', '/ colCtx->subdivLength.x'),
         ('* colCtx->subdivLengthInv.y', '/ colCtx->subdivLength.y'),
         ('* colCtx->subdivLengthInv.z', '/ colCtx->subdivLength.z'),
+        # Fx32: raw s16 normal (+-32767) x world position saturates before
+        # the trailing * COLPOLY_NORMAL_FRAC: plane distances were garbage,
+        # so line tests (LineVsPoly) almost never hit and point-plane
+        # distances were wrong. Scale each component first (Claude
+        # 2026-10-06; found by oot-core/tests/run_bg_port_probe.sh).
+        ('(poly->normal.x * point->x + poly->normal.y * point->y + poly->normal.z * point->z) * COLPOLY_NORMAL_FRAC',
+         '(COLPOLY_GET_NORMAL(poly->normal.x) * point->x + COLPOLY_GET_NORMAL(poly->normal.y) * point->y + '
+         'COLPOLY_GET_NORMAL(poly->normal.z) * point->z)'),
+        ('(poly->normal.x * posA->x + poly->normal.y * posA->y + poly->normal.z * posA->z) * COLPOLY_NORMAL_FRAC',
+         '(COLPOLY_GET_NORMAL(poly->normal.x) * posA->x + COLPOLY_GET_NORMAL(poly->normal.y) * posA->y + '
+         'COLPOLY_GET_NORMAL(poly->normal.z) * posA->z)'),
+        # Fx32: the dyna bounding-sphere centre summed every transformed
+        # vertex in Fx: 18 vertices at y 2500 already exceed Q16.16 and the
+        # centre saturated (y 2500 -> 1819), so floors/walls of larger dyna
+        # meshes went missing. Sum the stored integer vertices in s32 and
+        # divide once (Claude 2026-10-06; oot-core/tests/bg_shim_scenario).
+        ('    newCenterPoint.x = newCenterPoint.y = newCenterPoint.z = 0.0f;',
+         '    newCenterPoint.x = newCenterPoint.y = newCenterPoint.z = 0.0f;\n'
+         '    s32 centerSum[3] = { 0, 0, 0 }; /* Fx32: integer sum */'),
+        ('        newCenterPoint.x += vtxT.x;\n'
+         '        newCenterPoint.y += vtxT.y;\n'
+         '        newCenterPoint.z += vtxT.z;',
+         '        centerSum[0] += dyna->vtxList[*vtxStartIndex + i].x;\n'
+         '        centerSum[1] += dyna->vtxList[*vtxStartIndex + i].y;\n'
+         '        centerSum[2] += dyna->vtxList[*vtxStartIndex + i].z;'),
+        ('    newCenterPoint.x *= numVtxInverse;\n'
+         '    newCenterPoint.y *= numVtxInverse;\n'
+         '    newCenterPoint.z *= numVtxInverse;',
+         '    newCenterPoint.x = centerSum[0] / (s32)pbgdata->numVertices;\n'
+         '    newCenterPoint.y = centerSum[1] / (s32)pbgdata->numVertices;\n'
+         '    newCenterPoint.z = centerSum[2] / (s32)pbgdata->numVertices;'),
+        # Fx32: dyna normals multiplied by 1 / |n|; for long edges that
+        # reciprocal is a few raw units and truncates ~10% (flat 200-unit
+        # floor got normal.y 0.906, dist -2719 at y 3000). Divide instead.
+        ('            newNormal.x *= (1.0f / newNormMagnitude);\n'
+         '            newNormal.y *= (1.0f / newNormMagnitude);\n'
+         '            newNormal.z *= (1.0f / newNormMagnitude);',
+         '            newNormal.x = newNormal.x / newNormMagnitude;\n'
+         '            newNormal.y = newNormal.y / newNormMagnitude;\n'
+         '            newNormal.z = newNormal.z / newNormMagnitude;'),
+        ('(poly->normal.x * posB->x + poly->normal.y * posB->y + poly->normal.z * posB->z) * COLPOLY_NORMAL_FRAC',
+         '(COLPOLY_GET_NORMAL(poly->normal.x) * posB->x + COLPOLY_GET_NORMAL(poly->normal.y) * posB->y + '
+         'COLPOLY_GET_NORMAL(poly->normal.z) * posB->z)'),
     ],
     # Fx32: 1.0f / SHT_MAX is not a folded constant in Fx (a runtime divide
     # per use) and truncates to 2 raw; OOT_Q15_NORMAL rounds with shifts.
@@ -1026,6 +1070,127 @@ def fix_mtxf(text, stats):
     return MTXF_ACCESS.sub(sub, text)
 
 
+# Saturn pose pass (Player migration, 2026-10-06): the Saturn renderer draws
+# Link, but SkelAnime_DrawFlexLod + override/post-limb draw still run so limb
+# matrices and every gameplay anchor (bodyPartsPos, weapon tips, held actor,
+# sGetItemRefPos, feet) keep source timing. Only pure presentation is cut:
+# fog flicker, lights, the STATE2_26 mirror copy (the normal pass runs last and
+# owns the anchors), ice fragment, get-item model, masks/bunny ears, hover
+# circle, eye/mouth/tunic segments, gauntlet/boot/bracelet DLs. Whole-function
+# swaps keyed by the source span hash: a decomp change fails the import.
+PLAYER_POSE_SPLIT = {
+    'src/code/z_player_lib.c': [
+        ('Player_DrawImpl', '6cc9cb1bfbd431f3', '''\
+void Player_DrawImpl(PlayState* play, void** skeleton, Vec3s* jointTable, s32 dListCount, s32 lod, s32 tunic, s32 boots,
+                     s32 face, OverrideLimbDrawOpa overrideLimbDraw, PostLimbDrawOpa postLimbDraw, void* data) {
+    /* Saturn pose pass: face indices stay in jointTable[22] for the renderer. */
+    sDListsLodOffset = lod * 2;
+    SkelAnime_DrawFlexLod(play, skeleton, jointTable, dListCount, overrideLimbDraw, postLimbDraw, data, lod);
+}
+'''),
+    ],
+    'src/overlays/actors/ovl_player_actor/z_player.c': [
+        ('Player_DrawGameplay', '7fd9cb1b0ce20562', '''\
+void Player_DrawGameplay(PlayState* play, Player* this, s32 lod, Gfx* cullDList, OverrideLimbDrawOpa overrideLimbDraw) {
+    /* Saturn pose pass: masks, bunny ears and hover circle are presentation. */
+    Player_DrawImpl(play, this->skelAnime.skeleton, this->skelAnime.jointTable, this->skelAnime.dListCount, lod,
+                    this->currentTunic, this->currentBoots, this->actor.shape.face, overrideLimbDraw,
+                    Player_PostLimbDrawGameplay, this);
+}
+'''),
+        ('Player_Draw', '6d78a878de6bda5d', '''\
+void Player_Draw(Actor* thisx, PlayState* play2) {
+    PlayState* play = play2;
+    Player* this = (Player*)thisx;
+
+    /* Saturn pose pass: source lod/override choice, one normal-pass walk. */
+    if (!(this->stateFlags2 & PLAYER_STATE2_29)) {
+        OverrideLimbDrawOpa overrideLimbDraw = Player_OverrideLimbDrawGameplayDefault;
+        s32 lod;
+
+        if ((this->csAction != PLAYER_CSACTION_NONE) || (this->actor.projectedPos.z < 160.0f)) {
+            lod = 0;
+        } else {
+            lod = 1;
+        }
+
+        if (this->invincibilityTimer > 0) {
+            this->damageFlickerAnimCounter += CLAMP(50 - this->invincibilityTimer, 8, 40);
+        }
+
+        if (this->unk_6AD != 0) {
+            Vec3f projectedHeadPos;
+
+            SkinMatrix_Vec3fMtxFMultXYZ(&play->viewProjectionMtxF, &this->actor.focus.pos, &projectedHeadPos);
+            if (projectedHeadPos.z < -4.0f) {
+                overrideLimbDraw = Player_OverrideLimbDrawGameplayFirstPerson;
+            }
+        } else if (this->stateFlags2 & PLAYER_STATE2_CRAWLING) {
+            if (this->actor.projectedPos.z < 0.0f) {
+                overrideLimbDraw = Player_OverrideLimbDrawGameplayCrawling;
+            }
+        }
+
+        Player_DrawGameplay(play, this, lod, NULL, overrideLimbDraw);
+    }
+}
+'''),
+    ],
+}
+
+
+def fix_player_pose_split(rel, text, stats):
+    for name, digest, body in PLAYER_POSE_SPLIT.get(rel, ()):
+        head = f'\nvoid {name}('
+        if text.count(head) != 1:
+            raise ValueError(f'{rel}: Player pose split anchor changed: {name}')
+        start = text.index(head) + 1
+        end = text.index('\n}\n', start) + 3
+        if hashlib.sha256(text[start:end].encode()).hexdigest()[:16] != digest:
+            raise ValueError(f'{rel}: Player pose split source changed: {name}')
+        text = text[:start] + body + text[end:]
+        stats['player_pose_split'] = stats.get('player_pose_split', 0) + 1
+    return text
+
+
+def fix_player_migration(rel, text, stats):
+    """Player-only Fx repairs; live SOURCES does not yet select this overlay."""
+    if rel == 'src/code/z_player_lib.c':
+        replacements = [
+            # Hookshot/longshot reticle reach 38600/77600 is local units under
+            # Link's 0.01 matrix: past Q16.16. Transform a 1000-unit local step
+            # and extend it in world space (386/776 world units fit).
+            ('    D_801260C8.z = arg2;\n    Matrix_MultVec3f(&D_801260C8, &sp80);\n',
+             '    D_801260C8.z = 1000.0f;\n    Matrix_MultVec3f(&D_801260C8, &sp80);\n'
+             '    sp80.x = sp8C.x + (sp80.x - sp8C.x) * arg2;\n'
+             '    sp80.y = sp8C.y + (sp80.y - sp8C.y) * arg2;\n'
+             '    sp80.z = sp8C.z + (sp80.z - sp8C.z) * arg2;\n'),
+            ('? 38600.0f : 77600.0f', '? 38.6f : 77.6f'),
+        ]
+    elif rel == 'src/overlays/actors/ovl_player_actor/z_player.c':
+        replacements = [
+        # |s16 diff| / 32768 is exactly |diff| * 2 raw Q16.16 (32768 -> 1.0).
+        ('temp = fabsf(sp1C) / 32768.0f;',
+         'temp = Fx::raw((s32)ABS((s32)(s16)(arg2 - this->actor.shape.rot.y)) * 2);'),
+        ('PLAYER_BODYPART_MAX - 0.1f', '(s32)PLAYER_BODYPART_MAX - 0.1f'),
+        # Store the rumble accumulator in units /256. Only this function uses
+        # unk_6A0 in source. Distance/16 is squared AFTER scaling, so neither
+        # the square nor the threshold needs an out-of-range Fx conversion.
+        ('f32 temp = 200000.0f - (this->closestSecretDistSq * 5.0f);',
+         'f32 distance = sqrtf(this->closestSecretDistSq) / 16;\n'
+         '        f32 temp = 781.25f - (SQ(distance) * 5.0f);'),
+        ('this->unk_6A0 > 4000000.0f', 'this->unk_6A0 > 15625.0f'),
+        ]
+    else:
+        return text
+    for old, new in replacements:
+        if text.count(old) != 1:
+            raise ValueError(f'{rel}: Player migration patch anchor changed: {old}')
+        text = text.replace(old, new)
+    stats['player_migration'] = stats.get('player_migration', 0) + len(replacements)
+    return text
+
+
 def fixup(rel, text, stats):
     if rel == 'include/ultra64/ultratypes.h':
         text, n = MTXF_DECL.subn('typedef union MtxF {\n    MtxF_t mf;\n} MtxF;', text)
@@ -1035,12 +1200,14 @@ def fixup(rel, text, stats):
         text, n = re.subn(r'LONG_DOUBLE_TYPE ld;', 'long long ld;', text)
         if n != 1:
             stats['problems'].append(f'{rel}: long double slot not found')
+    text = fix_player_pose_split(rel, text, stats)  # raw source span hashes
     text = fix_anon_aggregates(rel, text, stats)
     text = fix_macros(rel, text, stats)
     text = fix_sprite_actors(rel, text, stats)
     text = fix_bgcheck_bounds(rel, text, stats)
     text = fix_rand_ranges(rel, text, stats)
     text = fix_cross_products(rel, text, stats)
+    text = fix_player_migration(rel, text, stats)
     text = fix_stored_squares(rel, text, stats)
     text = fix_float_literals(text, stats, rel)
     return fix_mtxf(text, stats)
