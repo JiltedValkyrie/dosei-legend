@@ -27,12 +27,12 @@ static void play(player_water_t *water, unsigned phase, unsigned clip)
     link_anim_swim_play(clip);
 }
 
-/* func_8084B000, child ageProperties->unk_28=29.6. Q8 velocities retain
+/* func_8084B000, ageProperties->unk_28: child 29.6, adult 44.8. Q8 velocities retain
  * source magnitudes; acceleration is converted from 20 to 30 Hz (x2/3). */
-static void buoyancy(player_water_t *water, int32_t depth)
+static void buoyancy(player_water_t *water, int32_t depth, bool adult)
 {
     int32_t velocity = water->velocity_q8, acceleration, limit;
-    int32_t target = 7578 + (velocity < 0 ? 256 : 0);
+    int32_t target = (adult ? 11469 : 7578) + (velocity < 0 ? 256 : 0);
     if (depth * 256 < target) {
         acceleration = -17 - (velocity > 0 ? velocity / 3 : 0);
         limit = -1280;
@@ -64,7 +64,7 @@ static void stroke(player_water_t *water, int32_t target, uint16_t yaw)
     water->yaw = (uint16_t)(water->yaw + turn);
 }
 
-static void move(player_water_t *water, bg_vec_t *feet)
+static void move(player_water_t *water, bg_vec_t *feet, bool adult)
 {
     bg_vec_t prev = *feet, next = *feet, ray;
     bg_hit_t hit;
@@ -80,12 +80,12 @@ static void move(player_water_t *water, bg_vec_t *feet)
         *axes[k] += water->remainder[k] / 256;
         water->remainder[k] %= 256;
     }
-    bg_wall(feet, &next, &prev, 14, 26, BG_IGNORE_ENTITY, false, &hit);
+    bg_wall(feet, &next, &prev, adult ? 18 : 14, 26, BG_IGNORE_ENTITY, false, &hit);
     next.x = feet->x; next.z = feet->z;
     /* Query from the old feet so an upward step cannot skip a thin roof. */
     ray = next; ray.y = prev.y;
     rise = next.y > prev.y ? next.y - prev.y : 0;
-    if (bg_ceiling(&ceiling, &ray, 40 + rise, BG_IGNORE_ENTITY, &hit)) {
+    if (bg_ceiling(&ceiling, &ray, (adult ? 56 : 40) + rise, BG_IGNORE_ENTITY, &hit)) {
         ceiling += rise;
         if (ceiling < prev.y && (next.x != prev.x || next.z != prev.z)) {
             /* A horizontal move under a low roof cannot crush the swimmer
@@ -104,7 +104,7 @@ static void move(player_water_t *water, bg_vec_t *feet)
         ray = next;
         /* Check the headroom at the proposed bank height as well: the roof
          * may clear the old swim height but not the floor we would step onto. */
-        if (bg_ceiling(&ceiling, &ray, 40 + floor - next.y,
+        if (bg_ceiling(&ceiling, &ray, (adult ? 56 : 40) + floor - next.y,
                        BG_IGNORE_ENTITY, &hit)) {
             next.x = prev.x; next.z = prev.z;
             ray = next; ray.y = (prev.y > next.y ? prev.y : next.y) + 25;
@@ -120,6 +120,51 @@ static void move(player_water_t *water, bg_vec_t *feet)
     *feet = next;
 }
 
+/* Player_ActionHandler_12 admits surface swimmers without requiring ground.
+ * Keep the wall/floor/clearance tests; a tall bank is not a shore exit. */
+static bool climb_out(player_water_t *water, const player_water_input_t *input,
+                      bg_vec_t *feet, uint16_t *facing, int32_t depth)
+{
+    bg_vec_t a = *feet, b = *feet, at, target;
+    bg_hit_t hit;
+    int32_t sine, cosine, ceiling, floor, height;
+    uint16_t yaw = *facing;
+    bool wall;
+    if (water->phase != PLAYER_WATER_SURFACE || input->blocked || depth >= 50 ||
+        (!input->speed_q8 && !input->dive_pressed)) {
+        player_bg_reset(&water->ledge);
+        return false;
+    }
+    kokiri_camera_sincos(yaw, &sine, &cosine);
+    a.y += 18; b.y += 18;
+    b.x += sine * 24 / 65536; b.z += cosine * 24 / 65536;
+    wall = bg_line(&a, &b, &at, BG_CHECK_WALL | BG_CHECK_ONE_FACE,
+                   BG_IGNORE_ENTITY, &hit);
+    player_bg_update(&water->ledge, wall, &hit, feet, yaw, input->yaw, input->speed_q8);
+    height = water->ledge.y_dist_to_ledge;
+    if (water->ledge.ledge_type < PLAYER_LEDGE_CLIMB_2 ||
+        height < (input->adult ? 41 : 27) || height > (input->adult ? 70 : 46) ||
+        water->ledge.dist_to_wall > (input->adult ? 19 : 15) ||
+        water->ledge.world_yaw_to_wall >= 0x3000 ||
+        (water->ledge.delay_timer < PLAYER_LEDGE_CLIMB_STEPS && !input->dive_pressed) ||
+        (water->ledge.wall_hit.bg_id != BG_SCENE &&
+         (water->ledge.touched_flags & BG_WALL_FLAG_6) &&
+         (water->ledge.delay_timer < PLAYER_LEDGE_CLIMB_STEPS || !input->dive_pressed)))
+        return false;
+    target = *feet;
+    player_ledge_step_target(&water->ledge, &target, &yaw);
+    a = target; ++a.y;
+    floor = bg_floor(&a, BG_IGNORE_ENTITY, &hit);
+    if (floor == BG_Y_MIN || floor < target.y - 2 ||
+        bg_ceiling(&ceiling, &target, input->adult ? 56 : 40, BG_IGNORE_ENTITY, &hit))
+        return false;
+    *feet = target; *facing = yaw;
+    player_water_reset(water);
+    water->grounded = true;
+    link_anim_water_step_up(height, input->adult);
+    return true;
+}
+
 bool player_water_step(player_water_t *water, const player_water_input_t *input,
                        bg_vec_t *feet, uint16_t *facing, int32_t incoming_velocity,
                        bool was_grounded)
@@ -128,35 +173,36 @@ bool player_water_step(player_water_t *water, const player_water_input_t *input,
     unsigned clip, limit;
     bool done;
     if (!bg_water_surface(feet->x, feet->z, input->room, &surface, 0) ||
-        surface - feet->y < 22) {
+        surface - feet->y < (input->adult ? 36 : 22)) {
         if (water->phase) link_anim_move_end();
         player_water_reset(water);
         return false;
     }
     depth = surface - feet->y;
     if (!water->phase) {
-        if (depth <= 32) return false;
+        if (depth <= (input->adult ? 56 : 32)) return false;
         water->velocity_q8 = incoming_velocity;
         if (water->velocity_q8 < -1280) water->velocity_q8 = -1280;
         water->yaw = *facing;
         play(water, PLAYER_WATER_ENTER,
              was_grounded ? LINK_CLIP_SWIM_ENTER : LINK_CLIP_SWIM_FALL);
     }
-    if (depth >= 32) {
+    if (depth >= (input->adult ? 56 : 32)) {
         if (water->submerged_steps < 450) ++water->submerged_steps;
     } else water->submerged_steps = 0;
+    if (climb_out(water, input, feet, facing, depth)) return true;
     target = input->blocked ? 0 : input->speed_q8;
     limit = input->scale > 2 ? 360 : 120 * (input->scale + 1);
     done = link_anim_move_step(30, unused);
     switch (water->phase) {
     case PLAYER_WATER_ENTER:
     case PLAYER_WATER_SURFACE_END:
-        buoyancy(water, depth);
+        buoyancy(water, depth, input->adult);
         water->speed_q8 = approach(water->speed_q8, 0, 171);
         if (done) play(water, PLAYER_WATER_SURFACE, LINK_CLIP_SWIM_WAIT);
         break;
     case PLAYER_WATER_SURFACE:
-        buoyancy(water, depth);
+        buoyancy(water, depth, input->adult);
         if (input->dive_pressed && !input->blocked) {
             water->velocity_q8 = 0;
             play(water, PLAYER_WATER_DIVE_START, LINK_CLIP_DIVE_START);
@@ -185,13 +231,13 @@ bool player_water_step(player_water_t *water, const player_water_input_t *input,
         }
         break;
     case PLAYER_WATER_TURN:
-        buoyancy(water, depth);
+        buoyancy(water, depth, input->adult);
         water->speed_q8 = approach(water->speed_q8, 0, 171);
         if (!--water->timer) play(water, PLAYER_WATER_RISE, LINK_CLIP_SWIM);
         break;
     case PLAYER_WATER_RISE:
         if (done) link_anim_swim_play(LINK_CLIP_SWIM);
-        if (depth < 48 && water->velocity_q8 > 0)
+        if (depth < (input->adult ? 68 : 48) && water->velocity_q8 > 0)
             play(water, PLAYER_WATER_SURFACE_END, LINK_CLIP_DIVE_END);
         else {
             int32_t rise = 1024 + water->rise_depth * 576 / 125; /* (4+.018*d)*256 */
@@ -206,10 +252,10 @@ bool player_water_step(player_water_t *water, const player_water_input_t *input,
      * A starts a dive on the surface and sustains it underwater. */
     if (input->stroke_pressed && !input->blocked && water->phase == PLAYER_WATER_SURFACE)
         water->speed_q8 = approach(water->speed_q8, 1126, 256);
-    move(water, feet);
+    move(water, feet, input->adult);
     *facing = water->yaw;
     if (!bg_water_surface(feet->x, feet->z, input->room, &surface, 0) ||
-        surface - feet->y < 22) {
+        surface - feet->y < (input->adult ? 36 : 22)) {
         link_anim_move_end();
         player_water_reset(water);
     }

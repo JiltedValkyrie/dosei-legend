@@ -117,6 +117,38 @@ PlayState* gOotCorePlay; /* oot_core_views.cpp reads it */
 static ActorEntry sPlayerEntry;
 static const OotSceneBlob* sScene;
 
+int OotCore_PackBind(void* image, unsigned int bytes, unsigned int core_crc);
+int OotCore_PackRelease(void);
+int OotCore_SceneLoad(unsigned int scene, const char* name, unsigned int core_crc,
+                      const void* const** objects, unsigned int* count);
+extern EffectSsInfo sEffectSsInfo;
+
+static void oot_core_play_destroy(void) {
+    PlayState* play = gOotCorePlay;
+    if (!play) return;
+    /* Source scene cleanup destroys every actor before its code/objects go.
+     * The previous mirror owns these scene words. Global save values already
+     * mirrored at the last step may have changed on the host during transition. */
+    func_80031C3C(&play->actorCtx, play);
+    if (sHostSave && sHostSave->scene_flags) {
+        sHostSave->scene_flags[0] = play->actorCtx.flags.chest;
+        sHostSave->scene_flags[1] = play->actorCtx.flags.swch;
+        sHostSave->scene_flags[2] = play->actorCtx.flags.clear;
+        sHostSave->scene_flags[3] = play->actorCtx.flags.collect;
+    }
+    /* Source ClearAll zeroes table before iterating: delete live entries first. */
+    for (s32 i = 0; i < sEffectSsInfo.tableSize; ++i) EffectSs_Delete(&sEffectSsInfo.table[i]);
+    EffectSs_ClearAll(play);
+    Effect_DeleteAll(play);
+    CollisionCheck_ClearContext(play, &play->colChkCtx);
+    OotCore_ToolReset();
+    OotCore_OcarinaReset();
+    OotCore_GfxReset();
+    ZeldaArena_Cleanup();
+    gOotCorePlay = NULL;
+    sScene = NULL;
+}
+
 /* Room-list actor ids the blob owns; every other id stays with the C game
  * until its overlay is imported (plan Phase 1 step 6). */
 /* 2026-10-03: grass and drops only (NPCs/signs/wonder spots back to C until
@@ -154,6 +186,36 @@ static const OotSceneLayer* room_layer(int room) {
         return &row[SCENE_LAYER_ADULT_DAY];
     }
     return &row[0];
+}
+
+/* Preserve original transition indices: door params address this exact table.
+ * Only admit the table when every profile is available, before source spawning
+ * can mark an unavailable door as already spawned. Other scenes keep their
+ * existing host doors until their own source integration is ready. */
+static void load_transition_actors(PlayState* play) {
+    play->transitionActors.count = 0;
+    play->transitionActors.list = NULL;
+    if (!sScene || play->sceneId != SCENE_WATER_TEMPLE || !sScene->num_transition_layers) return;
+    const OotSceneLayer* rows = sScene->transitions;
+    s32 layer = gSaveContext.sceneLayer;
+    const OotSceneLayer* use = &rows[0];
+    if (layer > 0 && (u32)layer < sScene->num_transition_layers && rows[layer].present)
+        use = &rows[layer];
+    else if (layer == SCENE_LAYER_ADULT_NIGHT &&
+             SCENE_LAYER_ADULT_DAY < (s32)sScene->num_transition_layers && rows[SCENE_LAYER_ADULT_DAY].present)
+        use = &rows[SCENE_LAYER_ADULT_DAY];
+    TransitionActorEntry* entries = (TransitionActorEntry*)use->actors;
+    if (use->num_actors > 255 || (use->num_actors && !entries)) return;
+    for (u32 i = 0; i < use->num_actors; ++i) {
+        s32 id = entries[i].id;
+        if (id < 0) id = -id; /* source destroy restores this on normal unload */
+        id &= 0x1FFF;
+        if (id >= ACTOR_ID_MAX || !gActorOverlayTable[id].profile) return;
+    }
+    for (u32 i = 0; i < use->num_actors; ++i)
+        if (entries[i].id < 0) entries[i].id = -entries[i].id;
+    play->transitionActors.list = entries;
+    play->transitionActors.count = use->num_actors;
 }
 
 /* A generic-draw actor id listed in any room of the current scene layer
@@ -215,6 +277,16 @@ static void load_room_actors(PlayState* play, int room) {
             (OotCore_IsGenericDraw(list[i].id & 0x1FFF) || IsGenericNpc(list[i].id & 0x1FFF))) {
             sRoomEntries[n++] = list[i];
         }
+        /* Field's source-selected layer owns era/time placement. Dynamic
+         * children come from these source actions, never injected here. */
+        else if (k == ARRAY_COUNT(sRoomActorIds) && play->sceneId == SCENE_HYRULE_FIELD &&
+                 n < ROOM_ENTRIES_MAX) {
+            s16 id = list[i].id & 0x1FFF;
+            if ((id == ACTOR_EN_ENCOUNT1 || id == ACTOR_EN_SKB ||
+                 id == ACTOR_EN_PEEHAT || id == ACTOR_EN_PO_FIELD) &&
+                gActorOverlayTable[id].profile != NULL)
+                sRoomEntries[n++] = list[i];
+        }
     }
     play->actorEntryList = sRoomEntries;
     play->numActorEntries = n;
@@ -226,6 +298,9 @@ static void oot_core_init(const OotCoreHost* host) {
     }
     gOotCoreHost = host;
     gRegEditor = &sRegEditor;
+    /* GameState_Init (game.c): source motion and scaled steps use this rate.
+     * Regs_InitData does not set it; zero freezes arrows/hooks in place. */
+    R_UPDATE_RATE = 3;
     gSaveContext.nextDayTime = NEXT_TIME_NONE;
     gSaveContext.dogIsLost = true;
     gSaveContext.seqId = (u8)NA_BGM_DISABLED;
@@ -342,6 +417,8 @@ static int oot_core_play_init(void* block, unsigned int bytes, int scene_id, con
     play->playerEntry = &sPlayerEntry;
     seed_scene_save(scene_id);
     Actor_InitContext(play, &play->actorCtx, play->playerEntry);
+    load_transition_actors(play);
+    Actor_SpawnTransitionActors(play, &play->actorCtx);
     load_room_actors(play, room);
     OotCore_TransitionTimeFinish(play);
     OotCore_DaySequenceInit(play);
@@ -600,6 +677,7 @@ static void oot_core_set_room(int room) {
     play->roomCtx.prevRoom.num = -1;
     play->roomCtx.prevRoom.segment = NULL;
     func_80031B14(play, &play->actorCtx);
+    Actor_SpawnTransitionActors(play, &play->actorCtx);
 }
 
 /* Actor_DrawAll's culling pass (Actor_CullingCheck) is what sets
@@ -850,6 +928,20 @@ static int oot_core_transition_request(unsigned int consume) {
     return entrance;
 }
 
+int OotCore_EffectView(OotCoreEffectView* out, unsigned int capacity, unsigned int* omitted);
+static unsigned int oot_core_water_boxes(const void** boxes) {
+    static_assert(sizeof(WaterBox) == 16, "host water view stride");
+    *boxes = NULL;
+    if (!gOotCorePlay || gOotCorePlay->sceneId != SCENE_WATER_TEMPLE ||
+        !gOotCorePlay->colCtx.colHeader) return 0;
+    const CollisionHeader* col = gOotCorePlay->colCtx.colHeader;
+    *boxes = col->waterBoxes;
+    return col->waterBoxes ? col->numWaterBoxes : 0;
+}
+unsigned int OotCore_SpritePreload(const void*, const OotCoreSpriteLibrary*, unsigned int,
+                                  unsigned char**, unsigned int*);
+const unsigned char* OotCore_SpriteClip(const unsigned char*, unsigned int);
+
 /* First bytes of OOTCORE.BIN (oot-core.ld KEEPs .oot_entry at the load address). */
 extern "C" const OotCoreEntry oot_core_entry __attribute__((section(".oot_entry"), used)) = {
     OOT_CORE_MAGIC,
@@ -894,4 +986,12 @@ extern "C" const OotCoreEntry oot_core_entry __attribute__((section(".oot_entry"
     oot_core_cancel_transition_time,
     oot_core_npc_text,
     OotCore_DynaView,
+    OotCore_EffectView,
+    oot_core_play_destroy,
+    OotCore_PackBind,
+    OotCore_PackRelease,
+    OotCore_SceneLoad,
+    OotCore_SpritePreload,
+    OotCore_SpriteClip,
+    oot_core_water_boxes,
 };

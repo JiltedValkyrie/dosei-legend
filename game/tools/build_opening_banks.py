@@ -77,7 +77,7 @@ def forest_bank(rooms, track):
     return vertices, faces, tiles
 
 
-def house_panorama(oot, asset="LHVR", sides=4, rot_y=0.0):
+def house_panorama(oot, asset="LHVR", sides=4, rot_y=0.0, reduction_report=None):
     """z_vr_box.c: SKYBOX_HOUSE_LINK, sSkybox256FaceParams and 63x31 tiles.
 
     Four pre-rendered CI8 side images, each with its own RGBA16 palette.
@@ -118,6 +118,10 @@ def house_panorama(oot, asset="LHVR", sides=4, rot_y=0.0):
                     vertices.append(tuple(round(k * 16) for k in p))
                 faces.append(dict(idx=tuple(range(first, first + 4)),
                                   tex_off=tile, cull=False, mesh=False))
+    from build_hybrid_scene import halve_texture_tiles
+    tiles, halving = halve_texture_tiles(tiles)
+    if reduction_report is not None:
+        reduction_report.update(halving)
     return vertices, faces, tiles
 
 
@@ -177,7 +181,10 @@ def emit_opening_banks(oot, out, rooms, normal):
         raise ValueError('Navi track exceeds single-digit room bank names')
     for room, start in enumerate(range(0, len(track), BANK_FRAMES)):
         emit(asset_names.STORY_BANK_NAVI, room, forest_bank(rooms, track[start:start + BANK_FRAMES]))
-    emit(asset_names.STORY_BANK_PANORAMA, 0, house_panorama(oot))
+    halving = {}
+    emit(asset_names.STORY_BANK_PANORAMA, 0, house_panorama(oot, reduction_report=halving))
+    if halving['reductions']:
+        summaries[-1]['texture_halving'] = halving
     emit_flight_cache(out)
     import json
     (out / 'opening_banks.json').write_text(json.dumps(summaries, indent=2) + '\n')

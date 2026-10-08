@@ -20,6 +20,8 @@ typedef struct {
 
 /* Boot: load + init the blob and run the gate bench. False if not loaded. */
 bool oot_core_boot(void);
+/* Failed code-pack admission blocks gameplay until explicit scene restart. */
+bool oot_core_scene_failed(void);
 #include "gameplay.h"
 /* After gameplay_step (fixed 30 Hz). Starts/stops the decomp play state
 ** with the scene and steps it 2 of every 3 calls. `in` = that step's input. */
@@ -55,6 +57,9 @@ unsigned int oot_core_ocarina_song(void); /* completed source song + 1; consume 
 bool oot_core_ocarina_sun_allowed(void);
 bool oot_core_ocarina_sun_start(void);
 void oot_core_scene_restart(void); /* after a successful full scene reload */
+/* Release old scene resources before loading the next scene's native assets.
+ * Destructors run while their OOC/OOB/code pack is still resident. */
+void oot_core_scene_unload(void);
 /* Link's C-button tools on the decomp actors (bridge_items.cpp). Slot is the
 ** inventory slot; false = refused (no ammo/magic, one already out, no play). */
 bool oot_core_tool_use(unsigned int slot, const int32_t origin[3], uint16_t yaw, int16_t pitch);
@@ -62,6 +67,7 @@ bool oot_core_tool_holding(void);   /* bomb/Bombchu over Link's head */
 bool oot_core_tool_throw(void);
 bool oot_core_tool_pull(int32_t step_q8[3]); /* hookshot flight this step */
 void oot_core_tool_register(void);  /* C contact AT mirrors of live tools */
+void oot_core_tool_aim_draw(void);  /* one offline-baked first-person tool cel */
 /* Phase 2 draw shim meshes: upload after a bank reset, draw the items. */
 void oot_core_meshes_upload(void);
 void oot_core_meshes_draw(void);
@@ -86,6 +92,7 @@ static inline bool oot_core_owns_kokiri_props(void) { return oot_core_is_playing
 static inline bool oot_core_owns_kokiri_npcs(void) { return false; }
 #else
 static inline bool oot_core_is_playing(void) { return false; }
+static inline bool oot_core_scene_failed(void) { return false; }
 #define oot_core_frame(in) ((void)0)
 #define oot_core_skybox_time() 0x8000u
 #define oot_core_skybox_settings() 1u
@@ -110,12 +117,14 @@ static inline bool oot_core_tool_holding(void) { return false; }
 static inline bool oot_core_tool_throw(void) { return false; }
 static inline bool oot_core_tool_pull(int32_t step_q8[3]) { (void)step_q8; return false; }
 static inline void oot_core_tool_register(void) {}
+static inline void oot_core_tool_aim_draw(void) {}
 static inline unsigned int oot_core_ocarina_state(void) { return 0; }
 static inline unsigned int oot_core_ocarina_note(void) { return 0; }
 static inline unsigned int oot_core_ocarina_song(void) { return 0; }
 static inline bool oot_core_ocarina_sun_allowed(void) { return false; }
 static inline bool oot_core_ocarina_sun_start(void) { return false; }
 static inline void oot_core_scene_restart(void) {}
+static inline void oot_core_scene_unload(void) {}
 static inline int oot_core_prop(short id, int x, int z) { (void)id; (void)x; (void)z; return -1; }
 #endif
 

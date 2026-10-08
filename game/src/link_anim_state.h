@@ -130,6 +130,7 @@ void                link_anim_move_play(unsigned int clip, bool reverse,
 void                link_anim_push_play(unsigned int clip);
 /* Water controller owns the clip clock and collision travel. */
 void                link_anim_swim_play(unsigned int clip);
+void                link_anim_water_step_up(int32_t y_dist, bool adult);
 /* One step at |playSpeed| x 30 (30ths of a frame). LinkAnimation_Once: true,
 ** with no motion, when the play already sat at its end as the step began.
 ** Else `delta` = this step's root motion, raw model units, model-local (the

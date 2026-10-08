@@ -3,8 +3,8 @@
  * but Link is still the C player (player_*.c). Until z_player is imported,
  * ACTOR_PLAYER is this stand-in: same profile header as z_player_call.c
  * (id, category, flags, object, sizeof(Player)), with an update that copies
- * C Link's pose in. Everything else in Player stays zero: no state flags,
- * no held/talk/focus actor.
+ * C Link's pose in, source combat colliders and the existing item/talk
+ * handshakes. C remains the health/movement owner until real Player cutover.
  *
  * Replace by importing z_player_call.c + ovl_player_actor; then delete this
  * file (bridge_tables picks the real Player_Profile up automatically).
@@ -24,6 +24,11 @@
 #include "controller.h"
 #include "save.h"
 #include "bgcheck_bounds.h"
+#include "oot_core_host.h"
+
+extern const OotCoreHost* gOotCoreHost;
+static OotCoreCombatState sCombat;
+static u16 sSwordSwing;
 
 /* Set by oot_core_set_player (oot_core_api.cpp), read in update. */
 Vec3f gOotCorePlayerPos;
@@ -118,13 +123,18 @@ u8 Player_UpdateWeaponInfo(PlayState* play, ColliderQuad* collider, WeaponInfo* 
 
 /* Player_UpdateMeleeWeaponInfo for the C sword. APPROXIMATE: the C side
  * gives one blade line, so only quad 0 sweeps (the real player offsets two
- * lines from the left hand). dmgFlags as func_80837948 for a Kokiri Sword
- * slash (func_80837918); jump/spin flags not passed yet. */
+ * lines from the left hand). The host snapshot supplies source sword/stick
+ * damage flags, including jump and spin attacks. */
 static void PlayerProxy_UpdateSword(Player* this, PlayState* play) {
     WeaponInfo* w = &this->meleeWeaponInfo[1];
+    this->meleeWeaponState = gOotCoreSwordActive ? 1 : 0;
     if (!gOotCoreSwordActive) {
         w->active = false; /* func_80832318 */
         return;
+    }
+    if (sSwordSwing != sCombat.swing) {
+        w->active = false;
+        sSwordSwing = sCombat.swing;
     }
     /* func_80837918 sword rows: Kokiri 1, Master 2, Biggoron 4. */
     if (!LINK_IS_ADULT) {
@@ -136,6 +146,10 @@ static void PlayerProxy_UpdateSword(Player* this, PlayState* play) {
     } else {
         this->meleeWeaponQuads[0].elem.atDmgInfo.dmgFlags = DMG_SLASH_MASTER;
         this->meleeWeaponQuads[0].elem.atDmgInfo.damage = 2;
+    }
+    if (sCombat.damage_flags) {
+        this->meleeWeaponQuads[0].elem.atDmgInfo.dmgFlags = sCombat.damage_flags;
+        this->meleeWeaponQuads[0].elem.atDmgInfo.damage = sCombat.damage;
     }
     this->meleeWeaponQuads[0].elem.atElemFlags = ATELEM_ON | ATELEM_NEAREST;
     if (!w->active) {
@@ -173,11 +187,20 @@ static void PlayerProxy_Sync(Actor* thisx) {
     thisx->focus.rot.y = gOotCorePlayerYaw;
     /* Floor switches, currents and actors read the equipped boots. */
     ((Player*)thisx)->currentBoots = (s8)(CUR_EQUIP_VALUE(EQUIP_TYPE_BOOTS) - 1);
+    sCombat = {};
+    if (gOotCoreHost && gOotCoreHost->player_combat) gOotCoreHost->player_combat(&sCombat);
+    Player* player = (Player*)thisx;
+    player->invincibilityTimer = (sCombat.flags & OOT_COMBAT_INTANGIBLE) ? 1 :
+        (sCombat.flags & OOT_COMBAT_DODGE) ? -1 : 0;
+    player->currentShield = sCombat.shield;
+    if (sCombat.flags & OOT_COMBAT_SHIELD) player->stateFlags1 |= PLAYER_STATE1_SHIELDING;
+    else player->stateFlags1 &= ~PLAYER_STATE1_SHIELDING;
 }
 
 static void PlayerProxy_Init(Actor* thisx, PlayState* play) {
     Player* this = (Player*)thisx;
     sSariaSongTalk = 0;
+    sSwordSwing = 0;
     /* Player_Init: thisx->room = -1. Otherwise func_80031B14 deletes Player
      * on the first room change and every tool/talk loses GET_PLAYER. */
     thisx->room = -1;
@@ -187,6 +210,16 @@ static void PlayerProxy_Init(Actor* thisx, PlayState* play) {
     thisx->colChkInfo.mass = 50;
     Collider_InitQuad(play, &this->meleeWeaponQuads[0]);
     Collider_SetQuad(play, &this->meleeWeaponQuads[0], thisx, &sMeleeWeaponQuadInit);
+    Collider_InitQuad(play, &this->shieldQuad);
+    Collider_SetQuad(play, &this->shieldQuad, thisx, &sMeleeWeaponQuadInit);
+    this->shieldQuad.base.atFlags = AT_ON | AT_TYPE_PLAYER;
+    this->shieldQuad.base.colMaterial = COL_MATERIAL_METAL;
+    this->shieldQuad.base.acFlags = AC_ON | AC_HARD | AC_TYPE_ENEMY;
+    this->shieldQuad.elem.atElemFlags = ATELEM_ON | ATELEM_SFX_NORMAL;
+    this->shieldQuad.elem.atDmgInfo.dmgFlags = DMG_SHIELD;
+    this->shieldQuad.elem.atDmgInfo.damage = 0;
+    this->shieldQuad.elem.acElemFlags = ACELEM_ON;
+    this->shieldQuad.elem.acDmgInfo.dmgFlags = 0xDFCFFFFF;
     gOotCorePlayerPos = thisx->world.pos;
     gOotCorePlayerYaw = thisx->world.rot.y;
     PlayerProxy_Sync(thisx);
@@ -195,6 +228,7 @@ static void PlayerProxy_Init(Actor* thisx, PlayState* play) {
 static void PlayerProxy_Destroy(Actor* thisx, PlayState* play) {
     Collider_DestroyCylinder(play, &((Player*)thisx)->cylinder);
     Collider_DestroyQuad(play, &((Player*)thisx)->meleeWeaponQuads[0]);
+    Collider_DestroyQuad(play, &((Player*)thisx)->shieldQuad);
 }
 
 /* Player's get-item handling (func_8083E5A8) for the drops En_Item00 offers
@@ -358,7 +392,80 @@ static void PlayerProxy_UpdateTalk(Player* this, PlayState* play) {
  * start of this update (CollisionCheck_OC), so the displacement in
  * colChkInfo is the push from immovable/heavier actors (an En_Ko blocking a
  * path). The real player applies it in Actor_UpdatePos; the C player does. */
+static void PlayerProxy_ReceiveHit(Player* this, PlayState* play) {
+    OotCorePlayerHit hit = {};
+    bool ready = false;
+    if (!(sCombat.flags & OOT_COMBAT_DISABLED) && this->knockbackType != PLAYER_KNOCKBACK_NONE &&
+        (this->knockbackType >= PLAYER_KNOCKBACK_LARGE || !(sCombat.flags & OOT_COMBAT_INTANGIBLE))) {
+        int speed = OotCore_BgInt(this->knockbackSpeed);
+        if (speed < 0) speed = 0;
+        if (speed > 64) speed = 64;
+        hit.speed_q16 = speed * 65536;
+        hit.yaw = this->knockbackRot;
+        unsigned int damage = this->actor.colChkInfo.damage + this->knockbackDamage;
+        hit.damage = (sCombat.flags & (OOT_COMBAT_INTANGIBLE | OOT_COMBAT_DODGE)) ? 0 :
+            damage > 255 ? 255 : damage;
+        if (this->knockbackType >= PLAYER_KNOCKBACK_LARGE) hit.flags |= OOT_HIT_LARGE;
+        hit.effect = this->knockbackType == PLAYER_KNOCKBACK_LARGE_ELECTRIFIED ?
+            HIT_SPECIAL_EFFECT_ELECTRIC : HIT_SPECIAL_EFFECT_NONE;
+        ready = true;
+    } else if (this->shieldQuad.base.acFlags & AC_BOUNCED) {
+        hit.flags = OOT_HIT_GUARD;
+        ready = true;
+    } else if (!(sCombat.flags & (OOT_COMBAT_INTANGIBLE | OOT_COMBAT_DISABLED))) {
+        if ((this->cylinder.base.acFlags & AC_HIT) && this->cylinder.base.ac) {
+            hit.speed_q16 = 4 * 65536;
+            hit.yaw = Actor_WorldYawTowardActor(this->cylinder.base.ac, &this->actor);
+            hit.damage = this->actor.colChkInfo.damage;
+            hit.effect = this->actor.colChkInfo.acHitSpecialEffect;
+            if (hit.effect == HIT_SPECIAL_EFFECT_KNOCKBACK) hit.flags |= OOT_HIT_LARGE;
+            ready = true;
+        }
+    }
+    if (ready && gOotCoreHost && gOotCoreHost->player_hit && gOotCoreHost->player_hit(&hit) &&
+        !(hit.flags & OOT_HIT_GUARD)) sCombat.flags |= OOT_COMBAT_INTANGIBLE;
+    /* Results belong to one 20 Hz step, including skipped host frames. */
+    this->knockbackType = PLAYER_KNOCKBACK_NONE;
+    this->knockbackDamage = 0;
+    Collider_ResetCylinderAC(play, &this->cylinder.base);
+    Collider_ResetQuadAC(play, &this->shieldQuad.base);
+}
+
+static void PlayerProxy_UpdateShield(Player* this, PlayState* play) {
+    if (!(sCombat.flags & OOT_COMBAT_SHIELD) || (sCombat.flags & OOT_COMBAT_DISABLED)) return;
+    /* Semantic shield plane, matching the C forward guard volume. No pose
+     * evaluation in the proxy; real Player will replace this approximation. */
+    f32 sine = Math_SinS(this->actor.shape.rot.y), cosine = Math_CosS(this->actor.shape.rot.y);
+    Vec3f a = this->actor.world.pos, b, c, d;
+    a.x += sine * 18; a.z += cosine * 18;
+    /* Nutsball/Okuta obtain reflection yaw from shieldMf, then add 0x8000.
+     * Its local +Z therefore points into this planar shield: the source
+     * conversion sends a bounced projectile outward along Link's facing.
+     * This semantic transform shares the C guard plane; no pose evaluation. */
+    MtxF* shield = &this->shieldMf;
+    for (s32 i = 0; i < 4; ++i)
+        for (s32 j = 0; j < 4; ++j) shield->mf[i][j] = 0;
+    shield->mf[0][0] = shield->mf[2][2] = -cosine;
+    shield->mf[0][2] = sine;
+    shield->mf[2][0] = -sine;
+    shield->mf[1][1] = shield->mf[3][3] = 1;
+    shield->mf[3][0] = a.x;
+    shield->mf[3][1] = a.y;
+    shield->mf[3][2] = a.z;
+    b = c = d = a;
+    a.x += cosine * 20; a.z -= sine * 20; a.y += LINK_IS_ADULT ? 70 : 55;
+    b.x -= cosine * 20; b.z += sine * 20; b.y = a.y;
+    c.x += cosine * 20; c.z -= sine * 20;
+    d.x -= cosine * 20; d.z += sine * 20;
+    Collider_SetQuadVertices(&this->shieldQuad, &a, &b, &c, &d);
+    this->shieldQuad.base.colMaterial = this->currentShield == PLAYER_SHIELD_DEKU ?
+        COL_MATERIAL_WOOD : COL_MATERIAL_METAL;
+    CollisionCheck_SetAC(play, &play->colChkCtx, &this->shieldQuad.base);
+    CollisionCheck_SetAT(play, &play->colChkCtx, &this->shieldQuad.base);
+}
+
 static void PlayerProxy_UpdateBody(Player* this, PlayState* play) {
+    PlayerProxy_ReceiveHit(this, play);
     gOotCorePlayerPushX += (s32)this->actor.colChkInfo.displacement.x;
     gOotCorePlayerPushZ += (s32)this->actor.colChkInfo.displacement.z;
     this->actor.colChkInfo.mass = (this->stateFlags1 & PLAYER_STATE1_29) ? MASS_IMMOVABLE : 50;
@@ -367,10 +474,37 @@ static void PlayerProxy_UpdateBody(Player* this, PlayState* play) {
     this->cylinder.dim.height = LINK_IS_ADULT ? 78 : 60;
     Collider_UpdateCylinder(&this->actor, &this->cylinder);
     CollisionCheck_SetOC(play, &play->colChkCtx, &this->cylinder.base);
+    if (!(sCombat.flags & (OOT_COMBAT_INTANGIBLE | OOT_COMBAT_DISABLED)))
+        CollisionCheck_SetAC(play, &play->colChkCtx, &this->cylinder.base);
+    PlayerProxy_UpdateShield(this, play);
 }
 
 static void PlayerProxy_Update(Actor* thisx, PlayState* play) {
     PlayerProxy_Sync(thisx);
+    if (play->sceneId == SCENE_HYRULE_FIELD) {
+        /* Source En_Encount1 excludes roads, air, dynamic floors and water.
+         * Read the shared source collision world without moving host Link. */
+        Player* player = (Player*)thisx;
+        Vec3f probe = thisx->world.pos;
+        s32 bgId = BGCHECK_SCENE;
+        WaterBox* water;
+        f32 waterY = thisx->world.pos.y;
+        probe.y += 50;
+        thisx->floorHeight = BgCheck_EntityRaycastDown4(&play->colCtx, &thisx->floorPoly,
+                                                       &bgId, thisx, &probe);
+        thisx->floorBgId = bgId;
+        thisx->bgCheckFlags &= ~(BGCHECKFLAG_GROUND | BGCHECKFLAG_WATER);
+        if (thisx->floorPoly && thisx->world.pos.y >= thisx->floorHeight - 3 &&
+            thisx->world.pos.y <= thisx->floorHeight + 3)
+            thisx->bgCheckFlags |= BGCHECKFLAG_GROUND;
+        player->floorSfxOffset = thisx->floorPoly ?
+            SurfaceType_GetSfxOffset(&play->colCtx, thisx->floorPoly, bgId) : SURFACE_SFX_OFFSET_DIRT;
+        thisx->depthInWater = BGCHECK_Y_MIN;
+        if (BgCheck_GetWaterSurface(play, &play->colCtx, probe.x, probe.z, &waterY, &water)) {
+            thisx->depthInWater = waterY - thisx->world.pos.y;
+            if (thisx->depthInWater >= 0) thisx->bgCheckFlags |= BGCHECKFLAG_WATER;
+        }
+    }
     PlayerProxy_UpdateBody((Player*)thisx, play);
     PlayerProxy_GetItem((Player*)thisx, play);
     PlayerProxy_UpdateSword((Player*)thisx, play);

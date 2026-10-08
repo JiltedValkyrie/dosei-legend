@@ -58,7 +58,8 @@ class ItemSprites(unittest.TestCase):
                 entry = self.manifest[name]
                 self.assertEqual((entry['w'], entry['h'], entry['poses']), (w, h, poses))
                 # Cap from the baker's table (hero gear is 2x linear).
-                self.assertLessEqual(h, 48 if name == 'ITMEXP' else self.items.SHEETS[name][3])
+                self.assertLessEqual(h, 48 if name == 'ITMEXP' else
+                                     self.items.AIM_SIZE if name == 'ITMAIM' else self.items.SHEETS[name][3])
                 if name in self.items.ANCHORS:
                     self.assertIn('hand' if name not in ('ITMIRB', 'ITMHOB') else 'leg', entry['anchor'])
                 if name == 'ITMEXP':
@@ -79,6 +80,18 @@ class ItemSprites(unittest.TestCase):
                 if name == 'ITMBGS':
                     self.assertGreater(entry['blade_length'], 10)
                     self.assertTrue(any(cel(s, 0, 0)))
+
+    def test_aim_tools_share_one_bounded_cel_and_keep_distinct_source_shapes(self):
+        s = (self.out / 'ITMAIM.SPR').read_bytes()
+        entry = self.manifest['ITMAIM']
+        self.assertEqual(len(s), 10296)
+        self.assertEqual(self.items.vram_bytes(entry), 2080)
+        self.assertEqual(entry['screen_atlas'][:3], ['slingshot', 'bow', 'hookshot'])
+        self.assertEqual(len(set(cel(s, 0, i) for i in range(3))), 3)
+        for i in range(3):
+            self.assertTrue(any(cel(s, 0, i)))
+        for i in (3, 4):
+            self.assertFalse(any(cel(s, 0, i)))
 
 
 class ThickenArrow(unittest.TestCase):

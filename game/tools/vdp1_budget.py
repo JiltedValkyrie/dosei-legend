@@ -70,9 +70,12 @@ RUNTIME_SPRITES = (
     ('minimap markers', 9, 8, 8, 1),
 )
 HIT_FILTER_BYTES = 32 * 8  # resident Gouraud tables, no sprite slots
-RUNTIME_SPRITE_BYTES = HIT_FILTER_BYTES + sum(n * ((w * h * bpp + 7) // 8 * 8)
+# Shared first-person hand/tool cel. Uploaded in the actor bank, but reserve
+# beside every room and reachable actor set rather than spend the spare margin.
+AIM_TOOL_BYTES = 64 * 64 // 2 + CLUT_BYTES
+RUNTIME_SPRITE_BYTES = HIT_FILTER_BYTES + AIM_TOOL_BYTES + sum(n * ((w * h * bpp + 7) // 8 * 8)
                            for _, n, w, h, bpp in RUNTIME_SPRITES)
-RUNTIME_SPRITE_SLOTS = sum(n for _, n, _, _, _ in RUNTIME_SPRITES)
+RUNTIME_SPRITE_SLOTS = 1 + sum(n for _, n, _, _, _ in RUNTIME_SPRITES)
 
 # Prefer lower forest bake density to filling VRAM to 99%. This is spare
 # capacity after all current residents, not a substitute for counting them.

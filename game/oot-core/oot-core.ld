@@ -25,7 +25,7 @@ SECTIONS
 {
     . = OOT_CORE_LOAD_ADDR;
     .oot_entry : { KEEP(*(.oot_entry)) }
-    .text : { *(.text .text.*) }
+    .text : { _oot_core_text_start = .; *(.text .text.*) _oot_core_text_end = .; }
     .rodata : { *(.rodata .rodata.*) }
     .data : {
         *(.data .data.*)

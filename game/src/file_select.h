@@ -18,9 +18,10 @@
 ** renderer can leave the row out rather than draw a button that does nothing.
 */
 
-/* Cursor rows: the three files, then the erase row. */
+/* Cursor rows: three files, erase, then the debug level selector. */
 #define FILE_SELECT_ROW_ERASE   SAVE_FILE_SLOTS
-#define FILE_SELECT_ROWS        (SAVE_FILE_SLOTS + 1)
+#define FILE_SELECT_ROW_DEBUG   (SAVE_FILE_SLOTS + 1)
+#define FILE_SELECT_ROWS        (SAVE_FILE_SLOTS + 2)
 
 typedef enum
 {
@@ -43,7 +44,8 @@ typedef enum
     FILE_SELECT_NONE = 0,       /* still on the screen */
     FILE_SELECT_START_NEW,      /* begin a new game in `slot` */
     FILE_SELECT_START_LOAD,     /* continue the file in `slot` */
-    FILE_SELECT_BACK            /* cancelled: return to the title */
+    FILE_SELECT_BACK,           /* cancelled: return to the title */
+    FILE_SELECT_DEBUG
 }               file_select_result;
 
 typedef struct

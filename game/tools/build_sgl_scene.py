@@ -433,6 +433,12 @@ def main():
             continue
         data, head, verts, faces = read_scene(source)
         tiles = collect_tiles(data, head, faces)
+        if name == 'link':
+            from build_hybrid_scene import halve_texture_tiles
+            import json
+            tiles, halving = halve_texture_tiles(tiles, kind='actor')
+            if halving['reductions']:
+                (args.out / 'link_texture_halving.json').write_text(json.dumps(halving, indent=2) + '\n')
         if name == 'kokiri' and args.texture_path != 'legacy':
             from build_hybrid_scene import convert
             actor = dict(tiles=[], polygons=0, vertices=0)
@@ -447,6 +453,12 @@ def main():
                                                quad_obj=args.quad_obj, source_path=args.scene)
         if args.diagnostic_tiles and name == 'kokiri':
             replace_with_checker(tiles)
+        if name == 'kokiri' and args.texture_path == 'legacy':
+            from build_hybrid_scene import halve_texture_tiles
+            import json
+            tiles, halving = halve_texture_tiles(tiles)
+            if halving['reductions']:
+                (args.out / 'legacy_texture_halving.json').write_text(json.dumps(halving, indent=2) + '\n')
         blob_bytes = emit(head, verts, faces, tiles, args.out, name)
         total_polygons += len(faces)
         if name == 'link':

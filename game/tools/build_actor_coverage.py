@@ -30,7 +30,9 @@ LAYERS = ['child_day', 'child_night', 'adult_day', 'adult_night']
 
 
 def uncomment(text):
-    return re.sub(r'/\*.*?\*/|//[^\n]*', '', text, flags=re.S)
+    # Preserve source locations for every generated call-site reference.
+    return re.sub(r'/\*.*?\*/|//[^\n]*',
+                  lambda match: re.sub(r'[^\n]', ' ', match[0]), text, flags=re.S)
 
 
 def call_args(text, start):
@@ -59,9 +61,17 @@ def spawn_edges(text, path):
         expr = args[index] if index < len(args) else '<transition table>'
         targets = sorted(set(re.findall(r'\bACTOR_[A-Z0-9_]+\b', expr)))
         direct = len(targets) == 1 and expr == targets[0]
+        resolution = 'direct' if direct else 'review_indirect'
+        if re.fullmatch(r'[A-Za-z_]\w*', expr) and not direct:
+            # Source-backed finite local id assignments (En_Encount1's
+            # spawnId, for example). Unknown writes keep the gate unresolved.
+            assignments = re.findall(r'\b' + re.escape(expr) + r'\s*=\s*([^;]+);', text)
+            if assignments and all(re.fullmatch(r'ACTOR_[A-Z0-9_]+', a.strip()) for a in assignments):
+                targets = sorted({a.strip() for a in assignments})
+                resolution = 'finite_source_assignments'
         edges.append({'line': text.count('\n', 0, match.start()) + 1,
                       'call': match[1], 'actor_expression': expr,
-                      'targets': targets, 'resolution': 'direct' if direct else 'review_indirect',
+                      'targets': targets, 'resolution': resolution,
                       'source': path})
     return edges
 
@@ -114,7 +124,39 @@ def closure(roots, actors):
 
 def sheets(rows, folder):
     result = {}
-    for oid, limbs, clip, key in rows:
+    if rows and len(rows[0]) >= 5:
+        from build_sprite_keys import groups
+        symbols = (GAME / 'build/oot-core/obj_syms.ld').read_text(encoding='utf-8')
+        for index, ((oid, skeleton), clips) in enumerate(groups(rows, symbols).items()):
+            name = 'G%03X%02X.SP2' % (oid, index)
+            path = folder / name
+            record = {'object_id': oid, 'skeleton_key': skeleton, 'package': name,
+                      'clips': [clip[2] for clip in clips],
+                      'status': 'baked' if path.is_file() else 'missing'}
+            if path.is_file():
+                blob = path.read_bytes()
+                if len(blob) < 16:
+                    raise ValueError('invalid sprite archive: ' + name)
+                magic, version, count, key, size = struct.unpack_from('>4sHHII', blob)
+                if (magic != b'SPR2' or version != 2 or count != len(clips) or key != skeleton or
+                        size != len(blob) or count > (len(blob) - 16) // 12):
+                    raise ValueError('invalid sprite archive: ' + name)
+                max_cel = 0
+                for slot, (animation, _, _) in enumerate(clips):
+                    anim, offset, length = struct.unpack_from('>III', blob, 16 + slot * 12)
+                    if anim != animation or offset < 16 + count * 12 or length < 52 or offset + length > len(blob):
+                        raise ValueError('invalid sprite archive clip: ' + name)
+                    sheet = blob[offset:offset + length]
+                    if sheet[:4] != b'SPR1':
+                        raise ValueError('invalid sprite archive clip: ' + name)
+                    width, height = struct.unpack_from('>2H', sheet, 4)
+                    max_cel = max(max_cel, ((width * height // 2 + 31) & ~31) + 32)
+                record.update(cart_bytes=len(blob) + 1, vdp1_instance_bytes=max_cel,
+                              sha256=hashlib.sha256(blob).hexdigest())
+            result.setdefault(oid, []).append(record)
+        return result
+    for row in rows:
+        oid, limbs, clip, key = row[:4]
         name = f'G{oid:03X}{key:02X}.SPR'
         path = folder / name
         record = {'object_id': oid, 'limbs': limbs, 'clip': clip, 'package': name,
@@ -134,7 +176,7 @@ def sheets(rows, folder):
 
 def build(oot, asset_root, sprite_rows=(), sprite_dir=None, registrations=(), horse_rows=()):
     enums, _ = imp.object_ids(oot)
-    packages = sheets(sprite_rows, sprite_dir or GAME / 'build/generated/npcs')
+    packages = sheets(sprite_rows, sprite_dir or GAME / 'build/cd')
     profiles = {}
     sources = {}
     for path in sorted((oot / 'src').rglob('*.c')):
@@ -145,28 +187,34 @@ def build(oot, asset_root, sprite_rows=(), sprite_dir=None, registrations=(), ho
         for match in PROFILE.finditer(text):
             fields = [v.strip() for v in uncomment(match[2]).split(',')]
             if len(fields) >= 9:
-                profiles[fields[0]] = (fields, rel, text)
+                # Some source profiles deliberately contain a different actor
+                # id (En_Goma says BOSS_GOMA). The overlay table's symbol is
+                # authoritative; indexing by that field overwrites real bosses.
+                profiles[match[1].removesuffix('_Profile')] = (fields, rel, text)
         sources[rel] = text
-    imported = set(imp.SOURCES)
+    field_sources = set(imp.field_enemy_sources.SOURCES)
+    imported = set(imp.SOURCES) | field_sources
     generic = {actor for actor, _ in imp.GENERIC_NPC_SOURCES}
+    generic.update('ACTOR_' + name.upper() for name in imp.field_enemy_sources.ACTORS[1:])
     actors = {}
     table = (oot / 'include/tables/actor_table.h').read_text(encoding='utf-8')
+    actor_enums = {m[3] for m in TABLE.finditer(table)}
     for match in TABLE.finditer(table):
         aid, symbol, enum = match.groups()
-        fields, rel, text = profiles.get(enum, ([], None, ''))
+        fields, rel, text = profiles.get(symbol, ([], None, ''))
         category = fields[1] if fields else None
         obj = fields[3] if fields else None
         oid = enums.get(obj)
         edges = spawn_edges(text, rel) if rel else []
         # Direct spawn edges plus all actor constants conservatively cover table
         # candidates. References are labelled as candidates, not proven spawns.
-        candidates = sorted(set(re.findall(r'\bACTOR_[A-Z0-9_]+\b', text)) - {enum})
+        candidates = sorted((set(re.findall(r'\bACTOR_[A-Z0-9_]+\b', text)) & actor_enums) - {enum})
         deps = sorted({t for edge in edges for t in edge['targets']})
-        if any(e['resolution'] != 'direct' for e in edges):
+        if any(e['resolution'] == 'review_indirect' for e in edges):
             deps = sorted(set(deps + candidates))
         if enum == 'ACTOR_PLAYER':
             policy = 'link_separate'
-        elif category == 'ACTORCAT_BOSS' or symbol.startswith('Boss_'):
+        elif category == 'ACTORCAT_BOSS':
             policy = 'boss_exempt_preserve_complex_hitboxes'
         elif category in ('ACTORCAT_NPC', 'ACTORCAT_ENEMY') or enum in CHARACTERS:
             policy = 'sprite_required'
@@ -183,13 +231,16 @@ def build(oot, asset_root, sprite_rows=(), sprite_dir=None, registrations=(), ho
             blockers.append('gameplay owner / native parity not verified')
         if policy == 'sprite_required' and not own_packages:
             blockers.append('sprite recipe/package mapping unverified or missing')
-        if any(e['resolution'] != 'direct' for e in edges):
+        if any(e['resolution'] == 'review_indirect' for e in edges):
             blockers.append('indirect spawn expression requires source/runtime review')
         blockers.append('era/time/params/story/dialogue/reward/persistence scenarios not accepted')
         actors[enum] = {'id': int(aid, 16), 'symbol': symbol, 'category': category,
+                       'profile_declared_id': fields[0] if fields else None,
+                       'profile_instance_size': fields[4] if fields else None,
                        'object': obj, 'object_id': oid, 'source': rel,
                        'source_sha256': hashlib.sha256(text.encode()).hexdigest(),
                        'visual_policy': policy, 'gameplay_owner': status,
+                       'scene_pack_scope': [81] if rel in field_sources else None,
                        'clip_candidates': anims, 'source_predicates': predicates,
                        'source_condition_sites': condition_sites(text),
                        'dialogue_reward_sites': [
@@ -265,7 +316,10 @@ def build(oot, asset_root, sprite_rows=(), sprite_dir=None, registrations=(), ho
                 record['rooms'].append({'room': room.name, 'layers': variants})
         reached = closure(roots, actors)
         record['reachable_actor_candidates'] = reached
-        record['missing_gameplay_candidates'] = [a for a in reached if actors.get(a, {}).get('gameplay_owner') != 'decomp_imported']
+        record['missing_gameplay_candidates'] = [a for a in reached
+            if actors.get(a, {}).get('gameplay_owner') != 'decomp_imported' or
+            (actors.get(a, {}).get('scene_pack_scope') is not None and
+             record['id'] not in actors[a]['scene_pack_scope'])]
         record['budget'] = {'room_plus_actor_effect_peak': None,
                             'reason': 'simultaneous dynamic spawn and native actor sets require review'}
         record['blockers'] = ['source predicates need scenario review', 'dynamic multiplicity/indirect calls unresolved',

@@ -1,5 +1,38 @@
 # Real Player migration — working inventory, 2026-10-06
 
+Inventory preservation follow-up (2026-10-08): human requests all inventory via
+source Player paths, retaining the digital aiming crosshair. Source first-person
+sprites are allowed when meshes cannot fit. Preserve Biggoron/Mirror equip fixes
+and blue Hylian / red-and-silver Mirror fallback when their textures cannot fit.
+The detailed action/source/gap map is
+[INVENTORY_SOURCE_AUDIT_2026-10-08.md](INVENTORY_SOURCE_AUDIT_2026-10-08.md).
+The active first wave repairs source projectile motion/Draw-side collisions,
+source-to-C sweeps, magic-arrow admission, aim art and gear presentation. Host
+checks and the matching Clean target pass; human runtime acceptance remains open.
+Evidence: [INVENTORY_HANDOFF_2026-10-08.md](INVENTORY_HANDOFF_2026-10-08.md).
+These repairs retain temporary C Player ownership and do not complete migration.
+Every source inventory mutation needs one owner and a matching save commit;
+the current mirror must not overwrite new core bottle/ammo/magic changes.
+
+Current memory gate (2026-10-08): W0a and inventory repairs change the resident
+core and its shared services. The 2026-10-06 core/Player retention and partition figures below are
+historical measurements, not current available space. Before Player cutover,
+rerun combined retention and region placement against the current inventory ELF/BIN and
+matching objects, including current adapters, collision proxies, animation
+cache/metadata, alignment and scene-load peaks. Do not carry forward the old
+20,692 B, 11,808 B or 2,514 B margins, or infer fit by adding an old Player
+delta to the new core size. Require a resolved link, region/overlap guards and
+actual allocation budgets; preserve heap/actor capacities. The matching inventory
+build (`build/inventory-disc-build.log`) measures resident core text 401,340 B,
+data 46,512 B and BSS 62,332 B: **510,184 B total**. Main .bss ends at
+`0x06083900`, leaving **1,792 B** before SGL. This supersedes W0a's 508,560 B
+core/288 B main margin, all-map's 3,824 B margin and water/menu's 2,240 B margin.
+Combined Player retention, region placement and resulting fit remain pending
+remeasurement. Preserve the all-map allocation changes: entries/portals in
+SCENETAB.BIN, exact large collision allocations and pre-load resource teardown;
+see [ALL_MAPS_HANDOFF_2026-10-08.md](ALL_MAPS_HANDOFF_2026-10-08.md). Exact large
+C collision remains temporary migration debt, not the unified core world.
+
 Astra shim review (2026-10-06; source inspection, tests not rerun):
 The isolated shim/proxy implementation and integer bounding-center importer fix
 are present. Reported 177-row host comparison is not live integration acceptance.
@@ -218,8 +251,9 @@ sh-elf 9.3, makefile target flags) compiles the three objects into
 
 - SH-2 compile PASS all three. Wide audit: 0 helpers/soft-float; 293 dmuls (allowed).
 - Size (pre gc-sections upper bound): z_player 134,755 B, z_player_lib 15,994,
-  z_player_call 300 = **151,049 B**. Live blob ends at 501,840 B of the 0x90000
-  carve: **87,984 B headroom. Does not fit.** Retiring C Link frees main RAM,
+  z_player_call 300 = **151,049 B**. At this checkpoint the live blob ended at
+  501,840 B of the 0x90000 carve: **87,984 B headroom. Did not fit.** These
+  figures predate W0a and are not current headroom. Retiring C Link frees main RAM,
   not this carve. Memory placement is the first blocker before any link.
 - Strong duplicates (retire live owner, never suppress): Player_Profile,
   Player_UpdateWeaponInfo (bridge_player); Player_GetMask, Player_InCsMode,
@@ -318,7 +352,7 @@ capacity change made.
 New `oot-core/tests/measure_player_placement.sh` runs
 `tools/measure_player_placement.py`. It compiles temporary bridge copies with
 the nine duplicate definitions removed (declarations/callers kept), then runs
-relocatable section GC over **all 80 current core objects plus Player**, including
+relocatable section GC over **all 80 core objects at that checkpoint plus Player**, including
 actual SH-2 libgcc. No duplicate-symbol suppression. Entry, ctor and keep_ph
 roots match the production linker. A third case compiles and retains real
 source player_anim_headers.c metadata. Missing backends, frames and skeleton
@@ -342,8 +376,9 @@ engine code. The 4,168 B animation headers already leave the original candidate
 alignment. C Link retirement gets no memory credit. Combined disassembly passes
 the wide audit: 1,700 allowed hardware multiplies, zero failing sites.
 
-Placement design to implement next: **one statically linked resident core across
-five regions**, retaining the current core base/entry address:
+Candidate placement design recorded at this checkpoint: **one statically linked
+resident core across five regions**, retaining the core base/entry address.
+Remeasure with the final W0a baseline before accepting this partition:
 
 | Region (cached address) | Bytes | Intended use |
 | --- | ---: | --- |
@@ -353,8 +388,9 @@ five regions**, retaining the current core base/entry address:
 | 0x026EC800 retired cart MUSICTRG reservation | 20,480 | Player readonly data/code overflow |
 | 0x02683800 retired cart FAIRY reservation | 4,096 | small resident section group |
 
-Total candidate capacity **679,936 B**; **20,692 B remains before missing
-dependencies/alignment** with measured headers included. These are design
+Total candidate capacity **679,936 B**; the historical probe left **20,692 B
+before missing dependencies/alignment** with measured headers included. This
+is not current W0a headroom. These are design
 addresses, not installed allocations or proven final fit. Source audit finds no
 runtime consumer of either retired cart reservation; main.c loads MUSICTRG into
 RAM_LOW_MUSICTRG, and fairy rendering uses sprites. Existing ram_cart layout
@@ -396,8 +432,9 @@ discarded pause draw: 0 B.
 | object_link_boy + object_link_child blobs (real skeleton/limbs, 267 + 237 one-word DL/texture keys) | existing object pipeline + object.ld | 4,912 |
 | **Total** | | **8,884** |
 
-Against Astra's 20,692 B slack: about **11,808 B left**, before frame bank,
-alignment and adapter growth. Assumes both age skeletons resident (2,576 adult
+Against that checkpoint's 20,692 B slack: about **11,808 B left**, before frame
+bank, alignment and adapter growth. This estimate predates W0a and must be
+remeasured. It assumed both age skeletons resident (2,576 adult
 alone). Real sources not used: z_scene_table 6,224 B and object_table 3,216 B
 (adapters replace them). z_camera, z_kankyo and z_scene do not compile yet;
 they are host-owned anyway, so not needed. The 42 B mean is from simple
@@ -680,7 +717,9 @@ Partition `tools/partition_core_regions.py` -> `build/player-migration/regions/`
 core+Player+anim headers, 664,763 B in 3,461 sections. Entry/data/ctors/
 keep_ph/bss stay in the main carve; text/rodata fill LOWA 40,960, LOWB 24,576,
 MUSIC 20,480, FAIRY 4,096 completely. Main carve: 587,310 used incl. 12,332
-reserved (hook adapters 8,884 est., slot table, adapter code); 2,514 B free.
+reserved (hook adapters 8,884 est., slot table, adapter code); 2,514 B free
+in that historical partition. W0a invalidates this as a current free-space
+claim; regenerate from the final matching core objects before Player placement.
 Plan only, not a resolved link. Relative Low RAM/cart execution cost is
 unmeasured; compare target timing.
 
@@ -920,8 +959,10 @@ Astra review fixes, all isolated and host-tested:
   - Transformed copies use the core DynaPoly pool (512 polys / 512 vertices /
     1000 nodes, already allocated in the core play arena). Proxies now share
     it with core actors: count per scene before cutover.
-  Replacement ~19.4 KB vs C storage 129,670 B (+ C library code, ~4 KB LTO
-  lower bound). Not free; still ~110 KB net.
+  This isolated checkpoint measured replacement ~19.4 KB vs C storage
+  129,670 B (+ C library code, ~4 KB LTO lower bound), about 110 KB net on
+  paper. This is not an installed free region or current W0a allocation credit;
+  remeasure the combined replacement and prove C storage retirement first.
 Scenario: 185 rows, only the tracked Fx platform-corner case differs. Fx line
 miss ('L', 2981) is also still open. Neither is explained yet.
 All tests pass (test_player_migration incl. new collision-probe test, core
@@ -951,14 +992,15 @@ remains an explicit prerequisite to cutting over the corresponding subsystem.
 | Ladder/vine entry, alternating hands, end/let-go; child/adult special clips | src/player_climb.c, src/link_anim.c | source climb actions + Saturn pose/root adapter | test_player_climb.py; some adult specials currently child-authored |
 | Child crawl enter/leave/reverse, tunnel dimensions and Enter prompt | src/player_crawl.c, src/recomp.c | source crawl actions + collision | test_player_crawl.py; preserve age gate |
 | Push/pull, lift failure/strength, attach once, carry, throw/put; prop owns drops | src/player_push.c, src/player_lift.c, src/gameplay.c | source Player handshakes + actor owner | test_player_lift.py, test_gameplay.py; never duplicate release/reward |
-| Water enter/leave hysteresis, stroke/dive/scales, shore exit, underwater timer | src/player_water.c, src/gameplay.c | source Player and core WaterBox | test_player_water.py; gallery bridge omits water, cannot become final world |
+| Water enter/leave hysteresis, age-specific float heights, stroke/dive/scales, guarded shore step-up with swim clip, underwater timer | src/player_water.c, src/gameplay.c | source Player and core WaterBox | test_player_water.py; gallery bridge omits water, cannot become final world |
 | Sword combo/spin/jump and shield state, damage/invulnerability/knockback | src/gameplay.c, src/player_attack.h, src/recomp.c | source Player combat; retain Saturn hit anchors | test_player_attack.py, test_gameplay.py; proxy jump/spin damage flags incomplete |
 | First sword frame hits only current blade, no sheath sweep; unchanged pose catch-up keeps hit active | oot-core/src/bridge_player.cpp, src/oot_core_host.c | source weapon collision with cadence-aware Saturn anchors | test_core_views.py, test_gameplay.py; re-evaluate timing against real Player, preserve outcome |
 | Age/equipment sword damage, Biggoron two-handed, boots reflected to actors | oot-core/src/bridge_player.cpp, src/gameplay.c | source Player/save equipment | test_gameplay.py, test_core_save.py; no simultaneous proxy/source hit registration |
-| Stick/slingshot/nut and ammo; bow/arrows/magic, bombs/Bombchu carry, boomerang, hookshot movement | src/player_items.c, src/gameplay.c, oot-core/src/bridge_items.cpp | real Player item actions; tool actors remain source | test_gameplay.py, test_core_views.py; hookshot C-only targets unsupported; hammer/lens/spells/beans still deny |
-| Iron underwater walk, Hover grace, tunics, sheath cooldown and stowing during special actions | src/gameplay.c, src/recomp.c | source equipment/actions + Saturn render selection | test_gameplay.py, test_equipment_draw.py; older draw fixture has known drift |
+| Stick/slingshot/nut and ammo; bow/arrows/magic, bombs/Bombchu carry, boomerang, hookshot movement | src/player_items.c, src/gameplay.c, oot-core/src/bridge_items.cpp | real Player item actions; tool actors remain source | test_gameplay.py, test_item_aim.py, test_inventory_tools.py, test_core_update_rate.py and actual tool actor probe; source rate, finite quads, swept host contacts, carry ratio and source magic fallback repaired. C-only hook targets and full target feedback remain open; hammer/lens/spells/beans still deny |
+| Iron underwater walk, Hover grace, tunics, sheath cooldown and stowing during special actions | src/gameplay.c, src/recomp.c | source equipment/actions + Saturn render selection | test_gameplay.py, test_equipment_draw.py; draw fixture repaired, seven checks pass including adult Biggoron/Mirror variants |
 | Original child/adult mesh, matrix ownership, root correction, upper-body overlays, airborne origin, shield winding | src/link_anim.c, src/recomp.c, tools/build_adult_link.py, tools/build_link_model.py | retained Saturn renderer; source animation intent adapter | test_link_geometry_precision.py, test_link_shield.py, test_adult_link.py |
-| Gear hands/back variants/boots, tunic masks, actor-first gear bank allocation and flat fallback | tools/build_link_gear.py, src/recomp.c | retained Saturn gear renderer | test_equipment_draw.py, test_link_shield.py; full gear budget coverage remains pending per regression handoff |
+| Gear hands/back variants/boots, tunic masks, actor-first gear bank allocation and flat fallback | tools/build_link_gear.py, src/kokiri_sgl.c, src/recomp.c | retained Saturn gear renderer | test_equipment_draw.py, test_link_shield.py, test_inventory_tools.py; source-owned adult gear admission and missing-art/VRAM/slot fallback pass host tests, runtime acceptance open |
+| Digital aim crosshair and source first-person hand/tool sprites | src/main.c, src/oot_core_host.c, src/npc_sprite.c, tools/build_item_sprites.py | retained Saturn aim/input/render adapters | test_item_aim.py, test_item_sprites.py; same tap/fire/cancel controls, no runtime tool mesh/skeleton; static source-pose art is approximate |
 | Transactional era asset switch: validate/stage/fence then publish, rollback on failure, single resident bank | src/link_anim.c, src/recomp.c | Saturn age/render adapter, core age state commits once | test_adult_link.py; preserve low-RAM guards and original 672-poly adult |
 | Talk range/focus, page reveal vs advance, choices, item grants/parent handshake and source drops | src/gameplay.c, oot-core/src/bridge_player.cpp, oot-core/src/bridge_message.cpp | source Player talk/get-item; message backend retained | test_core_dialogue.py, test_dialogue_core_handoff.py; instant proxy get-item lacks hold-up; C quest callbacks not yet source actors |
 | Five Ocarina notes, B cancellation, source songs/warp restrictions, Saria hints, Sun reload | src/gameplay.c, src/oot_core_host.c, oot-core/src/bridge_message.cpp | source Player/message plus Saturn notes/audio | test_ocarina.py; source puzzle actors, dungeon Sun stun, Scarecrow/memory game missing |
@@ -993,22 +1035,25 @@ remains an explicit prerequisite to cutting over the corresponding subsystem.
    evidence. NPC sprite and boss rendering rules remain unchanged. No actor
    imports or renderer conversions are authorized by this staging step.
 
-After frame-bank fit (range/compile/symbol audit done above):
-1. Implement the five-region resident design above after sizing remaining
-   dependencies: actual retained baseline with headers is 659,244 B against
-   candidate capacity 679,936 B. Add section/loader guards and obtain a resolved
-   link before fit acceptance. No heap reduction, mid-play CD streaming or
-   C-Link-retirement memory credit. Preserve actor capacities and Clean margin.
+Remaining integration under the current demand-loading contract:
+1. Remeasure combined core/Player retention and the candidate five-region
+   design against the current inventory ELF/BIN and matching objects. The 659,244 B
+   retention / 679,936 B capacity comparison is a historical checkpoint, not
+   current fit. Include all retained dependencies and adapters, then regenerate
+   section/loader guards and obtain a resolved link before fit acceptance.
+   No heap reduction or speculative C-Link-retirement credit. Preserve actor
+   capacities and Clean margin; budget cache/load/recovery storage explicitly.
 2. Animation data: 521 gPlayerAnim_* need a Saturn link-animation bank (source
    anim headers/frames; reuse current Link anim conversion, not N64 DLs).
    Sizes (Claude, 2026-10-06): source frames = whole link_animetion ROM segment,
    2,513,968 B (22 Vec3s + face word = 134 B/frame). N64 DMAs one frame at a
-   time; Saturn cannot (no mid-play CD). Current baked LINKANIM.BIN covers 131 of
-   521 anims in 423,472 B (per-age bank swap, decimated, Saturn pose format).
-   Frames never fit the 20,692 B core slack: plan a separate resident frame
-   bank (raw joint frames, coverage per age/scene pack, explicit budget) and a
-   AnimTaskQueue_AddLoadPlayerFrame adapter that copies from it. Missing clip =
-   logged failure, never silent pose.
+   time. The historical baked LINKANIM.BIN covered 131 of 521 anims in
+   423,472 B (per-age bank swap, decimated, Saturn pose format). That comparison
+   does not define the required residency target. Implement the bounded common
+   set, indexed demand loads and readiness/pinning contract above; preload every
+   complete cutscene set before playback. Remeasure cache, metadata, decode/load
+   scratch and recovery peaks with W0a consumers present. A cold known clip is a
+   load request, not a missing asset; never advance an action without its data.
 3. Resolve remaining 127 Link asset references by actual consumers. Preserve skeleton,
    pose and gameplay anchors; only unused DL/texture references may be placeholders
    after native draw execution is removed. Source actions also restore Draw.

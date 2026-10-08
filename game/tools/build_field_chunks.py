@@ -551,7 +551,7 @@ def bake(oot, rom_dir, head, actor, owl_actor, document, out_path, report_path=N
         _, positions, faces, tiles = hybrid.convert(
             oot, head, merged, folder, rom_dir=rom_dir, room=room, prefix='spot00',
             layout=layout, base_tile_limit=32, source_tessellation=True, wall_split_limit=3,
-            streamed=True)
+            streamed=True, halve_textures=False)
         manifest = json.loads((folder / 'texture_manifest.json').read_text())
     records = manifest['faces']
     source_faces = [dict(f, source_index=i) for i, f in
@@ -565,6 +565,8 @@ def bake(oot, rom_dir, head, actor, owl_actor, document, out_path, report_path=N
         lod_settings = settings.get(room, {})
     pieces, pool, origin = build_pieces(positions, records, tiles, source_faces,
                                         lod_settings, lod0_source, LANDMARKS)
+    fitted, halving = hybrid.halve_texture_tiles(dict(enumerate(pool.tiles)))
+    pool.tiles = list(fitted.values())
     plan = sweep(pieces, pool, actor, owl_actor)
     summary = dict(origin=origin, pieces=len(pieces), tiles=len(pool.tiles),
                    kinds=dict(collections.Counter(p['kind'] for p in pieces)),
@@ -575,6 +577,8 @@ def bake(oot, rom_dir, head, actor, owl_actor, document, out_path, report_path=N
                                    polygons=len(p['faces']), vertices=len(p['points']),
                                    tiles=len(p['tiles']), flags=p['flags'])
                               for p in pieces if p['kind'] == KIND_LANDMARK])
+    if halving['reductions']:
+        summary['texture_halving'] = halving
     if report_path is not None:
         pathlib.Path(report_path).write_text(json.dumps(dict(summary, cells=plan['cells']), indent=1) + '\n')
     print('field stream: %d pieces (%s), %d pool tiles; worst resident %d polys / %d verts / '

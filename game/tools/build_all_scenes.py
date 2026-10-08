@@ -26,6 +26,7 @@ ROOM_SHAPE_IMAGE = 1
 def converter_fingerprint():
     """Invalidate old room banks when a decoder, material or budget changes."""
     digest = hashlib.sha256()
+    digest.update(('DOSEI_TEX_HALVE=%d' % hybrid.texture_halve_mode()).encode('ascii'))
     paths = [Path(__file__), ROOT.parent / 'shared/tools/build_kokiri_scene.py']
     paths += [ROOT / 'tools' / name for name in (
         'build_hybrid_scene.py', 'build_quads.py', 'build_room_scene.py',
@@ -57,12 +58,33 @@ def cache_current(rows, fingerprint, out):
     return True
 
 
-def scene_list(oot):
+def scene_list(oot, retail_only=False):
     out = []
+    conditions = [True]
     for line in (oot / 'include/tables/scene_table.h').read_text(encoding='utf-8').splitlines():
+        directive = line.strip()
+        if directive.startswith('#if '):
+            if directive != '#if DEBUG_ASSETS':
+                raise ValueError('unhandled scene table condition: ' + directive)
+            conditions.append(conditions[-1] and not retail_only)
+            continue
+        if directive == '#else':
+            if len(conditions) < 2:
+                raise ValueError('unmatched scene table #else')
+            conditions[-1] = conditions[-2] and not conditions[-1]
+            continue
+        if directive == '#endif':
+            if len(conditions) < 2:
+                raise ValueError('unmatched scene table #endif')
+            conditions.pop()
+            continue
+        if not conditions[-1]:
+            continue
         m = SCENE_LINE.search(line)
         if m:
             out.append(dict(id=int(m.group(1), 16), prefix=m.group(2), scene=m.group(3)))
+    if len(conditions) != 1:
+        raise ValueError('unterminated scene table condition')
     if not out:
         raise SystemExit('scene table parsed as empty')
     return out
@@ -91,6 +113,8 @@ def main():
                     help='reuse only banks matching current source, converters and actor budget')
     ap.add_argument('--registered-only', action='store_true',
                     help='refresh currently registered scenes; retain unregistered report rows')
+    ap.add_argument('--retail-only', action='store_true',
+                    help='build all source retail scenes; exclude DEBUG_ASSETS-only entries')
     args = ap.parse_args()
     args.out.mkdir(parents=True, exist_ok=True)
     # Generic import mode (shared/tools/build_kokiri_scene.py): room G_MTX
@@ -101,6 +125,10 @@ def main():
     actor = sgl.link_actor_budget(ROOT / 'build/generated/LINK.BIN')
     report = args.out / 'scene_preflight.json'
     old = json.loads(report.read_text()) if (args.only or args.refresh_stale or args.registered_only) and report.exists() else []
+    source_scenes = scene_list(args.oot, retail_only=args.retail_only)
+    if args.retail_only:
+        retail = {row['prefix'] for row in source_scenes}
+        old = [row for row in old if row['prefix'] in retail]
     selected = set(args.only) if args.only else None
     if args.registered_only:
         from build_scene_table import SCENES
@@ -109,7 +137,7 @@ def main():
     results = [r for r in old if r['prefix'] not in selected] if selected is not None else []
     converter = converter_fingerprint()
     changed = False
-    for sc in scene_list(args.oot):
+    for sc in source_scenes:
         prefix = sc['prefix']
         if selected is not None and prefix not in selected:
             continue
@@ -132,20 +160,31 @@ def main():
             room_id = int(name.rsplit('_', 1)[1])
             entry = dict(sc, room=room_id, fingerprint=fingerprint)
             shape = room_shape(segments[name])
-            if shape == ROOM_SHAPE_IMAGE:
+            if prefix == 'spot00' and room_id == 0:
+                # Hyrule Field already uses the spatial streaming bake/load
+                # route. A whole-field KRM1 bank is not its runtime payload.
+                entry.update(status='streamed', source_room_shape=shape,
+                             pipeline='build_field_chunks.py', owner='build_room_scene.py')
+            elif shape == ROOM_SHAPE_IMAGE:
                 entry.update(status='image')
             else:
                 folder = args.out / name
                 try:
                     _, vertices, faces, rtiles = hybrid.convert(args.oot, head, actor, folder,
-                        rom_dir=args.rom_dir, prefix=prefix, room=name, layout={})
+                        rom_dir=args.rom_dir, prefix=prefix, room=name, layout={},
+                        room_pixel_limit=hybrid.GENERIC_ROOM_PIXEL_LIMIT,
+                        room_vertex_limit=hybrid.GENERIC_ROOM_VERTEX_LIMIT,
+                        room_face_limit=hybrid.GENERIC_ROOM_FACE_LIMIT)
                     detail = json.loads((folder / 'texture_manifest.json').read_text())
                     mesh, pixels, bounds = rooms.pack_room(vertices, faces, rtiles, detail['faces'],
-                                                          sgl.face_normal)
+                                                          sgl.face_normal,
+                                                          source_empty=detail.get('source_empty', False))
                     (folder / 'room.msh').write_bytes(mesh)
                     (folder / 'room.tex').write_bytes(pixels)
                     entry.update(status='baked', vertices=len(vertices), polygons=len(faces),
-                                 tiles=len(rtiles), mesh_bytes=len(mesh), pixel_bytes=len(pixels))
+                                 tiles=len(rtiles), mesh_bytes=len(mesh), pixel_bytes=len(pixels),
+                                 pixel_budget=detail['pixel_budget'],
+                                 source_empty=detail.get('source_empty', False))
                 except Exception as error:  # noqa: BLE001
                     entry.update(status='blocked', error='%s: %s' % (type(error).__name__, error),
                                  where=traceback.format_exc().strip().splitlines()[-2].strip())
@@ -164,7 +203,9 @@ def main():
     for r in results:
         counts[r['status']] = counts.get(r['status'], 0) + 1
     print('rooms:', counts)
-    if args.only and any(r['prefix'] in args.only and r['status'] == 'blocked' for r in results):
+    if (args.only or args.retail_only) and any(
+            (not args.only or r['prefix'] in args.only) and r['status'] == 'blocked'
+            for r in results):
         raise SystemExit('requested scene bake failed; do not stage stale banks')
 
 

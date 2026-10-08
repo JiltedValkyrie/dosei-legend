@@ -4,21 +4,23 @@ import os
 import pathlib
 import sys
 import subprocess
+import shutil
 import tempfile
 import unittest
 import test_player_bg as bg
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-GCC = pathlib.Path('C:/msys64/mingw64/bin/gcc.exe')
+GCC = pathlib.Path(shutil.which('gcc') or 'C:/msys64/mingw64/bin/gcc.exe')
+OOT = pathlib.Path(os.environ.get('DOSEI_OOT') or 'D:/Workspace-Claude/game-decomps/n64/oot')
 class Water(C.Structure):
     _fields_ = [('phase', C.c_uint), ('timer', C.c_uint), ('submerged', C.c_uint),
                 ('speed', C.c_int32), ('velocity', C.c_int32),
                 ('remainder', C.c_int32 * 3), ('rise_depth', C.c_int32),
-                ('yaw', C.c_uint16), ('grounded', C.c_bool)]
+                ('yaw', C.c_uint16), ('grounded', C.c_bool), ('ledge', bg.Bg)]
 class Input(C.Structure):
     _fields_ = [('speed', C.c_int32), ('yaw', C.c_uint16),
                 ('room', C.c_uint), ('scale', C.c_uint), ('pressed', C.c_bool),
-                ('held', C.c_bool), ('stroke', C.c_bool), ('blocked', C.c_bool)]
+                ('held', C.c_bool), ('stroke', C.c_bool), ('blocked', C.c_bool), ('adult', C.c_bool)]
 class Box(C.Structure):
     _fields_ = [('x', C.c_int16), ('y', C.c_int16), ('z', C.c_int16),
                 ('width', C.c_int16), ('length', C.c_int16), ('properties', C.c_uint32)]
@@ -31,11 +33,11 @@ class PlayerWater(unittest.TestCase):
         dll = pathlib.Path(cls.tmp.name) / 'water.dll'
         env = dict(os.environ)
         env['PATH'] = str(GCC.parent) + os.pathsep + env.get('PATH', '')
-        subprocess.run([str(GCC), '-shared', '-O2', '-Wall', '-Wextra', '-Werror',
+        subprocess.run([str(GCC), '-shared', '-fPIC', '-O2', '-Wall', '-Wextra', '-Werror',
             '-I'+str(ROOT/'src'), '-I'+str(ROOT/'build/generated'),
             '-I'+str(ROOT.parent/'shared/lib/camera'),
             '-I'+str(ROOT.parent/'shared/lib/collision'),
-            str(ROOT/'src/player_water.c'), str(ROOT/'src/link_anim_state.c'),
+            str(ROOT/'src/player_water.c'), str(ROOT/'src/player_bg.c'), str(ROOT/'src/link_anim_state.c'),
             str(ROOT/'build/generated/link_clips.c'),
             str(ROOT/'tests/fixtures/traversal_host.c'),
             str(ROOT.parent/'shared/lib/collision/kokiri_collision.c'),
@@ -248,12 +250,77 @@ class PlayerWater(unittest.TestCase):
         self.assertEqual(self.water.phase, 2)
         self.assertEqual(self.feet.z, start)
 
-    @unittest.skipUnless(pathlib.Path('D:/Workspace-Claude/game-decomps/n64/oot/baseroms/ntsc-1.2').is_dir(),
+    def bank(self, height=8, roof=None):
+        geometry = bg.ground(-300) + bg.wall(80, -300, height) + bg.ground(height, z0=80, z1=300)
+        if roof is not None:
+            geometry += bg.ceiling(roof, 80, 300)
+        self.world(geometry)
+
+    def test_child_and_adult_swim_out_with_original_climb_clip(self):
+        for adult in (False, True):
+            with self.subTest(adult=adult):
+                self.setUp()
+                self.bank()
+                self.input.adult = adult
+                self.feet.y = -70
+                for _ in range(180): self.step()
+                self.assertTrue(-48 <= self.feet.y <= -42 if adult else -33 <= self.feet.y <= -27)
+                self.input.speed = 1408
+                for _ in range(300):
+                    self.step()
+                    if not self.water.phase: break
+                self.assertEqual(self.water.phase, 0)
+                self.assertTrue(self.water.grounded)
+                self.assertEqual(self.feet.y, 8)
+                self.assertGreater(self.feet.z, 80)
+                self.assertEqual(self.lib.link_anim_state(), bg.STATE['STEP_UP'])
+                self.assertEqual(self.lib.link_anim_move_clip(), bg.clip_ids()['SWIM_STEP'])
+                self.assertFalse(self.step())
+                self.assertEqual(self.lib.link_anim_state(), bg.STATE['STEP_UP'])
+
+    def test_surface_a_prefers_valid_ledge_to_dive(self):
+        self.bank()
+        self.surface()
+        self.feet.z = 66
+        self.input.pressed = True
+        self.step()
+        self.assertEqual(self.water.phase, 0)
+        self.assertEqual(self.feet.y, 8)
+
+    def test_high_bank_and_low_landing_ceiling_do_not_teleport_swimmer(self):
+        for height, roof in ((80, None), (8, 28)):
+            with self.subTest(height=height, roof=roof):
+                self.setUp()
+                self.bank(height, roof)
+                self.surface()
+                self.input.speed = 1408
+                for _ in range(240): self.step()
+                self.assertNotEqual(self.water.phase, 0)
+                self.assertLess(self.feet.z, 80)
+                self.assertLess(self.feet.y, 0)
+
+    def test_blocked_or_diving_swimmer_cannot_grab_bank(self):
+        for blocked, diving in ((True, False), (False, True)):
+            self.setUp()
+            self.bank()
+            self.surface()
+            self.feet.z = 66
+            self.input.speed = 1408
+            self.input.blocked = blocked
+            if diving:
+                self.water.phase = 4
+                self.input.held = True
+                self.feet.y = -65
+            for _ in range(12): self.step()
+            self.assertNotEqual(self.water.phase, 0)
+            self.assertLess(self.feet.z, 80)
+
+    @unittest.skipUnless((OOT/'baseroms/ntsc-1.2').is_dir(),
                          'local source ROM required')
     def test_deku_tree_water_boxes_use_source_rooms(self):
         sys.path.insert(0, str(ROOT.parent/'shared/tools'))
         import build_kokiri_scene as source
-        root = pathlib.Path('D:/Workspace-Claude/game-decomps/n64/oot')
+        root = OOT
         scene = source.extract(root, root/'baseroms/ntsc-1.2', prefix='ydan')['ydan_scene']
         data = source.collision_data(scene)
         # Whole source mesh, no exporter-cap change or invented forest fixture.

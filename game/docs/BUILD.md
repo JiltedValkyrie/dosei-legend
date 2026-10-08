@@ -5,6 +5,98 @@ Do not use MSYS2 or Git Bash for builds.
 
 ## Build commands
 
+Field actor packs (2026-10-08): `SA.OAP` must relink against the exact
+`OOTCORE.BIN` CRC. Build all four actors plus six source effect objects; omitting
+the effect objects leaves undefined profiles. Keep pack ELF/map/JSON evidence
+under `build/oot-core/field`, staging only the OAP. The make rule checks the
+combined Field OOC, all six OOBs and pack memory against the unchanged 256 KiB
+scene carve. New enemy SFX exporter is `build_field_enemy_audio.py`; the existing
+`build_field_audio.py` remains the Field music exporter.
+
+The expanded renderer initially linked but exceeded the fixed SGL base. Never
+treat a successful raw/ELF link as the boundary check. The existing 48,128-byte
+non-cart heap is redistributed as 35,840 high-WRAM bytes plus 12,288 low-WRAM
+bytes (previously 39,936 + 8,192); total capacity is unchanged. The low zone is
+initialized by the existing allocator boot path. Effect views use the unused
+0x19200..0x197ff low-WRAM span, with a compile-time size check, rather than a
+1,408-byte local array on SGL's 1 KiB stack. Caps and command tables stay fixed.
+The latest isolated target check ends .bss at 0x06083400, 3,072 bytes below SGL.
+
+Run Linux host tests with `DOSEI_OOT` set before importing tooling. Broad legacy
+test discovery currently includes stale decimal room filenames, Windows compiler
+defaults and shared-library probes lacking `-fPIC`; a failed broad run must not
+be reported as a green suite. Field's focused tests and actual source probe are
+recorded separately in the Field handoff.
+
+Water Temple isolated probes: actor translation units need their corresponding
+imported actor-directory include path (Ruto includes cutscene data there).
+Run `oot-core/tests/run_water_temple_probe.sh` under Bash in WSL; it imports
+original water-controller actions and links the actual Fx math implementation.
+Its deterministic engine I/O does not establish live camera/ocarina integration.
+ABI26 support compiles, but is not in the accepted ABI25 Field ISO. Keep that
+image intact while Kronos is running. Transition-list OOCs now carry format
+0x4f4f4302; old blobs fail admission. Building only game-clean.raw does not rebuild
+all OOCs/OOBs: explicitly build data targets or use the full wrapper before
+mastering the next image. Current isolated support .bss ends 0x06083470.
+Stinger offline segment 8 is ACTOR_SETUP_OPA_DL (material commands), not a texture.
+Shell Blade display lists use ModifyVertex signed ST edits: update cached UVs
+without applying a limb transform again. Water sprite bakes currently remain
+isolated under build/water-temple/sprites until complete pack admission.
+Keese DLs use LERP(TEXEL1, TEXEL0, ENV_ALPHA, TEXEL0): the shared DL walker uses
+tile 0 unless a baker sets `env_alpha`; set it from the source Draw env colour.
+Spikes DLs call segment 7 (func_8002EBCC/ED80 reflection setup): bind it to an
+end-DL offline. Skeleton-less sprites use `STATIC_SPRITES` in
+water_temple_sources.py and share one cel layout across variants.
+Raw-target check without mastering: build/water-temple/target-raw.sh (Clean,
+--quick, OOT_CORE=1, target game-clean.raw). A failed boundary check deletes
+the usual ISO/CUE: back them up before any raw build.
+
+Human-accepted texture density (2026-10-08): use
+`./build.sh --clean OOT_CORE=1` in WSL for the usual
+`build/game-clean.cue/.iso`. Clean defaults to `DOSEI_TEX_HALVE=2`;
+explicit `0` restores original density. Standalone tools and other build
+variants still default to `0` when unset. Explicit `1`
+halves room and actor mesh TEX tiles, including LINK/ADULT/LGEAR; `2`
+halves rooms only. The human clarified TEX tiles only: baked SPR sheets,
+HUD and get-item sprites keep their existing dimensions. No runtime caps or
+command-table allocation change. Human accepted the reduced look and reported
+better performance; the screenshot shows VRAM 49% and CPU~ 79%. No paired
+FPS/load-time benchmark was captured. The existing accepted image already uses
+mode 2; changing the wrapper default requires no new asset bake for that image.
+
+Use a **full build when switching modes**. The all-scenes fingerprint includes
+the mode; `--quick` skips room regeneration and cannot switch texture density.
+The first bake after converter changes is slow. Preserve its preflight cache
+and resume with the same full command after interruption. The initial WSL
+process ended with exit 1 mid-room and no Python/compiler error during this
+task; the cause was not established. Do not treat a partial bake as an image.
+Descriptors and pixels must be rebuilt together. NAVIPOOL deduplicates already
+halved flight-bank tiles; do not halve it again. Field's complete pool, including
+near/far/landmark tiles, is halved once before its residency sweep. CLUTs retain
+all 16 entries and their existing alignment; eight-wide tiles save less than 75%.
+The pass precedes the old room pixel cap: a room already reduced by that cap
+need not become exactly one quarter of its previous output. Compare actual
+TEX files, not just source dimensions. Room IDs are base 36, including letters;
+include every S/Z/C room name and the panorama banks staged directly to CD.
+Three old story banks survived under current image-backdrop IDs: `SNR0`
+(`entra_n`), `SPR0` (`market_alley`) and `SQR0` (`market_alley_n`). They were
+not rebaked and falsely inflated the measured maximum. Density builds now
+prune MSH/TEX only for registrations whose shape is `image`; the runtime uses
+their RGB or separate C2 panorama instead. RGB, collision, real mesh scenes
+and virtual story/panorama banks remain. Mode 0 does not prune. The removal
+ledger is `build/generated/obsolete_image_banks.json`; the experiment retained
+old files in `build/tex-halve/before-banks`. Report these as removed obsolete
+banks, not texture-halving savings. Do not infer texture VRAM from stale files.
+
+Measure before overwriting staging with
+`python3 tools/measure_texture_halving.py --out build/tex-halve/before.json`,
+then compare after the full build with
+`python3 tools/measure_texture_halving.py --before build/tex-halve/before.json --out build/tex-halve/after.json`.
+The second command also writes a per-room CSV. Its bank bytes include CLUTs and
+alignment; free-after-residents additionally reserves worst-age Link, existing
+runtime sprites and 64 KiB actors. This is capacity accounting, not measured
+runtime allocation, visual quality or load latency.
+
 From Windows (PowerShell):
 
 ```powershell
@@ -147,12 +239,14 @@ sudo apt-get install -y python3-pil genisoimage   # Pillow + mkisofs
     `#include "spot04_scene.h"` to the asset-root path; new scenes get the same rewrite.
 29. **PlayState is 78 KB with Fx** (floats doubled). It lives in low work RAM
     (`RAM_LOW_OOTPLAY`), never in the blob .bss or the 256 KB blob carve.
-30. **All-scenes registration needs `tools/build_all_scenes.py` run first (about 1-2 h).**
-    It bakes every decomp scene's rooms into `build/all-scenes/` (ignored). Then
-    `build_scene_table.py` registers each scene that fits the runtime caps
-    (`RUNTIME_CAPS`), caching the verdicts in `build/all-scenes/registered.json`
-    (delete it to recheck). Without the bake only the 11 slice scenes exist. Run from
-    `game/tools` with `DOSEI_OOT` set and `--rom-dir <oot>/baseroms/ntsc-1.2`.
+30. **All retail maps require a complete room bake.** The full build runs
+    `build_all_scenes.py --retail-only --refresh-stale` and then
+    `build_scene_table.py --require-retail`. All 101 retail scene prefixes must
+    register; a blocked map fails the build. Nine `DEBUG_ASSETS` entries have no
+    payload in the retail inputs. Room banks live in `build/all-scenes/`;
+    `registered.json` fingerprints both the registration tool and preflight
+    contents, so changed caps cannot reuse stale exclusions. Fresh full bakes
+    are expensive; converter fingerprints permit unchanged banks to be reused.
 31. **Scene ids >= 36 use `Z<two base-36 digits>` file names** (`asset_scene_name`,
     tools/asset_names.py `scene_stem`). Spawns and doors are in `SCENETAB.BIN`, not
     work RAM: 75 scenes put 10 KB of tables over the static RAM limit. build.sh copies
@@ -609,3 +703,84 @@ checks pass; this is not target/runtime acceptance. Size growth is not yet attri
     start with `-x c++`, which also swallows following `.o` files: put
     `-x none` before objects. Host `s32` is 64-bit `long` on Linux; give
     C headers `int`-based int32_t, never `s32`.
+87. **W0a sprite archives need a full asset rebuild.** Run
+    `./build.sh --clean OOT_CORE=1` when moving from old generic SPR staging.
+    The baker writes intermediate clips under `build/generated/generic-sprites`;
+    after object linking, `build_sprite_keys.py` resolves skeleton/animation
+    addresses through `obj_syms.ld` and stages object+skeleton `.SP2` archives
+    plus scene manifests. Old `G?????.SPR` staging does not satisfy the new
+    loader. A quick-only code rebuild against that old staging is insufficient;
+    use `--quick` only after the matching full asset build.
+88. **Actor packs belong to one exact resident core.** W0a introduced core API23 and
+    OAP1, linked at the fixed top of the scene carve. `build_actor_packs.py`
+    verifies that `--core` ELF converts exactly to `--core-bin`, then binds the
+    pack to that binary's CRC. Rebuild host/core together for API changes and
+    rebuild every pack after any core change; old symbol addresses or CRCs
+    cannot be reused. After a full Clean build, the standalone infrastructure
+    target is `./build.sh --clean --quick OOT_CORE=1 oot-actor-pack-test`.
+    Its `build/oot-core/pack-test/TEST.OAP` exercises linking/constructors only,
+    imports no actor, and must stay off the disc. Building this target alone
+    does not refresh the game ISO or prove runtime acceptance.
+89. **Gameplay/drop host harnesses now run in Linux.** `test_gameplay.py` and
+    `test_item_drops.py` find host `gcc` on PATH and build position-independent
+    shared libraries. Run them in WSL with `DOSEI_OOT` set to the Linux decomp
+    path and generated tables present; a skipped test is not a passing probe.
+    The historical Windows compiler path remains a fallback in these harnesses,
+    not the authoritative build workflow.
+90. **W0a shared services must fit the existing RAM boundaries.** The first
+    W0a link crossed SGL by 1,600 B; its guard removed the unsafe output.
+    Cold scene/SPR2 validation and preload now execute in the cart core.
+    Dynamic collision owner records share the existing 4 KiB low-RAM draw
+    carve, with a target `sizeof` assertion and explicit boot/reset ownership.
+    Do not grow heaps, reduce actor capacities or move the SGL boundary to
+    bypass the check. Final measurements are in
+    `ENEMY_W0A_HANDOFF_2026-10-08.md`; rerun Player retention/partition checks
+    against this core before using any older free-space estimate.
+91. **Map registration must preserve old IDs.** Keep the original eleven native
+    entries and `LEGACY_GENERIC_ORDER` fixed; append newly admitted maps. Sorting
+    the entire table by source ID changes filenames and old save destinations.
+    Full asset generation is required: scene entries (26 bytes) and portals
+    (20 bytes) now share the loaded `SCENETAB.BIN` allocation with names, spawns
+    and doors. Generated C holds pointers, with target size assertions. Never
+    combine a new binary table with stale generated C/headers or a quick-only
+    build. `test_level_select` checks binary fields and menu rows;
+    `test_all_map_registration` rejects incomplete final staging.
+92. **Large dungeon collision uses exact allocations.** The maximum is 5,096
+    triangles (194,520 decoded bytes), with a 20 KiB XZ index. The raw `.COL`
+    read borrows existing load scratch; do not free that pointer. Decode and
+    validate into a new allocation before publishing, then release the old
+    mesh. Allocation/read/decode failure must retain the previous world. This
+    temporary C path remains until Player/core collision cutover; global heap
+    capacities and actor counts are unchanged. Test actual decode/index fit
+    for every staged map and rollback/shrink through the production loader.
+93. **Source-empty stages are explicit.** `hiral_demo` has an empty source room
+    display list. Its KRM1 flag admits only a 32-byte bank with all counts zero;
+    the loader clears previous geometry and the renderer skips submission.
+    Arbitrary empty conversion results still fail. Scene discovery must match
+    `<prefix>_room_`, not the word `room` anywhere in a name (`moribossroom`).
+94. **Old core resources must unload before native scene assets.** Deferring
+    archive/tool/dynamic-copy/mesh release to the next core frame made the
+    Ranch-to-Gohma allocation peak exceed the entire heap. `scene_flow_load`
+    releases them after successful collision admission and before room/native
+    actor loading. Destroy source actors before freeing their resources or code
+    pack; frontend reset must first detach the previous save mirror. Dynamic
+    registrations must be removed before their triangles are freed, including
+    frontend teardown that precedes collision reset. Idle music-cache trimming
+    frees only non-current area tables and does nothing during fades/swaps.
+    Keep these lifetimes in Player and actor budget models. Focused production
+    host regressions: `test_scene_resource_lifetime`, `test_music_area_trim`.
+95. **Tool views require matching API24 host/core.** Inventory repairs add source
+    sweep endpoints and fallback damage to `OotCoreToolView`. Rebuild both sides;
+    rebuild actor packs against the resulting exact core binary as in rule 88.
+    `oot_core_init` must set `R_UPDATE_RATE = 3`, normally done by source
+    `GameState_Init`; `Regs_InitDataImpl` does not set it. A zeroed register makes
+    source velocity movement and scaled turns stationary. Preserve the 20 Hz
+    source / 30 Hz host conversion and run `test_core_update_rate.py` plus
+    `oot-core/tests/run_tool_actor_probe.sh` after movement/importer changes.
+96. **Aim and equipment assets need a full rebuild.** `ITMAIM.SPR` adds a
+    2,080-byte/one-slot reserve to every scene budget. Gear tile deduplication
+    changes generated texture indices, and `LGEARMSH.BIN` appends 1,068 bytes of
+    per-face fallback colours. Rebuild generated headers, mesh, texture table
+    and pixels together; quick-only builds against old gear staging are invalid.
+    Optional artwork can be absent/short or fail VRAM admission without hiding
+    valid gear geometry. Geometry and skin validation remain mandatory.

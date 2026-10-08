@@ -47,6 +47,9 @@
 /* Shared 24-row actor-view query scratch; each query fills returned rows. */
 #define RAM_LOW_CORE_VIEW_OFFSET     0x19000u
 #define RAM_LOW_CORE_VIEW_BYTES      0x0200u
+/* Effect snapshots use existing pose/view slack, never the 1 KiB SGL stack. */
+#define RAM_LOW_EFFECT_VIEW_OFFSET   0x19200u
+#define RAM_LOW_EFFECT_VIEW_BYTES    0x0600u
 #define RAM_LOW_LINK_SKIN_OFFSET    0x19800u
 #define RAM_LOW_LINK_SKIN_BYTES     0x2000u
 /* Adult hero gear pose points (kokiri_sgl.c gear_draw), filled each draw
@@ -99,10 +102,10 @@
 #define RAM_LOW_BACKUP_LIB_BYTES    0x4000u
 #define RAM_LOW_BACKUP_WORK_OFFSET  0xF5600u
 #define RAM_LOW_BACKUP_WORK_BYTES   8312u
-/* 8 KB of jo_malloc moved out of high work RAM (makefile 48128 -> 39936):
+/* 12 KB of jo_malloc moved out of high work RAM (makefile 48128 -> 35840):
 ** a heap zone after the backup workspace. Zeroed by jo_add_memory_zone. */
 #define RAM_LOW_HEAP_OFFSET         0xF8000u
-#define RAM_LOW_HEAP_BYTES          0x2000u
+#define RAM_LOW_HEAP_BYTES          0x3000u
 #define RAM_LOW_USED_BYTES          (RAM_LOW_HEAP_OFFSET + RAM_LOW_HEAP_BYTES)
 typedef char ram_low_heap_after_backup[RAM_LOW_BACKUP_WORK_OFFSET + RAM_LOW_BACKUP_WORK_BYTES
                                        <= RAM_LOW_HEAP_OFFSET ? 1 : -1];
@@ -135,6 +138,8 @@ typedef char ram_low_ordered[RAM_LOW_EQUIP_POLY_OFFSET + RAM_LOW_EQUIP_POLY_BYTE
                              RAM_LOW_LINK_MATRICES_OFFSET + RAM_LOW_LINK_MATRICES_BYTES
                              <= RAM_LOW_CORE_VIEW_OFFSET &&
                              RAM_LOW_CORE_VIEW_OFFSET + RAM_LOW_CORE_VIEW_BYTES
+                             <= RAM_LOW_EFFECT_VIEW_OFFSET &&
+                             RAM_LOW_EFFECT_VIEW_OFFSET + RAM_LOW_EFFECT_VIEW_BYTES
                              <= RAM_LOW_LINK_SKIN_OFFSET &&
                              RAM_LOW_LINK_SKIN_OFFSET + RAM_LOW_LINK_SKIN_BYTES
                              <= RAM_LOW_SAVE_OFFSET &&

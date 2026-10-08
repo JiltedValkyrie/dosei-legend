@@ -102,6 +102,8 @@ def convert(entry, actor):
             # One room object; per-face depth culling still applies.
             records.append(dict(object=0, indices=indices))
     vertices = [tuple(round(c) for c in p) for p in positions]
+    from build_hybrid_scene import halve_texture_tiles
+    tiles, halving = halve_texture_tiles(tiles)
     budget = Budget()
     budget.add('import', [(t['width'], t['height']) for t in tiles.values()],len(faces),len(vertices))
     budget.add('link', actor['tiles'], actor['polygons'], actor['vertices'])
@@ -114,5 +116,9 @@ def convert(entry, actor):
             failures.append('Gameplay room import must leave 32 KiB spare after resident actors')
     if failures:
         raise ValueError('; '.join(failures))
-    return vertices, faces, tiles, dict(faces=records, budget=budget.parts,
-                                       workshop=dict(obj=str(entry['obj']), uv_mode=mode))
+    manifest = dict(faces=records, budget=budget.parts,
+                    workshop=dict(obj=str(entry['obj']), uv_mode=mode))
+    if halving['reductions']:
+        # emit_rooms persists the workshop block in rooms_manifest.json.
+        manifest['workshop']['texture_halving'] = halving
+    return vertices, faces, tiles, manifest

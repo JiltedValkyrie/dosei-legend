@@ -48,6 +48,11 @@ elif [ "${1:-}" = "--clean" ]; then
     variant=game-clean
     mode_args=(CLEAN_TEST=1)
 fi
+# Human accepted room texture halving for Clean. Preserve explicit overrides;
+# standalone tools and other variants retain their mode-0 default.
+if [ "$variant" = game-clean ]; then
+    export DOSEI_TEX_HALVE="${DOSEI_TEX_HALVE-2}"
+fi
 # --quick (after --clean/--hires, before make args): skip asset generation and
 # reuse build/cd + build/generated from the last full build of this variant.
 # For C/C++ (and oot-core) changes only; never for asset/tool changes.
@@ -123,14 +128,14 @@ if [ -n "${AUTHORED_OBJ:-}" ]; then
 fi
 # Generic banks must match source, converter/material rules and live actor
 # budgets. Previously only Ranch refreshed and every other scene stayed stale.
-    "$python" "$here/tools/build_all_scenes.py" --oot "$oot" --rom-dir "$roms" --refresh-stale --registered-only
+    "$python" "$here/tools/build_all_scenes.py" --oot "$oot" --rom-dir "$roms" --refresh-stale --retail-only
 "$python" "$here/tools/build_sgl_scene.py" --texture-path "${TEXTURE_PATH:-hybrid}" --oot "$oot" --rom-dir "$roms" "${quad_args[@]}"
 # Overwrite the generated forest with the authored import. Link's tables and
 # vdp1_layout.h come from the run above and are left alone.
 if [ -n "${AUTHORED_OBJ:-}" ]; then
     "$python" "$here/tools/build_authored_scene.py" --obj "$AUTHORED_OBJ" ${AUTHORED_UV_FROM:+--uv-from "$AUTHORED_UV_FROM"} ${AUTHORED_ATLAS:+--atlas "$AUTHORED_ATLAS"}          ${AUTHORED_UNITS_PER_TEXEL:+--units-per-texel "$AUTHORED_UNITS_PER_TEXEL"}         ${AUTHORED_MAX_TILE:+--max-tile "$AUTHORED_MAX_TILE"}         ${AUTHORED_SPLIT_SPAN:+--split-span "$AUTHORED_SPLIT_SPAN"}         ${AUTHORED_MAX_DEPTH:+--max-depth "$AUTHORED_MAX_DEPTH"}         ${AUTHORED_POLYGON_CAP:+--polygon-cap "$AUTHORED_POLYGON_CAP"}
 fi
-"$python" "$here/tools/build_scene_table.py" --oot "$oot" --rom-dir "$roms"
+"$python" "$here/tools/build_scene_table.py" --oot "$oot" --rom-dir "$roms" --require-retail
 "$python" "$here/tools/build_area_music.py" --oot "$oot"
 cp "$here"/build/generated/owl/OWL*.BIN "$here"/build/generated/owl/OWL*.ANM "$here/build/cd/"
 # NPCs ship as sprites only: no mesh NPC BIN/ANM/TRK/SKN build.
@@ -150,6 +155,7 @@ rm -f "$here"/build/cd/S*.SUR
 "$python" "$here/tools/build_cdda.py"
 "$python" "$here/tools/song_dictionary.py"
 "$python" "$here/tools/build_action_audio.py" --oot "$oot"
+"$python" "$here/tools/build_field_enemy_audio.py" --oot "$oot" --generated "$here/build/generated" --cd "$here/build/cd" --source "$here/../shared/build/audio-source/extracted/assets/audio"
 "$python" "$here/tools/build_opening_audio.py" --oot "$oot"
 "$python" "$here/tools/build_recomp_assets.py" --oot "$oot"
 "$python" "$here/tools/build_fairy.py" --oot "$oot"
@@ -227,6 +233,10 @@ cd "$here"
 # Field floor (STM) and C collision (COL) must come from one retopo bundle.
 "$python" "$here/tools/field_retopo.py" --check-pairing stm,col
 fi  # quick
+
+# Density builds must not retain old story meshes under image-scene IDs.
+# The tool is a no-op in mode 0; RGB/panorama/collision assets are preserved.
+"$python" "$here/tools/prune_obsolete_room_banks.py"
 # Small colour tables derive from the staged geometry and original sky images.
 # Run for quick builds too: they use the same preserved room banks.
 "$python" "$here/tools/build_environment_sky.py" --oot "$oot" \
@@ -240,6 +250,7 @@ for arg in "$@"; do
 done
 if [ "$oot_core" = 1 ]; then
     "$python" "$here/tools/oot_core_import.py" --oot "$oot"
+    "$python" "$here/tools/build_field_enemy_anchors.py" --oot "$oot" --rom-dir "$roms"
     # oot-core scene collision (SA.OOC) must match the Field STM/COL bundle.
     "$python" "$here/tools/field_retopo.py" --check-pairing stm,col,ooc
     # Phase 2 draw shim meshes (K/Q*.MSH) + build/oot-core/generic_meshes.h.
@@ -248,8 +259,8 @@ if [ "$oot_core" = 1 ]; then
     printf '/* Sprite-only NPCs: no skinned draw entries. */\n { 0xFFFF, 0, 0, 0 },\n' > "$here/build/oot-core/generic_skins.h"
     rm -f "$here"/build/cd/N????.BIN "$here"/build/cd/N????.SKN
     # Sprite sheets + symbol manifest; make resolves keys after object linking.
-    rm -f "$here"/build/cd/G?????.SPR
-    "$python" "$here/tools/build_npc_sprites.py" --oot "$oot" --rom-dir "$roms" --generic-only --out "$here/build/cd"
+    rm -f "$here"/build/cd/G?????.SPR "$here"/build/cd/G?????.SP2
+    "$python" "$here/tools/build_npc_sprites.py" --oot "$oot" --rom-dir "$roms" --generic-only --out "$here/build/generated/generic-sprites"
     # Link's tools (arrows, bombs, Bombchu, boomerang, hookshot, held gear, boots).
     "$python" "$here/tools/build_item_sprites.py" --oot "$oot" --rom-dir "$roms" --out "$here/build/cd"
 else

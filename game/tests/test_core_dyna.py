@@ -33,13 +33,25 @@ typedef struct {
     unsigned char transform, enabled; int scale_q16;
 } OotCoreDynaView;
 static const bg_mesh_t *registered; static uint32_t reg_transform, removed = BG_NONE;
+static uint32_t next_id=3,registered_id;
+static bool registry_live;
+static unsigned remove_calls,free_calls;
 static bg_vec_t at; static uint16_t at_rot; static int32_t at_scale; static bool at_enabled;
-static uint32_t bg_dyna_register(const bg_mesh_t *m, uint32_t t) { registered = m; reg_transform = t; return 3; }
-static void bg_dyna_remove(uint32_t id) { removed = id; }
-static void bg_dyna_set(uint32_t id, const bg_vec_t *p, uint16_t r, int32_t s) { assert(id == 3); at = *p; at_rot = r; at_scale = s; }
-static void bg_dyna_enable(uint32_t id, bool e) { assert(id == 3); at_enabled = e; }
+static uint32_t bg_dyna_register(const bg_mesh_t *m, uint32_t t) {
+    assert(!registry_live); registry_live=true;
+    registered = m; reg_transform = t; registered_id=next_id; return next_id;
+}
+static void bg_dyna_remove(uint32_t id) {
+    assert(registry_live && id==registered_id);
+    registry_live=false; removed=id; ++remove_calls;
+}
+static void bg_dyna_set(uint32_t id, const bg_vec_t *p, uint16_t r, int32_t s) { assert(registry_live && id == registered_id); at = *p; at_rot = r; at_scale = s; }
+static void bg_dyna_enable(uint32_t id, bool e) { assert(registry_live && id == registered_id); at_enabled = e; }
 #define jo_malloc malloc
-#define jo_free free
+static void jo_free(void *p) {
+    assert(!registry_live && p==registered->triangles); /* unregister BEFORE free */
+    ++free_calls; free(p);
+}
 static OotCoreDynaView views[1]; static int view_count;
 static struct { int (*dyna_view)(const OotCoreDynaView **); } entry;
 static int dyna_view(const OotCoreDynaView **out) { *out = views; return view_count; }
@@ -71,11 +83,15 @@ int main(void) {
     assert(!at_enabled && at.x == 11 && removed == BG_NONE);       /* same actor: no re-register */
     view_count = 0;
     core_dyna_sync();
-    assert(removed == 3);                                            /* actor gone */
-    removed = BG_NONE; view_count = 1;
+    assert(removed == 3 && remove_calls==1 && free_calls==1);          /* actor gone */
+    removed = BG_NONE; view_count = 1; next_id=0;                     /* slot zero is valid */
     core_dyna_sync();
-    core_dyna_reset();                                               /* scene change: no remove */
-    assert(removed == BG_NONE);
+    assert(registry_live && core_dyna[0].id==0);
+    core_dyna_reset();                                               /* frontend may precede collision reset */
+    assert(removed == 0 && !registry_live && remove_calls==2 && free_calls==2);
+    assert(!core_dyna[0].key && !core_dyna[0].tri);
+    core_dyna_reset(); core_dyna_reset();
+    assert(remove_calls==2 && free_calls==2);                         /* no stale unregister or double free */
     return 0;
 }
 '''

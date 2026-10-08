@@ -61,6 +61,8 @@ bool recomp_lift_throw_ready(void);
 /* A close, front-facing push block can start A: Grab. */
 bool recomp_push_prompt(void);
 bool recomp_slingshot_aiming(void);
+/* Selected aim tool's source inventory slot, or 0xff outside tool aim. */
+unsigned int recomp_aim_inventory_slot(void);
 bool recomp_target_marker(int32_t *x, int32_t *y, bool *locked, unsigned *kind);
 /* Sword and shield in hand (drawn) rather than on Link's back. */
 bool recomp_sword_out(void);

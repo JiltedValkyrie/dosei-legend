@@ -288,6 +288,16 @@ int  gp_dead(void) { return gameplay.dead ? 1 : 0; }
 void gp_land(int fell, int rolled) { gameplay_land(fell, rolled != 0); }
 void gp_void_respawned(void) { gameplay_void_respawned(); }
 void gp_hurt_set(int damage, int yaw) { gameplay.hurt_pending = 1; gameplay.hurt_damage = (uint8_t)damage; gameplay.hurt_yaw = (uint16_t)yaw; }
+void gp_core_hurt_set(int damage, int yaw, int speed, int large) {
+    gp_hurt_set(damage, yaw);
+    gameplay.hurt_speed = speed;
+    gameplay.hurt_effect = 0;
+    gameplay.hurt_large = large != 0;
+    gameplay.hurt_core = 1;
+}
+int gp_hurt_metadata(void) {
+    return gameplay.hurt_speed != 0 || gameplay.hurt_effect || gameplay.hurt_large || gameplay.hurt_core;
+}
 int  gp_go_state(void) { return (int)game_over_state(); }
 int  gp_go_step(int step, int confirm) { return (int)game_over_step(step, confirm != 0); }
 void gp_go_save_done(int ok) { game_over_save_done(ok != 0); }
@@ -457,6 +467,8 @@ int  gp_boulder_next(void) { return gameplay.boulder_next; }
 int  gp_boulder_live(void) { return gameplay.boulder_live; }
 int  gp_boulder_hit(void) { return gameplay.boulder_hit; }
 int  gp_knock_yaw(void) { return gameplay.knock_yaw; }
+int  gp_knock_speed(void) { return gameplay.knock_speed; }
+int  gp_knock_down(void) { return gameplay.knock_down; }
 
 int  gp_lunge(void) { return gameplay.lunge_q16; }
 

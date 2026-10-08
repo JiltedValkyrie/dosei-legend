@@ -1,5 +1,6 @@
 """Run the actual C host lifecycle/renderer against deferred decomp actors."""
 from pathlib import Path
+import re
 import unittest
 
 import test_graphics_backend as graphics
@@ -18,6 +19,9 @@ class CoreSprites(unittest.TestCase):
         source = HOST.read_text()
         storage = source[source.index('#define CORE_MESHES_MAX'):
                          source.index('#define ENTRY')]
+        # Native pointers are wider than SH-2. This test checks initialization
+        # boundaries; the unchanged target compile assertion checks carve fit.
+        storage = re.sub(r'typedef char core_draw_low_fits\[[^;]+;', '', storage)
         self.run_c(r'''
 #include <stdint.h>
 #include <string.h>
@@ -26,13 +30,14 @@ class CoreSprites(unittest.TestCase):
             + '#include "' + (ROOT / 'src/npc_sprite.h').as_posix() + '"\n'
             + '#include "' + (ROOT / 'src/oot_core_host.h').as_posix() + '"\n'
             + '#include "' + (ROOT / 'src/ram_low.h').as_posix() + '"\n'
-            + '#include "' + (ROOT / 'src/collide.h').as_posix() + '"\n' + r'''
+            + '#include "' + (ROOT / 'src/collide.h').as_posix() + '"\n'
+            + '#include "' + (ROOT.parent / 'shared/lib/collision/kokiri_collision.h').as_posix() + '"\n' + r'''
 static unsigned int low[RAM_LOW_BYTES / sizeof(unsigned int)];
 #undef RAM_LOW
 #define RAM_LOW(offset) ((void *)((unsigned char *)low + (offset)))
 #define __sh__ 1
-#define CORE_SPRITE_ROWS 128
-#define CORE_SPRITE_SLOTS 8
+#define CORE_SPRITE_ROWS 7
+#define CORE_SPRITE_SLOTS 16
 typedef int actor_mesh_t;
 static unsigned frees;
 static void jo_free(void *p) { assert(p); ++frees; }
@@ -125,12 +130,12 @@ int main(void) {
 #define OOT_SCENECOL_ADDR 0
 #define RECOMP_LINK_EYE_HEIGHT 16
 typedef struct { int unused; } gameplay_input_t;
-static bool loaded=true, playing, interior, paused;
+static bool loaded=true, playing, interior, paused, scene_load_failed;
 static unsigned inputs;
 static bool gameplay_is_paused(void) { return paused; }
 static unsigned play_scene=0xffff,step_phase,update_us;
 static int meshes_room=-1;
-static unsigned scene=14,room,updates,loads,spawns;
+static unsigned scene=14,room,updates,loads,spawns,unloads;
 static int source_room=-1, init_room=-1;
 static struct { int x,y,z; } recomp_link;
 static int recomp_link_yaw,recomp_yaw;
@@ -142,6 +147,13 @@ static void *scene_flow_entry(void) { return &entry; }
 static unsigned kokiri_bank_room(void) { return room; }
 static bool scene_flow_is_interior(void) { return interior; }
 static bool load_scene_blob(unsigned s) { return true; }
+typedef void OotSceneBlob;
+static bool sprites_preload(const OotSceneBlob *s) { return true; }
+static struct { unsigned missing; } sprite_stats;
+static void jo_core_error(const char *s,unsigned n) { assert(0); }
+static void jo_printf(int x,int y,const char *s,...) {}
+static void destroy(void) {}
+static int release(void) { return 1; }
 static void mirror_save(void) {}
 static void sync_player(void) {}
 static void send_input(const gameplay_input_t *in) { ++inputs; }
@@ -167,27 +179,36 @@ static int tool(unsigned c,int *io) { return 0; }
 static void tools_free(void) {}
 static void core_dyna_reset(void) {}
 static void core_dyna_sync(void) {}
+typedef struct { int unused; } bg_waterbox_t;
+static unsigned water_binds;
+static void bg_water_bind(const bg_waterbox_t *w,unsigned n) { ++water_binds; }
+static unsigned water_boxes(const void **w) { *w=0; return 0; }
+static void oot_core_scene_unload(void) {
+    ++unloads; playing=false; scene_load_failed=false;
+    play_scene=~0u; meshes_room=-1;
+}
 static bool gameplay_link_point(unsigned l,int32_t *o) { return false; }
 static struct { unsigned tool_bits; int tool_pull[6]; } core_draw;
 #define CORE_DRAW (&core_draw)
-static OotCoreEntry api={.play_init=init,.set_objects=objects,.set_flags=flags,
-    .set_camera=camera,.set_room=set_room,.set_sword=sword,.update=update,.player_push=push,.tool=tool};
+static OotCoreEntry api={.play_init=init,.play_destroy=destroy,.pack_release=release,.set_objects=objects,.set_flags=flags,
+    .set_camera=camera,.set_room=set_room,.set_sword=sword,.update=update,.player_push=push,.tool=tool,
+    .water_boxes=water_boxes};
 #define ENTRY (&api)
 ''' + function(HOST, 'void oot_core_frame(') + r'''
 int main(void) {
     gameplay_input_t in={0};
-    oot_core_frame(&in); assert(!updates && !loads); /* skipped 20 Hz step */
+    oot_core_frame(&in); assert(!updates && !loads && unloads==1); /* skipped 20 Hz step */
     oot_core_frame(&in); assert(updates==1 && loads==1);
     oot_core_frame(&in); assert(updates==2 && loads==1);
     room=1; spawns=0;
     oot_core_frame(&in); assert(updates==2 && loads==1); /* no premature room load */
     oot_core_frame(&in); assert(updates==3 && loads==2);
-    oot_core_frame(&in); assert(updates==4 && loads==2); /* no repeated CD reads */
+    oot_core_frame(&in); assert(updates==4 && loads==2 && unloads==1); /* no repeated CD reads */
     ++scene;
-    oot_core_frame(&in); assert(updates==4 && loads==2);
+    oot_core_frame(&in); assert(updates==4 && loads==2 && unloads==2);
     oot_core_frame(&in); assert(updates==5 && loads==3);
     ++scene; interior=true; room=10; /* Ranch panorama artwork bank */
-    oot_core_frame(&in); assert(init_room==0 && source_room==0);
+    oot_core_frame(&in); assert(init_room==0 && source_room==0 && unloads==3);
     oot_core_frame(&in); assert(meshes_room==0 && loads==4);
     room=0; /* C-Up switches to the fixed JPEG; actor room must stay put */
     oot_core_frame(&in); assert(source_room==0 && meshes_room==0 && loads==4);
@@ -200,7 +221,7 @@ int main(void) {
 }
 ''')
 
-    def test_spawned_sheets_root_joint_and_vram_instance_count(self):
+    def test_scene_preload_cow_keys_and_shared_slots(self):
         self.run_c(r'''
 #include <stdbool.h>
 #include <stdint.h>
@@ -219,8 +240,9 @@ typedef char Sint8;
 typedef int actor_mesh_t;
 typedef struct { unsigned size; } jo_file;
 typedef struct { const unsigned char *sheet; unsigned short slot,colno,shown; } npc_sprite_inst_t;
-static const struct { unsigned short object; unsigned char limbs; unsigned anim,file; }
-    core_sprite_rows[3]={{0xc0,19,0x1234,4},{0xe0,18,0x4567,5},{0xc0,19,0x9999,6}};
+typedef struct { const unsigned short *objects; unsigned num_objects; } OotSceneBlob;
+static const OotCoreSpriteLibrary
+    core_sprite_rows[3]={{0x18b,0x1234,0},{0x18b,0x5678,1},{0xe0,0x4567,2}};
 static unsigned char *core_sprite[3];
 static unsigned char core_sprite_tried[3];
 static unsigned core_sprite_reserved;
@@ -242,7 +264,8 @@ static unsigned opens,fail_file,fail_alloc,fail_read,invalid_packet,live;
 static struct { int x,z; } recomp_camera;
 static int mesh_list(const OotCoreMeshKey **p) { return 0; }
 static int npc_view(const OotCoreNpcView **p) { *p=views; return count; }
-static OotCoreEntry api={.mesh_list=mesh_list,.npc_view=npc_view};
+unsigned int OotCore_SpritePreload(const void*,const OotCoreSpriteLibrary*,unsigned,unsigned char**,unsigned*);
+static OotCoreEntry api={.mesh_list=mesh_list,.npc_view=npc_view,.sprite_preload=OotCore_SpritePreload};
 #define ENTRY (&api)
 static int oot_core_npcs(const OotCoreNpcView **p) { return npc_view(p); }
 static void actor_mesh_free(actor_mesh_t *m) {}
@@ -254,68 +277,99 @@ static int jo_fs_open(jo_file *p,const char *s) { ++opens; p->size=64; return !f
 static void jo_fs_close(jo_file *p) {}
 static void jo_free(void *p) { assert(p && live); --live; free(p); }
 static void *jo_malloc(unsigned n) { alloc_bytes=n; if(fail_alloc)return 0; ++live; return malloc(n); }
-static unsigned jo_memory_usage_percent(void) { return 50; }
+static unsigned heap_percent=50;
+static unsigned jo_memory_usage_percent(void) { return heap_percent; }
 static void *jo_fs_read_file_ptr(const char *s,void *p,int *n) {
     /* Jo's documented NUL write must fit; old length-only allocation fails. */
     assert(alloc_bytes>=65);
-    assert(!strcmp(s,"G0C004.SPR") || !strcmp(s,"G0E005.SPR") || !strcmp(s,"G0C006.SPR"));
+    assert(!strcmp(s,"G18B00.SP2") || !strcmp(s,"G18B01.SP2") || !strcmp(s,"G0E002.SP2"));
     memset(p,0,65); ((unsigned char*)p)[5]=48; ((unsigned char*)p)[7]=56;
     *n=64; ++reads; return fail_read ? 0 : p;
 }
-static int npc_sprite_valid(const unsigned char *s,unsigned n) { return !invalid_packet; }
+static int OotSprite_ArchiveValid(const unsigned char *s,unsigned n,unsigned skeleton) { return !invalid_packet; }
+static int sprite_file(const char *s,void *p,unsigned bytes) {
+    int length=64;
+    if (!p) { ++opens; return fail_file ? 0 : 64; }
+    assert(bytes==64);
+    return jo_fs_read_file_ptr(s,p,&length) ? length : -1;
+}
+static const unsigned char *npc_sprite_archive_largest(const unsigned char *s) { return s; }
+static const unsigned char *npc_sprite_archive_clip(const unsigned char *s,unsigned anim) {
+    return (anim&0xffffff)==0x9999 ? 0 : s;
+}
+static unsigned npc_sprite_cel(const unsigned char *s,unsigned f,int x,int z,uint16_t yaw) { return f; }
 static int npc_sprite_upload(const unsigned char *s,npc_sprite_inst_t *p) {
-    p->slot=uploads++; return 1;
+    p->slot=uploads++; p->sheet=s; p->shown=0; return 1;
 }
-static int npc_sprite_visible(const unsigned char *s,int x,int y,int z) { return z>=0; }
-static void npc_sprite_draw(const unsigned char *s,npc_sprite_inst_t *p,unsigned f,
-                           int x,int y,int z,uint16_t yaw) {
-    assert(p->slot==0 && s==core_sprite[0]); ++draws;
+static int npc_sprite_visible_scaled(const unsigned char *s,int x,int y,int z,unsigned sx,unsigned sy) {
+    assert(sx==256 && sy==256); return z>=0;
 }
-''' + function(HOST, 'static void sprites_reset(')
+static uint16_t gameplay_facing(int x,int z) { return 0; }
+static void npc_sprite_draw_styled(const unsigned char *s,npc_sprite_inst_t *p,unsigned sample,
+                                  int x,int y,int z,unsigned sx,unsigned sy,unsigned alpha,unsigned tint) {
+    assert(sx==256 && sy==256 && alpha==255 && tint==0);
+    p->sheet=s; p->shown=sample&0xffffu; ++draws;
+}
+''' + function(HOST, 'static void* host_sprite_memory(') + r'''
+static const OotCoreHost core_host={.scene_file=sprite_file,.sprite_memory=host_sprite_memory};
+static const OotCoreHost *gOotCoreHost=&core_host;
+''' + function(ROOT / 'oot-core/src/oot_core_sprite.cpp', 'unsigned int OotCore_SpritePreload(')
+            + function(HOST, 'static void sprites_reset(')
+            + function(HOST, 'static bool sprites_preload(')
+            + function(HOST, 'static const unsigned char *sprites_clip(')
             + function(HOST, 'static bool sprites_refresh(')
+            + function(HOST, 'static void meshes_free(')
             + function(HOST, 'static void load_meshes(')
             + function(HOST, 'void oot_core_meshes_upload(')
+            + function(ROOT / 'src/npc_sprite.c', 'npc_sprite_inst_t *npc_sprite_cache_claim(')
             + function(HOST, 'static void sprites_draw(') + r'''
 int main(void) {
-    /* Spawned Ingo: skeleton has 19 limbs, SkelAnime includes translation. */
-    count=1; views[0].object=0xc0; views[0].limbs=20;
-    views[0].anim=0x06001234; views[0].flags=OOT_CORE_VIEW_DRAWN;
-    load_meshes(); assert(reads==1 && core_sprite[0] && !core_sprite[1]);
-    oot_core_meshes_upload(); assert(uploads==1);
-    for(unsigned i=1;i<8;++i) assert(core_sprite_inst[i].slot==KOKIRI_TILE_NONE);
+    /* Cow body and tail have identical limb counts, distinct linked keys. */
+    unsigned short objects[]={0x18b}; OotSceneBlob blob={objects,1};
+    assert(sprites_preload(&blob) && reads==2 && live==2);
+    assert(core_sprite[0] && core_sprite[1] && !core_sprite[2]);
+    count=1; views[0].object=0x18b; views[0].limbs=6;
+    views[0].skeleton=0x06001234; views[0].anim=0x06000100;
+    views[0].flags=OOT_CORE_VIEW_DRAWN;
+    views[0].scale_x=views[0].scale_y=256; views[0].alpha=255;
+    load_meshes(); assert(reads==2 && live==2);
+    oot_core_meshes_upload(); assert(uploads==8);
+    assert(sprites_clip(&views[0])==core_sprite[0]);
     sprites_draw(); assert(draws==1);
-    views[0].limbs=19; sprites_draw(); assert(draws==1); /* wrong skeleton rejected */
-    views[0].limbs=0; sprites_draw(); assert(draws==2); /* clock-only Malon: no skeleton header read */
-    views[0].limbs=20; views[0].anim=0x06009999;
-    sprites_draw(); assert(draws==3); /* missing pose keeps a compatible sprite visible */
+    views[0].skeleton=0x06005678;
+    assert(sprites_clip(&views[0])==core_sprite[1]);
+    sprites_draw(); assert(draws==2);
+    views[0].skeleton=0x06005555; sprites_draw(); assert(draws==2);
+    views[0].skeleton=0x06001234; views[0].anim=0x06009999;
+    sprites_draw(); assert(draws==2); /* missing clip is explicit, never wrong animation */
+    assert(!sprites_refresh() && sprite_stats.missing==1 && !sprite_stats.fallback);
+    views[0].anim=0x06000100;
     views[1]=views[0]; views[0].z=-100; count=2;
-    sprites_draw(); assert(draws==4); /* hidden actor cannot consume visible actor's slot */
+    sprites_draw(); assert(draws==3); /* hidden actor cannot consume visible actor's slot */
     views[0].z=0; count=1;
-    assert(!sprites_refresh() && sprite_stats.fallback==1 && !core_sprite[2]);
-    /* Later same-room spawns discover a new object without freeing old sheets. */
+    /* Dynamic spawns use the preloaded scene union. No CD or whole bank reset. */
     unsigned char *original=core_sprite[0];
-    views[1]=views[0]; views[1].object=0xe0; views[1].limbs=19;
-    views[1].anim=0x06004567; count=2;
-    assert(sprites_refresh() && reads==2 && core_sprite[0]==original && live==2);
-    uploads=0; oot_core_meshes_upload(); assert(uploads==2 && sprite_stats.slots==2);
+    views[1]=views[0]; views[1].skeleton=0x06005678; count=2;
+    assert(!sprites_refresh() && reads==2 && core_sprite[0]==original && live==2);
     assert(!sprites_refresh() && reads==2 && sprite_stats.actors==2 && !sprite_stats.missing);
-    /* More instances of an existing object need slots, never new CD reads. */
     views[2]=views[1]; count=3;
-    assert(sprites_refresh() && reads==2);
-    count=1; assert(!sprites_refresh()); /* disappearance preserves capacity */
-    count=0; load_meshes(); assert(!core_sprite[0] && !live && reads==2);
-    /* Each unavailable file is attempted once per room; next room retries. */
+    assert(!sprites_refresh() && reads==2);
+    count=0; load_meshes(); assert(core_sprite[0]==original && live==2 && reads==2);
+    sprites_reset(); assert(!live);
+    /* Failed scene admission is reported; refresh never retries I/O. */
     count=1; fail_file=1; unsigned before=opens;
-    assert(!sprites_refresh() && sprite_stats.missing==1 && opens==before+2);
+    assert(!sprites_preload(&blob) && sprite_stats.missing==2 && opens==before+2);
     assert(!sprites_refresh() && opens==before+2);
     sprites_reset(); fail_file=0; fail_alloc=1;
-    assert(!sprites_refresh() && !live && sprite_stats.missing==1);
+    assert(!sprites_preload(&blob) && !live && sprite_stats.missing==2);
     sprites_reset(); fail_alloc=0; fail_read=1;
-    assert(!sprites_refresh() && !live);
+    assert(!sprites_preload(&blob) && !live);
     sprites_reset(); fail_read=0; invalid_packet=1;
-    assert(!sprites_refresh() && !live);
-    sprites_reset(); invalid_packet=0;
-    assert(sprites_refresh() && live==1);
+    assert(!sprites_preload(&blob) && !live);
+    sprites_reset(); invalid_packet=0; heap_percent=86;
+    assert(!sprites_preload(&blob) && !live && sprite_stats.missing==2);
+    sprites_reset(); heap_percent=50;
+    assert(sprites_preload(&blob) && live==2);
     sprites_reset(); sprites_reset(); assert(!live);
     return 0;
 }

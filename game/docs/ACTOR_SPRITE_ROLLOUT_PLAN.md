@@ -1,5 +1,60 @@
 # All-scene NPC and enemy sprite rollout
 
+Current Field follow-up (2026-10-08): source En_Encount1, En_Skb, En_Peehat and
+En_Po_Field are imported into a Field-only OAP, with six source EffectSs profiles.
+Child/night/adult placement stays in the original layer lists and source actions.
+73 generic clips now include headless Stalchildren and Poe body/lantern/soul
+variants; enemy pose matrices remain offline. Current view/cel capacity is 32,
+within the existing draw carve and actor texture bank. Focused host checks and
+target/pack checks pass; the usual Clean Field disc is built. Human accepts the
+shown adult Poe defeat/soul dialogue. Other era/population/heap and bottle checks
+remain open. Source rewards are retained; horse-dependent Big Poe
+play remains blocked on Player/horse work. See [Field status](FIELD_ENEMIES_2026-10-08.md).
+Water Temple enemies/obstacles/puzzles are in progress: all 36 source units
+compile in isolation. Shell Blade, Stinger, Tektite, Keese and Spikes are
+converted (25 isolated sheets; Spikes use the new skeleton-less display-list
+bake). Like Like, Dark Link and runtime admission remain unfinished.
+Source water/transition host probes and ABI26 support target compile pass;
+no temple pack or target image yet. See [Water Temple status](WATER_TEMPLE_2026-10-08.md).
+
+Inventory follow-up (2026-10-08, implemented/host-tested/target-built): existing imported
+En_Arrow, En_Bom, En_Bom_Chu, En_Boom and Arms_Hook retain their source actions
+and sprite rendering. No new NPC/enemy profile is admitted. Restored source
+Draw-owned attack quads, hook scenery anchors and bomb blast placement outside
+rendering; included En_Boom's actual MISC category. Initialized the source movement
+rate rather than keeping its actors stationary. Source-to-C contact snapshots
+now carry full movement sweeps/default damage. Original tools have no random
+drop replacement in this task; collectible carry/return remains source behavior.
+
+The requested source first-person hand/tool atlas reserves one 64x64 4bpp cel
+(2,080 B including CLUT) and one sprite slot alongside every room/actor set.
+It adds no runtime item mesh or skeleton; Link's separate retained gear renderer
+keeps its original meshes and gains colored fallback when textures cannot fit.
+Full bake/target checks pass: all 388 room records, six staged VDP1 checks and
+five all-map checks pass, alongside the tool/gear host regressions. The usual
+Clean image and all 1,458 staged files match; main has 1,792 B spare and resident
+core is 510,184 B. Human acceptance remains pending. Current coverage/gaps and
+evidence are in [INVENTORY_HANDOFF_2026-10-08.md](INVENTORY_HANDOFF_2026-10-08.md).
+
+Enemy W0a (Astra, 2026-10-08): [ENEMY_ROLLOUT_PLAN.md](ENEMY_ROLLOUT_PLAN.md),
+[review decisions](ENEMY_DESIGN_REVIEW.md), [source roster](ENEMY_ROSTER.json).
+All five review questions are settled; shared groundwork is implemented,
+with no actor imports at that checkpoint. Existing generic NPCs use complete scene-preloaded SPR2
+libraries keyed by object+skeleton+animation, with stable shared cel slots.
+34 clips remain, reduced to 32px/4 poses: 394,912 B across seven archives.
+Sixteen cel slots and 16 views were the W0a limits; Field now uses 32. Host/target/runtime
+evidence and remaining gates are separated in the enemy plan and
+[W0a handoff](ENEMY_W0A_HANDOFF_2026-10-08.md). Human runtime acceptance remains open.
+Human decisions: boss exemption by ACTORCAT_BOSS (20 actual profiles; Bdfire
+is ENEMY), work alongside Player migration, grabbers after Player cutover,
+hazards retain geometry, original 20 missing enemy scenes in scope.
+The separate [all-map fix](ALL_MAPS_HANDOFF_2026-10-08.md) registers all 101
+retail maps, including those 20. This is asset admission, not enemy import or
+scene readiness; existing gameplay/population budget gates remain required.
+Runtime skeleton/limb replay is rejected; future enemies use semantic gameplay
+anchors and actor-specific Draw-side-effect audits. No new enemy is admitted
+before Wave 0 Fx32 closes. Dated evidence below describes earlier checkpoints.
+
 2026-10-06 requested Kokiri dialogue follow-up: native child/Mido/Saria placement
 now hands regular conversation pages and choices to core z_message. Existing C
 text-id selection and quest/gate close callbacks remain; no actor import, mesh,
@@ -28,16 +83,16 @@ Budget addition is twelve transformed vertices and five polygon/commands per vis
 character, plus one indexed floor query; scenery and actors still share existing
 SGL rejection accounting and limits. Flat circular disks approximate slopes;
 legacy mesh enemies/boss shadows are not converted by this NPC/character pass.
-The prior diamond-shadow Clean image passed before this correction. Current
-round-shadow/adult-audio ELF links with .bss end 0x06083FF0 (16 B spare).
+The prior diamond-shadow Clean image passed before this correction. At that
+checkpoint, round-shadow/adult-audio ELF linked with .bss end 0x06083FF0 (16 B spare).
 Cold collision loading/index construction and fog setup use size optimization;
-heap and actor limits unchanged. Final ISO refresh is blocked by running Kronos
+heap and actor limits unchanged. Its final ISO refresh was blocked by running Kronos
 holding game-clean.iso; do not overwrite a mounted image. Logs:
 build/round-shadow-link.log and build/round-shadow-boundary.log.
 Human visual/FPS acceptance remains pending; no emulator launched.
 
 
-Updated 2026-10-04. Active branch: main (oot-core pipeline). Owner: current implementing agent;
+Updated 2026-10-08. Active branch: oot-core. Owner: Astra;
 human owns emulator/hardware acceptance. This plan covers the entire game,
 including scenes and actors not yet imported. It is not a completion claim.
 
@@ -109,13 +164,17 @@ There are 41 offline gameplay-horse clips, including young/normal/Epona/Ingo and
 Gerudo-saddle variants: 910,945 B total sheet storage including allocator
 terminators and a largest live cel plus CLUT of 1,472 B. These packages are not
 staged; no horse gameplay or per-scene simultaneous population budget is complete.
-Thirty-five source destinations also still lack registered scene assets.
+The separate 2026-10-08 all-map fix registers all 101 retail maps, preserving
+the existing 75 IDs and adding the missing 26. Nine debug-only table entries
+have no data in the retail inputs. Map registration does not import actors or
+close their gameplay/population budgets. Host/target map checks are recorded in
+the all-map handoff; human runtime acceptance remains pending.
 
-Host sprite discovery includes later same-room spawns without reloading existing
-sheets or retrying absent files every step. Packets are validated before upload;
-L+R diagnostics show imported views, missing sheets, fallback poses and allocated
-slots. Dynamic preloading, eight-slot/16-view limits and full scene actor/effect
-budget closure remain open. Save v11 and its mirror retain source scene flags,
+Current generic NPC preload uses the scene object union and validates complete
+SPR2 libraries before gameplay; later spawns perform no sprite CD reads. Shared
+cels are pinned during frame submission. L+R retains missing/slot diagnostics.
+Enemy/effect dynamic coverage and scene budget closure remain open; sixteen
+cel slots/16 views are current limits. The historical Save v11 mirror retained scene flags,
 keys, equipment, quest items, bottles and era/time. The player bridge honors
 automatic talk offers and milk reward/textbox parent handshakes. Talon's timer/
 carry minigame, ocarina/song interactions and other unsupported rewards remain

@@ -724,6 +724,7 @@ CLIPS = (
     # func_80834D2C: the slingshot plays bow_bow_ready once on the upper body
     # and holds its last frame while aiming (first-person arm pose).
     ('aim_ready','gPlayerAnim_link_bow_bow_ready',0,0,1),
+    ('swim_step','gPlayerAnim_link_swimer_swim_15step_up',0,0,1),
 
 )
 

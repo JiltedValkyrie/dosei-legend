@@ -49,16 +49,23 @@ void OotCore_SpriteChange(SkelAnime* s, AnimationHeader* animation,
     s->morphWeight = s->morphRate = sprite_frame(0);
 }
 
-void OotCore_SpriteInitFlex(PlayState*, SkelAnime* s, FlexSkeletonHeader*,
+void OotCore_SpriteInitFlex(PlayState*, SkelAnime* s, FlexSkeletonHeader* skeleton,
                            AnimationHeader* animation, Vec3s*, Vec3s*, s32 limbCount) {
     s->initFlags = 0x53;
     s->limbCount = limbCount; /* sheet key only; zero means object/clip lookup */
     s->dListCount = 0;
-    s->skeleton = NULL;
+    /* Only the linked symbol identity survives. Its placeholder contains no
+     * skeleton data and must never be dereferenced by a sprite path. */
+    s->skeleton = (void**)skeleton;
     s->jointTable = s->morphTable = NULL;
     s->update.normal = NULL;
     if (animation != NULL)
         OotCore_SpriteChange(s, animation, sprite_frame(256), sprite_frame(0), sprite_frame(0), ANIMMODE_LOOP);
+}
+
+void OotCore_SpriteInit(PlayState* play, SkelAnime* s, SkeletonHeader* skeleton,
+                       AnimationHeader* animation, Vec3s* joints, Vec3s* morph, s32 limbCount) {
+    OotCore_SpriteInitFlex(play, s, (FlexSkeletonHeader*)skeleton, animation, joints, morph, limbCount);
 }
 
 s32 OotCore_SpriteUpdate(SkelAnime* s) {

@@ -117,8 +117,10 @@ def pack_lods(rows):
                                     r['cull_distance'], r['lod1'], r['lod0']) for r in rows)
 
 
-def pack_room(vertices, faces, tiles, records, normal, lods=None):
+def pack_room(vertices, faces, tiles, records, normal, lods=None, source_empty=False):
     """Big-endian Saturn POINT/POLYGON/ATTR buffers, tile table and palettes."""
+    if source_empty and any((vertices, faces, tiles, records, lods)):
+        raise ValueError('source-empty room must contain no geometry or textures')
     baked = [(x,-y,z) for x,y,z in vertices]
     objects = collections.defaultdict(list)
     for i, record in enumerate(records):
@@ -134,7 +136,7 @@ def pack_room(vertices, faces, tiles, records, normal, lods=None):
     lod_rows = lod_table(vertices, records, lods or {}, object_ids)
     pixels = b''.join(t['pixels'] + bytes((-len(t['pixels']))%8) for t in tiles.values())
     data = bytearray(struct.pack('>8I',0x4b524d31,len(vertices),len(faces),len(tiles),
-                                 len(pixels),len(bounds),len(lod_rows),0))
+                                 len(pixels),len(bounds),len(lod_rows),int(source_empty)))
     for p in baked:
         data.extend(struct.pack('>3i',*(v*65536 for v in p)))
     for f in faces:
@@ -310,7 +312,7 @@ def emit_rooms(args, head, actor, normal):
                'typedef struct { int minimum[3],maximum[3]; } kokiri_object;',
                '/* An En_Holl tunnel between two rooms of ONE scene. `scene` is',
                '   which scene it belongs to; a portal never crosses scenes. */',
-               'typedef struct { short front,back,x,y,z,yaw; unsigned char scene,kind,flag; unsigned int layers; } kokiri_portal;',
+               'typedef struct kokiri_portal { short front,back,x,y,z,yaw; unsigned char scene,kind,flag; unsigned int layers; } kokiri_portal;',
                'extern PDATA kokiri_pdata;',
                'extern kokiri_tile *kokiri_tiles;',
                'extern unsigned short (*kokiri_cluts)[16];',
@@ -320,7 +322,7 @@ def emit_rooms(args, head, actor, normal):
                'typedef char room_objects_fit[KOKIRI_POLYGON_COUNT+3 <= RAM_LOW_ROOM_OBJECTS_BYTES ? 1 : -1];',
                'typedef char room_bounds_fit[KOKIRI_OBJECT_COUNT*sizeof(kokiri_object) <= RAM_LOW_ROOM_BOUNDS_BYTES ? 1 : -1];',
                '#define KOKIRI_PORTAL_COUNT %d'%max(len(portals), 1),
-               'extern const kokiri_portal kokiri_portals[KOKIRI_PORTAL_COUNT];','#endif']
+               'extern const kokiri_portal *kokiri_portals;','#endif']
     (out/'kokiri_scene.h').write_text('\n'.join(header)+'\n')
     code = ['#include "kokiri_scene.h"',
             'PDATA kokiri_pdata;',
@@ -341,13 +343,9 @@ def emit_rooms(args, head, actor, normal):
             '    kokiri_pdata.pntbl = points; kokiri_pdata.pltbl = polygons;',
             '    kokiri_pdata.attbl = attributes; return true;',
             '}',
-            'const kokiri_portal kokiri_portals[KOKIRI_PORTAL_COUNT] = {']
-    code += ['    {%d,%d,%d,%d,%d,%d,%d,%d,%d,%du},'
-             % tuple(p[k] for k in ('front','back','x','y','z','yaw','scene','kind','flag','layers'))
-             for p in portals]
-    if not portals:
-        code += ['    {0,0,0,0,0,0,0,0},']
-    code += ['};']
+            '/* Loaded with the scene records from SCENETAB.BIN before any map. */',
+            'typedef char portal_record_size[sizeof(kokiri_portal) == 20 ? 1 : -1];',
+            'const kokiri_portal *kokiri_portals;']
     (out/'kokiri_scene.c').write_text('\n'.join(code)+'\n')
     (out/'kokiri_textures.c').write_text('#include "kokiri_scene.h"\n'
         'kokiri_tile *kokiri_tiles;\n'

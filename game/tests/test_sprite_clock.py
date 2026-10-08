@@ -21,7 +21,7 @@ class SpriteClock(unittest.TestCase):
 ''' + '#include "' + (ROOT / 'oot-core/include/fx.h').as_posix() + '"\n' + r'''
 typedef Fx f32; typedef int32_t s32; typedef uint8_t u8;
 typedef struct { int16_t x,y,z; } Vec3s;
-struct PlayState {}; struct FlexSkeletonHeader {};
+struct PlayState {}; struct FlexSkeletonHeader {}; struct SkeletonHeader {};
 struct AnimationHeader { struct { int16_t frameCount; } common; };
 enum { ANIMMODE_LOOP, ANIMMODE_LOOP_INTERP, ANIMMODE_ONCE, ANIMMODE_ONCE_INTERP,
        ANIMMODE_LOOP_PARTIAL, ANIMMODE_LOOP_PARTIAL_INTERP };
@@ -34,13 +34,15 @@ struct SkelAnime {
 #define SEGMENTED_TO_VIRTUAL(a) (a)
 ''' + '\n'.join(graphics.function(bridge, marker) for marker in (
             'static s32 sprite_q8(', 'static f32 sprite_frame(',
-            'void OotCore_SpriteChange(', 'void OotCore_SpriteInitFlex(',
+            'void OotCore_SpriteChange(', 'void OotCore_SpriteInitFlex(', 'void OotCore_SpriteInit(',
             's32 OotCore_SpriteUpdate(')) + r'''
 int main() {
     AnimationHeader anim={{10}};
     SkelAnime s={};
+    OotCore_SpriteInit(nullptr,&s,(SkeletonHeader*)2,&anim,(Vec3s*)1,(Vec3s*)1,6);
+    assert(s.skeleton==(void**)2 && !s.jointTable && !s.morphTable && s.limbCount==6);
     OotCore_SpriteInitFlex(nullptr,&s,(FlexSkeletonHeader*)1,&anim,(Vec3s*)1,(Vec3s*)1,0);
-    assert(!s.skeleton && !s.jointTable && !s.morphTable && !s.update.normal);
+    assert(s.skeleton==(void**)1 && !s.jointTable && !s.morphTable && !s.update.normal);
     assert(s.initFlags==0x53 && !s.limbCount);
     for(int n=0;n<10;++n) assert(!OotCore_SpriteUpdate(&s));
     assert(sprite_q8(s.curFrame)==0);
@@ -58,7 +60,7 @@ int main() {
     s.playSpeed=sprite_frame(0);
     for(int n=0;n<50;++n) assert(!OotCore_SpriteUpdate(&s));
     assert(sprite_q8(s.curFrame)==2*256);
-    assert(!s.skeleton && !s.jointTable && !s.morphTable);
+    assert(s.skeleton==(void**)1 && !s.jointTable && !s.morphTable);
 }
 '''
         with tempfile.TemporaryDirectory() as temp:

@@ -34,8 +34,8 @@ MAX_HEIGHT = 64     # texels; bigger NPCs get a coarser texel
 HERO_HEIGHT = 90    # story heroes: ~1.4x linear, 2x pixels (human 2026-10-04)
 MAX_POSES = 8       # per clip, sampled evenly over its ticks (cart budget)
 SUPER = 2           # supersample factor
-GENERIC_POSES = 6   # decomp NPCs: many clips each, so fewer poses and texels
-GENERIC_HEIGHT = 56
+GENERIC_POSES = 4   # Complete scene clip libraries must fit, not just idle.
+GENERIC_HEIGHT = 32
 
 
 def rgb555(c):
@@ -209,19 +209,29 @@ def write_sprite(faces, poses, order, dest, preview_path, layout=None, cap=None)
           (dest.name, width, height, len(poses), DIRS, len(data)))
 
 
-def bake_generic(oot, rom_dir, work, out, core):
+def bake_generic(oot, rom_dir, work, out, core, only_objects=None):
     """Decomp NPC objects (oot_core_import GENERIC_NPC_SOURCES): every Skeleton,
-    every Animation the actor sources name. G<oid3><nn>.SPR + generic_sprites.h
-    { object id, limb count, animation offset, file number } for the host."""
+    every Animation the actor sources name. Intermediate G<oid3><nn>.SPR
+    plus {object, limbs, animation symbol, clip file, skeleton symbol} rows;
+    build_sprite_keys packs complete SPR2 libraries after object linking."""
     import xml.etree.ElementTree as ET
     import build_actor_model as actor
     import build_core_skins as skins
     imp = skins.load_importer()
+    import field_enemy_sources
+    import water_temple_sources
+    required_objects = field_enemy_sources.OBJECTS + water_temple_sources.SPRITE_OBJECTS
     _enums, sym_ids = imp.object_ids(oot)
     keep = link.read_object(oot, 'gameplay_keep', rom_dir)
     text = ''.join((oot / src).read_text(encoding='utf-8', errors='replace')
-                   for _a, src in imp.GENERIC_NPC_SOURCES)
+                   for src in [s for _, s in imp.GENERIC_NPC_SOURCES] + field_enemy_sources.SOURCES +
+                   water_temple_sources.SPRITE_SOURCES)
     wanted = sorted(name for name in imp.OBJECTS if name.upper() in text.upper())
+    if only_objects is not None:
+        missing = set(only_objects) - set(wanted)
+        if missing:
+            raise ValueError(f'No source sprite object: {sorted(missing)}')
+        wanted = [name for name in wanted if name in only_objects]
     rows, files = [], 0
     for name in wanted:
         oid = sym_ids[name]
@@ -233,14 +243,18 @@ def bake_generic(oot, rom_dir, work, out, core):
         anims = [(a.attrib['Name'], int(a.attrib['Offset'], 16)) for a in root.iter('Animation')
                  if not a.attrib.get('Offset', '.').startswith('.') and a.attrib['Name'] in text]
         skels = [k for k in root.iter('Skeleton') if not k.attrib.get('Offset', '.').startswith('.')]
-        for n, skel in enumerate(skels[:4]):
+        variants = ((0, 1) if name in ('object_skb', 'object_tite', 'object_firefly') else
+                    (0, 1, 2, 3, 4) if name == 'object_po_field' else (0,))
+        for n, skel, variant in [(n, skel, v) for n, skel in enumerate(skels[:4]) for v in variants]:
             skel_off = int(skel.attrib['Offset'], 16)
             try:
-                bin_path = work / ('G%03X%X.BIN' % (oid, n))
+                bin_path = work / ('G%03X%X_%d.BIN' % (oid, n, variant))
                 owners, locals_, limbs, count = full_skin(oot, rom_dir, name, data, skel_off,
-                                                          xml_path, keep, bin_path)
+                                                          xml_path, keep, bin_path, variant=variant)
                 faces, _, _ = read_model(bin_path, None)
             except Exception as exc:
+                if name in required_objects:
+                    raise ValueError(f'{name} variant {variant}: required enemy sprite failed') from exc
                 print('  sprite: %s %s left out: %r' % (name, skel.attrib.get('Name'), exc))
                 continue
             bind = max(math.dist((0, 0, 0), l) for l in locals_) * .01 + 1
@@ -255,10 +269,20 @@ def bake_generic(oot, rom_dir, work, out, core):
                     poses = []
                     for f in range(frames):
                         _, rt, rot = actor.read_animation(data, off, count, f)
+                        if name == 'object_ei':
+                            rt = (rt[0], rt[1], rt[2] + 2000) # source root OverrideLimbDraw
+                        if name == 'object_firefly':
+                            rt = (rt[0], rt[1] + 2300, rt[2]) # source root OverrideLimbDraw
+                        if name == 'object_peehat':
+                            rot = list(rot)
+                            rot[3] = (-round(f * 65536 / max(frames, 1)), rot[3][1], rot[3][2])
                         pose = {i: (m, o) for i, m, o, _ in link.walk_skeleton(limbs, rot, rt)}
-                        poses.append([tuple(v * .01 for v in link.transform(*pose[ow], lc))
+                        poses.append([tuple(v * .01 for v in (lc if name == 'object_po_field' and variant >= 2
+                                                              else link.transform(*pose[ow], lc)))
                                       for ow, lc in zip(owners, locals_)])
                 except Exception:
+                    if name in required_objects:
+                        raise
                     continue
                 if not poses:
                     continue
@@ -275,8 +299,31 @@ def bake_generic(oot, rom_dir, work, out, core):
                 dest = out / ('G%03X%02X.SPR' % (oid, files % 256))
                 write_sprite(faces, poses, list(range(len(poses))), dest,
                              work / (dest.stem + '_sprites.png'), layout, GENERIC_POSES)
-                rows.append((oid, count, anim_name, files % 256))
+                rows.append((oid, count, anim_name, files % 256, skel.attrib['Name'], variant))
                 files += 1
+    # Skeleton-less actors (Spikes): one pose per source draw state. The key
+    # pair is two of the object's display-list symbols; variants select the
+    # display lists the source Draw would submit.
+    for name, (skel_name, anim_name, states) in water_temple_sources.STATIC_SPRITES.items():
+        if only_objects is not None and name not in only_objects:
+            continue
+        oid = sym_ids[name]
+        data = link.read_object(oot, name, rom_dir)
+        xml_path = oot / 'assets' / 'xml' / 'objects' / (name + '.xml')
+        baked = []
+        for variant, lists_named in enumerate(states):
+            bin_path = work / ('G%03XS_%d.BIN' % (oid, variant))
+            owners, locals_ = static_skin(name, data, xml_path, keep, lists_named, bin_path)
+            faces, _, _ = read_model(bin_path, None)
+            baked.append((faces, [[tuple(v * .01 for v in lc) for lc in locals_]]))
+        # One cel size and texel for every state: one VDP1 slot per archive.
+        layout = layout_of([poses for _, poses in baked], GENERIC_HEIGHT)
+        for variant, (faces, poses) in enumerate(baked):
+            dest = out / ('G%03X%02X.SPR' % (oid, files % 256))
+            write_sprite(faces, poses, [0], dest, work / (dest.stem + '_sprites.png'),
+                         layout, GENERIC_POSES)
+            rows.append((oid, 0, anim_name, files % 256, skel_name, variant))
+            files += 1
     # ROM offsets are only for offline posing. The imported object is compacted
     # and linked again; make resolves these names AFTER linking the new blobs.
     import json
@@ -284,7 +331,39 @@ def bake_generic(oot, rom_dir, work, out, core):
     print('generic sprites: %d sheets' % len(rows))
 
 
-def full_skin(oot, rom_dir, obj, data, skel_off, xml_path, keep, bin_path):
+def static_skin(obj, data, xml_path, keep, display_lists, bin_path):
+    """Faces of whole-object display lists drawn with the actor matrix only."""
+    import xml.etree.ElementTree as ET
+    root = ET.parse(xml_path)
+    named = {e.attrib['Name']: int(e.attrib['Offset'], 16) for e in root.iter()
+             if 'Name' in e.attrib and 'Offset' in e.attrib and not e.attrib['Offset'].startswith('.')}
+    link.HEAD_LIMB, link.LIMB_NONE = -1, 0xFF
+    lists = link.LimbLists(b'', b'')
+    enddl = struct.pack('>II', 0xDF000000, 0)
+    # Segment 7 is the func_8002EBCC/ED80 reflection setup list: no geometry.
+    lists.segments = {6: data, 4: keep, 7: enddl, 8: enddl, 9: enddl, 10: enddl, 11: enddl, 12: enddl, 13: enddl}
+    lists.matrix_limbs = [0]
+    faces = []
+    for name in display_lists:
+        lists.prim = (255, 255, 255, 255)
+        lists.current_limb = 0
+        start = len(lists.faces)
+        lists.walk(0x06000000 | named[name])
+        for original in lists.faces[start:]:
+            face = dict(original)
+            face['local'] = [tuple(v[:3]) for v in face['vertices']]
+            face['limb'] = 0
+            face['full_texture'] = True
+            faces.append(face)
+    if not faces:
+        raise ValueError(f'{obj}: no faces in {display_lists}')
+    link.apply_primitive_colour(faces)
+    faces = link.scale_faces(faces, 0.01)
+    _, _, owners, locals_ = link.write_model(faces, bin_path, skinned=True, character=False)
+    return owners, locals_
+
+
+def full_skin(oot, rom_dir, obj, data, skel_off, xml_path, keep, bin_path, variant=0):
     """build_core_skins.skin_object faces with FULL textures (sprite source)."""
     import xml.etree.ElementTree as ET
     import build_actor_model as actor
@@ -311,15 +390,54 @@ def full_skin(oot, rom_dir, obj, data, skel_off, xml_path, keep, bin_path):
     lists.segments = {6: data, 4: keep, 8: data[first('EyeOpen', 'Eye'):],
                       9: data[first('MouthClosed', 'Mouth'):],
                       10: enddl, 11: enddl, 12: enddl, 13: enddl}
+    named = {v: k for k, v in names.items()}
+    if obj == 'object_ei':
+        lists.segments[8] = enddl # source ACTOR_SETUP_OPA_DL material commands
+    if obj == 'object_tite':
+        textures = ('object_tite_Tex_001300', 'object_tite_Tex_001700', 'object_tite_Tex_001900') if variant else (
+                    'object_tite_Tex_001B00', 'object_tite_Tex_001F00', 'object_tite_Tex_002100')
+        for segment, texture in zip((8, 9, 10), textures):
+            lists.segments[segment] = data[named[texture]:]
+    if obj == 'object_po_field':
+        # These are generated material/display-list segments, not face textures.
+        lists.segments.update({8: enddl, 9: enddl, 10: enddl, 12: enddl})
+        if variant >= 3:
+            tex = 'gBigPoeSoulTex' if variant == 4 else 'gPoeFieldSoulTex'
+            lists.segments[9] = data[named[tex]:]
+    if obj == 'object_firefly':
+        # Source Draw env alpha: 255 normal body lerps to TEXEL1 (gKeese*),
+        # 0 fire body keeps TEXEL0 (gFireKeese*). Ice Keese use the normal body.
+        lists.env_alpha = 0 if variant else 255
     lists.matrix_limbs = [i for i, _, _, d in placed if d]
     faces = []
     for i, _, _, display in placed:
-        if not display:
+        if obj == 'object_skb' and variant == 1 and i in (10, 11):
+            continue
+        if obj == 'object_po_field':
+            if variant == 1 and i in (0, 7, 8):
+                display = 0x06000000 | named[{0: 'gBigPoeFaceDL', 7: 'gBigPoeCloakDL', 8: 'gBigPoeBodyDL'}[i]]
+            if variant == 2:
+                if i != 6:
+                    continue
+                display = 0x06000000 | named['gPoeFieldLanternDL']
+            if variant >= 3:
+                if i != 0:
+                    continue
+                display = 0x06000000 | named['gPoeFieldSoulDL']
+        # Source PostLimbDraw: a normal-body Keese draws gKeeseEyesDL on the
+        # one-based KEESE_LIMB_HEAD (27) matrix; fire variant 1 has none.
+        eyes = obj == 'object_firefly' and variant == 0 and i == 26
+        if not display and not eyes:
             continue
         lists.prim = (255, 255, 255, 255)
         lists.current_limb = i
         start = len(lists.faces)
-        lists.walk(display)
+        if display:
+            lists.walk(display)
+        if obj == 'object_po_field' and i == 6:
+            lists.walk(0x06000000 | named['gPoeFieldLanternTopDL'])
+        if eyes:
+            lists.walk(0x06000000 | named['gKeeseEyesDL'])
         for original in lists.faces[start:]:
             face = dict(original)
             face['local'] = [tuple(v[:3]) for v in face['vertices']]

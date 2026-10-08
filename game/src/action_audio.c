@@ -8,6 +8,8 @@
 #include "ram_cart.h"
 #include "action_audio.h"
 #include "action_audio_data.h"
+#include "action_decomp_sfx.h"
+#include "field_audio_data.h"
 #include "opening_audio_data.h"
 #include "gameplay.h"
 #include "save_state.h"
@@ -21,6 +23,7 @@ static volatile bool ready;
 static bool opening_bank;
 static unsigned int area_bank;          /* SFX bank index, 0 = none */
 static bool area_ready;
+static bool field_bank;
 static unsigned int voice;
 static unsigned char action_age = 1;
 static volatile bool rupee_active;
@@ -84,12 +87,24 @@ static bool load_area(void)
     area_ready = false;
     if (opening_bank) return true;
     SLOT(26,12) = 255; SLOT(26,0) = 0x1000;     /* area one-shot slot */
+    if (field_bank) {
+        unsigned age = save_state.link_age ? 0 : 1;
+        if (field_sfx_bytes[age] > SFX_AREA_LIMIT ||
+            !upload(field_sfx_file[age], SFX_AREA_BASE, field_sfx_bytes[age])) return false;
+        area_ready = true;
+        return true;
+    }
     if (sfx_bank_file[area_bank] &&
         (sfx_bank_bytes[area_bank] > SFX_AREA_LIMIT ||
          !upload(sfx_bank_file[area_bank], SFX_AREA_BASE, sfx_bank_bytes[area_bank])))
         return false;
     area_ready = true;
     return true;
+}
+
+void action_audio_set_field(bool field)
+{
+    if (field != field_bank) { field_bank = field; area_ready = false; }
 }
 
 bool action_audio_set_area(unsigned int bank)
@@ -118,21 +133,27 @@ bool action_audio_set_opening(bool opening)
     return opening || load_area();
 }
 
-static void play_sample(unsigned int id, unsigned int slot, unsigned int pitch,
-                        unsigned int level, bool loop)
+/* Held decomp sounds (kind 3: hookshot chain, boomerang flight, bomb fuse,
+** Bombchu motor). SCSP repeats one source pass while the actor keeps asking
+** (one request per 20 Hz core step); vblank keys it off once requests stop.
+** Any other sound started on this slot takes it over. */
+#define ITEM_LOOP_SLOT 26
+#define ITEM_LOOP_HOLD 10
+static volatile unsigned char item_loop_frames;
+static unsigned short item_loop_id;
+
+static void play_pcm(unsigned address, unsigned length, unsigned slot,
+                     unsigned pitch, unsigned level, bool loop)
 {
-    const action_pcm_t *sample;
-    unsigned int address, key;
-    if (!ready || id >= (opening_bank ? OPENING_PCM_COUNT : ACTION_PCM_COUNT)) return;
-    sample = opening_bank ? &opening_pcm[id] : &action_pcm[id];
-    address = ACTION_PCM_BASE + sample->offset;
+    unsigned key;
+    if (slot == ITEM_LOOP_SLOT) item_loop_frames = 0;
     SLOT(slot,0) = 0x1000; /* key off old one-shot before retrigger */
     SLOT(slot,12) = 255;
     key = 0x0010 | (loop ? 0x0020 : 0) | ((address >> 16) & 15);
     SLOT(slot,0) = key;
     SLOT(slot,2) = address & 65535;
     SLOT(slot,4) = 0;
-    SLOT(slot,6) = sample->length;
+    SLOT(slot,6) = length;
     SLOT(slot,8) = 31;
     SLOT(slot,10) = 31;
     SLOT(slot,14) = 0;
@@ -142,6 +163,14 @@ static void play_sample(unsigned int id, unsigned int slot, unsigned int pitch,
     SLOT(slot,22) = 7 << 13;
     SLOT(slot,12) = level;
     SLOT(slot,0) = key | 0x1800;
+}
+
+static void play_sample(unsigned int id, unsigned int slot, unsigned int pitch,
+                        unsigned int level, bool loop)
+{
+    if (!ready || id >= (opening_bank ? OPENING_PCM_COUNT : ACTION_PCM_COUNT)) return;
+    const action_pcm_t *sample = opening_bank ? &opening_pcm[id] : &action_pcm[id];
+    play_pcm(ACTION_PCM_BASE + sample->offset, sample->length, slot, pitch, level, loop);
 }
 
 void action_audio_opening_play(unsigned int sound, unsigned int channel, bool loop)
@@ -192,27 +221,11 @@ static void play_area(unsigned int id, unsigned int slot)
 static void play_area_pitch(unsigned int id, unsigned int slot, unsigned int shift)
 {
     const action_pcm_t *sample;
-    unsigned int address, key;
-    if (!ready || opening_bank || !area_ready || id >= AREA_SFX_COUNT) return;
+    if (!ready || opening_bank || !area_ready || field_bank || id >= AREA_SFX_COUNT) return;
     sample = &sfx_bank_pcm[area_bank][id];
     if (!sample->length) return;
-    address = SFX_AREA_BASE + sample->offset;
-    SLOT(slot,0) = 0x1000;
-    SLOT(slot,12) = 255;
-    key = 0x0010 | ((address >> 16) & 15);
-    SLOT(slot,0) = key;
-    SLOT(slot,2) = address & 65535;
-    SLOT(slot,4) = 0;
-    SLOT(slot,6) = sample->length;
-    SLOT(slot,8) = 31;
-    SLOT(slot,10) = 31;
-    SLOT(slot,14) = 0;
-    SLOT(slot,16) = (unsigned short)(((unsigned int)area_sfx_octave[id] << 11) + shift);
-    SLOT(slot,18) = 0;
-    SLOT(slot,20) = 0;
-    SLOT(slot,22) = 7 << 13;
-    SLOT(slot,12) = 12;
-    SLOT(slot,0) = key | 0x1800;
+    play_pcm(SFX_AREA_BASE + sample->offset, sample->length, slot,
+             ((unsigned)area_sfx_octave[id] << 11) + shift, 12, false);
 }
 
 /* Kaleido Game Over prompts: PIECE_OF_HEART for Yes, DECIDE for No, CURSOR
@@ -296,6 +309,10 @@ static void rupee_vblank(void)
 {
     unsigned int tick, previous, start, age;
     navi_vblank();
+    if (item_loop_frames && !--item_loop_frames) {
+        SLOT(ITEM_LOOP_SLOT,12) = 255;
+        SLOT(ITEM_LOOP_SLOT,0) = 0x1000;
+    }
     if (!ready || !rupee_active) return;
     if (music_busy()) {
         SLOT(30,12) = 255;
@@ -425,16 +442,36 @@ void action_audio_owl_flap(void){play_area(AREA_SFX_OWL_FLAP,26);}
 /* Decomp sfxIds (include/tables/sfx/<bank>_table.h) the oot-core actors play. */
 void action_audio_decomp_sfx(unsigned int sfx_id)
 {
-    switch (sfx_id) {
-    case 0x284E: play_area(AREA_SFX_CUT, 26); break;   /* NA_SE_EV_PLANT_BROKEN */
-    case 0x4803: rupee_start(); break;                 /* NA_SE_SY_GET_RUPY */
-    case 0x4824: play(ACTION_GET_ITEM, 27); break;     /* NA_SE_SY_GET_ITEM */
-    case 0x4829: play(ACTION_CAMERA_ZOOM_DOWN_2, 27); break;
-    case 0x480B: play(ACTION_HP_RECOVER, 27); break;   /* NA_SE_SY_HP_RECOVER */
-    case 0x4818:                                       /* NA_SE_SY_MESSAGE_PASS */
-    case 0x482E:                                       /* NA_SE_SY_MESSAGE_END */
-    case 0x4808:                                       /* NA_SE_SY_DECIDE */
-    case 0x4809: play(ACTION_MESSAGE, 27); break;      /* NA_SE_SY_CURSOR */
-    default: break;
+    unsigned int i;
+    if (ready && !opening_bank && area_ready && field_bank) {
+        unsigned age = save_state.link_age ? 0 : 1;
+        for (i = 0; i < field_sfx_count[age]; ++i) {
+            const field_sfx_t *s = &field_sfx_rows[age][i];
+            if ((sfx_id | 0x800u) != s->id) continue;
+            bool loop = !(sfx_id & 0x800u);
+            if (loop && item_loop_frames && item_loop_id == s->id) {
+                item_loop_frames = ITEM_LOOP_HOLD;
+                return;
+            }
+            play_pcm(SFX_AREA_BASE + s->offset, s->length, 26, s->octave << 11, 12, loop);
+            if (loop) { item_loop_id = s->id; item_loop_frames = ITEM_LOOP_HOLD; }
+            return;
+        }
+    }
+    for (i = 0; i < ACTION_DECOMP_SFX_COUNT; ++i) {
+        const action_decomp_sfx_t* entry = &action_decomp_sfx[i];
+        if (entry->id != sfx_id) continue;
+        if (entry->kind == 2) rupee_start();
+        else if (entry->kind == 3) {
+            if (!item_loop_frames || item_loop_id != entry->slot) {
+                play_sample(entry->slot, entry->channel,
+                            (unsigned int)action_pcm_octave[entry->slot] << 11, 12, true);
+                item_loop_id = entry->slot;
+            }
+            item_loop_frames = ITEM_LOOP_HOLD;
+        }
+        else if (entry->kind == 1) play_area(entry->slot, entry->channel);
+        else play(entry->slot, entry->channel);
+        return;
     }
 }

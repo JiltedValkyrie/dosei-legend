@@ -14,6 +14,7 @@ void action_audio_navi_flight(unsigned int speed, bool active);
 bool action_audio_set_opening(bool opening);
 /* Per-area SFX bank (scene_entry_t.sfx_bank) after the resident core. */
 bool action_audio_set_area(unsigned int bank);
+void action_audio_set_field(bool field);
 enum { OPENING_CUT, OPENING_THUNDER, OPENING_BRIDGE, OPENING_BRIDGE_STOP,
        OPENING_HOOVES, OPENING_NEIGH, OPENING_DUST, OPENING_DASH, OPENING_RAIN,
        OPENING_NAVI_FLY, OPENING_TREE_DEATH };

@@ -8,6 +8,8 @@ import struct
 import tempfile
 import unittest
 
+from test_graphics_backend import function
+
 ROOT = Path(__file__).resolve().parents[1]
 GEN = ROOT/'build/generated'
 GCC = Path('C:/msys64/mingw64/bin/gcc.exe')
@@ -18,11 +20,16 @@ class EquipmentDraw(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.temp = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
-        text = (ROOT/'src/kokiri_sgl.c').read_text()
+        source = ROOT/'src/kokiri_sgl.c'
+        text = source.read_text()
         start = text.index('#include "link_equipment.h"')
-        helpers = text[start:text.index('void                kokiri_scene_draw',start)]
-        start = text.index('void                kokiri_link_draw')
-        draw = text[start:text.index('/* Base child-day actor list',start)]
+        # Keep the actual selector and draw function; unrelated texture loading,
+        # scene haze and first-person rendering need different fixtures.
+        helpers = text[start:text.index('/* ---- Adult hero gear',start)]
+        start = text.index('enum { GEAR_LEFT_MASTER')
+        helpers += text[start:text.index(';',start)+1]
+        helpers += function(source,'static void link_part(')
+        draw = function(source,'void                kokiri_link_draw(')
         adapter = '''
 #include <stdbool.h>
 #include <stdint.h>
@@ -47,10 +54,15 @@ typedef unsigned short ANGLE;
 #define ECdis 128
 #define sprPolygon 4
 #define No_Option 0
-#define C_RGB(r,g,b) ((r)|((g)<<5)|((b)<<10))
-#define ATTRIBUTE(plane,sort,tex,col,gouraud,attr,dir,option) (0x80000000u|(col))
+#define C_RGB(r,g,b) (0x8000u|(r)|((g)<<5)|((b)<<10))
+#define ATTRIBUTE(plane,sort,tex,col,gouraud,attr,dir,option) {plane,sort,tex,attr,col,gouraud,dir}
 static bool stick;
 static bool ocarina;
+static bool sword_out,gear_ready;
+static unsigned gear_active,drawn_gear;
+static bool recomp_sword_out(void) { return sword_out; }
+static void gear_draw(void) { drawn_gear=gear_active; }
+static void kokiri_actor_shadow(int x,int y,int z,int radius) {}
 static unsigned filter,draw_filter,filter_calls;
 static int cosine;
 static unsigned oot_core_ocarina_state(void) { return ocarina ? 1 : 0; }
@@ -61,8 +73,10 @@ static bool cutscene_is_playing(void) { return false; }
 static unsigned cutscene_id(void) { return 0; }
 static void slScale(int x,int y,int z) {}
 static void slRotY(ANGLE y) {}
-typedef unsigned int POLYGON;
-typedef unsigned int ATTR;
+/* Match SGL's 20-byte POLYGON and 12-byte ATTR so the actual RAM carve
+ * checks and record copies remain meaningful on the host. */
+typedef struct { int32_t norm[3]; uint16_t Vertices[4]; } POLYGON;
+typedef struct { uint8_t flag,sort; uint16_t texno,atrb,colno,gstb,dir; } ATTR;
 typedef struct { void *pntbl; unsigned int nbPoint; POLYGON *pltbl; unsigned int nbPolygon; ATTR *attbl; } PDATA;
 static POLYGON polygons[1024]; static ATTR attributes[1024];
 static PDATA link_pdata = {0,323,polygons,0,attributes};
@@ -91,7 +105,8 @@ static void jo_3d_rotate_matrix_y(int y) {}
                    ','.join(str(byte) for byte in cls.adult_tunics) + '};\n') + '''
 void reset_gear(void) {
  memset(&gameplay,0,sizeof gameplay);memset(&save_state,0,sizeof save_state);
- stick=ocarina=false;link_age_model=0;filter=draw_filter=filter_calls=0;
+ stick=ocarina=gear_ready=false;sword_out=true;gear_active=drawn_gear=0;
+ link_age_model=0;filter=draw_filter=filter_calls=0;save_state.link_age=1;
  invalidate_equipped();
 }
 void choose_age(int adult) {
@@ -100,8 +115,14 @@ void choose_age(int adult) {
  memcpy(model->gear,adult_groups,sizeof adult_groups);
  memcpy((unsigned char *)(model+1)+((model->vertices+3u)&~3u)+model->vertices*sizeof(link_vec3_t),
         adult_tunics,sizeof adult_tunics);
- link_age_model=adult ? model : 0;invalidate_equipped();
+ link_age_model=adult ? model : 0;save_state.link_age=adult ? 0 : 1;invalidate_equipped();
 }
+void draw_sword(int on) {sword_out=on;}
+void source_gear(unsigned sword,unsigned shield,int ready) {
+ save_state.equip_sword=sword;save_state.equip_shield=shield;gear_ready=ready;
+ invalidate_equipped();
+}
+unsigned selected_groups(void) {return drawn_gear;}
 void play_ocarina(int on) {ocarina=on;}
 void choose_tunic(unsigned tunic) {save_state.tunic=tunic;}
 void hurt(int timer,int dead,int wave) {gameplay.hurt_flash_timer=timer;gameplay.dead=dead;cosine=wave;}
@@ -112,13 +133,16 @@ unsigned points(void) {return drawn.nbPoint;}
 void hold_stick(int on) { stick = on; }
 void select_gear(unsigned int mask) {
  unsigned int i;
- for(i=0;i<1024;++i) { polygons[i]=i; attributes[i]=i+1000; }
+ for(i=0;i<1024;++i) {
+  polygons[i].norm[0]=i;
+  attributes[i]=(ATTR){0,0,i,0,i+1000,0,2};
+ }
  gameplay.equipped=mask; submissions=0; kokiri_link_draw(0,0,0,0);
 }
 unsigned int calls(void) { return submissions; }
 unsigned int count(void) { return drawn.nbPolygon; }
-unsigned int polygon(unsigned int i) { return drawn.pltbl[i]; }
-unsigned int attribute(unsigned int i) { return drawn.attbl[i]; }
+unsigned int polygon(unsigned int i) { return drawn.pltbl[i].norm[0]; }
+unsigned int attribute(unsigned int i) { return drawn.attbl[i].colno; }
 '''
         output = Path(cls.temp.name)/'gear.dll'
         env = dict(os.environ, PATH=str(GCC.parent)+os.pathsep+os.environ.get('PATH',''))
@@ -195,13 +219,53 @@ unsigned int attribute(unsigned int i) { return drawn.attbl[i]; }
         self.lib.choose_age(1)
         self.lib.select_gear(3)
         baseline=self.actual()
-        for tunic,colour in ((1,31<<10),(2,25),(0,0)):
+        # z_player_lib sTunicColors: Zora {0,60,100}, Goron {100,20,0},
+        # converted to RGB555 by the renderer.
+        for tunic,colour in ((1,(7<<5)|(12<<10)),(2,12|(2<<5)),(0,0)):
             self.lib.choose_tunic(tunic)
             self.lib.select_gear(3)
             self.assertEqual(self.actual(),baseline)
             for i,p in enumerate(baseline):
                 tinted=tunic and self.adult_tunics[p//8]&(1<<(p%8))
-                self.assertEqual(self.lib.attribute(i),(0x80000000|colour) if tinted else p+1000)
+                self.assertEqual(self.lib.attribute(i),(0x8000|colour) if tinted else p+1000)
+
+    def test_sheathed_equipment_and_draw_transition_for_both_ages(self):
+        for adult in (False,True):
+            self.lib.choose_age(adult)
+            for mask in (0,1,3,2):
+                self.lib.draw_sword(0)
+                self.lib.select_gear(mask)
+                groups=['BODY','LEFT_EMPTY',
+                        'RIGHT_SHIELD' if mask==2 else 'RIGHT_EMPTY']
+                if mask&1: groups.append('SHEATH_SHIELD' if mask&2 else 'SHEATH_SWORD')
+                self.assertEqual(self.actual(),self.expected(groups,adult))
+                self.assertEqual(self.lib.saved_gear(),mask)
+                self.lib.draw_sword(1)
+                self.lib.select_gear(mask)
+                if mask&1:
+                    self.assertNotEqual(self.actual(),self.expected(groups,adult))
+
+    def test_adult_source_sword_and_shield_select_hand_and_back_groups(self):
+        self.lib.choose_age(1)
+        # Enum values come from the real selector declarations above.
+        for sword,left in ((2,0),(3,4)):
+            for shield,right,back in ((2,1,3),(3,5,6)):
+                self.lib.source_gear(sword,shield,1)
+                self.lib.draw_sword(1)
+                self.lib.select_gear(3)
+                self.assertEqual(self.lib.selected_groups(),(1<<left)|(1<<right))
+                self.assertEqual(self.actual(),self.expected(['BODY','SHEATH'],True))
+                self.assertEqual(self.lib.saved_gear(),3)
+                self.lib.draw_sword(0)
+                self.lib.select_gear(3)
+                self.assertEqual(self.lib.selected_groups(),1<<back)
+                self.assertEqual(self.actual(),self.expected(['BODY','LEFT_EMPTY','RIGHT_EMPTY'],True))
+                self.lib.play_ocarina(1)
+                self.lib.draw_sword(1)
+                self.lib.select_gear(3)
+                self.assertEqual(self.lib.selected_groups(),1<<back)
+                self.assertEqual(self.actual(),self.expected(['BODY','LEFT_EMPTY','RH_OCARINA'],True))
+                self.lib.play_ocarina(0)
 
     def test_hurt_filter_resets_after_shared_equipment_submission(self):
         for wave,level in ((-65536,1),(0,8),(65536,16)):

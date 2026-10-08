@@ -1,6 +1,7 @@
 #ifndef PLAYER_WATER_H
 #define PLAYER_WATER_H
 #include "kokiri_collision.h"
+#include "player_bg.h"
 
 enum {
     PLAYER_WATER_DRY, PLAYER_WATER_ENTER, PLAYER_WATER_SURFACE,
@@ -12,12 +13,14 @@ typedef struct {
     int32_t speed_q8, velocity_q8, remainder[3], rise_depth;
     uint16_t yaw;
     bool grounded;
+    player_bg_t ledge;
 } player_water_t;
 typedef struct {
     int32_t speed_q8;
     uint16_t yaw;
     unsigned room, scale;
     bool dive_pressed, dive_held, stroke_pressed, blocked;
+    bool adult;
 } player_water_input_t;
 
 void player_water_reset(player_water_t *water);

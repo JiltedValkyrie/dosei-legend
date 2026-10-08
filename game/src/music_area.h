@@ -5,4 +5,6 @@
 ** disc, tables loaded into the jo heap, played through a shared bank.
 ** False when the scene's sequence has no baked bank. */
 bool music_area_play(unsigned int seq, unsigned int fade_frames);
+/* Release inaudible cached tables before another scene's large asset loads. */
+void music_area_trim(void);
 #endif

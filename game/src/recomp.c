@@ -1127,13 +1127,11 @@ static void __attribute__((optimize("Os"))) file_select_tick(void)
             interact_pending=cancel_pending=pause_pending=false;
             return;
         }
-        level_select_move(menu_dy,menu_dx);
-        if(menu_page<0)level_select_toggle_max_gear();
-        if(menu_page>0)level_select_toggle_era();
+        unsigned action=level_select_step(menu_dy,menu_dx,pick.confirm,pick.cancel);
         menu_step=menu_dx=menu_dy=menu_page=0;c_assign=c_use=0;
         interact_pending=cancel_pending=pause_pending=false;
-        if(pick.cancel){level_select.visible=false;game_mode_set(GAME_MODE_TITLE);player_input_reset();player_input_set_dialogue(false);music_play(NA_BGM_TITLE);}
-        else if(pick.confirm)level_select_enter();
+        if(action==LEVEL_BACK){level_select.visible=false;file_select_open();}
+        else if(action==LEVEL_BEGIN)level_select_enter();
         return;
     }
     menu_step = menu_dx = menu_dy = menu_page = 0;
@@ -1142,6 +1140,9 @@ static void __attribute__((optimize("Os"))) file_select_tick(void)
     cancel_pending = false;
     pause_pending = false;
     chosen = file_select_step(&pick);
+    if (chosen == FILE_SELECT_DEBUG) {
+        level_select_open();level_select_open_tick=ticks-150u;return;
+    }
     if (chosen == FILE_SELECT_BACK) {
         game_mode_set(GAME_MODE_TITLE);
         /* Hand the pad back, or B would keep cancelling instead of toggling
@@ -2033,6 +2034,8 @@ void recomp_update(void)
                     action.item_eye[1] = recomp_camera.y;
                     action.item_eye[2] = recomp_camera.z;
                 } else if (!item_aim && action.c_use && action.c_use <= 3 &&
+                           save_inventory_slot_usable(save_c_item_inventory_slot(save_state.c_items[action.c_use - 1])) &&
+                           save_inventory_item(save_c_item_inventory_slot(save_state.c_items[action.c_use - 1])) != 0xff &&
                            (save_state.c_items[action.c_use - 1] == 2 ?
                                 save_state.slingshot && save_state.ammo_seeds :
                                 gameplay_item_aimable(save_state.c_items[action.c_use - 1])) &&
@@ -2040,6 +2043,14 @@ void recomp_update(void)
                            !gameplay.attack_phase && !action.shield && !action.pause &&
                            !view_first_person && !input.look_mode && !action.target_held) {
                     item_aim = action.c_use;
+                    {
+                        /* D_80854398: bow/sling/hookshot ready sound on aim. */
+                        unsigned int slot = save_c_item_inventory_slot(save_state.c_items[item_aim - 1]);
+                        if (slot == 3 || slot == 4 || slot == 10 || slot == 16)
+                            action_audio_decomp_sfx(0x1807); /* NA_SE_IT_BOW_DRAW */
+                        else if (slot == 6) action_audio_decomp_sfx(0x1821); /* NA_SE_IT_SLING_DRAW */
+                        else if (slot == 9) action_audio_decomp_sfx(0x1827); /* NA_SE_IT_HOOKSHOT_READY */
+                    }
                     action.c_use = 0; view_first_person = true;
                     oot_follow_look_exit(&link_follow);
                     oot_follow_look(&link_follow, 0, 0);
@@ -2394,6 +2405,7 @@ void recomp_update(void)
                     if (!player_input_motion(&input, recomp_yaw, &wi.yaw, &wi.speed_q8))
                         wi.speed_q8 = 0;
                     wi.room = kokiri_scene_room();
+                    wi.adult = save_state.link_age == 0;
                     wi.dive_pressed = roll_pending;
                     wi.dive_held = input.interact_held;
                     wi.stroke_pressed = water_stroke;
@@ -3288,3 +3300,8 @@ bool player_items_wall(const int32_t from[3], int32_t to[3], unsigned item)
 }
 
 bool recomp_slingshot_aiming(void) { return item_aim && view_first_person; }
+unsigned int recomp_aim_inventory_slot(void)
+{
+    return item_aim && item_aim <= 3 && view_first_person
+        ? save_c_item_inventory_slot(save_state.c_items[item_aim-1]) : 0xffu;
+}

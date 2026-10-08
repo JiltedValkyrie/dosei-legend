@@ -20,7 +20,7 @@ item_drop_t item_drop_random(unsigned int table, unsigned int roll)
 {
     item_drop_t result = { DROP_NONE, 0 };
     unsigned int item;
-    if (table >= 13) table = 0; /* EnKusa/EnIshi guard */
+    if (table >= sizeof item_drop_ids / sizeof item_drop_ids[0]) table = 0;
     roll &= 15;
     item = item_drop_ids[table][roll];
     if (item == 0x12) {

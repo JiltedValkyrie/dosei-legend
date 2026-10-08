@@ -7,6 +7,7 @@
  */
 #ifndef OOT_CORE_HOST_H
 #define OOT_CORE_HOST_H
+#include "oot_core_combat.h"
 
 typedef struct OotCoreHost {
     /* Decomp sfxId (include/tables/sfx/<bank>_table.h) at world position, Q0 units. */
@@ -21,6 +22,16 @@ typedef struct OotCoreHost {
     unsigned int (*ticks_to_us)(unsigned int ticks);
     /* z_parameter Rupees_ChangeBy: add (or spend, negative) rupees. */
     void (*rupees_change)(short amount);
+    /* Temporary Player proxy: snapshot once per core step, one accepted hit.
+     * Health remains C-owned; the proxy must never also call Health_ChangeBy. */
+    void (*player_combat)(OotCoreCombatState* out);
+    int (*player_hit)(const OotCorePlayerHit* hit);
+    /* Scene loading only. NULL data queries size (0 missing, -1 error).
+     * Otherwise read exactly bytes from start; purge SH-2 cache after read. */
+    int (*scene_file)(const char* name, void* data, unsigned int bytes);
+    /* Scene-only sprite storage: free non-NULL memory, otherwise allocate
+     * bytes under the unchanged live-heap admission guard. */
+    void* (*sprite_memory)(void* memory, unsigned int bytes);
 } OotCoreHost;
 
 #endif

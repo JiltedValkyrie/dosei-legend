@@ -8,6 +8,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT/'tools'))
@@ -317,6 +318,64 @@ unsigned saved_source_entrance(){return save_state.source_entrance;}
         self.assertTrue(g.go(0,0,-200))
         self.assertEqual(g.here(),0)  # variant 1, not child-day target 1
         self.assertEqual(g.music_calls(),0)  # base group says keep BGM
+
+
+class AuditSourceClassification(unittest.TestCase):
+    def fixture(self, all_registered=False, debug_segment=False, fail_prefix=None):
+        import audit_world_routes as audit
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp)
+            table=root/'include/tables/scene_table.h'
+            table.parent.mkdir(parents=True)
+            table.write_text('/* 0x00 */ DEFINE_SCENE(a_scene, none, SCENE_A, SDC_DEFAULT, 0, 0)\n'
+                             '/* 0x01 */ DEFINE_SCENE(b_scene, none, SCENE_B, SDC_DEFAULT, 0, 0)\n'
+                             '#if DEBUG_ASSETS\n'
+                             '/* 0x65 */ DEFINE_SCENE(debug_scene, none, SCENE_DEBUG, SDC_DEFAULT, 0, 0)\n'
+                             '#endif\n')
+            manifest=root/'baseroms/ntsc-1.2/segments.csv'
+            manifest.parent.mkdir(parents=True)
+            manifest.write_text('Name,VRAM start\na_scene,\nb_scene,\n'+('debug_scene,\n' if debug_segment else ''))
+            registry=[dict(scene='SCENE_A',rooms=1)]
+            if all_registered:registry.append(dict(scene='SCENE_B',rooms=1))
+            def extract(oot,rom_dir,prefix):
+                if prefix==fail_prefix:raise ValueError('damaged source payload')
+                self.assertNotEqual(prefix,'debug' if not debug_segment else None)
+                return {prefix+'_scene':b''}
+            with mock.patch.object(audit.scenes,'SCENES',registry), \
+                 mock.patch.object(audit.scenes,'ALL_SCENES_DIR',root/'registration'), \
+                 mock.patch.object(audit.scenes,'entrance_metadata',return_value={}), \
+                 mock.patch.object(audit.scenes.source,'extract',side_effect=extract), \
+                 mock.patch.object(audit.scenes.source,'collision_surfaces',return_value=[]), \
+                 mock.patch.object(audit.rooms,'transition_layers',return_value=[]), \
+                 mock.patch.object(audit.rooms,'transition_rows',return_value=[]):
+                return audit.audit(root)
+
+    def test_absent_debug_inputs_are_separate_from_missing_retail_registration(self):
+        report=self.fixture()
+        summary=report['summary']
+        self.assertEqual((summary['source_scenes'],summary['retail_source_scenes'],
+                          summary['debug_source_scenes'],summary['registered_scenes']), (3,2,1,1))
+        self.assertEqual((summary['unregistered_retail_scenes'],summary['unavailable_debug_sources'],
+                          summary['extract_errors'],summary['retail_extract_errors']), (1,1,0,0))
+        self.assertEqual(report['errors'],[])
+        self.assertEqual(report['unavailable_sources'][0]['scene'],'SCENE_DEBUG')
+        self.assertEqual(report['scenes'][-1]['source_scope'],'debug')
+        self.assertFalse(report['scenes'][-1]['source_available'])
+        self.assertTrue(any('1 unregistered retail' in text for text in report['remaining']))
+        complete=self.fixture(all_registered=True)
+        self.assertEqual(complete['summary']['unregistered_retail_scenes'],0)
+        self.assertFalse(any('unregistered retail' in text for text in complete['remaining']))
+        self.assertTrue(any('excluded from retail map coverage' in text for text in complete['remaining']))
+        self.assertEqual(complete['version'],1)
+
+    def test_real_extraction_errors_stay_errors_for_retail_and_present_debug_segments(self):
+        for prefix,debug_segment,retail_errors,unavailable in [('b',False,1,1),('debug',True,0,0)]:
+            with self.subTest(prefix=prefix):
+                report=self.fixture(debug_segment=debug_segment,fail_prefix=prefix)
+                self.assertEqual(report['summary']['extract_errors'],1)
+                self.assertEqual(report['summary']['retail_extract_errors'],retail_errors)
+                self.assertEqual(report['summary']['unavailable_debug_sources'],unavailable)
+                self.assertEqual(report['errors'][0]['error'],'damaged source payload')
 
 
 if __name__=='__main__':unittest.main()

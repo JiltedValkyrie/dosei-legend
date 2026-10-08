@@ -15,9 +15,10 @@
 
 #include "oot_core_bench.h"
 #include "oot_core_host.h"
+#include "oot_core_effects.h"
 
 #define OOT_CORE_MAGIC 0x4F4F5443u /* 'OOTC' */
-#define OOT_CORE_VERSION 22u
+#define OOT_CORE_VERSION 26u
 #define OOT_CORE_TRANSITION_RELOAD 0x10000 /* debug scene has no source entrance */
 /* set_flags bits. NPC_SPRITES: generic NPCs are host sprites (NPC views carry
  * object/anim/frame; their Actor_Draw is skipped, no limb matrices). */
@@ -61,8 +62,10 @@ typedef struct OotCoreNpcView {
      * SkelAnime limb count and animation (segment address), frame above. */
     unsigned short object;
     unsigned char limbs;
-    unsigned char pad;
+    unsigned char tint;          /* resident red/blue hit table, 0 = none */
     unsigned int anim;
+    unsigned int skeleton;       /* opaque linked key; never dereferenced */
+    unsigned short scale_x, scale_y; /* Q8 relative to offline 0.01 scale */
 } OotCoreNpcView;
 
 /* z_message state for the VDP2 text box (route step 4). The blob lays the
@@ -199,6 +202,12 @@ typedef struct OotCoreDynaView {
     int scale_q16;               /* actor scale.x, Q16 */
 } OotCoreDynaView;
 
+typedef struct OotCoreSpriteLibrary {
+    unsigned short object;
+    unsigned int skeleton;
+    unsigned char file;
+} OotCoreSpriteLibrary;
+
 typedef struct OotCoreEntry {
     unsigned int magic;
     unsigned int version;
@@ -292,6 +301,26 @@ typedef struct OotCoreEntry {
     /* Live DynaPoly actors (v22); returns the count, at most
      * OOT_CORE_DYNA_VIEWS_MAX. After update. */
     int (*dyna_view)(const OotCoreDynaView** out);
+    /* Caller-owned effect buffer; omitted reports visual overflow only. */
+    int (*effect_view)(OotCoreEffectView* out, unsigned int capacity, unsigned int* omitted);
+    /* Scene teardown runs while code and object payloads still exist. */
+    void (*play_destroy)(void);
+    /* Exact-core-bound OAP1, validated before constructors/profile publish. */
+    int (*pack_bind)(void* image, unsigned int bytes, unsigned int core_crc);
+    /* Refuses release while a PlayState still owns actors/effects. */
+    int (*pack_release)(void);
+    /* 1 ready, 0 optional OOC absent, -1 failed admission (remain stopped). */
+    int (*scene_load)(unsigned int scene, const char* name, unsigned int core_crc,
+                      const void* const** objects, unsigned int* count);
+    /* Cold scene-only sprite admission runs in the cart with the pack loader.
+     * Return loaded libraries; missing counts failed required libraries. */
+    unsigned int (*sprite_preload)(const void* scene, const OotCoreSpriteLibrary* rows,
+                                   unsigned int count, unsigned char** archives, unsigned int* missing);
+    /* UINT_MAX animation queries largest cel; other values select exact clip. */
+    const unsigned char* (*sprite_clip)(const unsigned char* archive, unsigned int animation);
+    /* Borrowed source WaterBox array (five s16 fields, u32 properties, 16-byte
+     * stride). Valid only during this PlayState; no host writes or ownership. */
+    unsigned int (*water_boxes)(const void** boxes);
 } OotCoreEntry;
 
 #endif

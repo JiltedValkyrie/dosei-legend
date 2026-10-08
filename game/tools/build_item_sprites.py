@@ -27,6 +27,11 @@ Held items carry manifest "anchor" (sprite origin joint); ITMBGS also
 "blade_length" (world units at Link scale; blade lies along +Z).
 
 ITMBOM (EnBom_Draw) is billboarded on N64: every direction is the front cel.
+
+ITMAIM is a presentation-only atlas: its five SPR1 direction cells contain
+slingshot, bow, hookshot, blank, blank. Only one 64x64 cel is uploaded. These
+are the original first-person hand display lists, posed offline with the
+source ready animation. Runtime selects a cell directly, never by world yaw.
 """
 import argparse
 import json
@@ -72,7 +77,15 @@ SHEETS = {
     'ITMHOB': ('object_link_boy', ['gLinkAdultRightHoverBootDL'], 0.01, 48, {}),
 }
 
-NAMES = list(SHEETS) + ['ITMEXP']   # ITMEXP: bake_explosion (textures, no DL mesh)
+NAMES = list(SHEETS) + ['ITMEXP', 'ITMAIM']
+AIM_SIZE = 64
+# Player_OverrideLimbDrawGameplayFirstPerson / func_80834D2C. Keep each
+# vertex's original limb owner while baking the stretched/flex hand lists.
+AIM_RECIPES = (
+    ('object_link_child', 'gLinkChildRightArmStretchedSlingshotDL', 'gPlayerAnim_link_bow_bow_ready'),
+    ('object_link_boy', 'gLinkAdultRightHandHoldingBowFirstPersonDL', 'gPlayerAnim_link_bow_bow_ready'),
+    ('object_link_boy', 'gLinkAdultRightHandHoldingHookshotFarDL', 'gPlayerAnim_link_hook_shot_ready'),
+)
 
 
 class ItemLists(link.LimbLists):
@@ -291,6 +304,60 @@ def anchor_of(name, pts):
     return out
 
 
+def bake_aim(out, preview_dir, keep, oot, rom_dir):
+    """One low-cost held-tool atlas; source pose, approximate screen placement.
+
+    Replay the complete skeleton before selecting the replacement right hand:
+    segment-D vertex ownership and material state must match the real draw.
+    No skeleton, mesh or animation payload is added to Saturn for this view.
+    """
+    animations = link.read_object(oot, 'link_animetion', rom_dir)
+    offsets = link.resolve_animations(oot, keep, link.IDLE_ANIMATION)
+    images = []
+    for obj, symbol, anim in AIM_RECIPES:
+        data = link.read_object(oot, obj, rom_dir)
+        xml = ET.parse(oot / 'assets/xml/objects' / (obj + '.xml'))
+        symbols = {e.attrib['Name']: int(e.attrib['Offset'], 0) for e in xml.iter()
+                   if e.attrib.get('Offset', '.').startswith('0x') and 'Name' in e.attrib}
+        table = symbols['gLinkChildLimbs' if obj.endswith('child') else 'gLinkAdultLimbs']
+        limbs = link.read_limbs(data, table)
+        frame = struct.unpack_from('>h', keep, offsets[anim])[0] - 1
+        _, root, rotations = link.read_animation(keep, animations, offsets[anim], frame, len(limbs))
+        if obj.endswith('child'):
+            root = link.child_root(root)
+        placed = link.walk_skeleton(limbs, rotations, root)
+        placed = [(i, m, o, (0x06000000 | symbols[symbol]) if i == 18 else dl)
+                  for i, m, o, dl in placed]
+        faces = [f for f in link.collect_faces(data, keep, placed) if f['limb'] == 18]
+        # Link's materials remain flat; shapes and source pose identify tools.
+        link.flatten_faces(faces)
+        link.apply_primitive_colour(faces)
+        link.scale_faces(faces, 1.0)
+        sfaces, points = kfr_faces(faces, preview_dir / ('_AIM%d.BIN' % len(images)))
+        # A fixed rear three-quarter view keeps bow curvature and the hook's
+        # muzzle readable at 64px. Screen placement/view are approximations;
+        # the model and its held pose still come from the decomp draw path.
+        points = spr.view(points, math.pi + math.pi / 3)
+        low = [min(p[i] for p in points) for i in (0, 1)]
+        high = [max(p[i] for p in points) for i in (0, 1)]
+        texel = max(high[i] - low[i] for i in (0, 1)) / (AIM_SIZE - 4)
+        centre = [(low[i] + high[i]) / 2 for i in (0, 1)]
+        points = [(x-centre[0], y-centre[1], z) for x, y, z in points]
+        picture = spr.render(sfaces, points, AIM_SIZE, AIM_SIZE, 0, texel)
+        if not picture.getbbox():
+            raise ValueError('First-person tool is empty: ' + symbol)
+        images.append(picture)
+    images.extend(Image.new('RGBA', (AIM_SIZE, AIM_SIZE)) for _ in range(spr.DIRS-len(images)))
+    data = pack_sprite([images], AIM_SIZE, AIM_SIZE, 0, 1, 0,
+                       out / 'ITMAIM.SPR', preview_dir / 'ITMAIM_sprites.png')
+    return dict(symbol='Player_OverrideLimbDrawGameplayFirstPerson',
+                symbols=[r[1] for r in AIM_RECIPES], animations=[r[2] for r in AIM_RECIPES],
+                object='object_link_child/object_link_boy', w=AIM_SIZE, h=AIM_SIZE,
+                poses=1, dirs=spr.DIRS, ticks=1, texel_q8=256, centre_y_q4=0,
+                pitch_bands=False, bytes=len(data), resident_cels=1,
+                screen_atlas=['slingshot', 'bow', 'hookshot', 'blank', 'blank'])
+
+
 # EffectSsBomb2 layered draw (z_eff_ss_bomb2.c): gEffBombExplosionVtx quad
 # (-31..32), 8 ia16 32x32 textures, combiner (PRIM-ENV)*I+ENV, alpha
 # PRIM_A*A; base layer plus two layers, each RotateZ(life*0.02+180 rad) and
@@ -408,7 +475,7 @@ def pack_sprite(images, width, height, centre_y, texel, focus_y, dest, preview_p
 
 def vram_bytes(entry):
     cel = entry['w'] * entry['h'] // 2
-    return entry['poses'] * entry['dirs'] * ((cel + 31) & ~31) + 32
+    return entry.get('resident_cels', entry['poses'] * entry['dirs']) * ((cel + 31) & ~31) + 32
 
 
 def build(oot, rom_dir, out, only=None, preview_dir=None, manifest=None):
@@ -423,7 +490,8 @@ def build(oot, rom_dir, out, only=None, preview_dir=None, manifest=None):
     if only and manifest.exists():
         result = json.loads(manifest.read_text(encoding='utf-8'))
     for name in only or NAMES:
-        result[name] = (bake_explosion(out, preview_dir, keep) if name == 'ITMEXP'
+        result[name] = (bake_aim(out, preview_dir, keep, oot, rom_dir) if name == 'ITMAIM'
+                        else bake_explosion(out, preview_dir, keep) if name == 'ITMEXP'
                         else bake_sheet(name, oot, rom_dir, out, preview_dir, keep))
     result['_convention'] = ('pitch_bands: pose p = elevation (-90,-45,0,45,90)[p] deg of item +Z '
                              'toward +Y; ticks=5 identity. dirs: 5 yaw views, runtime mirrors 3.')

@@ -18,6 +18,7 @@
 #include "dungeon_doors.h"
 #include "vdp1_draw_wait.h"
 #include "oot_core_host.h"
+#include "music_area.h"
 #include "save_state.h"
 #include "oot_follow.h"
 
@@ -34,8 +35,9 @@ static bool         door_armed;
 /* Collision for the loaded scene: S<n>.COL (KBG2) decoded into one buffer --
 ** triangles, per-triangle surface info, raw SurfaceTypes, water boxes and
 ** bgCams. Reused across scenes so a transition does not fragment the arena;
-** sized for the largest set the format allows, checked at load time. */
-#define SCENE_COLLISION_MAX   2321  /* ydan source scene; allocated dynamically */
+** sized to this scene's complete decoded data. New storage is admitted before
+** replacing the old world; small scenes release the larger scene's storage. */
+#define SCENE_COLLISION_MAX   5096  /* largest retail source scene: ganontika */
 #define SCENE_COLLISION_BYTES \
     (SCENE_COLLISION_MAX * (36 + 2) + 256 * 8 + 64 * 16 + 64 * 8 + 512 * 6)
 static void                 *collision_buffer;
@@ -47,7 +49,7 @@ static bg_mesh_t             collision_mesh;
 ** Leaving a stale index behind is both wrong and slow -- it was why movement
 ** crawled after walking in and out of the house. Allocated once and reused,
 ** because the buffer has to outlive the collision data it indexes. */
-#define SCENE_COLLISION_INDEX_BYTES (16 * 1024)
+#define SCENE_COLLISION_INDEX_BYTES (20 * 1024) /* retail maximum 19,774 B */
 static void                 *collision_index;
 bool                         scene_collision_indexed;
 
@@ -148,37 +150,39 @@ const scene_spawn_t *scene_flow_spawn(unsigned int scene, unsigned int spawn)
 static bool __attribute__((optimize("Os"))) collision_load(unsigned int scene)
 {
     char        name[12];
-    void       *data;
+    const void *data;
+    void       *next_buffer, *old_buffer;
+    bg_mesh_t   next_mesh;
     int         length = 0;
     uint32_t    need;
 
     if (!asset_scene_name(name, scene, -1, "COL"))
         return (false);
-    data = jo_fs_read_file(name, &length);
+    /* The scene-load scratch is already reserved and larger than any COL.
+     * Avoid a second whole-file heap allocation while two worlds overlap. */
+    data = ram_cart_load_scratch(name, &length);
     if (!data || length <= 0) {
-        if (data) jo_free(data);
         return (false);
     }
     need = bg_mesh_bytes((const uint8_t *)data, (uint32_t)length);
     if (!need || need > SCENE_COLLISION_BYTES) {
         /* Refuse rather than truncate: half a scene's collision would let Link
         ** walk through walls in ways that look like a physics bug. */
-        jo_free(data);
         return (false);
     }
-    if (!collision_buffer) {
-        collision_buffer = jo_malloc(SCENE_COLLISION_BYTES);
-        if (!collision_buffer) { jo_free(data); return (false); }
-    }
+    next_buffer = jo_malloc(need);
+    if (!next_buffer) return (false);
     if (!bg_mesh_decode((const uint8_t *)data, (uint32_t)length,
-                        collision_buffer, SCENE_COLLISION_BYTES,
-                        &collision_mesh) ||
-        collision_mesh.triangle_count > SCENE_COLLISION_MAX) {
-        jo_free(data);
+                        next_buffer, need, &next_mesh) ||
+        next_mesh.triangle_count > SCENE_COLLISION_MAX) {
+        jo_free(next_buffer);
         return (false);
     }
-    jo_free(data);
+    old_buffer = collision_buffer;
+    collision_buffer = next_buffer;
+    collision_mesh = next_mesh;
     bg_scene_set(&collision_mesh);
+    if (old_buffer) jo_free(old_buffer);
     /* Actors own their dyna collision and are gone with the old scene. */
     if (!dyna_ready) {
         bg_dyna_init(ram_cart_fixed(RAM_CART_DYNA_OFFSET, RAM_CART_DYNA_BYTES),
@@ -212,6 +216,10 @@ bool __attribute__((optimize("Os"))) scene_flow_load(unsigned int scene, unsigne
     oot_follow_set_adult(save_state.link_age == 0);
     if (!collision_load(scene))
         return (false);
+    /* Old core archives must not overlap the next scene's native models and
+     * animation banks (Ranch SPR2 + Gohma exceeds the existing heap). */
+    oot_core_scene_unload();
+    music_area_trim();
     if (entry->image) {
         /* A prerendered interior: one backdrop on VDP2, no geometry at all. */
         /* Houses with source pivot cameras start on their panorama bank;
@@ -226,7 +234,11 @@ bool __attribute__((optimize("Os"))) scene_flow_load(unsigned int scene, unsigne
     }
     /* Area SFX follow the scene. A failed bank load leaves those sounds
     ** silent rather than blocking the scene. */
-    action_audio_set_area(entry->sfx_bank);
+    action_audio_set_field(scene == SCENE_SPOT00);
+    if (!action_audio_set_area(entry->sfx_bank) && scene == SCENE_SPOT00) {
+        jo_core_error("Field sound bank load failed");
+        return false;
+    }
     minimap_scene(entry->save_scene);
     current_scene = scene;
     loaded = true;

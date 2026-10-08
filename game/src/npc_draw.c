@@ -211,8 +211,8 @@ static bool upload_visible(unsigned int visible, unsigned int generation)
 #ifdef DOSEI_OOT_CORE
         oot_core_meshes_upload();   /* never starves the C uploads */
 #endif
-        /* Adult hero gear last: optional, so it can never starve an actor;
-         * a full bank keeps Link's flat hand/back variants for this room. */
+        /* Adult hero gear last: artwork never starves an actor. A full bank
+         * keeps the selected source geometry with its baked flat colours. */
         (void)kokiri_link_gear_upload();
         uploaded = 0;
     }

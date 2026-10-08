@@ -46,7 +46,7 @@ class GraphicsBackend(unittest.TestCase):
             env['PATH'] = str(Path(GCC).parent) + os.pathsep + env.get('PATH', '')
             exe = p / 'test.exe'
             subprocess.run([GCC, '-std=c99', '-O2', '-Wno-pointer-to-int-cast',
-                            str(p / 'test.c'), '-o', str(exe)], check=True, env=env)
+                            str(p / 'test.c'), '-o', str(exe), '-lm'], check=True, env=env)
             subprocess.run([str(exe)], check=True, env=env)
 
     @unittest.skipUnless((ROOT / 'build/cd' / room_asset(STORY_BANK_PANORAMA,0,'MSH')).exists(), 'baked house required')

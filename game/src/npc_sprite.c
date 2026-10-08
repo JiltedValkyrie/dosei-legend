@@ -6,6 +6,10 @@
 #include "gameplay.h"
 #include "recomp.h"
 #include "kokiri_camera.h"
+#include "../oot-core/include/oot_sprite_archive.h"
+#ifdef DOSEI_OOT_CORE
+#include "oot_core_api.h"
+#endif
 
 #define U16(s, o) ((unsigned int)((s)[o] << 8 | (s)[(o) + 1]))
 #define CELS(s) (0x34u + ((U16(s, 0x0C) * 2u + 3u) & ~3u))
@@ -21,6 +25,50 @@ int npc_sprite_valid(const unsigned char *s, unsigned int length)
     if (base + w*h/2*poses*5 != length) return 0;
     for (i=0;i<ticks;++i) if (U16(s,0x34+i*2)>=poses) return 0;
     return 1;
+}
+
+int npc_sprite_archive_valid(const unsigned char *s, unsigned int bytes, unsigned int skeleton)
+{
+    return OotSprite_ArchiveValid(s,bytes,skeleton);
+}
+
+const unsigned char *npc_sprite_archive_clip(const unsigned char *s, unsigned int animation)
+{
+    if (!s) return 0;
+#ifdef DOSEI_OOT_CORE
+    return ((const OotCoreEntry*)OOT_CORE_LOAD_ADDR)->sprite_clip(s,animation);
+#else
+    return OotSprite_Clip(s,animation);
+#endif
+}
+
+const unsigned char *npc_sprite_archive_largest(const unsigned char *s)
+{
+    if (!s) return 0;
+#ifdef DOSEI_OOT_CORE
+    return ((const OotCoreEntry*)OOT_CORE_LOAD_ADDR)->sprite_clip(s,~0u);
+#else
+    return OotSprite_Clip(s,~0u);
+#endif
+}
+
+npc_sprite_inst_t *npc_sprite_cache_claim(npc_sprite_inst_t *slots, unsigned int count,
+                                         unsigned int *pinned, const unsigned char *sheet,
+                                         unsigned int cel)
+{
+    unsigned int i, candidate=count;
+    if (count>32) return 0;
+    for (i=0;i<count;++i) {
+        if (slots[i].slot==NPC_SPRITE_SLOT_NONE) continue;
+        if (slots[i].sheet==sheet && slots[i].shown==cel) {
+            *pinned |= 1u<<i;
+            return &slots[i];
+        }
+        if (!(*pinned & (1u<<i)) && candidate==count) candidate=i;
+    }
+    if (candidate==count) return 0;
+    *pinned |= 1u<<candidate;
+    return &slots[candidate];
 }
 
 unsigned char *npc_sprite_load(const char *name)
@@ -88,31 +136,39 @@ int npc_sprite_visible(const unsigned char *spr, int x, int y, int z)
 }
 
 unsigned char npc_sprite_shadow_off;
+unsigned int npc_sprite_cel(const unsigned char *spr, unsigned int frame, int x, int z, uint16_t yaw)
+{
+    uint16_t phi=(uint16_t)(yaw-gameplay_facing(recomp_camera.x-x,recomp_camera.z-z));
+    unsigned int d8=((phi+0x1000u)>>13)&7, dir=d8<=4?d8:8-d8;
+    if (!npc_sprite_shadow_off && last_depth>500) frame &= ~1u;
+    if (!npc_sprite_shadow_off && last_depth>1200) frame=0;
+    return (U16(spr,0x34+(frame%U16(spr,0x0C))*2)*U16(spr,8)+dir) |
+           (d8>4 ? 0x10000u : 0);
+}
+
+int npc_sprite_visible_scaled(const unsigned char *spr, int x, int y, int z,
+                              unsigned sx, unsigned sy)
+{
+    if (!sx || !sy) return 0;
+    if (sx > 4096) sx = 4096;
+    if (sy > 4096) sy = 4096;
+    unsigned radius = (U16(spr, 4) * sx + U16(spr, 6) * sy) / 256;
+    radius = radius * U16(spr, 0x10) / 512 + 8;
+    return npc_sprite_in_view(x, y + (int16_t)U16(spr, 0x0E) * (int)sy / 4096, z, radius);
+}
+
 void npc_sprite_draw(const unsigned char *spr, npc_sprite_inst_t *inst, unsigned int frame,
                      int x, int y, int z, uint16_t yaw)
 {
     if (inst->slot == NPC_SPRITE_SLOT_NONE ||
         !npc_sprite_visible(spr, x, y, z)) return;
+    npc_sprite_draw_sample(spr,inst,npc_sprite_cel(spr,frame,x,z,yaw),x,y,z);
+}
+
+static void npc_sprite_bind_sample(const unsigned char *spr, npc_sprite_inst_t *inst,
+                                   unsigned int cel)
+{
     unsigned int bytes = U16(spr, 4) * U16(spr, 6) / 2;
-    if (!npc_sprite_shadow_off) kokiri_actor_shadow(x,y,z,U16(spr,4)*U16(spr,0x10)/1024+4);
-    /* phi: camera seen from the actor's frame, 0 = in front (bake view()).
-    ** Sign confirmed in Kronos 2026-10-03. */
-    uint16_t phi = (uint16_t)(yaw - gameplay_facing(recomp_camera.x - x, recomp_camera.z - z));
-    unsigned int d8 = ((phi + 0x1000u) >> 13) & 7, dir = d8 <= 4 ? d8 : 8 - d8;
-    unsigned int pose;
-    /* Distance LOD: full rate near, half rate past 500 units, pose frozen past
-     * 1200 (only the view direction updates). Fewer cel copies from the cart.
-     * Tools (shadow off) keep exact frames: theirs encode pitch bands. */
-    if (!npc_sprite_shadow_off && last_depth > 500) frame &= ~1u;
-    pose = U16(spr, 0x34 + (frame % U16(spr, 0x0C)) * 2);
-    if (!npc_sprite_shadow_off && last_depth > 1200 && inst->sheet == spr && inst->shown != 0xFFFF)
-        pose = inst->shown / U16(spr, 8);
-    unsigned int cel = pose * U16(spr, 8) + dir;
-    FIXED pos[5];
-    /* SGL sprHflip is broken (PDATA16 typo): bit 4 is the H flip. */
-    SPR_ATTR attr = SPR_ATTRIBUTE(0, 0, No_Gouraud, CL16Look | ECdis,
-                                  (d8 > 4 ? (1 << 4) : 0) | sprNoflip | FUNC_Sprite);
-    if (inst->slot == NPC_SPRITE_SLOT_NONE) return;
     if (inst->sheet != spr) {
         jo_texture_definition *t = &__jo_sprite_def[inst->slot];
         uint16_t *clut = (uint16_t *)(JO_VDP1_VRAM + inst->colno * 8u);
@@ -131,6 +187,52 @@ void npc_sprite_draw(const unsigned char *spr, npc_sprite_inst_t *inst, unsigned
         for (k = 0; k < bytes / 4; ++k) to[k] = from[k];
         inst->shown = (uint16_t)cel;
     }
+}
+
+void npc_sprite_draw_screen(const unsigned char *spr, npc_sprite_inst_t *inst,
+                            unsigned int cel, int x, int y, int scale_q16)
+{
+    FIXED pos[5];
+    SPR_ATTR attr = SPR_ATTRIBUTE(0, 0, No_Gouraud, CL16Look | ECdis,
+                                  sprNoflip | FUNC_Sprite);
+    if (!spr || inst->slot == NPC_SPRITE_SLOT_NONE || cel >= U16(spr,8)*U16(spr,10)) return;
+    npc_sprite_bind_sample(spr, inst, cel);
+    pos[0] = (x-JO_TV_WIDTH_2)*65536;
+    pos[1] = (y-JO_TV_HEIGHT_2)*65536;
+    pos[2] = kokiri_hud_depth(4);
+    pos[3] = pos[4] = scale_q16;
+    attr.texno = inst->slot;
+    attr.colno = inst->colno;
+#ifdef DOSEI_HIRES
+    pos[1] = (y*2-JO_TV_HEIGHT_2)*65536;
+    pos[4] *= 2;
+    slDispSpriteHV(pos, &attr, 1);
+#else
+    slDispSprite(pos, &attr, 0);
+#endif
+}
+
+void npc_sprite_draw_sample(const unsigned char *spr, npc_sprite_inst_t *inst,
+                            unsigned int sample, int x, int y, int z)
+{
+    npc_sprite_draw_styled(spr, inst, sample, x, y, z, 256, 256, 255, 0);
+}
+
+void npc_sprite_draw_styled(const unsigned char *spr, npc_sprite_inst_t *inst,
+                            unsigned int sample, int x, int y, int z,
+                            unsigned sx, unsigned sy, unsigned alpha, unsigned tint)
+{
+    FIXED pos[5];
+    /* SGL sprHflip is broken (PDATA16 typo): bit 4 is the H flip. */
+    SPR_ATTR attr = SPR_ATTRIBUTE(0, 0, No_Gouraud, CL16Look | ECdis,
+                                  (sample & 0x10000u ? (1 << 4) : 0) | sprNoflip | FUNC_Sprite);
+    if (inst->slot == NPC_SPRITE_SLOT_NONE || !sx || !sy || !alpha) return;
+    if (sx > 4096) sx = 4096;
+    if (sy > 4096) sy = 4096;
+    if (alpha < 255) attr.atrb |= MESHon;
+    if (tint) { attr.atrb |= CL_Gouraud; attr.gstb = kokiri_hit_gouraud(tint); }
+    if (!npc_sprite_shadow_off) kokiri_actor_shadow(x,y,z,U16(spr,4)*U16(spr,0x10)/1024+4);
+    npc_sprite_bind_sample(spr, inst, sample & 0xffffu);
     {
         /* SGL drops a sprite whose single anchor is nearer than the screen
          * distance >> ZDSP level 3; narrow cutscene shots move that cut out.
@@ -139,7 +241,8 @@ void npc_sprite_draw(const unsigned char *spr, npc_sprite_inst_t *inst, unsigned
          * (~900 px) so a huge close sprite cannot wrap VDP1 coordinates. */
         int dist = recomp_screen_distance(), near = dist / 8 + 6, depth = last_depth;
         int32_t cx = recomp_camera.x, cy = recomp_camera.y, cz = recomp_camera.z;
-        int32_t ay = y + (int16_t)U16(spr, 0x0E) / 16, k = 256, scale = (int32_t)U16(spr, 0x10) * 256, px;
+        int32_t ay = y + (int16_t)U16(spr, 0x0E) * (int)sy / 4096, k = 256;
+        int32_t scale = (int32_t)U16(spr, 0x10), px;
         if (depth < 4) depth = 4;
         if (depth < near) {
             k = near * 256 / depth;
@@ -148,12 +251,13 @@ void npc_sprite_draw(const unsigned char *spr, npc_sprite_inst_t *inst, unsigned
             z = cz + (z - cz) * k / 256;
             depth = near;
         }
-        px = U16(spr, 6) * U16(spr, 0x10) / 256 * k / 256 * dist / depth;
+        px = U16(spr, 6) * U16(spr, 0x10) / 256 * sy / 256 * k / 256 * dist / depth;
         if (px > 900) k = k * 900 / px;
         pos[0] = x * 65536;
         pos[1] = -ay * 65536;
         pos[2] = z * 65536;
-        pos[3] = pos[4] = scale / 256 * k;
+        pos[3] = scale * (int)sx / 256 * k;
+        pos[4] = scale * (int)sy / 256 * k;
     }
     attr.texno = inst->slot;
     attr.colno = inst->colno;

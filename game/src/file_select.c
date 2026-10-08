@@ -102,6 +102,10 @@ static void         confirm_choosing(void)
 {
     unsigned int    slot = file_select.cursor;
 
+    if (slot == FILE_SELECT_ROW_DEBUG) {
+        file_select.result = FILE_SELECT_DEBUG;
+        return;
+    }
     if (slot == FILE_SELECT_ROW_ERASE) {
         file_select.mode = FILE_SELECT_ERASE_PICK;
         file_select.cursor = 0;
@@ -217,6 +221,7 @@ const char         *file_select_row_label(unsigned int row)
         case 1:  return "FILE 2";
         case 2:  return "FILE 3";
         case FILE_SELECT_ROW_ERASE: return "ERASE FILE";
+        case FILE_SELECT_ROW_DEBUG: return "Level Select (Debug Mode)";
         default: return "";
     }
 }

@@ -3,12 +3,13 @@ import ctypes
 import os
 from pathlib import Path
 import re
+import shutil
 import subprocess
 import tempfile
 import unittest
 ROOT=Path(__file__).resolve().parents[1]
-GCC=Path('C:/msys64/mingw64/bin/gcc.exe')
-OOT=Path('D:/Workspace-Claude/game-decomps/n64/oot')
+GCC=Path(shutil.which('gcc') or 'C:/msys64/mingw64/bin/gcc.exe')
+OOT=Path(os.environ.get('DOSEI_OOT', 'D:/Workspace-Claude/game-decomps/n64/oot'))
 class Drop(ctypes.Structure):
     _fields_=[('item',ctypes.c_uint8),('count',ctypes.c_uint8)]
 class Drops(unittest.TestCase):
@@ -18,7 +19,7 @@ class Drops(unittest.TestCase):
         path=Path(cls.tmp.name)
         (path/'adapter.c').write_text('#include "save_state.h"\nvoid state(int h,int max,int sling,int seeds){save_new_game();save_state.health=h;save_state.health_capacity=max;save_state.slingshot=sling;save_state.ammo_seeds=seeds;}\nint hp(void){return save_state.health;}\nint nuts(void){return save_state.nut_ammo;}\nint seeds(void){return save_state.ammo_seeds;}\n')
         env=dict(os.environ);env['PATH']=str(GCC.parent)+os.pathsep+env.get('PATH','')
-        subprocess.run([str(GCC),'-shared','-O2','-I'+str(ROOT/'src'),str(path/'adapter.c'),
+        subprocess.run([str(GCC),'-shared','-fPIC','-O2','-I'+str(ROOT/'src'),str(path/'adapter.c'),
                         str(ROOT/'src/item_drop.c'),str(ROOT/'src/save_state.c'),'-o',str(path/'drop.dll')],check=True,env=env)
         cls.lib=ctypes.CDLL(str(path/'drop.dll'));cls.lib.item_drop_random.restype=Drop
         cls.lib.item_drop_give.restype=ctypes.c_bool
@@ -40,6 +41,14 @@ class Drops(unittest.TestCase):
         self.lib.state(32,48,1,0)
         self.assertEqual(3,self.lib.item_drop_filter(3))
         self.assertEqual(16,self.lib.item_drop_filter(8))
+    def test_enemy_tables_13_and_14_are_not_clamped_to_grass(self):
+        self.lib.state(32,48,1,0)
+        for table, roll, expected, count in ((13,0,16,1),(13,2,12,1),(13,4,13,1),(14,0,3,3),(14,2,16,1),(14,4,3,1)):
+            drop=self.lib.item_drop_random(table,roll)
+            self.assertEqual((drop.item,drop.count),(expected,count))
+        a=self.lib.item_drop_random(15,0)
+        b=self.lib.item_drop_random(0,0)
+        self.assertEqual((a.item,a.count),(b.item,b.count))
     def test_flexible_fairy_and_health_quantities(self):
         self.lib.state(16,48,0,0)
         drop=self.lib.item_drop_random(0,11)

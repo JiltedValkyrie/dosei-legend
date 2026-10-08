@@ -3,12 +3,13 @@ import ctypes as C
 import math
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
-GCC = Path('C:/msys64/mingw64/bin/gcc.exe')
+GCC = Path(shutil.which('gcc') or 'C:/msys64/mingw64/bin/gcc.exe')
 
 
 @unittest.skipUnless(GCC.exists(), 'host compiler required')
@@ -29,7 +30,8 @@ class ItemAim(unittest.TestCase):
 #include "gameplay.h"
 #include "save_state.h"
 #include "player_input.h"
-gameplay_t gameplay; save_state_t save_state;
+gameplay_t gameplay;
+#include "save_state.c"
 static unsigned item_aim,c_use; static bool view_first_person,cancel_pending,interact_pending,pause_pending;
 static unsigned short recomp_link_yaw,recomp_yaw; static int recomp_pitch;
 static struct {int x,y,z;} recomp_camera;
@@ -46,8 +48,11 @@ static void oot_follow_look(void *p,int x,int y){(void)p;(void)x;(void)y;}
 static int recomp_screen_distance(void){return 160;}
 void kokiri_camera_sincos(uint16_t a,int32_t *s,int32_t *c){*s=lround(sin(a*6.28318530718/65536)*65536);*c=lround(cos(a*6.28318530718/65536)*65536);}
 void reset(void){memset(&gameplay,0,sizeof(gameplay));memset(&save_state,0,sizeof(save_state));
-save_state.slingshot=1;save_state.ammo_seeds=10;save_state.c_items[0]=2;
+save_state.slingshot=1;save_state.ammo_seeds=10;save_state.c_items[0]=2;save_state.link_age=1;
 item_aim=0;view_first_person=false;cancel_pending=false;pause_pending=false;recomp_link_yaw=0;}
+void set_item(int slot,int item,int age){save_state.source_items[slot]=item;save_state.link_age=age;
+save_state.c_items[0]=save_c_item_for_slot(slot);}
+void invalidate_age(int age){save_state.link_age=age;}
 int aiming(void){return item_aim && view_first_person;}
 int route(int press,int cancel,int target,int pause){
 player_input_t input={0};gameplay_input_t action={0};
@@ -102,6 +107,33 @@ int screen_pose(int x,int y,int z,int yaw,int pitch,int axis){recomp_yaw=yaw;ret
         self.assertFalse(g.aiming())
         g.route(1,0,0,0)
         self.assertEqual(g.route(1,0,0,1),0)
+        self.assertFalse(g.aiming())
+
+    def test_bow_elemental_hookshot_longshot_and_boomerang_keep_crosshair_aim(self):
+        # Source inventory slots; the view contract is shared by each tool.
+        for slot,item,age in ((3,3,0),(4,4,0),(10,12,0),(16,18,0),
+                              (9,10,0),(9,11,0),(12,14,1)):
+            with self.subTest(slot=slot,item=item):
+                g=self.lib
+                g.reset();g.set_item(slot,item,age)
+                self.assertEqual(g.route(1,0,0,0),0)
+                self.assertTrue(g.aiming())
+                for _ in range(4): self.assertEqual(g.route(0,0,0,0),0)
+                g.set_look_pitch(-4096)
+                self.assertEqual(g.route(1,0,0,0),1)
+                self.assertTrue(g.aiming())
+                self.assertEqual(g.fired_pitch(),-4096)
+                self.assertTrue(g.fired_from_eye())
+                self.assertEqual(g.route(0,1,0,0),0)
+                self.assertFalse(g.aiming())
+
+    def test_stale_wrong_age_or_empty_slot_does_not_open_aim(self):
+        g=self.lib
+        g.set_item(3,3,0);g.invalidate_age(1)
+        g.route(1,0,0,0)
+        self.assertFalse(g.aiming())
+        g.reset();g.set_item(9,0xff,0)
+        g.route(1,0,0,0)
         self.assertFalse(g.aiming())
 
     def test_marker_projection_matches_y_up_camera_and_screen_handedness(self):

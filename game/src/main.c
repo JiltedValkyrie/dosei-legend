@@ -450,8 +450,9 @@ static void __attribute__((optimize("Os"))) viewer_draw(void)
             frame_timer_end(FRAME_PHASE_LINK);
         }
     } else if (recomp_link_active && !recomp_title_is_visible() && recomp_slingshot_aiming()) {
-        /* Slingshot aim draws no Link: the first-person arm never showed and
-         * was removed (human, 2026-10-01). A VDP2 crosshair marks the aim. */
+        /* Source first-person hand/tool pose baked into one bounded cel.
+         * The independent VDP2 crosshair keeps the same aiming position. */
+        if (!gameplay_blocks_world() && !gameplay.dead) oot_core_tool_aim_draw();
     } else if (recomp_link_active && !recomp_title_is_visible() && !recomp_first_person() &&
                !recomp_shop_browsing()) {
         frame_timer_begin(FRAME_PHASE_LINK);
@@ -1347,15 +1348,27 @@ static void __attribute__((optimize("Os"))) file_select_screen(void)
     was_visible = true;
     if(level_select.visible) {
         for(row=0;row<FS_ROWS;++row)jo_printf(0,FS_ROW+row,"                                      ");
-        jo_printf(8,FS_ROW,"LEVEL SELECT");
-        jo_printf(4,FS_ROW+2,"AREA: %-24s",scene_name(level_select.scene));
-        jo_printf(4,FS_ROW+4,"ROOM: %u / %u",level_select.room,scene_entries[level_select.scene].rooms-1);
-        jo_printf(4,FS_ROW+6,"UP/DOWN: AREA  LEFT/RIGHT: ROOM");
-        jo_printf(4,FS_ROW+8,"ALL ITEMS + MAX STATS: %-3s",level_select.max_gear?"YES":"NO");
-        jo_printf(4,FS_ROW+9,"ADULT LINK: %-3s",level_select.adult?"YES":"NO");
-        jo_printf(4,FS_ROW+10,"L: ITEMS R: ADULT A: ENTER B: BACK");
-        jo_printf(4,FS_ROW+11,"TEST RUN - NO SAVE SLOT");
-        if(level_select.failed)jo_printf(4,FS_ROW+12,"ROOM ENTRY UNAVAILABLE");
+        jo_printf(4,FS_ROW,"LEVEL SELECT - DEBUG MODE");
+        if(level_select.page==LEVEL_OPTIONS) {
+            jo_printf(2,FS_ROW+2,"%.35s",scene_name(level_select.scene));
+            for(row=0;row<5;++row)jo_printf(2,FS_ROW+4+row*2,"%s",level_select.cursor==row?">":" ");
+            jo_printf(4,FS_ROW+4,"Room: %u / %u",level_select.room,scene_entries[level_select.scene].rooms-1);
+            jo_printf(4,FS_ROW+6,"Link: %s",level_select.adult?"Adult":"Child");
+            jo_printf(4,FS_ROW+8,"All Items? %s",level_select.max_gear?"On":"Off");
+            jo_printf(4,FS_ROW+10,"Begin Play Test");
+            jo_printf(4,FS_ROW+12,"Go Back");
+            if(level_select.failed)jo_printf(2,FS_ROW+13,"ROOM ENTRY UNAVAILABLE");
+        } else {
+            unsigned count=level_select_count();
+            unsigned first=level_select.cursor>=8?level_select.cursor-7:0;
+            jo_printf(2,FS_ROW+2,"%s",level_select.page==LEVEL_REGIONS?"Choose Region":level_select_region(level_select.region));
+            for(row=first;row<count && row<first+8;++row)
+                jo_printf(2,FS_ROW+4+row-first,"%s %.33s",row==level_select.cursor?">":" ",
+                    level_select.page==LEVEL_REGIONS?level_select_region(row):scene_name(level_select_map(level_select.region,row)));
+            jo_printf(2,FS_ROW+13,"%u / %u",level_select.cursor+1,count);
+        }
+        jo_printf(2,FS_ROW+14,"A: SELECT / TOGGLE  B: BACK");
+        jo_printf(2,FS_ROW+15,"TEST RUN - NO SAVE SLOT");
         was_open=true;return;
     }
 
@@ -1402,9 +1415,11 @@ static void __attribute__((optimize("Os"))) file_select_screen(void)
         /* In erase mode the erase row itself is not selectable, so it is drawn
         ** without a cursor rather than left looking chosen. */
         if (file_select.mode == FILE_SELECT_ERASE_PICK &&
-            row == FILE_SELECT_ROW_ERASE)
+            row >= SAVE_FILE_SLOTS)
             here = false;
-        jo_printf(2, line, "%s %-7s %-24s", here ? ">" : " ",
+        if(row==FILE_SELECT_ROW_DEBUG)
+            jo_printf(2,line,"%s %-34s",here?">":" ",file_select_row_label(row));
+        else jo_printf(2, line, "%s %-7s %-24s", here ? ">" : " ",
                   file_select_row_label(row),file_select_row_location(row));
         jo_printf(2, line + 1, "     %-32s", file_select_row_detail(row));
     }

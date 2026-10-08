@@ -133,6 +133,8 @@ def main():
     vertices, faces, tiles = convert(args.obj, args.atlas,
                                      args.units_per_texel, args.max_tile,
                                      args.cull)
+    from build_hybrid_scene import halve_texture_tiles
+    tiles, halving = halve_texture_tiles(tiles)
 
     # One object: the bank is drawn whole, with no per-room visibility to
     # resolve, so every face belongs to the same bounding box.
@@ -147,6 +149,8 @@ def main():
                    polygons=len(faces), tiles=len(tiles),
                    pixel_bytes=len(pixels), objects=len(bounds),
                    clut_bytes=len(tiles) * 32, source=args.obj.name)
+    if halving['reductions']:
+        summary['texture_halving'] = halving
     # Read by build_room_scene.py when it computes the shared bank capacities.
     # Without this the compiled maximums come from the ROM rooms alone and a
     # larger cutscene bank would be refused at load.

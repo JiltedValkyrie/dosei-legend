@@ -16,6 +16,7 @@
 #include "message_data_fmt.h"
 #include "play_state.h"
 #include "player.h"
+#include "effect.h"
 #include "overlays/actors/ovl_En_Ko/z_en_ko.h"
 #include "overlays/actors/ovl_En_Md/z_en_md.h"
 #include "overlays/actors/ovl_En_Kanban/z_en_kanban.h"
@@ -26,6 +27,16 @@
 #include "overlays/actors/ovl_En_Ta/z_en_ta.h"
 #include "overlays/actors/ovl_En_Niw/z_en_niw.h"
 #include "overlays/actors/ovl_En_Cow/z_en_cow.h"
+#include "overlays/actors/ovl_En_Skb/z_en_skb.h"
+#include "overlays/actors/ovl_En_Peehat/z_en_peehat.h"
+#include "overlays/actors/ovl_En_Po_Field/z_en_po_field.h"
+#include "overlays/actors/ovl_En_Sb/z_en_sb.h"
+#include "overlays/actors/ovl_En_Weiyer/z_en_weiyer.h"
+#include "overlays/actors/ovl_En_Tite/z_en_tite.h"
+#include "overlays/actors/ovl_En_Firefly/z_en_firefly.h"
+#include "overlays/actors/ovl_En_Ny/z_en_ny.h"
+#include "assets/objects/object_ny/object_ny.h"
+#include "z_actor_dlftbls.h"
 
 extern u32 gOotCoreFlags; /* oot_core_api.cpp, OOT_CORE_FLAG_* */
 
@@ -39,11 +50,58 @@ static const SkelAnime* GenericNpc_Skel(Actor* a) {
         case ACTOR_EN_TA: return &((EnTa*)a)->skelAnime;
         case ACTOR_EN_NIW: return &((EnNiw*)a)->skelAnime;
         case ACTOR_EN_COW: return &((EnCow*)a)->skelAnime;
+        case ACTOR_EN_SKB: return &((EnSkb*)a)->skelAnime;
+        case ACTOR_EN_PEEHAT: return &((EnPeehat*)a)->skelAnime;
+        case ACTOR_EN_PO_FIELD: return &((EnPoField*)a)->skelAnime;
+        case ACTOR_EN_SB: return &((EnSb*)a)->skelAnime;
+        case ACTOR_EN_WEIYER: return &((EnWeiyer*)a)->skelAnime;
+        case ACTOR_EN_TITE: return &((EnTite*)a)->skelAnime;
+        case ACTOR_EN_FIREFLY: return &((EnFirefly*)a)->skelAnime;
         default: return NULL;
     }
 }
 
 extern PlayState* gOotCorePlay; /* oot_core_api.cpp */
+extern EffectSsInfo sEffectSsInfo;
+
+int OotCore_EffectView(OotCoreEffectView* out, unsigned int capacity, unsigned int* omitted) {
+    unsigned int count = 0, dropped = 0;
+    if (!out) capacity = 0;
+    if (capacity > OOT_CORE_EFFECT_VIEWS_MAX) capacity = OOT_CORE_EFFECT_VIEWS_MAX;
+    /* Prioritize damaging actor-owned flames over decorative particles. */
+    if (gOotCorePlay) {
+        for (unsigned cat = 0; cat < ACTORCAT_MAX; ++cat)
+        for (Actor* actor = gOotCorePlay->actorCtx.actorLists[cat].head; actor; actor = actor->next) {
+            if (actor->id != ACTOR_EN_PO_FIELD || !actor->update) continue;
+            const EnPoField* poe = (const EnPoField*)actor;
+            if (!poe->flameTimer || poe->flameScale <= 0) continue;
+            if (count == capacity) { ++dropped; continue; }
+            OotCoreEffectView* row = &out[count++];
+            row->x = (int)poe->flamePosition.x; row->y = (int)poe->flamePosition.y;
+            row->z = (int)poe->flamePosition.z;
+            for (unsigned j = 0; j < 13; ++j) row->regs[j] = 0;
+            row->life = poe->flameTimer; row->type = OOT_CORE_EFFECT_POE_FLAME;
+            row->priority = 0; row->slot = 0xffff;
+        }
+    }
+    if (gOotCorePlay && sEffectSsInfo.table) {
+        for (unsigned int i = 0; i < sEffectSsInfo.tableSize; ++i) {
+            const EffectSs* effect = &sEffectSsInfo.table[i];
+            /* DeadSound is update-only and must still execute in source;
+             * viewing never plays SFX or advances/despawns an effect. */
+            if (effect->life < 0 || !effect->draw || effect->type >= EFFECT_SS_TYPE_MAX) continue;
+            if (count == capacity) { ++dropped; continue; }
+            OotCoreEffectView* row = &out[count++];
+            row->x = (int)effect->pos.x; row->y = (int)effect->pos.y; row->z = (int)effect->pos.z;
+            for (unsigned int j = 0; j < 13; ++j) row->regs[j] = effect->regs[j];
+            row->life = effect->life; row->type = effect->type;
+            row->priority = effect->priority; row->slot = i;
+        }
+    }
+    if (omitted) *omitted = dropped;
+    return count;
+}
+
 unsigned int OotCore_TalkState(void);
 int OotCore_DrawItems(const OotCoreDrawItem** out);
 static const OotCoreDrawItem* sItemsView;
@@ -192,7 +250,7 @@ const OotCoreMessageView* OotCore_MessageView(void) {
     return &sMsgView;
 }
 
-#define NPC_VIEW_MAX 16
+#define NPC_VIEW_MAX 32
 static OotCoreNpcView sNpcView[NPC_VIEW_MAX];
 const int* OotCore_SkinMats(Actor* actor, unsigned char* count, unsigned short* model); /* oot_core_draw.cpp */
 
@@ -235,6 +293,9 @@ int OotCore_NpcView(const OotCoreNpcView** out) {
         v->object = 0;
         v->limbs = 0;
         v->anim = 0;
+        v->skeleton = 0;
+        v->scale_x = v->scale_y = 256;
+        v->tint = 0;
         if (actor->id == ACTOR_EN_KO) {
             EnKo* ko = (EnKo*)actor;
             info = &ko->interactInfo;
@@ -245,6 +306,36 @@ int OotCore_NpcView(const OotCoreNpcView** out) {
             info = &md->interactInfo;
             skel = &md->skelAnime;
             alpha = md->alpha;
+        } else if ((gOotCoreFlags & OOT_CORE_FLAG_NPC_SPRITES) && actor->id == ACTOR_EN_NY) {
+            /* Skeleton-less Spikes: two object DLs key the baked sheet.
+             * Variant follows EnNy_Draw: rock, metal, metal + spikes out. */
+            const EnNy* ny = (const EnNy*)actor;
+            const ActorProfile* profile = gActorOverlayTable[ACTOR_EN_NY].profile;
+            unsigned variant = ny->unk_1E0 > 0.25f ? 2 : ny->unk_1D8 > ny->unk_1D4 ? 1 : 0;
+            v->mats = NULL;
+            v->mat_count = 0;
+            v->skin = 0;
+            v->id = actor->id;
+            v->params = actor->params;
+            v->x = (s32)actor->world.pos.x;
+            v->y = (s32)actor->world.pos.y;
+            v->z = (s32)actor->world.pos.z;
+            v->yaw = (u16)actor->shape.rot.y;
+            v->head_x = v->head_y = v->torso_x = v->torso_y = 0;
+            v->frame = 0;
+            v->alpha = 255;
+            /* Death swaps Draw to the rock-fragment effect: no body sprite. */
+            v->flags = (actor->draw != NULL && profile && actor->draw == profile->draw) ? OOT_CORE_VIEW_DRAWN : 0;
+            v->object = (u16)play->objectCtx.slots[actor->objectSlot].id;
+            v->limbs = 0;
+            v->anim = (u32)(uintptr_t)gEnNySpikeDL | (variant << 20);
+            v->skeleton = (u32)(uintptr_t)gEnNyRockBodyDL;
+            v->scale_x = (u16)(int)(actor->scale.x * 25600);
+            v->scale_y = (u16)(int)(actor->scale.y * 25600);
+            if (actor->colorFilterTimer)
+                v->tint = (actor->colorFilterParams & 0x4000) ? 8 : 24;
+            n++;
+            continue;
         } else if ((gOotCoreFlags & OOT_CORE_FLAG_NPC_SPRITES) && (skel = GenericNpc_Skel(actor)) != NULL) {
             /* Generic NPC as a host sprite: object + animation + frame. */
             v->mats = NULL;
@@ -263,6 +354,40 @@ int OotCore_NpcView(const OotCoreNpcView** out) {
             v->object = (u16)play->objectCtx.slots[actor->objectSlot].id;
             v->limbs = skel->limbCount;
             v->anim = (u32)(uintptr_t)skel->animation;
+            v->skeleton = (u32)(uintptr_t)skel->skeleton;
+            if (actor->id == ACTOR_EN_SKB || actor->id == ACTOR_EN_PEEHAT || actor->id == ACTOR_EN_PO_FIELD ||
+                actor->id == ACTOR_EN_SB || actor->id == ACTOR_EN_WEIYER ||
+                actor->id == ACTOR_EN_TITE || actor->id == ACTOR_EN_FIREFLY) {
+                v->scale_x = (u16)(int)(actor->scale.x * 25600);
+                v->scale_y = (u16)(int)(actor->scale.y * 25600);
+                v->y += (int)(actor->shape.yOffset * actor->scale.y);
+                if (actor->colorFilterTimer)
+                    v->tint = (actor->colorFilterParams & 0x4000) ? 8 : 24;
+                if (actor->id == ACTOR_EN_WEIYER) v->alpha = actor->shape.shadowAlpha;
+                /* Baked sheets: Tektite 1 = blue textures; Keese 0 = normal
+                 * body with eyes (ice Keese too), 1 = fire body without eyes. */
+                if (actor->id == ACTOR_EN_TITE && actor->params == TEKTITE_BLUE)
+                    v->anim |= 1u << 20;
+                if (actor->id == ACTOR_EN_FIREFLY) {
+                    if (((EnFirefly*)actor)->bodyElementalType != 0) /* source enum NORMAL */
+                        v->anim |= 1u << 20;
+                    /* Source DrawXlu drops every limb unless the Lens is on. */
+                    if ((actor->flags & ACTOR_FLAG_REACT_TO_LENS) && !play->actorCtx.lensActive)
+                        v->flags = 0;
+                }
+                if (actor->id == ACTOR_EN_SKB && (((EnSkb*)actor)->breakFlags & 2))
+                    v->anim |= 1u << 20; /* source headless state */
+                if (actor->id == ACTOR_EN_PO_FIELD) {
+                    EnPoField* poe = (EnPoField*)actor;
+                    unsigned variant = actor->params == 1 ? 1 : 0;
+                    v->alpha = poe->lightColor.a;
+                    if (actor->category == ACTORCAT_MISC) {
+                        variant = actor->gravity < 0 ? 2 : actor->params == 1 ? 4 : 3;
+                        if (variant == 2) v->alpha = 255;
+                    }
+                    v->anim |= variant << 20;
+                }
+            }
             n++;
             continue;
         } else {

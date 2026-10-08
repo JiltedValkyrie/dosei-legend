@@ -104,6 +104,11 @@ def combine_alpha_opaque(w0, w1):
     return combined == 1
 
 
+def env_alpha_texel_lerp(w0, w1):
+    """Cycle-1 colour LERP(TEXEL1, TEXEL0, ENV_ALPHA, TEXEL0)."""
+    return ((w0 >> 20) & 15, (w1 >> 28) & 15, (w0 >> 15) & 31, (w1 >> 15) & 7) == (2, 1, 12, 1)
+
+
 class DisplayLists:
     def __init__(self, scene, room):
         self.segments = {2: scene, 3: room}
@@ -118,6 +123,10 @@ class DisplayLists:
         self.geom = 0
         self.prim = (255, 255, 255, 255)
         self.alpha_opaque = False
+        # A caller baking an actor may supply its draw-time env alpha (0/255);
+        # an env-alpha texel lerp then picks TEXEL1/TEXEL0. None keeps tile 0.
+        self.env_alpha = None
+        self.texel_lerp = False
         self.faces = []
         self.textures = {}
         self.opcodes = collections.Counter()
@@ -140,7 +149,10 @@ class DisplayLists:
     def texture(self):
         if not self.texture_on:
             return None
-        tile = self.tiles[self.texture_tile]
+        index = self.texture_tile
+        if self.texel_lerp and self.env_alpha is not None and self.env_alpha >= 128:
+            index = (index + 1) & 7
+        tile = self.tiles[index]
         if tile.get('tmem') not in self.images:
             raise ValueError(f'No texture loaded at {tile}')
         image = self.images[tile['tmem']]
@@ -254,6 +266,21 @@ class DisplayLists:
                     # Skin importers retain source blend ownership through G_VTX.
                     self.vertex_address = w1 + i * 16
                     self.load_vertex(first + i, (x, y, z, u / 32, v / 32, r, g, b, a))
+            elif op == 0x02:
+                # F3DEX2 ModifyVertex edits the already transformed cache.
+                # Re-loading it would apply a skinned limb transform twice.
+                index = (w0 & 0xFFFF) // 2
+                where = (w0 >> 16) & 0xFF
+                if index >= len(self.cache) or self.cache[index] is None:
+                    raise ValueError(f'ModifyVertex references unloaded vertex {index}')
+                vertex = self.cache[index]
+                if where == 0x14: # G_MWO_POINT_ST, signed S10.5 texture coordinates
+                    u, v = struct.unpack('>hh', struct.pack('>I', w1))
+                    self.cache[index] = vertex[:3] + (u / 32, v / 32) + vertex[5:]
+                elif where == 0x10: # G_MWO_POINT_RGBA
+                    self.cache[index] = vertex[:5] + tuple((w1 >> s) & 255 for s in (24, 16, 8, 0))
+                else:
+                    raise ValueError(f'Unsupported ModifyVertex field {where:02x}')
             elif op == 0x05:
                 self.triangle(w0, transparent)
             elif op == 0x06:
@@ -269,6 +296,7 @@ class DisplayLists:
                 self.prim = tuple((w1 >> shift) & 255 for shift in (24, 16, 8, 0))
             elif op == 0xFC:
                 self.alpha_opaque = combine_alpha_opaque(w0, w1)
+                self.texel_lerp = env_alpha_texel_lerp(w0, w1)
             elif op == 0xFD:
                 self.image = (w1, (w0 & 4095) + 1, (w0 >> 21) & 7, (w0 >> 19) & 3)
             elif op == 0xF5:

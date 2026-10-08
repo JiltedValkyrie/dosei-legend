@@ -752,8 +752,14 @@ static void         consume_link_damage(const gameplay_input_t *in)
         gameplay.intangible = GP_INTANGIBLE_STEPS;
     }
     gameplay.knock_yaw = gameplay.hurt_yaw;
-    gameplay.knock_speed = GP_HIT_SPEED_Q16;
-    gameplay.knock_down = false;
+    gameplay.knock_speed = gameplay.hurt_core ? gameplay.hurt_speed : GP_HIT_SPEED_Q16;
+    gameplay.knock_down = gameplay.hurt_large != 0;
+    gameplay.hurt_speed = 0;
+    gameplay.hurt_large = 0;
+    gameplay.hurt_core = 0;
+    /* W0a carries the source element for the later status-effect adapter.
+     * No elemental enemy can be admitted until its response is implemented. */
+    gameplay.hurt_effect = 0;
     gameplay.events |= GP_EVENT_HURT;
     lock = gameplay.face_locked ? actor_resolve(gameplay.target) : (const actor_t *)0;
     if (!(in->moving && !(lock && (lock->flags & ACTOR_FLAG_HOSTILE))))
@@ -1291,6 +1297,8 @@ void __attribute__((optimize("Os"))) gameplay_reset(void)
     gameplay.knock_speed = 0;
     gameplay.knock_down = false;
     gameplay.hurt_pending = 0;
+    gameplay.hurt_speed = 0;
+    gameplay.hurt_effect = gameplay.hurt_large = gameplay.hurt_core = 0;
     gameplay.shop_prompt = false;
     gameplay.events = 0;
     gameplay.face_yaw = 0;
@@ -1418,9 +1426,9 @@ static void __attribute__((optimize("Os"))) sync_gear_from_save(void)
 
     gameplay.owned = 0;
     gameplay.equipped = 0;
-    if (save_all_equip_value(EQUIP_TYPE_SWORD))
+    if (save_all_equip_value(EQUIP_TYPE_SWORD) || (save_state.source_equipment & 0x7u))
         gameplay.owned |= GP_SWORD;
-    if (save_all_equip_value(EQUIP_TYPE_SHIELD))
+    if (save_all_equip_value(EQUIP_TYPE_SHIELD) || (save_state.source_equipment & 0x70u))
         gameplay.owned |= GP_SHIELD;
     if (save_cur_equip_value(EQUIP_TYPE_SWORD))
         gameplay.equipped |= GP_SWORD;
@@ -1887,11 +1895,15 @@ static void         run_contacts(const gameplay_input_t *in)
     if (gameplay.shielding && collide_guard_blocked(shield)) {
         gameplay.events |= GP_EVENT_GUARD;      /* the bounce wins */
         gameplay.guard_pending = true;          /* Player_UpdateDamage, next step */
-    } else if ((body->result & COL_RES_AC_HIT) && body->ac_hit) {
+    } else if ((body->result & COL_RES_AC_HIT) && body->ac_hit && !gameplay.hurt_pending) {
         int32_t ax = body->ac_hit->x, az = body->ac_hit->z;
         gameplay.hurt_pending = 1;
         gameplay.hurt_damage = body->ac_damage;
         gameplay.hurt_yaw = gameplay_facing(in->x - ax, in->z - az);
+        gameplay.hurt_speed = 0;
+        gameplay.hurt_effect = 0;
+        gameplay.hurt_large = 0;
+        gameplay.hurt_core = 0;
     }
     if (!blade_live)
         return;
@@ -2301,7 +2313,7 @@ bool                gameplay_is_paused(void)
 
 bool                gameplay_blocks_world(void)
 {
-    return gameplay.paused || gameplay.talking || gohma_cinematic() || gohma_warp_active() ||
+    return oot_core_scene_failed() || gameplay.paused || gameplay.talking || gohma_cinematic() || gohma_warp_active() ||
            (oot_core_talk() & 1u);
 }
 
@@ -2344,9 +2356,15 @@ static void __attribute__((optimize("Os"))) update_menu(const gameplay_input_t *
         gameplay.events |= GP_EVENT_MENU_MOVE;
         return;
     }
+    /* The menu draws source ownership bits, including gear granted after the
+     * legacy category cache was filled. Admit those same categories here;
+     * save_equip_source still checks the exact piece and source age rule. */
+    unsigned owned = gameplay.owned |
+        ((save_state.source_equipment & 0x7u) ? GP_SWORD : 0) |
+        ((save_state.source_equipment & 0x70u) ? GP_SHIELD : 0);
     unsigned result = pause_window_step(&gameplay.pause_window,
         in->menu_dx, in->menu_dy, in->menu_page,
-        in->cancel, in->interact, gameplay.owned);
+        in->cancel, in->interact, owned);
     switch (result) {
     case PAUSE_TUNIC_GREEN: case PAUSE_TUNIC_RED: case PAUSE_TUNIC_BLUE:
         gameplay.events |= save_equip_tunic(result==PAUSE_TUNIC_GREEN?0:result==PAUSE_TUNIC_RED?2:1)
@@ -2378,6 +2396,7 @@ static void __attribute__((optimize("Os"))) update_menu(const gameplay_input_t *
             break;
         }
         gameplay.equipped |= sword ? GP_SWORD : GP_SHIELD;
+        gameplay.owned |= sword ? GP_SWORD : GP_SHIELD;
         gameplay.events |= GP_EVENT_EQUIP;
         break;
     }
@@ -3121,6 +3140,12 @@ void                gameplay_step(const gameplay_input_t *in)
     gameplay.events = 0;
     gameplay.events2 = 0;
     gameplay.baba_events = 0;
+    if (oot_core_scene_failed()) {
+        if (gameplay.paused || in->pause) update_menu(in);
+        gameplay.shielding = false;
+        gameplay.prompt = -1;
+        return;
+    }
     /* Dead: the Game Over flow owns the pad (recomp.c steps game_over). */
     if (gameplay.dead)
         return;

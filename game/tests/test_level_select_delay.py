@@ -2,12 +2,13 @@
 import ctypes
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
-GCC = Path('C:/msys64/mingw64/bin/gcc.exe')
+GCC = Path(shutil.which('gcc') or 'C:/msys64/mingw64/bin/gcc.exe')
 
 
 @unittest.skipUnless(GCC.exists(), 'host compiler required')
@@ -30,7 +31,8 @@ static bool interact_pending,cancel_pending,pause_pending;
 static int entered,cancelled,moved,toggled,era;
 #define GAME_MODE_TITLE 0
 #define NA_BGM_TITLE 0
-void level_select_move(int y,int x){moved+=y+x;}
+unsigned level_select_step(int y,int x,bool a,bool b){moved+=y+x;return b?LEVEL_BACK:a?LEVEL_BEGIN:LEVEL_NONE;}
+void file_select_open(void){++cancelled;}
 void level_select_toggle_max_gear(void){++toggled;}
 void level_select_toggle_era(void){++era;}
 static void level_select_enter(void){++entered;}
@@ -48,9 +50,9 @@ menu_dy=direction;file_select_tick();}
 void shoulder(unsigned elapsed,int page){ticks=level_select_open_tick+elapsed;menu_page=page;file_select_tick();}
 int result(int kind){return kind==0?entered:kind==1?cancelled:kind==2?moved:kind==3?toggled:era;}
 '''
-        out = Path(cls.tmp.name) / 'delay.dll'
+        out = Path(cls.tmp.name) / ('delay.dll' if os.name == 'nt' else 'delay.so')
         env = dict(os.environ, PATH=str(GCC.parent)+os.pathsep+os.environ.get('PATH',''))
-        subprocess.run([str(GCC), '-shared', '-O2', '-I'+str(ROOT/'src'),
+        subprocess.run([str(GCC), '-shared', *(['-fPIC'] if os.name != 'nt' else []), '-O2', '-I'+str(ROOT/'src'),
                         '-x', 'c', '-', '-o', str(out)], input=source, text=True,
                        check=True, env=env)
         cls.lib = ctypes.CDLL(str(out))
@@ -80,7 +82,7 @@ int result(int kind){return kind==0?entered:kind==1?cancelled:kind==2?moved:kind
         g.press(150, 0, 1, 0)
         self.assertEqual(g.result(1), 1)
 
-    def test_shoulder_toggles_only_after_delay_without_moving_scene_or_entering(self):
+    def test_shoulders_no_longer_toggle_options(self):
         g = self.lib
         g.reset(0)
         g.shoulder(149,1)
@@ -88,9 +90,9 @@ int result(int kind){return kind==0?entered:kind==1?cancelled:kind==2?moved:kind
         g.shoulder(150,0)
         self.assertEqual(g.result(3),0)
         g.shoulder(151,1)
-        self.assertEqual([g.result(i) for i in range(5)], [0,0,0,0,1])
+        self.assertEqual([g.result(i) for i in range(5)], [0,0,0,0,0])
         g.shoulder(152,-1)
-        self.assertEqual([g.result(i) for i in range(5)], [0,0,0,1,1])
+        self.assertEqual([g.result(i) for i in range(5)], [0,0,0,0,0])
 
 
 if __name__ == '__main__':

@@ -229,6 +229,8 @@ typedef enum
     SAVE_ITEM_BOTTLE_EMPTY,
     SAVE_ITEM_BOTTLE_MILK_FULL, /* bottle reward: requires an unowned slot */
     SAVE_ITEM_MILK,            /* refill: requires an existing empty bottle */
+    SAVE_ITEM_BOTTLE_POE,
+    SAVE_ITEM_BOTTLE_BIG_POE,
     SAVE_ITEM_COUNT
 }                       save_item_t;
 

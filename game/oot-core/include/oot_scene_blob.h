@@ -8,13 +8,14 @@
 #define OOT_SCENE_BLOB_H
 
 #define OOT_SCENE_MAX_ROOMS 32
+#define OOT_SCENE_BLOB_FORMAT 0x4f4f4302u
 
 /* One room's actor list in one scene layer (0 = main header, L = room
  * AltHeaders[L - 1]). present 0: no header for that layer (NULL entry), the
  * runtime falls back as Scene_CommandAlternateHeaderList does. */
 typedef struct OotSceneLayer {
     const void* actors;          /* decomp ActorEntry[] or NULL */
-    unsigned short num_actors;
+    unsigned short num_actors; /* room ActorEntry count, or scene Path count */
     unsigned short present;
     unsigned short time;       /* baked Scene_CommandTimeSettings conversion */
     unsigned char time_speed;
@@ -38,6 +39,10 @@ typedef struct OotSceneBlob {
      * NULL; present 0 = no header for that layer). */
     const OotSceneLayer* paths;
     unsigned int num_path_layers;
+    /* ABI26: reject older blobs before reading appended transition lists. */
+    unsigned int format;
+    const OotSceneLayer* transitions; /* original TransitionActorEntry[], per layer */
+    unsigned int num_transition_layers;
 } OotSceneBlob;
 
 #endif

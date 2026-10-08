@@ -4,13 +4,14 @@ import json
 import os
 from pathlib import Path
 import re
+import shutil
 import subprocess
 import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 GEN = ROOT/'build/generated'
-GCC = Path('C:/msys64/mingw64/bin/gcc.exe')
+GCC = Path(shutil.which('gcc') or 'C:/msys64/mingw64/bin/gcc.exe')
 
 
 class AudioBank(unittest.TestCase):
@@ -101,6 +102,8 @@ class AudioEvents(unittest.TestCase):
 #include "player_items.h"
 unsigned player_items_events(void) { return 0; }
 #include "action_audio_data.h"
+#include "action_decomp_sfx.h"
+#include "field_audio_data.h"
 #include "opening_audio_data.h"
 #include "action_audio.h"
 #include "karebaba.h"
@@ -124,7 +127,8 @@ static int jo_fs_read_next_bytes(jo_file *f, char *b, unsigned int n) { return -
 '''
         wrapper = '''
 void set_area(unsigned int bank, bool loaded) { area_bank = bank; area_ready = loaded; }
-void reset(void) { memset(regs, 0, sizeof(regs)); ready = true; opening_bank = false; area_bank = 1; area_ready = true; busy = false; voice = 0; rupee_active = false; rupee_clock = rupee_note = 0; sound_refresh = 60; }
+void reset(void) { memset(regs, 0, sizeof(regs)); ready = true; field_bank = false; item_loop_frames = 0; opening_bank = false; area_bank = 1; area_ready = true; busy = false; voice = 0; rupee_active = false; rupee_clock = rupee_note = 0; sound_refresh = 60; }
+void use_field(unsigned child) { field_bank=true; area_ready=true; save_state.link_age=child; }
 void use_opening(void) { opening_bank = true; }
 unsigned int reg(unsigned int s, unsigned int o) { return SLOT(s,o); }
 void set_busy(bool b) { busy = b; }
@@ -136,8 +140,9 @@ unsigned world_pending(void) { return gameplay.world_sfx; }
 void set_events2(unsigned int e) { gameplay.events2 = e; }
 '''
         env = dict(os.environ, PATH=str(GCC.parent)+os.pathsep+os.environ.get('PATH',''))
-        output = Path(cls.temp.name)/'audio.dll'
-        subprocess.run([str(GCC), '-shared', '-O2', '-I'+str(ROOT/'src'), '-I'+str(GEN),
+        output = Path(cls.temp.name)/('audio.dll' if os.name == 'nt' else 'audio.so')
+        subprocess.run([str(GCC), '-shared', '-O2', *([] if os.name == 'nt' else ['-fPIC']),
+                        '-I'+str(ROOT/'src'), '-I'+str(GEN),
                         '-x','c','-','-o',str(output)], input=adapter+source+wrapper,
                        text=True, env=env, check=True)
         cls.lib = ctypes.CDLL(str(output))
@@ -161,6 +166,46 @@ void set_events2(unsigned int e) { gameplay.events2 = e; }
         self.assertTrue(self.keyed(27))
         self.assertEqual(self.lib.reg(27, 6), sample['length'])
         self.assertEqual(self.lib.reg(27, 2), (0x50000 + sample['offset']) & 0xffff)
+        for slot in range(24):
+            self.assertEqual(self.lib.reg(slot, 0), 0)
+
+    def test_field_era_bank_and_held_source_requests(self):
+        self.lib.use_field(1)
+        self.lib.action_audio_decomp_sfx(0x3155)  # Peahat fly minus SFX_FLAG
+        self.assertTrue(self.keyed(26))
+        self.assertEqual(self.lib.reg(26, 0) & 0x20, 0x20)
+        self.assertEqual(self.lib.reg(26, 16), 12 << 11)
+        for _ in range(10):
+            self.lib.tick()
+        self.assertEqual(self.lib.reg(26, 0), 0x1000)
+        self.lib.reset()
+        self.lib.use_field(0)
+        self.lib.action_audio_decomp_sfx(0x3155)
+        self.assertFalse(self.keyed(26))  # child-only sample absent in adult bank
+        self.lib.action_audio_decomp_sfx(0x3071)  # Poe fly
+        self.assertTrue(self.keyed(26))
+        for slot in range(24):
+            self.assertEqual(self.lib.reg(slot, 0), 0)
+
+    def test_item_shot_is_resident_and_held_tool_sound_loops_until_requests_stop(self):
+        samples = {s['name']: s for s in json.loads((GEN/'action_audio.json').read_text())['samples']}
+        self.lib.set_area(0, True)              # tools sound in scenes without an area bank
+        self.lib.action_audio_decomp_sfx(0x1804)  # NA_SE_IT_ARROW_SHOT
+        self.assertTrue(self.keyed(28))
+        self.assertEqual(self.lib.reg(28, 6), samples['it_arrow_shot']['length'])
+        chain = samples['it_hook_chain']
+        self.lib.action_audio_decomp_sfx(0x180B - 0x800)  # Actor_PlaySfx_Flagged2(.. - SFX_FLAG)
+        self.assertTrue(self.keyed(26))
+        self.assertEqual(self.lib.reg(26, 0) & 0x0020, 0x0020)  # SCSP LPCTL loop
+        self.assertEqual(self.lib.reg(26, 6), chain['length'])
+        for _ in range(9):
+            self.lib.tick()
+        self.lib.action_audio_decomp_sfx(0x180B)  # held: refresh, no restart
+        for _ in range(9):
+            self.lib.tick()
+        self.assertTrue(self.keyed(26))
+        self.lib.tick()
+        self.assertEqual(self.lib.reg(26, 0), 0x1000)  # requests stopped: key off
         for slot in range(24):
             self.assertEqual(self.lib.reg(slot, 0), 0)
 

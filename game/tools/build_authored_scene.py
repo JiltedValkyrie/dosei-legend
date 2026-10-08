@@ -594,6 +594,12 @@ def main():
             tiles[offset] = dict(index=len(tiles), width=width, height=height,
                                  clut=clut, pixels=pixels)
         face['tex_off'] = tile_ids[key]
+    from build_hybrid_scene import halve_texture_tiles
+    import json
+    tiles, halving = halve_texture_tiles(tiles)
+    if halving['reductions']:
+        args.out.mkdir(parents=True, exist_ok=True)
+        (args.out / 'authored_texture_halving.json').write_text(json.dumps(halving, indent=2) + '\n')
     sizes = collections.Counter('%dx%d' % (t['width'], t['height']) for t in tiles.values())
     print('tiles   : %d unique of %d faces  %s'
           % (len(tiles), len(faces), dict(sizes)))

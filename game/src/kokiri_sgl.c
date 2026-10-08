@@ -47,6 +47,7 @@ static bool gear_load(void);
 static unsigned int texture_base = GAME_TEXTURE_BASE;
 static unsigned int hit_table_offset, hit_filter;
 void kokiri_hit_filter(unsigned level){hit_filter=level<=32?level:0;}
+unsigned kokiri_hit_gouraud(unsigned level){return level && level<=32 ? (texture_base+hit_table_offset)/8+level-1 : 0;}
 #define TEXTURE_CAPACITY (0x7fef8u - texture_base)
 #define CUTSCENE_TEXTURE_BASE ((3750u * 32 + 8192 + 255) & ~255u)
 #include "recomp.h"
@@ -1121,6 +1122,17 @@ unsigned int kokiri_field_stream_stat(unsigned int which)
     }
 }
 
+/* KRM1 flag 1 describes a source room whose display lists contain no faces.
+ * Its header is the entire bank; missing geometry is never inferred from
+ * zero counts. The converter currently proves this only for hiral_demo. */
+static bool room_geometry_valid(const unsigned int header[8])
+{
+    if (header[7])
+        return header[7] == 1 && !(header[1] | header[2] | header[3] |
+                                   header[4] | header[5] | header[6]);
+    return header[1] && header[2];
+}
+
 static bool __attribute__((optimize("Os"))) room_load_bank(unsigned int scene, unsigned int room)
 {
     unsigned int header[8], expected, i;
@@ -1156,7 +1168,7 @@ static bool __attribute__((optimize("Os"))) room_load_bank(unsigned int scene, u
     ** in its ATTR and there is no pixel file at all. The dream's Hyrule Field
     ** is built that way, so header[3] of zero is a kind of bank, not a
     ** malformed one. */
-    if (header[0] != 0x4b524d31 || !header[1] || !header[2] ||
+    if (header[0] != 0x4b524d31 || !room_geometry_valid(header) ||
         header[1] > KOKIRI_VERTEX_COUNT || header[2] > KOKIRI_POLYGON_COUNT ||
         header[3] > KOKIRI_TILE_COUNT || header[4] > KOKIRI_PIXEL_BYTES ||
         header[5] > KOKIRI_OBJECT_COUNT || header[6] > MESH_LOD_MAX ||
@@ -1486,6 +1498,7 @@ static void         submit(PDATA *pdata, unsigned int bit)
     ** frame's polygon or vertex budget is exhausted. Ignoring it is how a
     ** partially drawn scene could look complete, so every refusal is recorded. */
     unsigned i;
+    if (!pdata->nbPolygon) return;
     /* CMDPMOD colour mode describes texture fetches. Sega requires mode 0
      * for polygons/lines, even when CMDCOLR holds RGB555. Old backend assets
      * incorrectly used texture mode 5 for their untextured RGB faces. */
@@ -1572,10 +1585,6 @@ static bool __attribute__((optimize("Os"))) gear_load(void)
         h->polygons != LINK_GEAR_POLYGON_COUNT || h->tiles != LINK_GEAR_TILE_COUNT) goto fail;
     gear_mesh = (unsigned char *)jo_fs_read_file("LGEARMSH.BIN", &length);
     if (!gear_mesh || length != (int)LINK_GEAR_MESH_BYTES) goto fail;
-    gear_tex = (unsigned char *)jo_fs_read_file("LGEARTEX.BIN", &length);
-    if (!gear_tex || length != (int)LINK_GEAR_TEX_BYTES) goto fail;
-    gear_pixels = (unsigned char *)jo_fs_read_file("LGEAR.TEX", &length);
-    if (!gear_pixels || length != (int)LINK_GEAR_PIXEL_BYTES) goto fail;
     poly = (const POLYGON *)gear_mesh;
     attr = (const ATTR *)(gear_mesh + LINK_GEAR_POLYGON_COUNT * sizeof(POLYGON));
     for (i = 0; i < LINK_GEAR_GROUPS; ++i) {
@@ -1588,27 +1597,53 @@ static bool __attribute__((optimize("Os"))) gear_load(void)
     }
     for (i = 0; i < LINK_GEAR_VERTEX_COUNT; ++i)
         if (gear_skin[sizeof(link_gear_head_t) + i] >= LINK_LIMB_COUNT) goto fail;
+    /* Artwork is optional; valid selected gear geometry is not. Missing or
+     * short texture files use the same baked-colour fallback as a full bank. */
+    if (GFS_NameToId((Sint8 *)"LGEARTEX.BIN") >= 0 && GFS_NameToId((Sint8 *)"LGEAR.TEX") >= 0) {
+        gear_tex = (unsigned char *)jo_fs_read_file("LGEARTEX.BIN", &length);
+        if (gear_tex && length == (int)LINK_GEAR_TEX_BYTES) {
+            gear_pixels = (unsigned char *)jo_fs_read_file("LGEAR.TEX", &length);
+            if (gear_pixels && length == (int)LINK_GEAR_PIXEL_BYTES) return true;
+        }
+    }
+    if (gear_tex) jo_free(gear_tex);
+    if (gear_pixels) jo_free(gear_pixels);
+    gear_tex = gear_pixels = 0;
     return true;
 fail:
     gear_free();
     return false;
 }
 
-/* From the bank reset (npc_draw.c), before decomp meshes. A full bank only
- * drops back to Link's flat hand/back variants for this room. */
+/* From the bank reset (npc_draw.c), after actor uploads. A full texture bank
+ * retains the selected source gear geometry with baked flat colours. */
 bool __attribute__((optimize("Os"))) kokiri_link_gear_upload(void)
 {
     unsigned bank = ((LINK_GEAR_PIXEL_BYTES + 31u) & ~31u) + LINK_GEAR_TILE_COUNT * 32u + 32u, i;
     ATTR *attr;
     PDATA all;
     gear_ready = false;
-    if (!gear_mesh || vram_used + bank > TEXTURE_CAPACITY || sprite_next + LINK_GEAR_TILE_COUNT > JO_MAX_SPRITE)
-        return gear_mesh == 0;
+    if (!gear_mesh) return true;
     attr = (ATTR *)(gear_mesh + LINK_GEAR_POLYGON_COUNT * sizeof(POLYGON));
-    if (gear_tex_base != 0xFFFFu)   /* mesh_load rebases texno in place */
-        for (i = 0; i < LINK_GEAR_POLYGON_COUNT; ++i)
-            if ((attr[i].dir & 7) < 4) attr[i].texno -= gear_tex_base;
-    gear_tex_base = sprite_next;
+    /* Retain local tile IDs during the flat fallback, so the next bank can
+     * restore textures without a disc read or another copy of the mesh. */
+    for (i = 0; i < LINK_GEAR_POLYGON_COUNT; ++i) if (attr[i].texno != 0xFFFFu) {
+        if (gear_tex_base != 0xFFFFu) attr[i].texno -= gear_tex_base;
+        attr[i].dir = (attr[i].dir & ~7u) | 2u;
+        attr[i].atrb = (attr[i].atrb & ~(0x38u | SPdis)) | CL16Look | ECdis;
+    }
+    gear_tex_base = 0xFFFFu;
+    if (!gear_tex || !gear_pixels || vram_used + bank > TEXTURE_CAPACITY ||
+        sprite_next + LINK_GEAR_TILE_COUNT > JO_MAX_SPRITE) {
+        const uint16_t *colours = (const uint16_t *)(attr + LINK_GEAR_POLYGON_COUNT);
+        for (i = 0; i < LINK_GEAR_POLYGON_COUNT; ++i) {
+            attr[i].dir = (attr[i].dir & ~7u) | sprPolygon;
+            attr[i].atrb = (attr[i].atrb & ~0x38u) | ECdis | SPdis;
+            attr[i].colno = colours[i];
+        }
+        gear_ready = true;
+        return true;
+    }
     all.pltbl = (POLYGON *)gear_mesh; all.attbl = attr;
     all.pntbl = gear_points; all.nbPoint = 0; all.nbPolygon = LINK_GEAR_POLYGON_COUNT;
     mesh_staged_pixels = gear_pixels;
@@ -1616,6 +1651,7 @@ bool __attribute__((optimize("Os"))) kokiri_link_gear_upload(void)
                            (const unsigned short (*)[16])(gear_tex + LINK_GEAR_TILE_COUNT * sizeof(link_tile)),
                            &all, LINK_GEAR_POLYGON_COUNT, 0);
     mesh_staged_pixels = 0;
+    if (gear_ready) gear_tex_base = sprite_next - LINK_GEAR_TILE_COUNT;
     return gear_ready;
 }
 
@@ -2118,8 +2154,8 @@ void                kokiri_link_draw(int x, int y, int z, int yaw)
         unsigned visible_gear = player_items_stick() ? gameplay.equipped & ~GP_SWORD : gameplay.equipped;
         bool ocarina = (oot_core_ocarina_state() & 1u) != 0;
         if (ocarina) visible_gear |= 0x10000u;
-        /* Biggoron's blade and the Mirror Shield are sprites (oot_core_host
-         * tools_draw): the hand meshes stay empty instead. */
+        /* Adult gear owns Biggoron's blade and Mirror Shield geometry,
+         * including the flat-colour fallback when its texture bank is full. */
         if (!save_state.link_age && save_state.equip_sword == EQUIP_VALUE_SWORD_BIGGORON) visible_gear |= 0x20000u;
         if (!save_state.link_age && save_state.equip_shield == EQUIP_VALUE_SHIELD_MIRROR) visible_gear |= 0x40000u;
         /* Player_SetModels: a sheathed sword rides on the back with the shield
@@ -2457,6 +2493,28 @@ void kokiri_flame_draw(int32_t x,int32_t y,int32_t z,unsigned tick)
 }
 
 /* M2c nutsball test: the boulder's sphere scaled to the ball's radius. */
+void kokiri_particle_draw(int x,int y,int z,unsigned radius,unsigned colour,unsigned dither)
+{
+    static POINT points[4];
+    static POLYGON polygon={ {0,0,0},{0,1,2,3} };
+    static ATTR attr=ATTRIBUTE(Dual_Plane,SORT_CEN|UseNearClip,0,0,No_Gouraud,ECdis|SPdis,sprPolygon,No_Option);
+    static PDATA mesh={points,4,&polygon,1,&attr};
+    int32_t sn,cs;unsigned i;
+    if(!radius)return;
+    if(radius>80)radius=80;
+    kokiri_camera_sincos(recomp_yaw,&sn,&cs);
+    for(i=0;i<4;++i){
+        int side=i==1?-(int)radius:i==3?(int)radius:0;
+        int up=i==0?(int)radius:i==2?-(int)radius:0;
+        points[i][X]=x*65536+side*cs;
+        points[i][Y]=-(y+up)*65536;
+        points[i][Z]=z*65536-side*sn;
+    }
+    attr.colno=colour;
+    attr.atrb=ECdis|SPdis|(dither?MESHon:0);
+    kokiri_submit_pdata(&mesh);
+}
+
 void                kokiri_nut_draw(void)
 {
     int32_t x, y, z;

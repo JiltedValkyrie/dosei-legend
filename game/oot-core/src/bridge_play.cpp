@@ -31,6 +31,14 @@ SaveContext gSaveContext;       /* z_sram/z_play own it on N64 */
 uintptr_t gSegments[NUM_SEGMENTS]; /* sched/graph */
 
 /* ---- z_play.c ---- */
+void Play_SaveSceneFlags(PlayState* thisx) { /* REAL: z_play.c */
+    SavedSceneFlags* flags = &gSaveContext.save.info.sceneFlags[thisx->sceneId];
+    flags->chest = thisx->actorCtx.flags.chest;
+    flags->swch = thisx->actorCtx.flags.swch;
+    flags->clear = thisx->actorCtx.flags.clear;
+    flags->collect = thisx->actorCtx.flags.collect;
+}
+
 Camera* Play_GetCamera(PlayState* this, s16 camId) { /* REAL */
     s16 camIdx = (camId == CAM_ID_NONE) ? this->activeCamId : camId;
     return this->cameraPtrs[camIdx];
@@ -136,6 +144,12 @@ void func_800F4C58(Vec3f* pos, u16 sfxId, u8 arg2) { /* HOST: sequence-tempo sfx
 void Audio_StopSfxByPos(Vec3f* pos) { /* STUB: host one-shots end on their own */
 }
 
+void Audio_StopSfxByPosAndId(Vec3f* pos, u16 id) {
+    /* Host sounds have bounded tails; ending source requests ends held sounds.
+     * Keep the stop scoped: never stop another actor sharing the area slot. */
+    (void)pos; (void)id;
+}
+
 /* ---- z_player_lib.c: Link is the C player until z_player is imported ---- */
 int Player_InCsMode(PlayState* play) { /* STUB */
     return false;
@@ -158,7 +172,15 @@ u8 Item_Give(PlayState* play, u8 item) { /* HOST */
         return ITEM_NONE;
     }
     if (gOotCoreHost != NULL && gOotCoreHost->give_item != NULL) {
-        return gOotCoreHost->give_item(item);
+        u8 result = gOotCoreHost->give_item(item);
+        if (result == ITEM_NONE && (item == ITEM_BOTTLE_POE || item == ITEM_BOTTLE_BIG_POE)) {
+            for (u32 slot = SLOT_BOTTLE_1; slot <= SLOT_BOTTLE_4; ++slot)
+                if (gSaveContext.save.info.inventory.items[slot] == ITEM_BOTTLE_EMPTY) {
+                    gSaveContext.save.info.inventory.items[slot] = item;
+                    break;
+                }
+        }
+        return result;
     }
     return ITEM_NONE;
 }

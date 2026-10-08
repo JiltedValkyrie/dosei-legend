@@ -1,6 +1,6 @@
-/* Baked NPC sprite impostors (tools/build_npc_sprites.py, SPR1 files).
-** The sheet stays in the cart; each drawn instance owns one VDP1 cel slot
-** that is rewritten only when its pose or view direction changes. */
+/* Baked NPC sprite impostors (SPR1 clips, SPR2 complete skeleton libraries).
+** Sheets stay in the cart. Native C actors own individual cel slots; decomp
+** actors share stable cel entries, pinned for each command-list frame. */
 #ifndef DOSEI_NPC_SPRITE_H
 #define DOSEI_NPC_SPRITE_H
 
@@ -28,5 +28,29 @@ unsigned char *npc_sprite_load(const char *name);
 extern unsigned char npc_sprite_shadow_off;
 int npc_sprite_valid(const unsigned char *sheet, unsigned int bytes);
 int npc_sprite_visible(const unsigned char *sheet, int x, int y, int z);
+int npc_sprite_visible_scaled(const unsigned char *sheet, int x, int y, int z,
+                              unsigned sx, unsigned sy);
+/* SPR2 owns complete clip libraries. Validate once before exposing any clip. */
+int npc_sprite_archive_valid(const unsigned char *archive, unsigned int bytes,
+                             unsigned int skeleton);
+const unsigned char *npc_sprite_archive_clip(const unsigned char *archive, unsigned int animation);
+const unsigned char *npc_sprite_archive_largest(const unsigned char *archive);
+/* Shared cel entries are pinned until all commands for this frame are built.
+ * A pinned different cel can never be overwritten while VDP1 still uses it. */
+unsigned int npc_sprite_cel(const unsigned char *sheet, unsigned int frame, int x, int z, uint16_t yaw);
+/* cel's low 16 bits identify pixels; bit 16 requests a horizontal mirror.
+ * Call after visible(), then submit immediately (uses its cached depth). */
+void npc_sprite_draw_sample(const unsigned char *sheet, npc_sprite_inst_t *inst,
+                            unsigned int sample, int x, int y, int z);
+void npc_sprite_draw_styled(const unsigned char *sheet, npc_sprite_inst_t *inst,
+                            unsigned int sample, int x, int y, int z,
+                            unsigned sx, unsigned sy, unsigned alpha, unsigned tint);
+/* Presentation-only direct cel, 320x240 screen coordinates. Uses the same
+ * bounded upload slot as world sprites; no projection or gameplay mutation. */
+void npc_sprite_draw_screen(const unsigned char *sheet, npc_sprite_inst_t *inst,
+                            unsigned int cel, int x, int y, int scale_q16);
+npc_sprite_inst_t *npc_sprite_cache_claim(npc_sprite_inst_t *slots, unsigned int count,
+                                         unsigned int *pinned, const unsigned char *sheet,
+                                         unsigned int cel);
 
 #endif

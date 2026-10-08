@@ -127,7 +127,12 @@ def main():
             continue
         scene = source.extract(args.oot, args.rom_dir, prefix=prefix)[prefix + '_scene']
         panorama_room(prefix, scene, source)
-        vertices, faces, tiles = house_panorama(args.oot, asset, sides, rotation)
+        halving = {}
+        vertices, faces, tiles = house_panorama(args.oot, asset, sides, rotation, halving)
+        if halving['reductions']:
+            import json
+            report = args.out / ('panorama_%s_halving.json' % asset)
+            report.write_text(json.dumps(halving, indent=2) + '\n')
         records = [dict(object=0, indices=list(f['idx'])) for f in faces]
         mesh, pixels, _ = pack_room(vertices, faces, tiles, records, normal)
         if bank_bytes(len(pixels), len(tiles)) > 140000:

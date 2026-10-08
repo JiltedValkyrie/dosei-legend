@@ -370,8 +370,10 @@ typedef struct
     bool        knock_down;
     /* Link's body AC hit from the last contact pass, read by the next step
     ** (Player_UpdateDamage reads the previous frame's cylinder AC_HIT). */
-    uint8_t     hurt_pending, hurt_damage;
-    uint16_t    hurt_yaw;
+    uint8_t     hurt_pending;
+    uint16_t    hurt_damage, hurt_yaw; /* queued Health_ChangeBy may exceed 255 */
+    int32_t     hurt_speed; /* core knockback override, Q16 */
+    uint8_t     hurt_effect, hurt_large, hurt_core;
     uint8_t     shop_state;     /* gp_shop_state_t (EnOssan stateFlag) */
     uint8_t     shop_cursor;    /* shelf slot 0-7 */
     int8_t      shop_face, shop_target;  /* cameraFaceAngle, degrees */

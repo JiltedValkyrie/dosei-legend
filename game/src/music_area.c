@@ -1,5 +1,6 @@
 #pragma GCC optimize("Os") /* small logic: size over speed (work RAM) */
 #include <jo/jo.h>
+#include <string.h>
 #include "music.h"
 #include "music_area.h"
 #include "area_music_list.h"
@@ -23,6 +24,20 @@ static void area_name(char *out, unsigned int seq, const char *ext)
     static const char hex[] = "0123456789ABCDEF";
     out[0] = 'M'; out[1] = hex[(seq >> 4) & 15]; out[2] = hex[seq & 15]; out[3] = '.';
     out[4] = ext[0]; out[5] = ext[1]; out[6] = ext[2]; out[7] = 0;
+}
+
+void music_area_trim(void)
+{
+    unsigned int k;
+    /* A fading or pending bank can still own either slot's tables. */
+    if (music_busy()) return;
+    for (k = 0; k < 2; ++k) {
+        if (music_current() == &area_bank[k]) continue;
+        if (area_blob[k]) jo_free(area_blob[k]);
+        area_blob[k] = NULL;
+        area_seq[k] = 0xFFFFu;
+        memset(&area_bank[k], 0, sizeof area_bank[k]);
+    }
 }
 
 bool music_area_play(unsigned int seq, unsigned int fade_frames)

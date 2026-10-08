@@ -49,6 +49,8 @@ static bg_mesh_t scene_mesh;
 /* Actor-controlled water remains separate from immutable decoded scene data. */
 static int32_t water_override[16];
 static uint16_t water_override_mask;
+static const bg_waterbox_t *source_water;
+static uint32_t source_water_count;
 
 /* Optional XZ lookup grid. Both queries below reject a triangle first on its
  * XZ bounds, so scanning all of them costs the same whether or not anything is
@@ -88,6 +90,8 @@ void __attribute__((optimize("Os"))) bg_scene_set(const bg_mesh_t *mesh)
 {
         scene_mesh = *mesh;
         water_override_mask = 0;
+        source_water = 0;
+        source_water_count = 0;
         triangles = mesh->triangles;
         triangle_count = mesh->triangle_count;
         grid_ready = false;
@@ -1106,9 +1110,15 @@ bool bg_wall(bg_vec_t *result, const bg_vec_t *next, const bg_vec_t *prev,
 }
 
 /* ---- Water ---- */
+void bg_water_bind(const bg_waterbox_t *water, uint32_t count)
+{
+        source_water = water;
+        source_water_count = water ? count : 0;
+}
+
 bool bg_water_set_surface(uint32_t index, int32_t surface)
 {
-        if (index >= 16 || index >= scene_mesh.water_count) return false;
+        if (source_water || index >= 16 || index >= scene_mesh.water_count) return false;
         water_override[index] = surface;
         water_override_mask |= (uint16_t)(1u << index);
         return true;
@@ -1121,14 +1131,16 @@ bool bg_water_surface(int32_t x, int32_t z, uint32_t room, int32_t *surface,
         const bg_waterbox_t **box)
 {
         uint32_t i;
-        for (i = 0; i < scene_mesh.water_count; i++) {
-                const bg_waterbox_t *w = &scene_mesh.water[i];
+        uint32_t count = source_water ? source_water_count : scene_mesh.water_count;
+        const bg_waterbox_t *water = source_water ? source_water : scene_mesh.water;
+        for (i = 0; i < count; i++) {
+                const bg_waterbox_t *w = &water[i];
                 uint32_t r = BG_WATERBOX_ROOM(w->properties);
                 if (r != room && r != BG_WATERBOX_ROOM_ALL) continue;
                 if (w->properties & BG_WATERBOX_DISABLED) continue;
                 if (w->x_min < x && x < w->x_min + w->x_length &&
                     w->z_min < z && z < w->z_min + w->z_length) {
-                        *surface = i < 16 && (water_override_mask & (1u << i)) ? water_override[i] : w->y_surface;
+                        *surface = !source_water && i < 16 && (water_override_mask & (1u << i)) ? water_override[i] : w->y_surface;
                         if (box) *box = w;
                         return true;
                 }

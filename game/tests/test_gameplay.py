@@ -7,13 +7,14 @@ import ctypes
 import re
 import os
 import pathlib
+import shutil
 import subprocess
 import tempfile
 import unittest
 from test_save_file import SAVE_FILE_BYTES
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-GCC = pathlib.Path('C:/msys64/mingw64/bin/gcc.exe')
+GCC = pathlib.Path(shutil.which('gcc') or 'C:/msys64/mingw64/bin/gcc.exe')
 GENERATED = ROOT / 'build/generated'
 
 GP_SWORD = 1
@@ -198,10 +199,10 @@ class Gameplay(unittest.TestCase):
                         '--out', str(generated), '--cd', str(generated)],
                        check=True, capture_output=True)
         cls.generated = generated
-        output = pathlib.Path(cls.tmp.name) / 'gameplay.dll'
+        output = pathlib.Path(cls.tmp.name) / ('gameplay.dll' if os.name == 'nt' else 'gameplay.so')
         env = dict(os.environ)
         env['PATH'] = str(GCC.parent) + os.pathsep + env.get('PATH', '')
-        subprocess.run([str(GCC), '-shared', '-O2', '-o', str(output),
+        subprocess.run([str(GCC), '-shared', '-O2', *([] if os.name == 'nt' else ['-fPIC']), '-o', str(output),
                         '-I' + str(generated), '-I' + str(ROOT / 'src'),
                         '-I' + str(ROOT.parent / 'shared/lib/camera'),
                         '-I' + str(ROOT.parent / 'shared/lib/collision'),
@@ -223,7 +224,7 @@ class Gameplay(unittest.TestCase):
                         str(ROOT / 'src/save_state.c'),
                         str(ROOT / 'src/save_file.c'),
                         str(generated / 'kokiri_actors.c'),
-                        str(generated / 'kokiri_dialogue.c')],
+                        str(generated / 'kokiri_dialogue.c'), '-lm'],
                        check=True, env=env, cwd=str(ROOT))
         cls.lib = ctypes.CDLL(str(output))
         cls.lib.gp_page_line.restype = ctypes.c_char_p
@@ -2679,6 +2680,25 @@ class Gameplay(unittest.TestCase):
         self.lib.gp_hurt_set(8, 0)
         self.step(0, 0, 0)
         self.assertEqual(self.lib.gp_health(), 0x30 - 8)
+
+    def test_core_hit_impulse_consumed_once_zero_speed_and_scene_reset(self):
+        g = self.lib
+        for speed in (7 * 65536, 0):
+            g.gp_reset_no_greeting()
+            g.gp_health_set(48, 48)
+            g.gp_core_hurt_set(8, 0x4321, speed, 1)
+            self.step(*self.SPOT)
+            self.assertEqual(g.gp_health(), 40)
+            self.assertEqual(g.gp_knock_yaw(), 0x4321)
+            self.assertEqual(g.gp_knock_speed(), speed)
+            self.assertEqual(g.gp_knock_down(), 1)
+            self.assertEqual(g.gp_hurt_metadata(), 0)
+            self.step(*self.SPOT)
+            self.assertEqual(g.gp_health(), 40)  # queued hit consumed only once
+        g.gp_core_hurt_set(8, 0x4321, 7 * 65536, 1)
+        g.gp_reset_no_greeting()
+        self.assertEqual(g.gp_hurt_metadata(), 0)
+        self.assertEqual(g.gp_hurt(), 0)
 
     def test_no_jump_slash_without_a_sword(self):
         self.forest(0)

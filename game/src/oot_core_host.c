@@ -15,23 +15,25 @@
 #include "ram_low.h"
 #include "save_state.h"
 #include "oot_scene_blob.h"
+#include "oot_actor_pack.h"
 #include "actor_mesh.h"
 #include "npc_draw.h"
 #include "collide.h"
 #include "kokiri_collision.h"
 #include "player_items.h"
+#include "player_attack.h"
 #include <stdlib.h>
 #include <string.h>
 /* Generic decomp NPCs as baked sprites (tools/build_npc_sprites.py --generic,
 ** blob OOT_CORE_FLAG_NPC_SPRITES): no Actor_Draw, no limb matrices. */
 #define CORE_SPRITES 1
 #include "npc_sprite.h"
-static const struct { unsigned short object; unsigned char limbs; unsigned int anim; unsigned char file; }
+static const OotCoreSpriteLibrary
 core_sprite_rows[] = {
 #include "../build/oot-core/generic_sprites.h"
 };
 #define CORE_SPRITE_ROWS (sizeof core_sprite_rows / sizeof core_sprite_rows[0])
-#define CORE_SPRITE_SLOTS 8
+#define CORE_SPRITE_SLOTS 32 /* Field parents, larvae and Stalchildren; existing bank/carve */
 #define CORE_SPRITE_HEAP_PERCENT 85   /* leave heap for the rest of the scene */
 #define CORE_MESHES_MAX 40
 /* Decomp actor ids (actor_table.h) of Link's tools. */
@@ -41,7 +43,15 @@ core_sprite_rows[] = {
 #define ACTOR_ARMS_HOOK  0x0066
 #define ACTOR_EN_BOM_CHU 0x00DA
 enum { TOOL_ARW, TOOL_BOM, TOOL_CHU, TOOL_BOO, TOOL_HKT, TOOL_HKC, TOOL_BGS, TOOL_MIR,
-       TOOL_IRB, TOOL_HOB, TOOL_EXP, TOOL_COUNT };
+       TOOL_IRB, TOOL_HOB, TOOL_EXP, TOOL_AIM, TOOL_COUNT };
+/* Existing owner records share the already reserved draw-state carve. This
+ * moves no collision payload and adds no heap/carve reservation. */
+typedef struct {
+    unsigned int key;
+    uint32_t id;
+    collision_triangle_t *tri;
+    bg_mesh_t mesh;
+} core_dyna_t;
 typedef struct {
     unsigned char *sprite[CORE_SPRITE_ROWS]; /* sheets remain on the cart heap */
     unsigned char tried[CORE_SPRITE_ROWS];
@@ -59,6 +69,7 @@ typedef struct {
     collider_t tool_at[OOT_CORE_TOOL_VIEWS_MAX];
     int tool_pull[6];
     unsigned int tool_bits;
+    core_dyna_t dyna[OOT_CORE_DYNA_VIEWS_MAX];
 } core_draw_state_t;
 #if defined(__sh__)
 typedef char core_draw_low_fits[sizeof(core_draw_state_t) <= RAM_LOW_OOTDRAW_BYTES ? 1 : -1];
@@ -76,6 +87,7 @@ static core_draw_state_t core_draw_storage;
 #define core_mesh_key (CORE_DRAW->mesh_key)
 #define core_mesh_ready (CORE_DRAW->mesh_ready)
 #define core_mesh_count (CORE_DRAW->mesh_count)
+#define core_dyna (CORE_DRAW->dyna)
 
 static void core_draw_init(void)
 {
@@ -118,6 +130,8 @@ static unsigned char host_give_item(unsigned char item)
     case 0x8D: give = SAVE_ITEM_DEKU_NUTS_10; break;    /* ITEM_DEKU_NUTS_10 */
     case 0x58: give = SAVE_ITEM_SEEDS_5; break;         /* ITEM_DEKU_SEEDS (+5) */
     case 0x14: give = SAVE_ITEM_BOTTLE_EMPTY; break;
+    case 0x20: give = SAVE_ITEM_BOTTLE_POE; break;
+    case 0x1E: give = SAVE_ITEM_BOTTLE_BIG_POE; break;
     case 0x1A: give = SAVE_ITEM_BOTTLE_MILK_FULL; break; /* Talon's first bottle */
     case 0x82: give = SAVE_ITEM_MILK; break;            /* cow/Talon refill */
     default: return item; /* not in the C save yet: not given */
@@ -127,12 +141,72 @@ static unsigned char host_give_item(unsigned char item)
     return 0xFF;
 }
 
-/* Health_ChangeBy: 1/16 heart units; nonzero = still alive. */
+/* Health_ChangeBy: 1/16 heart units. Negative actor calls queue the C reaction;
+ * report the pending result now, including dodge/double defense, so a lethal
+ * source call does not incorrectly report survival before C consumes it. */
 static int host_health_change(short amount)
 {
     if (amount >= 0) save_heal((unsigned int)amount);
-    else save_damage((unsigned int)-amount);
+    else if (!gameplay.intangible && !gameplay.hurt_pending && !gameplay.dead) {
+        /* Actor-origin damage shares C Link's next-step reaction/i-frames. */
+        gameplay.hurt_pending = 1;
+        gameplay.hurt_damage = (unsigned int)-(int)amount;
+        gameplay.hurt_yaw = recomp_link_yaw;
+        gameplay.hurt_speed = 0;
+        gameplay.hurt_effect = gameplay.hurt_large = gameplay.hurt_core = 0;
+    }
+    if (amount < 0 && gameplay.hurt_pending && !gameplay.invulnerable) {
+        unsigned int damage = gameplay.hurt_damage;
+        if (save_state.source_double_defense) damage = (damage >> 1) + (damage & 1);
+        return save_state.health > damage;
+    }
     return save_state.health != 0;
+}
+
+static void host_player_combat(OotCoreCombatState *out)
+{
+    unsigned int flags = player_attack_damage_flags(gameplay.attack_id);
+    bool jump = flags == DMG_JUMP_KOKIRI;
+    bool spin = flags == DMG_SPIN_KOKIRI;
+    memset(out, 0, sizeof *out);
+    out->flags = (gameplay.shielding ? OOT_COMBAT_SHIELD : 0) |
+        ((gameplay.intangible || gameplay.hurt_pending) ? OOT_COMBAT_INTANGIBLE : 0) |
+        (gameplay.invulnerable ? OOT_COMBAT_DODGE : 0) |
+        (gameplay.dead || gameplay_blocks_world() ? OOT_COMBAT_DISABLED : 0) |
+        (gameplay.face_locked ? OOT_COMBAT_LOCKED : 0);
+    out->shield = save_state.equip_shield;
+    out->swing = gameplay.swing_count;
+    out->damage = 1;
+    if (!save_state.link_age) {
+        bool giant = save_state.equip_sword == EQUIP_VALUE_SWORD_BIGGORON;
+        flags = jump ? (giant ? DMG_JUMP_GIANT : DMG_JUMP_MASTER) :
+            spin ? (giant ? DMG_SPIN_GIANT : DMG_SPIN_MASTER) :
+                   (giant ? DMG_SLASH_GIANT : DMG_SLASH_MASTER);
+        out->damage = giant ? 4 : 2;
+    }
+    if (jump) out->damage *= 2;
+    if (player_items_stick()) { flags = DMG_DEKU_STICK; out->damage = jump ? 4 : 2; }
+    out->damage_flags = flags ? flags : DMG_SLASH_KOKIRI;
+}
+
+static int host_player_hit(const OotCorePlayerHit *hit)
+{
+    if (!hit || gameplay.dead || gameplay_is_paused()) return 0;
+    if (hit->flags & OOT_HIT_GUARD) {
+        gameplay.guard_pending = true;
+        gameplay.events |= GP_EVENT_GUARD;
+        return 1;
+    }
+    if (gameplay.hurt_pending) return 0;
+    if (gameplay.intangible && !(hit->flags & OOT_HIT_LARGE)) return 0;
+    gameplay.hurt_pending = 1;
+    gameplay.hurt_damage = gameplay.intangible ? 0 : hit->damage;
+    gameplay.hurt_yaw = hit->yaw;
+    gameplay.hurt_speed = hit->speed_q16;
+    gameplay.hurt_effect = hit->effect;
+    gameplay.hurt_large = (hit->flags & OOT_HIT_LARGE) != 0;
+    gameplay.hurt_core = 1;
+    return 1;
 }
 
 static void host_rupees_change(short amount)
@@ -143,14 +217,42 @@ static void host_rupees_change(short amount)
     gameplay.rupees = save_state.rupees;
 }
 
+static int host_scene_file(const char* name, void* data, unsigned int bytes)
+{
+    jo_file file;
+    int length, got;
+    if (GFS_NameToId((Sint8*)name) < 0) return 0;
+    if (!jo_fs_open(&file, name)) return -1;
+    length = file.size;
+    if (!data) { jo_fs_close(&file); return length; }
+    if (bytes > (unsigned int)length) { jo_fs_close(&file); return -1; }
+    got = jo_fs_read_next_bytes(&file, data, bytes);
+    jo_fs_close(&file);
+    slCashPurge();
+    return got;
+}
+
+static void* host_sprite_memory(void* memory, unsigned int bytes)
+{
+    if (memory) { jo_free(memory); return 0; }
+    memory=jo_malloc(bytes);
+    if (memory && jo_memory_usage_percent()>CORE_SPRITE_HEAP_PERCENT) {
+        jo_free(memory); return 0;
+    }
+    return memory;
+}
+
 static const OotCoreHost host = { host_sfx, host_give_item, host_health_change,
-                                  frame_timer_ticks, frame_timer_ticks_to_us, host_rupees_change };
+                                  frame_timer_ticks, frame_timer_ticks_to_us, host_rupees_change,
+                                  host_player_combat, host_player_hit, host_scene_file, host_sprite_memory };
 
 static OotCoreBench bench;
 /* Last decomp update (Actor_UpdateAll etc.), microseconds. */
 static unsigned int update_us;
 static bool loaded;
 static bool playing;
+static bool scene_load_failed;
+static unsigned int core_image_crc;
 /* Scene index the play state belongs to (or whose blob is missing/failed):
 ** a failed scene is not retried every frame. */
 static unsigned int play_scene = 0xFFFFu;
@@ -180,7 +282,8 @@ bool oot_core_boot(void)
     core_draw_init(); /* Low RAM retains arbitrary bytes across boots. */
     /* Boot progress on row 20: a hang leaves the last marker on screen. */
     jo_printf(0, 20, "oc 1 load ");
-    loaded = load_carve("OOTCORE.BIN", RAM_CART_OOTCORE_OFFSET, RAM_CART_OOTCORE_BYTES);
+    int core_file_bytes = load_carve("OOTCORE.BIN", RAM_CART_OOTCORE_OFFSET, RAM_CART_OOTCORE_BYTES);
+    loaded = core_file_bytes != 0;
     /* Code and data are used through the cached aliases: drop stale lines. */
     slCashPurge();
     {
@@ -199,6 +302,7 @@ bool oot_core_boot(void)
         }
     }
     jo_printf(0, 20, "oc 2 init  ");
+    core_image_crc = OotActorPack_Crc((const void*)OOT_CORE_LOAD_ADDR, core_file_bytes, 0);
     ENTRY->init(&host);
     {
         /* ROM message text (NESMSG.BIN): z_message DMAs from it. */
@@ -233,6 +337,11 @@ void oot_core_clock_reset(unsigned int skybox_time)
 }
 void oot_core_session_reset(unsigned int skybox_time)
 {
+    /* File/level select already installed the next C save. Detach the old
+     * mirror before its actor destructors run, so cleanup cannot stamp old
+     * scene words, inventory or clock into the newly selected file. */
+    if (loaded) ENTRY->set_save(NULL);
+    oot_core_scene_unload();
     oot_core_clock_reset(skybox_time);
     core_skybox_reset = 2;
 }
@@ -308,45 +417,18 @@ static void mirror_save(void)
 /* <scene>.OOC (asset_scene_name, like the room banks) into the scene carve,
 ** then each data object it lists (O<id>.OOB) packed after it. Objects are
 ** used through the cached alias like the blob. */
-#define SCENE_OBJECTS_MAX 16
-static const void *scene_objects[SCENE_OBJECTS_MAX];
+static const void *const *scene_objects;
 static unsigned int scene_object_count;
 
 static bool load_scene_blob(unsigned int scene)
 {
-    static const char hex[] = "0123456789ABCDEF";
     char name[12];
-    const OotSceneBlob *blob = (const OotSceneBlob *)OOT_SCENECOL_ADDR;
-    unsigned char *carve = (unsigned char *)ram_cart_fixed(RAM_CART_SCENECOL_OFFSET, RAM_CART_SCENECOL_BYTES);
-    unsigned int used, i;
-    int length;
-    scene_object_count = 0;
+    int result;
     if (!asset_scene_name(name, scene, -1, "OOC")) return false;
-    length = load_carve(name, RAM_CART_SCENECOL_OFFSET, RAM_CART_SCENECOL_BYTES);
-    if (!length) return false;
-    slCashPurge();
-    /* Blob linked for another carve address: its pointers are garbage. */
-    if (blob->col_header && (unsigned int)blob->col_header - OOT_SCENECOL_ADDR >= RAM_CART_SCENECOL_BYTES) return false;
-    used = ((unsigned int)length + 15u) & ~15u;
-    for (i = 0; i < blob->num_objects && i < SCENE_OBJECTS_MAX; ++i) {
-        unsigned int id = blob->objects[i];
-        char file[] = "O000.OOB";
-        jo_file probe;
-        file[1] = hex[(id >> 8) & 15]; file[2] = hex[(id >> 4) & 15]; file[3] = hex[id & 15];
-        scene_objects[i] = 0;
-        if (GFS_NameToId((Sint8 *)file) < 0 || !jo_fs_open(&probe, file)) continue;
-        length = probe.size;
-        jo_fs_close(&probe);
-        if (length <= 0 || used + (unsigned int)length > RAM_CART_SCENECOL_BYTES ||
-            !jo_fs_read_file_ptr(file, carve + used, &length)) continue;
-        scene_objects[i] = (const void *)((unsigned int)(carve + used) & ~0x20000000u);
-        used += ((unsigned int)length + 15u) & ~15u;
-    }
-    scene_object_count = i;
-    slCashPurge();
-    return true;
+    result = ENTRY->scene_load(scene, name, core_image_crc, &scene_objects, &scene_object_count);
+    scene_load_failed = result < 0;
+    return result > 0;
 }
-
 /* ---- Phase 2 draw shim: prebuilt meshes for the decomp's draw items ---- */
 
 static void sprites_reset(void)
@@ -361,74 +443,38 @@ static void sprites_reset(void)
     memset(&sprite_stats, 0, sizeof sprite_stats);
 }
 
-/* Reconcile after an actual actor step, including later same-room spawns.
- * Existing sheets stay owned until room teardown. Each unavailable file is
- * attempted once per room, so an absent bake never creates a per-frame CD loop. */
+/* OOC objects cover every room and layer, including the current NPC recipes.
+ * All clips load before actors run; same-room spawns never read the disc. */
+static bool sprites_preload(const OotSceneBlob *blob)
+{
+    unsigned int count=ENTRY->sprite_preload(blob,core_sprite_rows,CORE_SPRITE_ROWS,
+                                            core_sprite,&sprite_stats.missing);
+    core_sprite_reserved=count ? CORE_SPRITE_SLOTS : 0;
+    return sprite_stats.missing==0;
+}
+
+static const unsigned char *sprites_clip(const OotCoreNpcView *view)
+{
+    unsigned int r;
+    for (r=0;r<CORE_SPRITE_ROWS;++r)
+        if (core_sprite_rows[r].object==view->object &&
+            core_sprite_rows[r].skeleton==(view->skeleton&0xffffffu))
+            return npc_sprite_archive_clip(core_sprite[r],view->anim);
+    return 0;
+}
+
+/* Read-only diagnostics. No loading, fallback clip, slot growth or bank reset. */
 static bool sprites_refresh(void)
 {
-    static const char hex[] = "0123456789ABCDEF";
     const OotCoreNpcView *v;
-    int n = ENTRY->npc_view(&v), k;
-    unsigned int r, pass, count = 0;
-    bool changed = false;
-    for (pass = 0; pass < 2; ++pass)
-    for (r = 0; r < CORE_SPRITE_ROWS; ++r) {
-        char file[] = "G00000.SPR";
-        int length = 0;
-        jo_file probe;
-        if (core_sprite[r] || core_sprite_tried[r]) continue;
-        /* One compatible sheet per object/skeleton, not every animation in
-         * its library. Unused Ingo clips must not crowd later NPCs out. */
-        unsigned int resident;
-        for(resident=0;resident<CORE_SPRITE_ROWS;++resident)
-            if(core_sprite[resident] && core_sprite_rows[resident].object==core_sprite_rows[r].object &&
-               core_sprite_rows[resident].limbs==core_sprite_rows[r].limbs)break;
-        if(resident<CORE_SPRITE_ROWS)continue;
-        for (k = 0; k < n; ++k)
-            if (v[k].object == core_sprite_rows[r].object &&
-                (pass || core_sprite_rows[r].anim == (v[k].anim & 0xFFFFFFu))) break;
-        if (k == n) continue;
-        core_sprite_tried[r] = 1;
-        file[1] = hex[(core_sprite_rows[r].object >> 8) & 15];
-        file[2] = hex[(core_sprite_rows[r].object >> 4) & 15];
-        file[3] = hex[core_sprite_rows[r].object & 15];
-        file[4] = hex[core_sprite_rows[r].file >> 4];
-        file[5] = hex[core_sprite_rows[r].file & 15];
-        if (GFS_NameToId((Sint8 *)file) < 0 || !jo_fs_open(&probe, file)) continue;
-        length = probe.size;
-        jo_fs_close(&probe);
-        if (length < 0x34) continue;
-        /* Jo appends a NUL after the file, even for aligned SPR packets. */
-        core_sprite[r] = (unsigned char *)jo_malloc((unsigned int)length + 1u);
-        if (core_sprite[r] && jo_memory_usage_percent() > CORE_SPRITE_HEAP_PERCENT) {
-            jo_free(core_sprite[r]); core_sprite[r] = 0;
-        }
-        if (core_sprite[r] &&
-            (!jo_fs_read_file_ptr(file, core_sprite[r], &length) ||
-             !npc_sprite_valid(core_sprite[r], (unsigned int)length))) {
-            jo_free(core_sprite[r]); core_sprite[r] = 0;
-        }
-        if (core_sprite[r]) changed = true;
-    }
+    int n=ENTRY->npc_view(&v), k;
     sprite_stats.actors = sprite_stats.missing = sprite_stats.fallback = 0;
     for (k = 0; k < n; ++k) {
-        unsigned int found = 0, exact = 0;
         if (!v[k].object) continue; /* native C-owned views have no sprite package */
         ++sprite_stats.actors;
-        for (r = 0; r < CORE_SPRITE_ROWS; ++r)
-            if (core_sprite[r] && core_sprite_rows[r].object == v[k].object &&
-                (!v[k].limbs || core_sprite_rows[r].limbs + 1u == v[k].limbs)) {
-                found = 1;
-                if (core_sprite_rows[r].anim == (v[k].anim & 0xFFFFFFu)) exact = 1;
-            }
-        if (found) { ++count; if (!exact) ++sprite_stats.fallback; }
-        else ++sprite_stats.missing;
+        if (!sprites_clip(&v[k])) ++sprite_stats.missing;
     }
-    if (count > CORE_SPRITE_SLOTS) count = CORE_SPRITE_SLOTS;
-    /* Retain room capacity when an actor disappears; camera visibility and
-     * temporary deaths never reset the shared bank. */
-    if (count > core_sprite_reserved) { core_sprite_reserved = count; changed = true; }
-    return changed;
+    return false;
 }
 
 /* ---- Link's tools: decomp item actors (bridge_items.cpp), baked ITM*.SPR ----
@@ -440,14 +486,6 @@ static bool sprites_refresh(void)
 ** C Link collides with the same source mesh. Converted once per actor into
 ** the cart heap; transform refreshed after every decomp update. Normals are
 ** the source's n / 32767 halved to Q14, as build_kokiri_scene does offline. */
-typedef struct {
-    unsigned int key;
-    uint32_t id;
-    collision_triangle_t *tri;
-    bg_mesh_t mesh;
-} core_dyna_t;
-static core_dyna_t core_dyna[OOT_CORE_DYNA_VIEWS_MAX];
-
 static void core_dyna_drop(core_dyna_t *d, bool remove)
 {
     if (remove && d->id != BG_NONE) bg_dyna_remove(d->id);
@@ -458,8 +496,9 @@ static void core_dyna_drop(core_dyna_t *d, bool remove)
 static void core_dyna_reset(void)
 {
     unsigned int i;
-    /* scene_flow already cleared bg_dyna for the new scene */
-    for (i = 0; i < OOT_CORE_DYNA_VIEWS_MAX; ++i) if (core_dyna[i].key) core_dyna_drop(&core_dyna[i], false);
+    /* Frontend teardown can precede collision_load: detach each registration
+     * before freeing its triangle storage. Removing an already-cleared id is safe. */
+    for (i = 0; i < OOT_CORE_DYNA_VIEWS_MAX; ++i) if (core_dyna[i].key) core_dyna_drop(&core_dyna[i], true);
 }
 
 static int16_t q15_to_q14(int16_t n) { return (int16_t)(n >= 0 ? (n + 1) >> 1 : -((-n + 1) >> 1)); }
@@ -541,14 +580,14 @@ static void tools_free(void)
 static void tools_load(void)
 {
     static const char names[TOOL_COUNT][11] = { "ITMARW.SPR", "ITMBOM.SPR", "ITMCHU.SPR", "ITMBOO.SPR",
-        "ITMHKT.SPR", "ITMHKC.SPR", "ITMBGS.SPR", "ITMMIR.SPR", "ITMIRB.SPR", "ITMHOB.SPR", "ITMEXP.SPR" };
+        "ITMHKT.SPR", "ITMHKC.SPR", "ITMBGS.SPR", "ITMMIR.SPR", "ITMIRB.SPR", "ITMHOB.SPR", "ITMEXP.SPR", "ITMAIM.SPR" };
     bool adult = !save_state.link_age;
     unsigned int i;
     bool bomb = save_inventory_item(2) != 0xff, chu = save_inventory_item(8) != 0xff;
     bool hook = adult && save_inventory_item(9) != 0xff;
     bool need[TOOL_COUNT] = {
         adult && save_inventory_item(3) != 0xff, bomb, chu, !adult && save_inventory_item(12) != 0xff,
-        hook, hook, false, false, false, false, bomb || chu }; /* held gear is Link's mesh */
+        hook, hook, false, false, false, false, bomb || chu, true }; /* aim atlas supports later pickups without a live CD read */
     for (i = 0; i < TOOL_COUNT; ++i) {
         unsigned char **sheet = &CORE_DRAW->tool_sheet[i];
         if (!need[i] || *sheet || CORE_DRAW->tool_tried[i] || GFS_NameToId((Sint8 *)names[i]) < 0) continue;
@@ -556,6 +595,22 @@ static void tools_load(void)
         *sheet = npc_sprite_load(names[i]);
         if (*sheet && jo_memory_usage_percent() > CORE_SPRITE_HEAP_PERCENT) { jo_free(*sheet); *sheet = 0; }
     }
+}
+
+/* z_player_lib first-person hand/tool lists, reduced offline to one shared
+ * cel. This presentation follows the selected item; actors own shot behavior.
+ * The screen centre and shot ray are unchanged. Missing assets/VRAM never
+ * select another item's pixels or change whether its shot can fire. */
+void oot_core_tool_aim_draw(void)
+{
+    unsigned int slot = recomp_aim_inventory_slot(), cel;
+    if (!playing || !CORE_DRAW->tool_sheet[TOOL_AIM]) return;
+    if (slot == 6) cel = 0;
+    else if (slot == 3 || slot == 4 || slot == 10 || slot == 16) cel = 1;
+    else if (slot == 9) cel = 2;
+    else return;
+    npc_sprite_draw_screen(CORE_DRAW->tool_sheet[TOOL_AIM], &CORE_DRAW->tool_inst[TOOL_AIM],
+                           cel, 244, 187, 2*65536);
 }
 
 static unsigned int pitch_band(int pitch)
@@ -616,8 +671,9 @@ static void tools_draw(void)
     npc_sprite_shadow_off = 0;
 }
 
-/* C enemies and props take the decomp tools' hits through the C contact
- * pass: one AT cylinder per live tool, with the tool's source dmgFlags. */
+/* C enemies and props consume source attack flags through their own damage
+ * tables. Moving tools sweep the full core step (225 units for an arrow),
+ * including host frames on which the 20 Hz core did not advance. */
 void oot_core_tool_register(void)
 {
     const OotCoreToolView *v;
@@ -627,30 +683,38 @@ void oot_core_tool_register(void)
         int r = v[i].radius ? v[i].radius : 6;
         if (!v[i].dmg || v[i].held) continue;
         memset(c, 0, sizeof *c);
-        c->shape = COLSHAPE_CYLINDER;
-        c->x = v[i].x; c->y = v[i].y - r; c->z = v[i].z;
+        c->shape = v[i].id == ACTOR_EN_BOM ? COLSHAPE_CYLINDER : COLSHAPE_CAPSULE;
+        c->ax = v[i].previous_x; c->ay = v[i].previous_y; c->az = v[i].previous_z;
+        c->bx = v[i].x; c->by = v[i].y; c->bz = v[i].z;
+        c->x = v[i].x; c->y = v[i].y - (c->shape == COLSHAPE_CYLINDER ? r : 0); c->z = v[i].z;
         c->radius = (int16_t)r; c->height = (int16_t)(2 * r);
         c->at_type = AT_TYPE_PLAYER;
         c->at_dmg = v[i].dmg;
-        c->at_damage = v[i].id == ACTOR_EN_BOM ? 4 : 2;
+        c->at_damage = v[i].damage;
         c->ac_flags = COL_OUTSIDE_ACTOR;
-        c->tag = (uint16_t)(0x7200 + i);
-        c->attack_id = (uint16_t)(0x7200 + v[i].id);
+        c->tag = 0x7200;
+        c->attack_id = v[i].attack_id;
         collide_set_at(c);
     }
 }
 
-/* C-button tool use by inventory slot. Ammo and magic (sMagicArrowCosts
- * 4/4/8) are C save state and are spent only when the actor spawned. */
+/* C-button tool use by inventory slot. Until real Player owns the save,
+ * commit ammo/magic only after its source actor is admitted. Source
+ * func_8083442C falls back to ARROW_NORMAL when magic cannot be consumed. */
 bool oot_core_tool_use(unsigned int slot, const int32_t origin[3], uint16_t yaw, int16_t pitch)
 {
     unsigned int item = save_inventory_item(slot), ammo = slot, cost = 0;
     int io[6];
-    if (!playing || item == 0xff || CORE_DRAW->tool_bits & OOT_CORE_TOOL_HOLDING) return false;
+    if (!playing || item == 0xff || !save_inventory_slot_usable(slot) ||
+        CORE_DRAW->tool_bits & OOT_CORE_TOOL_HOLDING) return false;
     if (slot == 4 || slot == 10 || slot == 16) {
         ammo = 3;
         cost = slot == 16 ? 8 : 4;
-        if (save_state.source_magic < cost) return false;
+        if (save_inventory_item(3) == 0xff) return false;
+        if (!save_state.source_magic_level || save_state.source_magic < cost) {
+            item = 3; /* ITEM_BOW -> ARROW_NORMAL, retaining the equipped arrow. */
+            cost = 0;
+        }
     }
     if ((ammo == 2 || ammo == 3 || ammo == 8) && !save_state.source_ammo[ammo]) return false;
     io[0] = (int)item; io[1] = origin[0]; io[2] = origin[1]; io[3] = origin[2];
@@ -671,13 +735,25 @@ bool oot_core_tool_throw(void)
     return ENTRY->tool(OOT_CORE_TOOL_THROW, CORE_DRAW->tool_pull) != 0;
 }
 
-/* Arms_Hook pulling Link: this 30 Hz step's share of the 20 Hz velocity, Q8. */
+/* Source Actor_UpdatePos scales velocity by R_UPDATE_RATE/2 = 3/2.
+ * A 30 Hz host step takes 2/3 of that 20 Hz displacement: exactly velocity. */
 bool oot_core_tool_pull(int32_t step_q8[3])
 {
     unsigned int k;
     if (!playing || !(CORE_DRAW->tool_bits & OOT_CORE_TOOL_PULLING)) return false;
-    for (k = 0; k < 3; ++k) step_q8[k] = CORE_DRAW->tool_pull[k] * 2 / 3;
+    for (k = 0; k < 3; ++k) step_q8[k] = CORE_DRAW->tool_pull[k];
     return true;
+}
+
+static void meshes_free(void)
+{
+    unsigned int i;
+    for (i = 0; i < core_mesh_count; ++i) {
+        actor_mesh_free(core_mesh[i]);
+        core_mesh[i] = 0;
+        core_mesh_ready[i] = 0;
+    }
+    core_mesh_count = 0;
 }
 
 static void load_meshes(void)
@@ -685,8 +761,7 @@ static void load_meshes(void)
     static const char hex[] = "0123456789ABCDEF";
     const OotCoreMeshKey *keys;
     int n = ENTRY->mesh_list(&keys), i;
-    for (i = 0; i < (int)core_mesh_count; ++i) { actor_mesh_free(core_mesh[i]); core_mesh[i] = 0; }
-    core_mesh_count = 0;
+    meshes_free();
     for (i = 0; i < n && core_mesh_count < CORE_MESHES_MAX; ++i) {
         char file[] = "Q00000.MSH";
         const OotCoreMeshKey *k = &keys[i];
@@ -705,7 +780,6 @@ static void load_meshes(void)
         core_mesh_ready[core_mesh_count] = 0;
         core_mesh_count++;
     }
-    sprites_reset();
     sprites_refresh();
     tools_load();
     npc_draw_reupload();
@@ -724,7 +798,7 @@ void oot_core_meshes_upload(void)
         unsigned int r, best = 0;
         sprite_stats.slots = 0;
         for (r = 0; r < CORE_SPRITE_ROWS; ++r) {
-            const unsigned char *s = core_sprite[r];
+            const unsigned char *s = npc_sprite_archive_largest(core_sprite[r]);
             unsigned int bytes = s ? (unsigned int)(s[4] << 8 | s[5]) * (unsigned int)(s[6] << 8 | s[7]) : 0;
             if (bytes > best) { best = bytes; big = s; }
         }
@@ -746,33 +820,65 @@ static void sprites_draw(void)
 {
     const OotCoreNpcView *v;
     int n = oot_core_npcs(&v), k;
-    unsigned int r, used = 0;
-    for (k = 0; k < n && used < CORE_SPRITE_SLOTS; ++k) {
-        unsigned int chosen = CORE_SPRITE_ROWS;
+    unsigned int pinned = 0;
+    for (k = 0; k < n; ++k) {
+        const unsigned char *clip;
+        npc_sprite_inst_t *slot;
+        unsigned int sample;
         int dx = v[k].x - recomp_camera.x, dz = v[k].z - recomp_camera.z;
         if (!v[k].anim || !(v[k].flags & OOT_CORE_VIEW_DRAWN) ||
             dx < -2000 || dx > 2000 || dz < -2000 || dz > 2000) continue;
-        for (r = 0; r < CORE_SPRITE_ROWS; ++r)
-            if (core_sprite[r] && core_sprite_rows[r].object == v[k].object &&
-                /* SkelAnime includes the root translation joint; the baked
-                 * SkeletonHeader counts only actual limbs. */
-                (!v[k].limbs || core_sprite_rows[r].limbs + 1u == v[k].limbs)) {
-                if (chosen == CORE_SPRITE_ROWS) chosen = r;
-                if (core_sprite_rows[r].anim == (v[k].anim & 0xFFFFFFu)) { chosen = r; break; }
-            }
-        if (chosen < CORE_SPRITE_ROWS &&
-            npc_sprite_visible(core_sprite[chosen], v[k].x, v[k].y, v[k].z))
-            npc_sprite_draw(core_sprite[chosen], &core_sprite_inst[used++], v[k].frame,
-                            v[k].x, v[k].y, v[k].z, v[k].yaw);
+        clip=sprites_clip(&v[k]);
+        if (!clip || !v[k].alpha || !npc_sprite_visible_scaled(clip,v[k].x,v[k].y,v[k].z,
+                                                             v[k].scale_x,v[k].scale_y)) continue;
+        sample=npc_sprite_cel(clip,v[k].frame,v[k].x,v[k].z,v[k].yaw);
+        /* Soul sheets are billboards, not eight-way character poses. */
+        if (v[k].object == 0x06d && ((v[k].anim >> 20) & 15u) >= 3u)
+            sample=npc_sprite_cel(clip,v[k].frame,v[k].x,v[k].z,
+                                 gameplay_facing(recomp_camera.x-v[k].x,recomp_camera.z-v[k].z));
+        slot=npc_sprite_cache_claim(core_sprite_inst,CORE_SPRITE_SLOTS,&pinned,clip,
+                                   sample & 0xffffu);
+        if (!slot) { ++sprite_stats.missing; continue; }
+        npc_sprite_draw_styled(clip,slot,sample,v[k].x,v[k].y,v[k].z,
+                               v[k].scale_x,v[k].scale_y,v[k].alpha,v[k].tint);
     }
 }
 #endif
 
 /* From world_props_draw: one prebuilt mesh per decomp draw item. */
+static void effects_draw(void)
+{
+#ifdef __sh__
+    typedef char effect_view_fits[sizeof(OotCoreEffectView)*OOT_CORE_EFFECT_VIEWS_MAX
+                                  <= RAM_LOW_EFFECT_VIEW_BYTES ? 1 : -1];
+    OotCoreEffectView *rows=RAM_LOW(RAM_LOW_EFFECT_VIEW_OFFSET);
+#else
+    OotCoreEffectView rows[OOT_CORE_EFFECT_VIEWS_MAX];
+#endif
+    unsigned omitted=0;
+    int count=playing?ENTRY->effect_view(rows,OOT_CORE_EFFECT_VIEWS_MAX,&omitted):0;
+    for(int i=0;i<count;++i){
+        const OotCoreEffectView *v=&rows[i];
+        unsigned radius=4,colour=C_RGB(24,22,18),dither=1;
+        if(!npc_sprite_in_view(v->x,v->y,v->z,80))continue;
+        switch(v->type){
+        case 0x00: radius=v->regs[9]>0?(unsigned)v->regs[9]/4:1;break; /* Dust */
+        case 0x0f: radius=v->regs[3]>0?(unsigned)v->regs[3]/2:1;dither=0;break;
+        case 0x15: radius=v->regs[8]>0?(unsigned)v->regs[8]/8:1;colour=C_RGB(31,31,12);dither=0;break;
+        case OOT_CORE_EFFECT_POE_FLAME:
+        case 0x1d: kokiri_flame_draw(v->x,v->y,v->z,v->life);continue;
+        case 0x20: radius=v->regs[0]>0?(unsigned)v->regs[0]/4:1;colour=C_RGB(31,17,4);break;
+        default: continue;
+        }
+        kokiri_particle_draw(v->x,v->y,v->z,radius,colour,dither);
+    }
+}
+
 void oot_core_meshes_draw(void)
 {
     sprites_draw();
     tools_draw();
+    effects_draw();
     const OotCoreDrawItem *items;
     int n = playing ? ENTRY->draw_items(&items) : 0, i;
     unsigned int m;
@@ -809,6 +915,23 @@ static void send_input(const gameplay_input_t *in)
     ENTRY->set_input(press, press, 0, (signed char)(in->menu_step < 0 ? 60 : in->menu_step > 0 ? -60 : 0));
 }
 
+void oot_core_scene_unload(void)
+{
+    playing = false;
+    bg_water_bind(NULL, 0); /* borrowed OOC memory must not survive release */
+    /* Keep source actors' code and objects valid through their destructors. */
+    if (loaded) ENTRY->play_destroy();
+    sprites_reset();
+    tools_free();
+    core_dyna_reset();
+    meshes_free();
+    if (loaded) ENTRY->pack_release();
+    scene_objects = NULL;
+    scene_object_count = 0;
+    meshes_room = -1;
+    oot_core_scene_restart();
+}
+
 void oot_core_frame(const gameplay_input_t *in)
 {
     unsigned int scene = scene_flow_scene();
@@ -816,13 +939,18 @@ void oot_core_frame(const gameplay_input_t *in)
     int room = scene_flow_is_interior() ? 0 : (int)kokiri_bank_room();
     if (!loaded || gameplay_is_paused()) return;
     if (scene != play_scene) {
-        playing = false;
-        sprites_reset();
-        tools_free();
-        core_dyna_reset();
+        oot_core_scene_unload();
         play_scene = scene;
-        meshes_room = -1;
-        if (!load_scene_blob(scene)) return;
+        if (!load_scene_blob(scene)) {
+            if (scene_load_failed) jo_printf(0, 20, "Actor pack load failed: %u", scene);
+            return;
+        }
+        if (!sprites_preload((const OotSceneBlob *)OOT_SCENECOL_ADDR)) {
+            scene_load_failed = true;
+            ENTRY->pack_release();
+            jo_core_error("Scene sprite preload failed: %u missing", sprite_stats.missing);
+            return;
+        }
         mirror_save(); /* age/time/flags before play_init picks the layer */
         playing = ENTRY->play_init(RAM_LOW(RAM_LOW_OOTPLAY_OFFSET), RAM_LOW_OOTPLAY_BYTES,
                                    scene_flow_entry()->oot_scene, (const void *)OOT_SCENECOL_ADDR,
@@ -834,17 +962,29 @@ void oot_core_frame(const gameplay_input_t *in)
 #ifdef CORE_SPRITES
             ENTRY->set_flags(OOT_CORE_FLAG_NPC_SPRITES);
 #endif
-            /* Room actors do not exist yet. Actor_UpdateAll spawns/initializes
-             * them on the first 20 Hz step; only then can npc_view name sheets. */
+            /* Sprite libraries are ready for every scene room/layer. Actor
+             * instances and static prop views appear on the first core step. */
+        } else {
+            scene_load_failed = true;
+            ENTRY->play_destroy();
+            ENTRY->pack_release();
         }
         step_phase = 0;
     }
-    if (!playing) return;
+    if (!playing) {
+        if (scene_load_failed) jo_printf(0, 20, "Scene load failed. Pause: reload");
+        return;
+    }
     sync_player();
     ENTRY->set_camera((short)recomp_yaw);
     send_input(in);
     mirror_save();
     ENTRY->set_room(room);
+    {
+        const void *water;
+        unsigned count=ENTRY->water_boxes(&water);
+        bg_water_bind((const bg_waterbox_t *)water,count);
+    }
     {
         int32_t base[3], tip[3];
         bool have = gameplay_blade_points(base, tip);
@@ -910,7 +1050,12 @@ unsigned int oot_core_ocarina_note(void) { return playing ? ENTRY->ocarina(2) : 
 unsigned int oot_core_ocarina_song(void) { return playing ? ENTRY->ocarina(3) : 0; }
 bool oot_core_ocarina_sun_allowed(void) { return playing && ENTRY->ocarina(4) != 0; }
 bool oot_core_ocarina_sun_start(void) { return playing && ENTRY->ocarina(5) != 0; }
-void oot_core_scene_restart(void) { playing = false; play_scene = ~0u; }
+void oot_core_scene_restart(void) {
+    playing = false;
+    scene_load_failed = false;
+    play_scene = ~0u;
+}
+bool oot_core_scene_failed(void) { return scene_load_failed; }
 
 /* The decomp text box on the VDP2 text layer, in the C dialogue rows.
 ** VDP2 keeps text, so rows are reprinted only when the view changes and

@@ -91,7 +91,7 @@ JO_MAX_FS_BACKGROUND_JOBS = 2
 # give the decomp glue static RAM; overflow goes to the cart zones.
 # 2026-10-04: 8 KB of it moved to a low-RAM zone (ram_low.h RAM_LOW_HEAP,
 # added in ram_cart_claim_second_bank); total malloc capacity unchanged.
-JO_GLOBAL_MEMORY_SIZE_FOR_MALLOC ?= 39936
+JO_GLOBAL_MEMORY_SIZE_FOR_MALLOC ?= 35840
 
 SRCS = src/main.c src/ram_cart.c src/game_mode.c src/message.c src/cutscene.c src/cutscene_actor.c src/save_state.c src/item_drop.c src/world_props.c src/world_signs.c src/world_props_draw.c src/actor_sys.c src/attention.c src/karebaba.c src/karebaba_draw.c src/game_over.c src/collide.c src/save_file.c src/save_device.c src/ui_preferences.c src/file_select.c src/scene_flow.c src/kokiri_sgl.c ../shared/lib/music/music.c src/music_banks.c src/recomp.c src/navi.c src/player_input.c src/gameplay.c src/dialogue_text.c src/text_pool.c src/minimap.c src/health_hud.c src/pause_windows.c src/pause_window_state.c src/cdda.c src/music_songs.c src/action_audio.c src/recomp_camera.c src/recomp_collision.c src/recomp_follow.c src/link_anim.c src/link_anim_state.c src/player_air.c src/player_bg.c src/player_climb.c src/player_crawl.c src/frame_timer.c build/generated/kokiri_scene.c build/generated/kokiri_textures.c build/generated/link_scene.c build/generated/link_textures.c build/generated/link_clips.c build/generated/scene_table.c build/generated/kokiri_actors.c build/generated/kokiri_dialogue.c build/generated/cutscenes.c
 override ASSETS_DIR = ./build/cd
@@ -216,6 +216,8 @@ OOT_CORE_MAX_BYTES = 0x90000
 OOT_SCENECOL_ADDR = 0x02730000
 OOT_SCENECOL_MAX_BYTES = 0x40000
 OOT_CORE_CXXFLAGS = -x c++ -std=gnu++17 -fno-exceptions -fno-rtti -fpermissive -funsigned-char -w \
+	-DOOT_CORE_LOAD_ADDR=$(OOT_CORE_LOAD_ADDR)u -DOOT_SCENECOL_ADDR=$(OOT_SCENECOL_ADDR)u \
+	-DOOT_SCENECOL_MAX_BYTES=$(OOT_SCENECOL_MAX_BYTES)u \
 	-fno-threadsafe-statics -fno-use-cxa-atexit -Os -m2 -ffunction-sections -fdata-sections \
 	-include oot_prelude.h \
 	-DPLATFORM_N64=1 -DPLATFORM_GC=0 -DPLATFORM_IQUE=0 -DOOT_VERSION=NTSC_1_2 -DOOT_REVISION=2 \
@@ -233,11 +235,14 @@ OOT_CORE_SRCS = $(OOT_CORE_DECOMP_SRCS) \
 	oot-core/src/bridge_play.cpp oot-core/src/bridge_assets.cpp oot-core/src/bridge_player.cpp \
 	oot-core/src/bridge_message.cpp oot-core/src/oot_core_views.cpp \
 	oot-core/src/oot_core_draw.cpp build/oot-core/keep_ph.cpp oot-core/src/bridge_npc.cpp \
-	oot-core/src/bridge_items.cpp
+	oot-core/src/bridge_items.cpp oot-core/src/bridge_actor_pack.cpp oot-core/src/oot_core_sprite.cpp
 OOT_CORE_OBJS = $(patsubst %.cpp,$(OOT_CORE_OBJDIR)/%.o,$(notdir $(OOT_CORE_SRCS)))
+OOT_FIELD_SRCS = $(OOT_FIELD_ENEMY_SRCS) oot-core/src/field_enemy_sprite.cpp oot-core/src/field_enemy_pack.cpp
+OOT_FIELD_OBJS = $(patsubst %.cpp,$(OOT_CORE_OBJDIR)/%.o,$(notdir $(OOT_FIELD_SRCS)))
 _CCFLAGS += -DDOSEI_OOT_CORE -DOOT_CORE_LOAD_ADDR=$(OOT_CORE_LOAD_ADDR)u \
 	-DOOT_SCENECOL_ADDR=$(OOT_SCENECOL_ADDR)u -Ioot-core/include
 vpath %.cpp $(sort $(dir $(OOT_CORE_SRCS)))
+vpath %.cpp $(sort $(dir $(OOT_FIELD_SRCS)))
 $(OOT_CORE_OBJDIR):
 	mkdir -p $@
 # Static ctors are fine: OotCoreEntry.init runs the blob's ctor table.
@@ -247,14 +252,31 @@ $(OOT_CORE_OBJDIR)/bridge_message.o: build/oot-core/ocarina_restrictions.inc
 $(OOT_CORE_OBJDIR)/oot_core_api.o: build/oot-core/environment_clock.inc build/oot-core/environment_player_gate.inc oot-core/include/oot_scene_blob.h
 $(OOT_CORE_OBJDIR)/z_bgcheck.o: oot-core/include/bgcheck_bounds.h
 $(OOT_CORE_OBJDIR)/bridge_player.o: oot-core/include/bgcheck_bounds.h
-build/oot-core/oot-core.elf: $(OOT_CORE_OBJS) build/oot-core/sources.mk oot-core/oot-core.ld build/oot-core/obj_syms.ld build/oot-core/msg_syms.ld
+$(OOT_FIELD_OBJS): oot-core/include/field_enemy_sprite.h
+$(OOT_CORE_OBJDIR)/field_enemy_sprite.o: build/oot-core/field_anchors.inc
+build/oot-core/field_exports.ld: $(OOT_FIELD_OBJS) $(OOT_CORE_OBJS) tools/build_pack_exports.py
+	"$(PYTHON)" tools/build_pack_exports.py --nm $(patsubst %g++,%nm,$(patsubst %gcc,%nm,$(OOT_CORE_CXX))) --pack $(OOT_FIELD_OBJS) --resident $(OOT_CORE_OBJS) --out $@
+build/oot-core/oot-core.elf: $(OOT_CORE_OBJS) build/oot-core/sources.mk oot-core/oot-core.ld build/oot-core/obj_syms.ld build/oot-core/msg_syms.ld build/oot-core/field_exports.ld
 	$(OOT_CORE_CXX) -m2 -nostdlib -nostartfiles -T oot-core/oot-core.ld \
 		-Wl,--defsym,OOT_CORE_LOAD_ADDR=$(OOT_CORE_LOAD_ADDR) \
 		-Wl,--defsym,OOT_CORE_MAX_BYTES=$(OOT_CORE_MAX_BYTES) \
 		-Wl,--gc-sections -Wl,-Map,build/oot-core/oot-core.map \
-		$(OOT_CORE_OBJS) build/oot-core/msg_syms.ld build/oot-core/obj_syms.ld -lgcc -o $@
+		$(OOT_CORE_OBJS) build/oot-core/msg_syms.ld build/oot-core/obj_syms.ld build/oot-core/field_exports.ld -lgcc -o $@
 $(ASSETS_DIR)/OOTCORE.BIN: build/oot-core/oot-core.elf
 	$(CONV) -O binary $< $@
+# Field code and data must fit the existing scene carve together. Bind the
+# pack to the exact resident image; changing the core always relinks it.
+OOT_FIELD_PAYLOADS = SA.OOC O018.OOB O06D.OOB O07C.OOB O0C5.OOB O12F.OOB O184.OOB
+build/oot-core/field/SA.OAP: build/oot-core/oot-core.elf $(ASSETS_DIR)/OOTCORE.BIN $(OOT_FIELD_OBJS) $(addprefix $(ASSETS_DIR)/,$(OOT_FIELD_PAYLOADS)) tools/build_actor_packs.py oot-core/pack.ld
+	"$(PYTHON)" tools/build_actor_packs.py --core build/oot-core/oot-core.elf --core-bin $(ASSETS_DIR)/OOTCORE.BIN --obj-syms build/oot-core/obj_syms.ld --output $@ --cxx $(OOT_CORE_CXX) --scene 10 --objects $(OOT_FIELD_OBJS) $(foreach p,$(OOT_FIELD_PAYLOADS),--payload $(p)=$(ASSETS_DIR)/$(p)) --carve-base $(OOT_SCENECOL_ADDR) --carve-bytes $(OOT_SCENECOL_MAX_BYTES)
+$(ASSETS_DIR)/SA.OAP: build/oot-core/field/SA.OAP
+	cp $< $@
+$(TARGET2): $(ASSETS_DIR)/SA.OAP
+# Infrastructure fixture is never staged on the disc or registered as an actor.
+.PHONY: oot-actor-pack-test
+oot-actor-pack-test: build/oot-core/generic_sprites.h build/oot-core/pack-test/TEST.OAP
+build/oot-core/pack-test/TEST.OAP: build/oot-core/oot-core.elf $(ASSETS_DIR)/OOTCORE.BIN build/oot-core/obj_syms.ld tools/build_actor_packs.py oot-core/pack.ld oot-core/tests/actor_pack_fixture.cpp
+	"$(PYTHON)" tools/build_actor_packs.py --core build/oot-core/oot-core.elf --core-bin $(ASSETS_DIR)/OOTCORE.BIN --obj-syms build/oot-core/obj_syms.ld --output $@ --cxx $(OOT_CORE_CXX) --test-pack --carve-base $(OOT_SCENECOL_ADDR) --carve-bytes $(OOT_SCENECOL_MAX_BYTES)
 # One blob per registered scene (oot_core_import.py registered_scenes), named
 # by scene index like the room banks (S1, Z20). A scene whose blob does not fit
 # the carve is left out (recipe removes the target); the runtime skips it.
@@ -286,7 +308,7 @@ build/oot-core/objects/%.elf: build/oot-core/objects/%.cpp build/oot-core/object
 build/oot-core/obj_syms.ld: $(OOT_OBJECT_ELFS)
 	for f in $^; do $(OOT_CORE_NM) $$f | awk '$$2 ~ /^[DdBbRrGgSs]$$/ && $$3 !~ /^_oot_/ {print $$3 " = 0x" $$1 ";"}'; done > $@
 build/oot-core/generic_sprites.h: build/oot-core/generic_sprites.json build/oot-core/obj_syms.ld tools/build_sprite_keys.py
-	"$(PYTHON)" tools/build_sprite_keys.py $< build/oot-core/obj_syms.ld $@
+	"$(PYTHON)" tools/build_sprite_keys.py $< build/oot-core/obj_syms.ld $@ --sheets build/generated/generic-sprites --archives $(ASSETS_DIR) --scenes build/oot-core/scenecol
 $(OBJDIR)/oot_core_host.o: build/oot-core/generic_sprites.h
 $(OOT_CORE_OBJDIR)/oot-core/src/oot_core_draw.o: build/oot-core/generic_skins.h build/oot-core/generic_meshes.h
 # ROM message text for z_message (oot-core/src/bridge_message.cpp).

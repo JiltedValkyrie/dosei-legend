@@ -117,14 +117,36 @@ struct Actor {
     void *update,*draw;
     int id,params,objectSlot;
     struct { Vec pos; } world;
-    struct { Vec rot; } shape;
+    struct { Vec rot; int yOffset,shadowAlpha; } shape;
+    struct { float x,y,z; } scale;
+    int colorFilterTimer,colorFilterParams,category,gravity,flags;
 };
-typedef struct { int curFrame,limbCount; void *animation; } SkelAnime;
+typedef struct { int curFrame,limbCount; void *animation; void **skeleton; } SkelAnime;
 typedef struct { Vec headRot,torsoRot; } NpcInteractInfo;
 typedef struct { Actor actor; NpcInteractInfo interactInfo; SkelAnime skelAnime; int modelAlpha; } EnKo;
 typedef struct { Actor actor; NpcInteractInfo interactInfo; SkelAnime skelAnime; int alpha; } EnMd;
+typedef struct { Actor actor; int breakFlags; } EnSkb;
+typedef struct { Actor actor; struct { unsigned char a; } lightColor; } EnPoField;
+#define ACTOR_EN_SKB 4
+#define ACTOR_EN_PEEHAT 5
+#define ACTOR_EN_PO_FIELD 6
+#define ACTOR_EN_SB 7
+#define ACTOR_EN_WEIYER 8
+#define ACTOR_EN_TITE 9
+#define ACTOR_EN_FIREFLY 10
+#define TEKTITE_BLUE (-2)
+#define ACTOR_FLAG_REACT_TO_LENS 0x80
+typedef struct { Actor actor; } EnTite;
+typedef struct { Actor actor; unsigned char bodyElementalType; } EnFirefly;
+#define ACTOR_EN_NY 11
+typedef struct { Actor actor; int unk_1D4,unk_1D8; float unk_1E0; } EnNy;
+typedef struct { void *draw; } ActorProfile;
+static struct { const ActorProfile *profile; } gActorOverlayTable[16];
+#define gEnNySpikeDL ((char*)0x06000460)
+#define gEnNyRockBodyDL ((char*)0x06000180)
+#define ACTORCAT_MISC 0
 typedef struct {
-    struct { struct { Actor *head; } actorLists[1]; } actorCtx;
+    struct { struct { Actor *head; } actorLists[1]; unsigned char lensActive; } actorCtx;
     struct { struct { int id; } slots[1]; } objectCtx;
 } PlayState;
 #define ACTORCAT_MAX 1
@@ -134,8 +156,8 @@ typedef struct {
 static OotCoreNpcView sNpcView[NPC_VIEW_MAX];
 static PlayState *gOotCorePlay;
 static u32 gOotCoreFlags=OOT_CORE_FLAG_NPC_SPRITES;
-static SkelAnime generic={3,20,(void*)0x06001234};
-static const SkelAnime *GenericNpc_Skel(Actor *a) { return a->id==3 ? &generic : 0; }
+static SkelAnime generic={3,20,(void*)0x06001234,(void**)0x06005555};
+static const SkelAnime *GenericNpc_Skel(Actor *a) { return a->id>=3 ? &generic : 0; }
 static const int *OotCore_SkinMats(Actor *a,unsigned char *n,unsigned short *m) {
     *n=0; *m=0; return 0;
 }
@@ -153,6 +175,7 @@ int main(void) {
     ranch[0].next=&ranch[1]; play.actorCtx.actorLists[0].head=&ranch[0];
     assert(OotCore_NpcView(&rows)==2);
     assert(rows[0].object==0xc0 && rows[1].anim==0x06001234 && rows[1].limbs==20);
+    assert(rows[0].skeleton==0x06005555 && rows[1].skeleton==0x06005555);
     ko.actor.id=ACTOR_EN_KO; md.actor.id=ACTOR_EN_MD;
     ko.actor.update=ko.actor.draw=md.actor.update=md.actor.draw=(void*)1;
     ko.actor.next=&md.actor; play.actorCtx.actorLists[0].head=&ko.actor;
@@ -160,11 +183,64 @@ int main(void) {
     ko.interactInfo.headRot.y=41; md.skelAnime.curFrame=7;
     assert(OotCore_NpcView(&rows)==2);
     for(int i=0;i<2;++i) {
-        assert(rows[i].object==0 && rows[i].limbs==0 && rows[i].anim==0);
+        assert(rows[i].object==0 && rows[i].limbs==0 && rows[i].anim==0 && !rows[i].skeleton);
         assert(rows[i].flags & OOT_CORE_VIEW_DRAWN);
     }
     assert(rows[0].x==123 && rows[0].head_y==41 && rows[1].frame==7);
     assert(rows[1].alpha==128);
+    EnSkb stal={0};
+    stal.actor.id=ACTOR_EN_SKB; stal.actor.update=stal.actor.draw=(void*)1;
+    stal.actor.scale.x=stal.actor.scale.y=0.02f; stal.breakFlags=2;
+    stal.actor.colorFilterTimer=3; stal.actor.colorFilterParams=0x4000;
+    play.actorCtx.actorLists[0].head=&stal.actor;
+    assert(OotCore_NpcView(&rows)==1 && rows[0].scale_x==512 && rows[0].scale_y==512);
+    assert(rows[0].tint==8 && rows[0].anim==(0x06001234|0x100000));
+    EnPoField poe={0}; poe.actor.id=ACTOR_EN_PO_FIELD;
+    poe.actor.update=poe.actor.draw=(void*)1; poe.actor.scale.x=poe.actor.scale.y=0.01f;
+    poe.actor.params=1; poe.actor.gravity=-1; poe.lightColor.a=80;
+    play.actorCtx.actorLists[0].head=&poe.actor;
+    assert(OotCore_NpcView(&rows)==1 && rows[0].alpha==255);
+    assert(((rows[0].anim>>20)&15)==2);
+    poe.actor.gravity=0;
+    assert(OotCore_NpcView(&rows)==1 && rows[0].alpha==80);
+    assert(((rows[0].anim>>20)&15)==4 && rows[0].tint==0);
+    Actor stinger={0}; stinger.id=ACTOR_EN_WEIYER;
+    stinger.update=stinger.draw=(void*)1;
+    stinger.scale.x=stinger.scale.y=0.01f; stinger.shape.shadowAlpha=64;
+    play.actorCtx.actorLists[0].head=&stinger;
+    assert(OotCore_NpcView(&rows)==1 && rows[0].alpha==64 && rows[0].scale_x==256);
+    stinger.id=ACTOR_EN_SB; stinger.scale.x=stinger.scale.y=0.006f;
+    assert(OotCore_NpcView(&rows)==1 && rows[0].alpha==255 && rows[0].scale_x==153);
+    EnTite tite={0}; tite.actor.id=ACTOR_EN_TITE; tite.actor.update=tite.actor.draw=(void*)1;
+    tite.actor.scale.x=tite.actor.scale.y=0.01f; tite.actor.params=-1;
+    play.actorCtx.actorLists[0].head=&tite.actor;
+    assert(OotCore_NpcView(&rows)==1 && ((rows[0].anim>>20)&15)==0);
+    tite.actor.params=TEKTITE_BLUE;
+    assert(OotCore_NpcView(&rows)==1 && ((rows[0].anim>>20)&15)==1);
+    EnFirefly keese={0}; keese.actor.id=ACTOR_EN_FIREFLY; keese.actor.update=keese.actor.draw=(void*)1;
+    keese.actor.scale.x=keese.actor.scale.y=0.005f;
+    play.actorCtx.actorLists[0].head=&keese.actor;
+    assert(OotCore_NpcView(&rows)==1 && ((rows[0].anim>>20)&15)==0);
+    assert(rows[0].flags & OOT_CORE_VIEW_DRAWN);
+    keese.bodyElementalType=1;
+    assert(OotCore_NpcView(&rows)==1 && ((rows[0].anim>>20)&15)==1);
+    keese.actor.flags=ACTOR_FLAG_REACT_TO_LENS;
+    assert(OotCore_NpcView(&rows)==1 && !(rows[0].flags & OOT_CORE_VIEW_DRAWN));
+    play.actorCtx.lensActive=1;
+    assert(OotCore_NpcView(&rows)==1 && (rows[0].flags & OOT_CORE_VIEW_DRAWN));
+    static ActorProfile nyProfile={(void*)2};
+    gActorOverlayTable[ACTOR_EN_NY].profile=&nyProfile;
+    EnNy ny={0}; ny.actor.id=ACTOR_EN_NY; ny.actor.update=(void*)1; ny.actor.draw=(void*)2;
+    ny.actor.scale.x=ny.actor.scale.y=0.01f; ny.unk_1D4=255; ny.unk_1E0=0.25f;
+    play.actorCtx.actorLists[0].head=&ny.actor;
+    assert(OotCore_NpcView(&rows)==1 && rows[0].anim==0x06000460 && rows[0].skeleton==0x06000180);
+    assert(rows[0].limbs==0 && rows[0].frame==0 && (rows[0].flags & OOT_CORE_VIEW_DRAWN));
+    ny.unk_1D4=0; ny.unk_1D8=255;
+    assert(OotCore_NpcView(&rows)==1 && rows[0].anim==(0x06000460|0x100000));
+    ny.unk_1E0=1.0f;
+    assert(OotCore_NpcView(&rows)==1 && rows[0].anim==(0x06000460|0x200000));
+    ny.actor.draw=(void*)3; /* source death-effect draw */
+    assert(OotCore_NpcView(&rows)==1 && !(rows[0].flags & OOT_CORE_VIEW_DRAWN));
     return 0;
 }
 ''')

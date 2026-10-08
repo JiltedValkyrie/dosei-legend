@@ -46,6 +46,11 @@ def build(oot, rom_dir, out, cd):
     positions, _, owners, local = link.write_model(faces, path, skinned=True)
     data, head, vertices, records = sgl.read_scene(path)
     tiles = sgl.collect_tiles(data, head, records)
+    from build_hybrid_scene import halve_texture_tiles
+    import json
+    tiles, halving = halve_texture_tiles(tiles, kind='actor')
+    if halving['reductions']:
+        (out / 'adult_texture_halving.json').write_text(json.dumps(halving, indent=2) + '\n')
     baked = [(x, -y, z) for x, y, z in vertices]
     mesh = bytearray()
     for face in records:

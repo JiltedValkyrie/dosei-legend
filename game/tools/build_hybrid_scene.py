@@ -21,6 +21,96 @@ from vdp1_budget import (Budget, tile_bytes, MAX_POLYGONS, MAX_VERTICES,
                          FOREST_ACTOR_BYTES, ACTOR_SCENES)
 
 OOT_DEFAULT = pathlib.Path((__import__('os').environ.get('DOSEI_OOT') or 'D:/Workspace-Claude/game-decomps/n64/oot'))
+# Generic room admission retains the existing runtime bank limit. This is
+# separate from total VDP1 space, which also includes CLUTs and live actors.
+GENERIC_ROOM_PIXEL_LIMIT = 353536
+GENERIC_ROOM_VERTEX_LIMIT = 2047
+# One unique texture per face is the conservative tile bound. Room polygons
+# allow 1916 entries, but their 1426 texture slots are the tighter constraint.
+GENERIC_ROOM_FACE_LIMIT = 1426
+
+
+def room_pixel_bytes(tiles):
+    """Exact KRM1 pixel payload: each cropped tile starts on an 8-byte boundary."""
+    return sum((len(tile['pixels']) + 7) // 8 * 8 for tile in tiles.values())
+
+
+def texture_halve_mode():
+    value = os.environ.get('DOSEI_TEX_HALVE', '0')
+    if value not in ('0', '1', '2'):
+        raise ValueError('DOSEI_TEX_HALVE must be 0, 1 or 2')
+    return int(value)
+
+
+def sample_indexed_tile(tile, nw, nh):
+    """The room-budget nearest-neighbour sampler; never requantize indices."""
+    w, h, original = tile['width'], tile['height'], tile['pixels']
+    indices = []
+    for y in range(nh):
+        sy = min(h - 1, (2 * y + 1) * h // (2 * nh))
+        for x in range(nw):
+            sx = min(w - 1, (2 * x + 1) * w // (2 * nw))
+            source_index = sy * w + sx
+            value = original[source_index // 2]
+            indices.append(value & 15 if source_index & 1 else value >> 4)
+    return dict(tile, width=nw, height=nh,
+                pixels=bytes((indices[i] << 4) | indices[i + 1]
+                             for i in range(0, len(indices), 2)))
+
+
+def halve_texture_tiles(tiles, kind='room'):
+    """Halve each axis once before admission; actor/Link tiles only in mode 1."""
+    mode = texture_halve_mode()
+    before = room_pixel_bytes(tiles)
+    report = dict(mode=mode, before=before, after=before, reductions=[])
+    if mode == 0 or (mode == 2 and kind != 'room'):
+        return tiles, report
+    fitted = collections.OrderedDict()
+    for key, tile in tiles.items():
+        w, h = tile['width'], tile['height']
+        nw, nh = max(8, (w + 15) // 16 * 8), max(1, (h + 1) // 2)
+        fitted[key] = sample_indexed_tile(tile, nw, nh)
+        if (nw, nh) != (w, h):
+            report['reductions'].append(dict(tile=key, before=[w, h], after=[nw, nh],
+                                             reason='DOSEI_TEX_HALVE'))
+    report['after'] = room_pixel_bytes(fitted)
+    return fitted, report
+
+
+def fit_room_pixels(tiles, limit):
+    """Reduce texture density only; preserve tile identities, palettes and faces.
+
+    Indexed nearest sampling keeps source transparency/palette indices intact.
+    Each step halves one axis (VDP1 widths remain multiples of eight). Prefer
+    the byte saving closest to the remaining excess to limit quality loss.
+    The final normal VDP1/actor check still applies after this independent cap.
+    """
+    if limit < 0:
+        raise ValueError('room pixel limit must be nonnegative')
+    fitted = collections.OrderedDict((key, dict(tile)) for key, tile in tiles.items())
+    before = total = room_pixel_bytes(fitted)
+    reductions = []
+    while total > limit:
+        choices = []
+        for order, (key, tile) in enumerate(fitted.items()):
+            w, h = tile['width'], tile['height']
+            old_bytes = (len(tile['pixels']) + 7) // 8 * 8
+            for axis, (nw, nh) in enumerate(((max(8, (w + 15) // 16 * 8), h),
+                                            (w, max(1, (h + 1) // 2)))):
+                saved = old_bytes - (nw * nh // 2 + 7) // 8 * 8
+                if saved > 0:
+                    choices.append((abs(saved - (total - limit)), -saved,
+                                    order, axis, key, nw, nh))
+        if not choices:
+            raise ValueError('room pixel minimum %d exceeds limit %d; no tiles omitted'
+                             % (total, limit))
+        _, _, _, _, key, nw, nh = min(choices)
+        tile = fitted[key]
+        w, h = tile['width'], tile['height']
+        fitted[key] = sample_indexed_tile(tile, nw, nh)
+        reductions.append(dict(tile=key, before=[w, h], after=[nw, nh]))
+        total = room_pixel_bytes(fitted)
+    return fitted, dict(limit=limit, before=before, after=total, reductions=reductions)
 
 
 def load_faces(oot, rom_dir=None, prefix='spot04'):
@@ -32,7 +122,7 @@ def load_faces(oot, rom_dir=None, prefix='spot04'):
     segments = source.extract(oot, rom_dir, prefix=prefix)
     faces = []
     for name, data in segments.items():
-        if 'room' in name:
+        if name.startswith(prefix + '_room_'):
             display = source.DisplayLists(segments[prefix + '_scene'], data)
             if prefix in ('spot09','spot16'): display.include_depth_branches = True
             if prefix == 'ydan':
@@ -197,7 +287,8 @@ def render_tile(group, width, height, shared=False):
 
 def convert(oot, head, actor, out_dir, patches_only=False, rom_dir=None,
             quad_obj=None, source_path=None, room=None, prefix='spot04', layout=None, base_tile_limit=None, source_tessellation=False,
-            wall_split_limit=None, streamed=False):
+            wall_split_limit=None, streamed=False, room_pixel_limit=None,
+            room_vertex_limit=None, room_face_limit=None, halve_textures=True):
     """streamed=True: the caller (build_field_chunks.sweep) streams pieces and
     checks the table/vertex/VRAM budget per Link position, so the whole-scene
     union is allowed to exceed what one frame can hold."""
@@ -236,6 +327,24 @@ def convert(oot, head, actor, out_dir, patches_only=False, rom_dir=None,
             group['kind'] = quads.BAKE
     if room is not None:
         groups = [g for g in groups if g['tri']['room'] == room]
+    if not groups:
+        # The source cutscene map intentionally has an empty static display
+        # list; its sky/actors own presentation. Do not invent floor geometry.
+        # Other empty decodes remain errors rather than hiding decoder gaps.
+        if prefix != 'hiral_demo' or room != 'hiral_demo_room_0':
+            raise ValueError('no static room geometry; source-empty status unverified')
+        budget = Budget()
+        budget.add('forest', [], 0, 0)
+        budget.add('link', actor['tiles'], actor['polygons'], actor['vertices'])
+        if budget.failures():
+            raise ValueError('; '.join(budget.failures()))
+        out_dir.mkdir(parents=True, exist_ok=True)
+        (out_dir / 'texture_manifest.json').write_text(json.dumps(dict(
+            mode='hybrid', workshop=workshop, budget=budget.parts,
+            vram_limit=budget.vram_limit, source_empty=True,
+            pixel_budget=dict(limit=room_pixel_limit, before=0, after=0, reductions=[]),
+            vertices=[], faces=[], chunks=[], patches={}, lods={}, sizes={}), indent=2) + '\n')
+        return head, [], [], collections.OrderedDict()
     # Table budget policy for big scenes: a wall/cliff repeating texture split
     # into more than `wall_split_limit` pieces is baked as one face instead.
     # Ground keeps its splits (affine warp is worst underfoot).
@@ -280,7 +389,8 @@ def convert(oot, head, actor, out_dir, patches_only=False, rom_dir=None,
                 candidates.append(((center[0]+300)**2+center[2]**2, i))
     selected = {i for _,i in sorted(candidates)[:50]}
     if room is not None:
-        groups = [part for g in groups for part in ([g] if source_tessellation else room_ground(g))]
+        if not source_tessellation:
+            groups = bounded_room_ground(groups, room_vertex_limit, room_face_limit)
         # Isolated near-camera split experiment, opt-in only. DOSEI_SPLIT_TEST
         # holds source triangle ids ("580,581"); the one group built from
         # exactly those triangles is replaced by its 2x2 children. Everything
@@ -330,25 +440,8 @@ def convert(oot, head, actor, out_dir, patches_only=False, rom_dir=None,
         if group['kind'] == quads.BAKE:
             bakes.append(group)
             continue
-        points_list = quads.subdivide(group) if group['kind'] == quads.SPLIT else [group['points']]
         tex = group['texture']
-        bounded = []
-        for points in points_list:
-            # Tall quads can cover the view with every corner off-screen.
-            # Split the long vertical edge once; each half samples its own
-            # half of the same source tile (no stretching or extra repeats).
-            a,b,c,d = points
-            if max(abs(a[1]-d[1]),abs(b[1]-c[1])) > 400:
-                mid_ad = tuple((x+y)/2 for x,y in zip(a,d))
-                mid_bc = tuple((x+y)/2 for x,y in zip(b,c))
-                bounded.extend(([a,b,mid_bc,mid_ad],[mid_ad,mid_bc,c,d]))
-            elif max(abs(a[1]-b[1]),abs(d[1]-c[1])) > 400:
-                mid_ab = tuple((x+y)/2 for x,y in zip(a,b))
-                mid_dc = tuple((x+y)/2 for x,y in zip(d,c))
-                bounded.extend(([a,mid_ab,mid_dc,d],[mid_ab,b,c,mid_dc]))
-            else:
-                bounded.append(points)
-        for points in bounded:
+        for points in shared_room_pieces(group):
             piece = dict(group, points=points)
             # Preserve the original UV orientation; transposed quads use a
             # transposed tile. No runtime arbitrary-UV support is assumed.
@@ -368,7 +461,8 @@ def convert(oot, head, actor, out_dir, patches_only=False, rom_dir=None,
     budget.add('shared', [(t['width'], t['height']) for t in tiles.values()], 0, 0)
     if room is not None:
         bakes = refine_room_ground(bakes, pieces, actor,
-                                   budget.vram_limit-budget.vram_bytes-FOREST_VRAM_MARGIN)
+                                   budget.vram_limit-budget.vram_bytes-FOREST_VRAM_MARGIN,
+                                   room_vertex_limit, room_face_limit)
     # Start with 16x16 bakes. Spend remaining space on the worst *directional*
     # density, not a blanket resolution increase. Keep room for new effects.
     available = budget.vram_limit-budget.vram_bytes-FOREST_VRAM_MARGIN
@@ -440,6 +534,18 @@ def convert(oot, head, actor, out_dir, patches_only=False, rom_dir=None,
                                      for i,t in tiles.items() if i in used)
     pieces = [(g,mapping[t]) for g,t in pieces]
 
+    halving = dict(reductions=[])
+    if halve_textures:
+        tiles, halving = halve_texture_tiles(tiles)
+    pixel_budget = None
+    if room_pixel_limit is not None:
+        tiles, pixel_budget = fit_room_pixels(tiles, room_pixel_limit)
+        if halving['reductions']:
+            pixel_budget['before'] = halving['before']
+            pixel_budget['reductions'] = halving['reductions'] + pixel_budget['reductions']
+    elif halving['reductions']:
+        pixel_budget = dict(halving, limit=None)
+
     for group, tile in pieces:
         ids = []
         for p in group['points']:
@@ -468,6 +574,10 @@ def convert(oot, head, actor, out_dir, patches_only=False, rom_dir=None,
     print(budget.report(), flush=True)
     if budget.failures() and not streamed:
         raise ValueError('; '.join(budget.failures()))
+    if room_vertex_limit is not None and len(positions) > room_vertex_limit:
+        raise ValueError('room vertices %d exceed limit %d' % (len(positions), room_vertex_limit))
+    if room_face_limit is not None and len(faces) > room_face_limit:
+        raise ValueError('room faces %d exceed limit %d' % (len(faces), room_face_limit))
     # Export connected render components/bounds for later hut/tree visibility.
     # This metadata never removes or partitions the resident collision mesh.
     neighbors = collections.defaultdict(list)
@@ -504,7 +614,8 @@ def convert(oot, head, actor, out_dir, patches_only=False, rom_dir=None,
         % tuple(ground_center + tree_center))
     (out_dir/'texture_manifest.json').write_text(json.dumps(dict(
         mode='patches' if patches_only else 'hybrid', workshop=workshop, budget=budget.parts,
-        vram_limit=budget.vram_limit, vertices=positions, faces=records, chunks=chunks,
+        vram_limit=budget.vram_limit, pixel_budget=pixel_budget,
+        vertices=positions, faces=records, chunks=chunks,
         patches=patches, lods={str(k):v for k,v in lod_settings.get(room,{}).items()} if room else {},
         sizes=dict(collections.Counter('%dx%d' % (t['width'],t['height'])
                                                        for t in tiles.values()))), indent=2)+'\n')
@@ -542,12 +653,75 @@ def room_ground(group):
     return [group]
 
 
-def refine_room_ground(bakes, pieces, actor, texture_budget=None):
+def shared_room_pieces(group):
+    """Exactly the repeated/tall quads emitted by the shared-texture path."""
+    points_list = quads.subdivide(group) if group['kind'] == quads.SPLIT else [group['points']]
+    bounded = []
+    for points in points_list:
+        # Retain the near-camera tall-wall split and the same source UV halves.
+        a,b,c,d = points
+        if max(abs(a[1]-d[1]),abs(b[1]-c[1])) > 400:
+            mid_ad = tuple((x+y)/2 for x,y in zip(a,d))
+            mid_bc = tuple((x+y)/2 for x,y in zip(b,c))
+            bounded.extend(([a,b,mid_bc,mid_ad],[mid_ad,mid_bc,c,d]))
+        elif max(abs(a[1]-b[1]),abs(d[1]-c[1])) > 400:
+            mid_ab = tuple((x+y)/2 for x,y in zip(a,b))
+            mid_dc = tuple((x+y)/2 for x,y in zip(d,c))
+            bounded.extend(([a,mid_ab,mid_dc,d],[mid_ab,b,c,mid_dc]))
+        else:
+            bounded.append(points)
+    return bounded
+
+
+def bounded_room_ground(groups, vertex_limit=None, face_limit=None):
+    """Spend spare table space on floor subdivisions, never discard a surface."""
+    if vertex_limit is None and face_limit is None:
+        return [part for group in groups for part in room_ground(group)]
+
+    def mesh_parts(group):
+        return [group['points']] if group['kind'] == quads.BAKE else shared_room_pieces(group)
+
+    def point_counts(parts):
+        return collections.Counter(tuple(round(v) for v in point[:3])
+                                   for part in parts for point in part)
+
+    originals = [mesh_parts(group) for group in groups]
+    count = sum(map(len, originals))
+    points = point_counts([part for parts in originals for part in parts])
+    def fits(point_count, face_count):
+        return ((vertex_limit is None or point_count <= vertex_limit) and
+                (face_limit is None or face_count <= face_limit))
+    if not fits(len(points), count):
+        raise ValueError('source room geometry needs %d vertices / %d faces before optional refinement'
+                         % (len(points), count))
+    result = []
+    for group, old_parts in zip(groups, originals):
+        parts = room_ground(group)
+        expanded = [piece for part in parts for piece in mesh_parts(part)]
+        next_count = count + len(expanded) - len(old_parts)
+        changed = points.copy()
+        changed.subtract(point_counts(old_parts))
+        changed.update(point_counts(expanded))
+        changed = +changed  # remove zero references, retain shared vertices
+        if fits(len(changed), next_count):
+            result.extend(parts)
+            points, count = changed, next_count
+        else:
+            result.append(group)
+    return result
+
+
+def refine_room_ground(bakes, pieces, actor, texture_budget=None,
+                       vertex_limit=None, face_limit=None):
     """Use a room's spare geometry capacity for short, regular floor patches."""
     positions = {tuple(round(x) for x in p[:3])
                  for g in bakes + [g for g,_ in pieces] for p in g['points']}
     remaining_polygons = MAX_POLYGONS-actor['polygons']-len(bakes)-len(pieces)-32
     remaining_vertices = MAX_VERTICES-actor['vertices']-len(positions)-16
+    if face_limit is not None:
+        remaining_polygons = min(remaining_polygons, face_limit-len(bakes)-len(pieces))
+    if vertex_limit is not None:
+        remaining_vertices = min(remaining_vertices, vertex_limit-len(positions))
     # Optional refinement must leave room for every patch's minimum texture,
     # including its palette. Geometry capacity alone is not sufficient.
     remaining_texture = (texture_budget-len(bakes)*tile_bytes(16,16)

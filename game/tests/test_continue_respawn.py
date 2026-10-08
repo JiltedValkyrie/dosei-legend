@@ -1,20 +1,27 @@
 """Continue must reload the bank for the saved Tree entrance."""
+import json
 import pathlib
-import re
+import struct
 import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 RECOMP = (ROOT / 'src/recomp.c').read_text()
-TABLE = (ROOT / 'build/generated/scene_table.c').read_text()
+TABLE = json.loads((ROOT / 'build/generated/scene_table.json').read_text())
 
 
 class ContinueRespawn(unittest.TestCase):
     def test_tree_has_many_entrance_rooms_that_need_their_own_bank(self):
-        entries = re.search(r'const scene_entry_t scene_entries\[SCENE_COUNT\] = \{(.*?)\n\};',
-                            TABLE, re.S).group(1)
-        tree = next(line for line in entries.splitlines()
-                    if 'SAVE_SCENE_DEKU_TREE' in line)
-        self.assertIn(', 12, 19, 2, SAVE_SCENE_DEKU_TREE,', tree)
+        tree = next(row for row in TABLE['scenes'] if row['prefix'] == 'ydan')
+        self.assertEqual((tree['rooms'], tree['first_spawn'], tree['spawns']), (12, 19, 2))
+        blob = (ROOT / 'build/cd/SCENETAB.BIN').read_bytes()
+        self.assertEqual(TABLE['layout']['entry_bytes'], 26)
+        entry = struct.unpack_from('>BB3h2H2hBxH5Bx', blob,
+                                   TABLE['layout']['entry_offset'] + tree['index'] * 26)
+        self.assertEqual(entry[9:13], (12, 19, 2, tree['save_scene']))
+        spawns = [struct.unpack_from('>3hH2B', blob, (tree['first_spawn'] + i) * 10)
+                  for i in range(tree['spawns'])]
+        self.assertEqual([row[4] for row in spawns], [tree['index']] * 2)
+        self.assertEqual([row[5] for row in spawns], [0, 9])
 
     def test_continue_always_reloads_saved_scene_and_spawn(self):
         body = RECOMP.split('respawn_after_game_over(void)\n{', 1)[1].split('\n}\n\nstatic void', 1)[0]

@@ -1,5 +1,157 @@
 # Full OoT recomp plan
 
+Current task (human, 2026-10-08): implement Hyrule Field decomp enemies next,
+superseding the earlier enemy scene order. Field scene-pack/source sprite work
+is in progress. Focused source spawn/drop probes and isolated WSL SH-2 actor
+compilation pass. The 59-case focused host batch passes; actor/effect pack links
+with a clean math audit and fits alongside scene data. Raw Clean target passes
+the fixed SGL boundary after redistributing existing heap bytes to low WRAM.
+The usual Clean test disc is rebuilt: 84,131,840 bytes, 1,461 files matching
+staging, core/host/pack math audits clean and .bss 0x06083400 (3,072 B spare).
+Human accepts the shown adult Poe defeat/soul dialogue (screenshot VRAM 51%,
+CPU~82%); child cases, bottles, Big Poes and population checks remain open.
+Final focused batch: 72 host cases pass. Field sound scene-selection correction
+is code-only pending the next build; current Kronos image is left intact.
+Broad legacy host
+discovery is not green. Scope and remaining
+requirements: [Field enemies](FIELD_ENEMIES_2026-10-08.md). Preserve all original
+spawn/combat/drop paths; adult Poe bottles remain a Player integration dependency.
+Mandatory real Player migration is still required.
+Human follow-up in progress: implement Water Temple enemies, obstacles
+and puzzle actors as a dungeon integration test. Preserve source age/item,
+water-level, key/door and room-clear requirements. Full dungeon integration is
+unfinished; inventory identifies 23 rooms and runtime scene 79/source
+scene 5. All 36 original prop/enemy/support actors, including En_Holl passages,
+compile in an isolated SH-2 probe; no temple pack is staged. Source-owned water borrowing is implemented
+with host/lifetime tests passing, including boxes beyond the legacy 16-entry
+override limit. Original water-controller action probes pass level changes,
+switch replacement during movement and local rise/fall; six water/lifetime/rate
+host cases pass. Source transition tables and room-side spawning have three
+passing host cases; old OOC layouts now fail closed. Sprite conversion code and
+bakes cover Shell Blade, Stinger, Tektite (red/blue), Keese (normal/fire body,
+lens-only hidden variants) and Spikes (rock/metal/spiked): 25 isolated sheets.
+Sprite views and host tests pass; the sprite archives link in the Clean raw
+target (Z27 sheets 394,097 heap bytes, below Field's 479,243 peak). No temple
+pack, runtime admission or gameplay acceptance yet. Like Like and Dark Link
+remain unconverted pending real Player work. Clean raw target: .bss ends
+0x060837f0, 2,064 bytes below SGL; core and converted-enemy math audits clean.
+The accepted ABI25 Field ISO is unchanged; all OOCs must regenerate before
+mastering another image.
+Boss exemption and Player-dependent interactions remain. Current scope and
+dependencies: [Water Temple](WATER_TEMPLE_2026-10-08.md).
+
+Human-accepted texture reduction (2026-10-08): reduce the usual
+Clean image's room TEX tiles to save budget for remaining content. Code:
+`DOSEI_TEX_HALVE=0/1/2` uses the existing indexed sampler before the room cap;
+mode 2 covers rooms, panorama banks, Navi's shared pool and the complete Field
+pool. Mode 1 also covers Link/ADULT/LGEAR mesh TEX; SPR/HUD/get-item dimensions
+stay unchanged per the human's scope clarification. Clean now defaults to mode 2;
+explicit 0 restores full density. Standalone tools and other variants default to
+0. Existing caps and the command region are unchanged.
+Host: 34 focused cases pass, plus actual retained-bank/Field/Navi validation;
+mode 0 matches the saved pre-edit converter on 100 budget fixtures and real
+Deku room 0 MSH/TEX/manifest. Mode-1 Link builders pass isolated offline smoke.
+Clean default follow-up: WSL Bash syntax and 15 variant/default/export cases
+pass, including explicit 0/1/2 overrides and unchanged non-Clean defaults.
+Target: full WSL `OOT_CORE=1` Clean mode-2 build and final repack pass; usual
+`game-clean.cue` is the accepted reduced-room image. SGL margin remains 1,792 B;
+all 1,452 ISO files match staging and both SH-2 math audits pass. Three obsolete image-scene MSH/TEX pairs
+were removed from density staging, with originals backed up. Worst active room
+TEX is 87,296 B; worst bank including CLUTs/alignment is 124,640 B, leaving
+204,312 B after Link/runtime sprites/64 KiB actors in the unchanged 445,432 B
+area. NAVIPOOL is 141,536 B; ISO is 83,494,912 B. Full measurements, per-room
+CSV and limits: [texture experiment](TEXTURE_HALVING_2026-10-08.md).
+Human acceptance: user says it looks almost the same and reports improved
+performance. Screenshot shows VRAM 49%, CPU~ 79%; no paired FPS/load-time
+measurement or separate Kokiri/Field route-completion claim. Clean's default
+now preserves the accepted mode; the current target image already uses mode 2.
+This asset task does not close or defer the required Player migration below.
+
+Current inventory work (human, 2026-10-08): wire every Link inventory action
+through the decomp paths, retaining the digital-controller crosshair. Source
+first-person tool sprites are approved when meshes cannot fit. Also repair
+Biggoron/Mirror equipment and shield presentation; Hylian fallback is blue,
+Mirror fallback red with a silver center. The complete starting coverage and
+source ownership map is [INVENTORY_SOURCE_AUDIT_2026-10-08.md](INVENTORY_SOURCE_AUDIT_2026-10-08.md).
+
+First repair wave is implemented: the missing source R_UPDATE_RATE initialization
+explains stationary projectile motion; source movement, arrow/hook/boomerang
+Draw-side gameplay work, bomb blast radius, source-to-C swept contact views,
+magic-arrow fallback and source-owned equipment admission are repaired in code.
+First-person sprites and textured/flat shield fallback are integrated.
+All 346 host cases and the actual source actor probe pass. Full assets and the
+usual Clean image are rebuilt: main .bss ends at 0x06083900 (1,792 B spare),
+resident core is 510,184 B, and all 1,458 disc files match staging. Both SH-2
+math audits pass. All 388 room records pass (359 mesh, 28 image, one streamed).
+Evidence and remaining checks: [inventory handoff](INVENTORY_HANDOFF_2026-10-08.md).
+Human runtime acceptance remains open. This repairs the temporary tool bridge,
+not real Player ownership.
+Hammer, lens, spells, beans, bottles, trades, masks and source Player item actions
+remain required; do not declare all inventory functional from this wave.
+
+Water ledge and debug-menu follow-up (2026-10-08): surface swimmers now perform
+source-derived wall/ledge admission and the original swim step-up clip, with
+child/adult water heights and landing clearance. Level Select remains compiled
+and appears below save options after Start. Ten regions contain all 101 maps;
+A opens maps/options and toggles Link age or All Items. Only Begin Play Test
+starts an unsaved session; Go Back returns to maps. The legacy title cheat stays.
+Source and 119 host checks pass (104 focused, 15 map/session regressions).
+Previous matching water/menu Clean target was rebuilt;
+main .bss ends at 0x06083740 (2,240 B spare), core remains 508,560 B. Both math
+audits pass; all 1,457 disc files match staging. Current verification: [water/menu handoff](WATER_MENU_HANDOFF_2026-10-08.md).
+Human acceptance of the reported ledge and rendered menu remains open.
+Carry this shore-exit behavior into the mandatory real Player migration.
+
+All-map fix (human, 2026-10-08): all 101 retail maps now register for Level
+Select, including every temple and retail cutscene stage. The missing maps were
+registration/budget exclusions. The existing 75 IDs remain fixed; 26 append.
+All 388 room rows bake with no blockers. Optional subdivisions and texture
+density obey existing limits; complete source collision uses exact per-scene
+allocation. Scene entries and portals share SCENETAB.BIN. Old core resources
+unload before new native assets; inactive music tables are released when idle.
+Heap zones and actor capacities stay unchanged. Previous all-map Clean target built:
+main .bss ends at 0x06083110 (3,824 B spare), resident core remains 508,560 B.
+All 184 host checks pass without skips; 101 OOCs validate, both ELF math audits
+pass, and all 1,457 ISO files match staging (79 filesystem slots remain).
+Verification and limits: [all-map handoff](ALL_MAPS_HANDOFF_2026-10-08.md).
+Nine additional `DEBUG_ASSETS` entries have no retail source payload. This task
+imports no actors and does not complete their gameplay or route connectivity.
+Runtime/human acceptance and heap-fragmentation telemetry remain open; mandatory
+real Player/collision cutover and enemy admission gates remain required.
+
+Human playtest fixes (Claude, 2026-10-08): proxy Player now keeps source
+room -1, so a room change no longer deletes it and disables every C tool.
+Iron Boots in water leave the swim clip (stale SWIM self-heals). Arrow sheet
+thickened at bake plus a three-cel flight trail. Code + focused host tests;
+Clean target built (game-clean.cue, 18:18); human runtime check open.
+Tool SFX added: 16 resident source sounds, held loops, flagged actor audio;
+Deku Tree area tails trimmed for room (human choice). Door/zone water-fall
+lock still lacks a repro.
+Magic meter (source Magic_DrawMeter on the VDP2 heart cells) implemented and
+host-tested; Arrow_Fire/Ice/Light import waits for Astra's current core work.
+
+Enemy groundwork (Astra, 2026-10-08): [ENEMY_ROLLOUT_PLAN.md](ENEMY_ROLLOUT_PLAN.md)
+and [source design review](ENEMY_DESIGN_REVIEW.md). All five review choices are
+settled. W0a implements shared infrastructure without importing any actor:
+generated source roster, fixed-address packs/teardown, SPR2 NPC libraries and
+scene preload/shared cels, temporary two-way combat, effect snapshots and audio
+generation. Host/target verification and open runtime/content gates are recorded
+in the [W0a handoff](ENEMY_W0A_HANDOFF_2026-10-08.md) and enemy plan.
+Historical final W0a: 91 host checks passed without skips; Clean image rebuilt,
+main .bss 0x06083ee0 (288 B spare), core 508,560 B. Disc bytes and math audits
+passed. The all-map build superseded that main-RAM margin; recompute Player fit
+from the matching current ELF/BIN, including the new scene allocation lifetimes.
+Boss exemption follows the 20 actual ACTORCAT_BOSS profiles; En_Bdfire is not
+exempt. Hazards retain geometry; the original 20 missing enemy scenes remain
+in scope. Enemy work runs alongside mandatory Player migration; grab/capture/
+gear actors wait for real Player. The old W0b gate remains for its pilot scenes;
+the human explicitly advanced Field and Water Temple before that sequence.
+
+The following dated reviews/checkpoints retain historical evidence. Current
+enemy status is above and in its plan; current Player ownership remains C,
+with isolated migration work described in PLAYER_MIGRATION.md. Older priority,
+slot-count, scene-discovery and plan-only claims do not supersede those states.
+
 Astra shim review (2026-10-06; source inspection, tests not rerun):
 The isolated shim/proxy implementation and integer bounding-center importer fix
 are present. Reported 177-row host comparison is not live integration acceptance.
@@ -137,12 +289,14 @@ Severe core bug fixed (Claude, 2026-10-06): Fx z_bgcheck line tests and
 point-plane distances saturated (raw s16 normal x position before scaling).
 Line tests barely hit. Importer fix in MACRO_REWRITES; host mismatch totals improve; direct Fx/float parity remains unverified. Live core behaviour changes at the next Clean build: needs runtime check.
 
-Claude integration step 1 (2026-10-06): strict bank (uncertain clips strict) worst
+Historical Claude integration step 1 (2026-10-06): strict bank (uncertain clips strict) worst
 scene 554,668 B; placed into real old allocations, worst pack fits. Two-pack
 rollback does not fit (reload-from-disc rollback proposed). Frame-bank adapter,
 region loader (both host-tested, isolated) and 5-region partition (2,514 B
-main free) done; 110 collision call sites listed. Next: core collision API +
-port non-Player callers, then resolved build. See PLAYER_MIGRATION.md.
+main free in that old partition) done; 110 collision call sites listed. W0a
+changes the baseline: that margin is not current. Remeasure combined Player
+placement against the current inventory ELF/BIN before partition or cutover acceptance.
+See PLAYER_MIGRATION.md for historical evidence and current integration work.
 
 Claude follow-up (2026-10-06): blame-based per-channel precision + action-specific
 anchors cut worst scene to 552,756 B (0.5 everywhere) / 531,876 B (0.5 gameplay,
@@ -203,22 +357,23 @@ sources through production fixups without changing the playable source list.
 WSL host syntax passes all three after scoped enum/Fx and scaled rumble fixes.
 Two focused tests pass, including 102,000 rumble ticks matching source pulse
 timing with actual Fx32. Literal-range audit closed (Claude, 2026-10-06; five
-tests pass). Pose-pass split preserves anchors; standalone GC Player is 143,437 B.
-Combined retention now includes existing core dependencies, libgcc, temporary
-duplicate-owner removal and 521 real animation headers: **659,244 B**. Baseline
-501,840 B matches existing ELF size; combined wide audit passes. Core carve plus
-two large Low RAM gaps totals 655,360 B, already 3,884 B short before remaining
-hooks/frames/skeletons. Selected design adds retired music/fairy cart reservations
-(24 KiB), yielding 679,936 B capacity and 20,692 B unallocated before those missing
-costs/alignment. One ELF, separately loaded resident regions; no heap reduction
-or speculative C-Link-retirement credit. Claude sized hooks + real skeletons:
-8,884 B (estimates), about 11,808 B left before frame bank/alignment.
-Frame bank does NOT fit: reachable raw frames 2.26 MB/age vs 423 KB current
-bank; lossless compression too weak. Shared-bank prototype with trigger
-residency and FK-checked reduction: 0.91-1.24 MB peak; still no fit.
-Packed bank v1 at 0.5 units: 737,644 B peak, byte round trips pass; no fit. Needs a frame-reduction decision before
-sections/loader.
-Full placement/link/loader remain open.
+tests pass). Pose-pass split preserves anchors; that checkpoint measured
+standalone GC Player at 143,437 B.
+The 2026-10-06 combined-retention checkpoint measured **659,244 B**, including
+core dependencies, libgcc, temporary duplicate-owner removal and 521 animation
+headers, against a 501,840 B core baseline. Its proposed five-region capacity
+was 679,936 B; historical margins and later adapter estimates remain recorded
+in PLAYER_MIGRATION.md. W0a changes the resident core, so those retention totals
+and the 20,692 B / 11,808 B / 2,514 B margins are not current fit evidence.
+Rerun combined retention and placement with the current inventory ELF/BIN and matching
+objects, current dependencies/adapters, collision proxies, alignment and load
+peaks. Require one resolved ELF and validated per-region loading before Player
+cutover; no heap reduction or speculative C-Link-retirement credit.
+Older whole-frame-bank deficits are historical comparison data. The current
+human contract is a bounded demand-loaded common/action cache with complete
+cutscene preloading/pinning. Measure its metadata, decoder, loading/recovery
+scratch and full live working sets alongside W0a scene resources. Current
+Player memory fit, resolved placement/link and production loader remain open.
 Native Draw remains reachable from source actions; skeletons cannot be blank
 placeholders. 9 duplicate owners and 713 unresolved symbols mapped in
 PLAYER_MIGRATION.md. Isolated relocatable GC probes only; no resolved target game link/build, bake,
@@ -270,8 +425,8 @@ Rules and sequence:
    alone does not finish migration. Completion requires real Player ownership,
    preserved Saturn functionality, retired duplicate paths and runtime acceptance.
 
-Latest recorded Clean margin is 272 B (curtain/gallery checkpoints); this task
-does not reverify the artifact. Older failures, margins and build holds below
+The current inventory Clean margin is 1,792 B; its resident core is 510,184 B.
+This supersedes the water/menu 2,240 B margin. Older failures, margins and build holds below
 describe their named checkpoints, not current headroom or a new hold.
 
 ## Historical checkpoints and retained verification gaps
@@ -670,8 +825,9 @@ are historical. Preserve heap sizes, actor capacities and boundary checks.
 Full world traversal and NPC coverage remain incomplete. Continue missing
 destinations, special transitions, runtime horse logic, missing actors, dialogue,
 rewards and resource gates. No complete-world or runtime acceptance claim.
-The added Level Select option is **ALL ITEMS + MAX STATS**, default **NO**;
-L toggles it; R selects Child/Adult, default Child. Confirmed entry grants the test loadout. The user clarified
+Level Select offers **All Items? Off/On**, default **Off**, and
+**Link: Child/Adult**, default Child. A toggles the highlighted option.
+Begin Play Test grants the selected test loadout. The user clarified
 that quest items are required too: all stones (including Kokiri Emerald), songs,
 medallions and other quest bits are granted, plus source inventory/equipment,
 20 hearts, capped ammunition/magic, 500 rupees and eight source-debug small keys.
@@ -735,13 +891,16 @@ render/CPU fixes. Source song recognition does not finish the missing song puzzl
 actors, Temple sword time travel, dungeon Sun stun, or every inventory action.
 No emulator was launched; human acceptance of these changes remains pending.
 
-The source inventories enumerate 110 scenes and 429 actor profiles. Only 75
-scene assets are registered: 35 source scene destinations still lack assets.
+The source inventories enumerate 110 scene-table entries and 429 actor profiles.
+The all-map task above registers all 101 maps with retail source payloads,
+preserving 75 existing IDs and adding 26 maps; host and target evidence is in
+the linked handoff, while runtime acceptance remains open.
+Nine DEBUG_ASSETS entries have no source payload in the retail inputs.
 The actor ledger includes 836 room layers, conditions, dialogue/reward/drop
 sites and conservative dynamic dependencies; zero scenes pass its ready gate.
 Forty-one horse clips are baked offline (910,945 B total sheet storage including
 allocator terminators; largest cel plus aligned CLUT 1,472 B). They are neither
-runtime-imported nor staged. Eight generic sprite slots, 16 actor views, missing
+runtime-imported nor staged. Sixteen generic sprite slots, 16 actor views, missing
 actors such as En_Ma3 and unimplemented actions/branches remain coverage limits.
 
 ## Prior checkpoint implementation and verification
@@ -884,15 +1043,26 @@ counts and image contents describe those builds, not the current continuation.
 
 ## Next actions / remaining work
 
-Next implementation: continue mandatory Link migration under the rules at the
+Human accepted the current mode-2 Clean texture look; Clean now defaults to
+that mode. See the measurement handoff above. Broader Kokiri/Field route checks
+and the other visual/gameplay acceptance items below remain open.
+
+Human verification queue includes the rebuilt inventory wave: digital aim and
+crosshair, repeated arrow/hook shots, contacts/return, bombs and adult gear
+selection plus texture/fallback restoration. Global source movement now runs
+at the intended rate; also check existing source NPC behavior in real rooms.
+
+Next implementation: continue all inventory actions through mandatory Link migration under the rules at the
 top of this plan and PLAYER_MIGRATION.md. Initial inventory and isolated real
 source staging, tested fixed-point patches and the isolated SH-2 object audit
-exist. Combined retention with actual animation headers is 659,244 B; selected
-five-region resident design offers 679,936 B before missing dependency costs.
-Next implement/size remaining engine hooks, skeletons and animation backing,
-partition sections with linker guards and add a versioned multi-region loader.
-Require a resolved link before accepting fit. Temporary-copy duplicate removal
-is measured; live owners and C Link remain until their cutover. Heap stays intact.
+exist. Remeasure combined retention and the candidate five-region placement
+using the current inventory ELF/BIN and matching objects; the 659,244 B retention and
+old partition margins describe the earlier checkpoint only. Include remaining
+engine hooks, skeletons, current collision adapters and demand-cache/load peaks,
+then partition sections with linker guards and complete the versioned loader.
+Require a resolved link and overlap/allocation checks before accepting fit.
+Temporary-copy duplicate removal is historical evidence; live owners and C Link
+remain until their cutover. Heap and actor capacities stay intact.
 Complete each subsystem's detailed fix audit before its staged cutover.
 The older actor/Fx32 order does not defer this directive. Wave 0 host/target
 evidence remains in the pipeline handoff. The following are retained verification
@@ -916,24 +1086,27 @@ gaps and full-game requirements, not competing permission to postpone migration.
    inventory/quest pages, Ocarina input, both eras, house views, door/tomb art,
    steady hearts and populated Ranch/Kakariko frame timings. Astra's authorized
    emulator control is scoped to the warp diagnostic. Capped items remains
-   opt-in on confirmed Level Select entry; L toggles
-   it, R selects era. Complete the missing source song actors and adult story path.
+   opt-in on Begin Play Test; A toggles the highlighted
+   All Items or Link age option. Complete the missing source song actors and adult story path.
 2. Finish the source entrance graph. Current route audit separates structural
    reach from traversal acceptance and records every known missing destination,
-   reverse edge, source gate and extraction error. Thirty-five absent scene
-   assets, special grotto returns, alternate collision/spawn headers, transition cameras/fades and
+   reverse edge, source gate and extraction error. The all-map task above admits
+   all retail maps; nine debug-only entries need unavailable source inputs.
+   Special grotto returns, alternate collision/spawn headers, transition cameras/fades and
    unimported scripted/warp actors remain blockers. Kakariko cutscene layers also
    share collision exit indices beyond their shorter exit arrays; the old audit
    overreads following light data as entrances. Bound extraction by referenced
    data before trusting those edges; do not guess a destination. Preserve keys and boss logic.
 3. Review and extend the generated actor ledger across eras/time/story/dynamic
-   triggers. After the immediate Link migration, retain the proposed actor order
-   with the required Fx32 verification and scene packs:
+   triggers. Enemy W0a groundwork is implemented and target-built; human runtime
+   acceptance remains open. Enemy work runs alongside mandatory Link migration; follow
+   ENEMY_ROLLOUT_PLAN for enemy order and Player-gated capture/gear behavior.
+   The remaining NPC order retains required Fx32 verification and scene packs:
    Kokiri, Deku Tree, Lost Woods, Field, Ranch, Market, Castle and Kakariko,
    then the remaining game. Ranch horse runtime and En_Ma3 remain required.
    Offline horse sheets and text on disc do not implement gameplay. Sprite banks
    must preload reachable trigger sets and budget scenery/actors/effects together.
-   Eight generic slots and 16 views remain explicit limits, not full coverage.
+   Sixteen generic cel slots and 16 views remain explicit limits, not full coverage.
    Debug target verification, sprite pitch views, non-boss enemy migration,
    player/camera/cutscene and combat bridge parity remain required. Preserve the
    20 Hz/input/hit-volume contract and boss exemption. Do not archive a replaced
@@ -948,16 +1121,18 @@ gaps and full-game requirements, not competing permission to postpone migration.
    and the 20 Hz/input/hit-volume contract. Approximation and native SH-2 products
    are allowed; software-wide/soft-float fallback is not. A storage-width change needs matching collision/units and
    scene/object blob changes. Broad -O2 and relocating the whole blob are not
-   validated solutions. Latest recorded Clean margin is 272 bytes; verify the
-   actual matching artifact before budgeting Player. Older 304/2,704/8,736-byte
+   validated solutions. Verify the matching artifact before budgeting Player.
+   The matching inventory build leaves 1,792 B before SGL; the historical
+   272-byte curtain and 2,240-byte water/menu margins are superseded. Older 304/2,704/8,736-byte
    reports are not available headroom; the 2,704-byte report was a mixed build.
    No new FPS or CPU-versus-VDP1 conclusion is established.
 5. CD house-exit fix still needs verification; Navi room-read
    pauses and late music cues remain open. No CD test is requested now; the
    separate polygon plan proposes a human movement gate after an authorized P1.
-   Same-room NPC sheet discovery is implemented and host-tested. Reachable
-   dynamic sets still need preloading and budgeting before triggers; discovery
-   may read the CD at spawn. Missing clips/capacity have explicit diagnostics.
+   Existing generic NPC libraries now preload by the scene object union; no
+   same-room sprite CD discovery remains in that path. New enemy/effect dynamic
+   sets still need full roster/budget admission. Missing clips/capacity remain
+   explicit failures; host evidence does not establish runtime readiness.
    Graphics/CD checkpoint 11312ec remains pushed and graphics accepted. Broader
    save/reload, dialogue and performance acceptance remain pending; host tests or
    a build do not prove that the overall slowdown is resolved.

@@ -178,8 +178,11 @@ bool bg_line(const bg_vec_t *a, const bg_vec_t *b, bg_vec_t *at,
 /* BgCheck_GetWaterSurface: strict-inequality XZ bounds, infinite depth,
  * disabled boxes skipped, room must match or be 0x3F. */
 bool bg_water_set_surface(uint32_t index, int32_t surface);
+/* Borrow authoritative source water while its scene lives; NULL unbinds.
+ * No ownership transfer or copy. Scene replacement also unbinds it. */
+void bg_water_bind(const bg_waterbox_t *water, uint32_t count);
 void bg_water_reset_surface(uint32_t index);
-bool bg_water_surface(int32_t x, int32_t z, uint32_t room, int32_t *surface,
+  bool bg_water_surface(int32_t x, int32_t z, uint32_t room, int32_t *surface,
         const bg_waterbox_t **box);
 
 /* DynaPoly. World-space copies of each registered mesh live in the caller's

@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import random
 import re
+import shutil
 import struct
 import subprocess
 import sys
@@ -12,11 +13,12 @@ import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
-OOT = Path(os.environ.get('OOT_DECOMP', 'D:/Workspace-Claude/game-decomps/n64/oot'))
-GCC = Path('C:/msys64/mingw64/bin/gcc.exe')
+OOT = Path(os.environ.get('DOSEI_OOT') or os.environ.get('OOT_DECOMP', 'D:/Workspace-Claude/game-decomps/n64/oot'))
+GCC = Path(shutil.which('gcc') or 'C:/msys64/mingw64/bin/gcc.exe')
 sys.path.insert(0, str(ROOT / 'tools'))
 import build_link_gear as gear
 import build_link_model as model
+import test_graphics_backend as graphics
 
 
 @unittest.skipUnless(GCC.is_file(), 'host GCC required')
@@ -70,7 +72,7 @@ unsigned select_groups(unsigned adult, unsigned sword_id, unsigned shield_id,
 '''
         env = dict(os.environ)
         env['PATH'] = str(GCC.parent) + os.pathsep + env.get('PATH', '')
-        subprocess.run([str(GCC), '-shared', '-O2', '-Wall', '-Werror',
+        subprocess.run([str(GCC), '-shared', '-fPIC', '-O2', '-Wall', '-Werror',
                         '-I' + str(ROOT / 'src'), '-I' + str(ROOT / 'build/generated'),
                         '-x', 'c', '-', '-o', str(path)], input=adapter, text=True,
                        check=True, env=env)
@@ -190,9 +192,96 @@ class ShieldSource(unittest.TestCase):
             first = values['POLYGON_COUNT'] * 20
             flags = [data[first + i*12] for i in range(values['POLYGON_COUNT'])]
             self.assertEqual(flags, [0 if f['cull'] else 1 for f in self.faces])
-            self.assertEqual(len(data), values['POLYGON_COUNT'] * 32)
+            self.assertEqual(len(data), values['POLYGON_COUNT'] * 34)
+            fallback = struct.unpack_from('>%dH' % values['POLYGON_COUNT'], data,
+                                          values['POLYGON_COUNT'] * 32)
+            for face, colour in zip(self.faces, fallback):
+                self.assertTrue(colour & 0x8000)
+                if face.get('fallback_rgb555') is not None:
+                    self.assertEqual(colour, face['fallback_rgb555'])
+            # Shared hand/back variants no longer duplicate their texture bank.
+            self.assertLess(values['TILE_COUNT'], 325)
             skin = (out / 'LGEARSKN.BIN').read_bytes()
             self.assertEqual(struct.unpack_from('>H', skin, 6)[0], len(self.faces))
+
+    def test_fallback_shields_keep_requested_identity_colours(self):
+        colours = gear.shield_materials(OOT, fallback=True)
+        self.assertEqual(len(colours), 4)
+        blue = colours[0x04000400]
+        self.assertGreater((blue >> 10) & 31, blue & 31)
+        others = [c for addr, c in colours.items() if addr != 0x04000400]
+        self.assertEqual(sum((c & 31) > ((c >> 5) & 31) * 2 for c in others), 2)
+        self.assertEqual(sum(abs((c & 31) - ((c >> 10) & 31)) < 4 for c in others), 1)
+
+
+class GearFallback(unittest.TestCase):
+    run_c = graphics.GraphicsBackend.run_c
+
+    def test_full_bank_keeps_geometry_and_later_restores_original_texture_ids(self):
+        self.run_c(r'''
+#include <stdint.h>
+#include <stdbool.h>
+#include <assert.h>
+#include <string.h>
+#define LINK_GEAR_POLYGON_COUNT 3
+#define LINK_GEAR_TILE_COUNT 2
+#define LINK_GEAR_PIXEL_BYTES 64
+#define TEXTURE_CAPACITY 4096
+#define JO_MAX_SPRITE 64
+#define ECdis 0x80
+#define SPdis 0x40
+#define CL16Look 0x08
+#define sprPolygon 4
+typedef struct {int32_t n[3];uint16_t p[4];} POLYGON;
+typedef struct {uint8_t flag,sort;uint16_t texno,atrb,colno,gstb,dir;} ATTR;
+typedef int POINT[3];
+typedef struct {POINT *pntbl;int nbPoint;POLYGON *pltbl;ATTR *attbl;int nbPolygon;} PDATA;
+typedef struct {int dummy;} kokiri_tile;
+typedef kokiri_tile link_tile;
+static uint32_t mesh_words[26],tex_words[64],pixel_words[16];
+static unsigned char *gear_mesh=(unsigned char *)mesh_words;
+static unsigned char *gear_tex=(unsigned char *)tex_words;
+static unsigned char *gear_pixels=(unsigned char *)pixel_words;
+static POINT gear_points[1];
+static unsigned gear_tex_base=0xffff,vram_used,sprite_next,uploads;
+static bool gear_ready;
+static const void *mesh_staged_pixels;
+static bool mesh_load(const char *name,unsigned bytes,const kokiri_tile *tiles,unsigned count,
+                      const unsigned short (*cluts)[16],PDATA *all,unsigned polys,const void *cache) {
+    unsigned i;(void)name;(void)tiles;(void)cluts;(void)cache;
+    assert(mesh_staged_pixels==gear_pixels && count==2 && polys==3);
+    for(i=0;i<2;++i){ATTR *a=all->attbl+i;
+        assert(a->texno==i && (a->dir&7)==2 && (a->atrb&0x38)==CL16Look && !(a->atrb&SPdis));
+        a->texno+=sprite_next;a->colno=32+i*4;
+    }
+    vram_used+=bytes+count*32;sprite_next+=count;++uploads;return true;
+}
+''' + graphics.function(ROOT / 'src/kokiri_sgl.c', 'bool __attribute__((optimize("Os"))) kokiri_link_gear_upload(') + r'''
+int main(void) {
+    ATTR *a=(ATTR *)(gear_mesh+3*sizeof(POLYGON));uint16_t *colours=(uint16_t *)(a+3);
+    a[0].texno=0;a[1].texno=1;a[2].texno=0xffff;
+    a[0].dir=a[1].dir=2;a[2].dir=4;
+    a[0].atrb=a[1].atrb=CL16Look|ECdis;
+    colours[0]=0xe0c3;colours[1]=0x9079;colours[2]=0xead8;
+    vram_used=4096;sprite_next=7;
+    assert(kokiri_link_gear_upload() && gear_ready && uploads==0 && sprite_next==7);
+    assert((a[0].dir&7)==4 && a[0].colno==colours[0] && a[0].texno==0);
+    assert((a[1].atrb&0x38)==0 && (a[1].atrb&SPdis));
+    vram_used=0;sprite_next=9;
+    assert(kokiri_link_gear_upload() && gear_ready && uploads==1 && gear_tex_base==9);
+    assert(a[0].texno==9 && a[1].texno==10 && a[2].texno==0xffff);
+    sprite_next=63;
+    assert(kokiri_link_gear_upload() && gear_ready && uploads==1 && gear_tex_base==0xffff);
+    assert(a[0].texno==0 && a[1].texno==1 && a[1].colno==colours[1]);
+    vram_used=0;sprite_next=15;
+    assert(kokiri_link_gear_upload() && gear_ready && uploads==2 && gear_tex_base==15);
+    assert(a[0].texno==15 && a[1].texno==16 && a[2].texno==0xffff);
+    gear_pixels=0;vram_used=0;sprite_next=0;
+    assert(kokiri_link_gear_upload() && gear_ready && uploads==2 && gear_tex_base==0xffff);
+    assert(a[0].texno==0 && (a[0].dir&7)==4 && a[0].colno==colours[0]);
+    return 0;
+}
+''')
 
 
 if __name__ == '__main__':

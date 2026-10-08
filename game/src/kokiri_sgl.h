@@ -155,12 +155,14 @@ unsigned int    kokiri_order_error(void);
 
 void kokiri_cutscene_effects_draw(void);
 void kokiri_flame_draw(int32_t x,int32_t y,int32_t z,unsigned tick);
+void kokiri_particle_draw(int x,int y,int z,unsigned radius,unsigned colour,unsigned dither);
 /* Release only transient nightmare textures; resident Link/UI remain. */
 void kokiri_cutscene_tiles_reset(void);
 /* NPC tiles live after the current room, never over its texture bank. */
 unsigned int kokiri_actor_bank_generation(void);
 void kokiri_actor_tiles_reset(void);
 void kokiri_hit_filter(unsigned level);
+unsigned kokiri_hit_gouraud(unsigned level);
 /* Dithered ground contact marker: no textures or character meshes. */
 void kokiri_actor_shadow(int x, int y, int z, unsigned radius);
 /* Adult hero gear tiles into the actor bank after a bank reset; false =

@@ -11,12 +11,13 @@ import os
 import pathlib
 import re
 import subprocess
+import shutil
 import tempfile
 import unittest
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-GCC = pathlib.Path('C:/msys64/mingw64/bin/gcc.exe')
+GCC = pathlib.Path(shutil.which('gcc') or 'C:/msys64/mingw64/bin/gcc.exe')
 GEN = ROOT / 'build/generated'
 EYE = 90
 RUN_Q8 = 1408
@@ -128,7 +129,7 @@ class PlayerBg(unittest.TestCase):
         collision = ROOT.parent / 'shared/lib/collision'
         env = dict(os.environ)
         env['PATH'] = str(GCC.parent) + os.pathsep + env.get('PATH', '')
-        subprocess.run([str(GCC), '-shared', '-O2', '-Wall', '-Wextra', '-o', str(out),
+        subprocess.run([str(GCC), '-shared', '-fPIC', '-O2', '-Wall', '-Wextra', '-o', str(out),
                         '-I' + str(camera), '-I' + str(collision), '-I' + str(ROOT / 'src'),
                         '-I' + str(GEN),
                         str(ROOT / 'src/player_bg.c'), str(collision / 'kokiri_collision.c'),

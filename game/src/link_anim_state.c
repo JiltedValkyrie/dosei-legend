@@ -329,7 +329,8 @@ static bool             climb_step(void)
         climb_offset_q8 = 0;
         return true;
     }
-    if (crossed(before, climb_phase, climb_clip == LINK_CLIP_STEP150 ? 30 : 16))
+    if (crossed(before, climb_phase, climb_clip == LINK_CLIP_SWIM_STEP ? 68 :
+                climb_clip == LINK_CLIP_STEP150 ? 30 : 16))
         motion_events |= GP_EVENT_CLIMB_END;
     if (climb_clip == LINK_CLIP_STEP100 || climb_phase > 5 * 30) {
         if (climb_offset_q8 > CLIMB_OFFSET_STEP_Q8) climb_offset_q8 -= CLIMB_OFFSET_STEP_Q8;
@@ -683,6 +684,13 @@ void                    link_anim_jump_start(void)
     phase_ninths = 0;
     roll_speed_q8 = 0;
     climb_offset_q8 = 0;
+}
+
+void                    link_anim_water_step_up(int32_t y_dist, bool adult)
+{
+    link_anim_step_up(true, y_dist);
+    climb_clip = LINK_CLIP_SWIM_STEP;
+    climb_offset_q8 = (adult ? 60 * 256 : 60 * 256 * 11 / 17) - y_dist * 256;
 }
 
 void                    link_anim_hang(bool walk_off)

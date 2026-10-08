@@ -511,6 +511,14 @@ bool            save_item_give(save_item_t item)
     case SAVE_ITEM_SHIELD_DEKU:
         save_give_equip(EQUIP_TYPE_SHIELD, EQUIP_VALUE_SHIELD_DEKU);
         return true;
+    case SAVE_ITEM_BOTTLE_POE:
+    case SAVE_ITEM_BOTTLE_BIG_POE:
+        for(total=0;total<4;++total)
+            if(save_state.bottle_items[total]==0x14) {
+                save_state.bottle_items[total]=item==SAVE_ITEM_BOTTLE_POE?0x20:0x1e;
+                return true;
+            }
+        return false;
     case SAVE_ITEM_BOTTLE_EMPTY:
     case SAVE_ITEM_BOTTLE_MILK_FULL:
     case SAVE_ITEM_MILK:

@@ -14,15 +14,17 @@ import ctypes
 import os
 import pathlib
 import subprocess
+import shutil
 import tempfile
 import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-GCC = pathlib.Path('C:/msys64/mingw64/bin/gcc.exe')
+GCC = pathlib.Path(shutil.which('gcc') or 'C:/msys64/mingw64/bin/gcc.exe')
 
 SAVE_FILE_SLOTS = 3
 ROW_ERASE = SAVE_FILE_SLOTS
-ROWS = SAVE_FILE_SLOTS + 1
+ROW_DEBUG = SAVE_FILE_SLOTS + 1
+ROWS = SAVE_FILE_SLOTS + 2
 
 CHOOSING, OPEN_CONFIRM, ERASE_PICK, ERASE_CONFIRM = 0, 1, 2, 3
 NONE, START_NEW, START_LOAD, BACK = 0, 1, 2, 3
@@ -46,7 +48,7 @@ class FileSelect(unittest.TestCase):
         output = pathlib.Path(cls.tmp.name) / 'file_select.dll'
         env = dict(os.environ)
         env['PATH'] = str(GCC.parent) + os.pathsep + env.get('PATH', '')
-        subprocess.run([str(GCC), '-shared', '-O2', '-o', str(output),
+        subprocess.run([str(GCC), '-shared', '-fPIC', '-O2', '-o', str(output),
                         '-I' + str(ROOT / 'src'),
                         str(ROOT / 'src/file_select.c'),
                         str(ROOT / 'src/save_file.c'),
@@ -108,6 +110,22 @@ class FileSelect(unittest.TestCase):
             self.assertEqual(SAVE_FILE_EMPTY, self.lib.fs_status(slot))
             self.assertIn(b'NEW FILE', self.lib.file_select_row_detail(slot))
 
+    def test_debug_entry_does_not_open_or_write_a_save(self):
+        g = self.lib
+        self.populate(0, rupees=137)
+        g.fs_set_rupees(42)
+        for _ in range(ROW_DEBUG):
+            self.step(down=True)
+        self.assertEqual(4, self.step(confirm=True))
+        self.assertEqual(CHOOSING, g.fs_mode())
+        self.assertEqual(b'Level Select (Debug Mode)', g.file_select_row_label(ROW_DEBUG))
+        self.assertEqual(42, g.fs_rupees())
+        self.assertTrue(g.fake_is_stored(0))
+        self.assertFalse(g.fake_is_stored(1))
+        self.assertFalse(g.fake_is_stored(2))
+        g.save_device_read(0)
+        self.assertEqual(137, g.fs_rupees())
+
     def test_every_row_has_a_label(self):
         for row in range(ROWS):
             self.assertTrue(self.lib.file_select_row_label(row))
@@ -119,11 +137,11 @@ class FileSelect(unittest.TestCase):
     # ---- cursor --------------------------------------------------------
 
     def test_cursor_wraps_across_files_and_the_erase_row(self):
-        for expected in (1, 2, ROW_ERASE, 0):
+        for expected in (1, 2, ROW_ERASE, ROW_DEBUG, 0):
             self.step(down=1)
             self.assertEqual(expected, self.lib.fs_cursor())
         self.step(up=1)
-        self.assertEqual(ROW_ERASE, self.lib.fs_cursor())
+        self.assertEqual(ROW_DEBUG, self.lib.fs_cursor())
 
     def test_erase_pick_cursor_cannot_land_on_the_erase_row(self):
         self.populate(0)

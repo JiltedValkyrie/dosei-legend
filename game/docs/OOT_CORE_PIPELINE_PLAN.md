@@ -133,11 +133,86 @@ Removal and vertically locked restoration superseded.
 
 ## NEXT SESSION: mandatory Link migration (human, 2026-10-06)
 
+Latest human ordering (2026-10-08): Field enemies, then Water Temple enemies,
+obstacles and puzzles. Mandatory Player migration remains required, especially
+for horseback Big Poes, Like Like capture and Dark Link; neither a proxy nor an
+actor pack closes that work. Field is now in the usual Clean test disc with
+four actor/six effect profiles, API25 and source-era placement. Target memory
+and SH-2 audits pass; all 1,461 ISO files match staging. ISO 84,131,840 bytes,
+SHA256 `b62a08869df52cc08072962baa4bff6c0efeb3451e5903099d2461d6d8428eda`;
+.bss 0x06083400, 3,072 bytes below fixed SGL. Human accepts the shown adult Poe
+defeat/soul dialogue; other era, bottle and population checks remain pending.
+Water Temple work: 23 rooms, runtime scene 79, source scene 5; all 36 source
+units compile in isolation (140,644 bytes unlinked text). Borrowed source-water
+ownership and original controller action probes pass; five non-boss enemies have
+sprite conversions/bakes (Like Like, Dark Link pending Player). ABI26 is
+code-only in the Clean raw target; no temple pack is staged. Keep the
+mounted ABI25 image intact. See [Field handoff](FIELD_ENEMIES_2026-10-08.md) and
+[Water Temple status](WATER_TEMPLE_2026-10-08.md) for current evidence.
+
+The earlier texture-baseline Clean image (2026-10-08) uses accepted mode-2 room textures:
+[measurements and acceptance](TEXTURE_HALVING_2026-10-08.md). Code, 34 focused
+host checks, full WSL target build and final ISO comparison pass. Human accepted
+the look and reported better performance; screenshot VRAM 49%, CPU~ 79% is
+one observation, not a paired benchmark. Clean defaults to mode 2; explicit 0
+restores full density, and standalone/other variants still default to 0.
+That baseline's SGL margin was 1,792 B;
+the ISO is 83,494,912 B after three obsolete image-scene mesh pairs were removed.
+Inventory behavior below remains included; this asset experiment does not
+complete or defer mandatory Player migration.
+
+Current requested work (2026-10-08): all Link inventory through source paths,
+crosshair retained, bounded source first-person sprites permitted; Biggoron/
+Mirror equipment and shield art/fallback repair. See
+[inventory source audit](INVENTORY_SOURCE_AUDIT_2026-10-08.md) and current RECOMP_PLAN.
+The first projectile/gear repair wave is implemented, host-tested and target-built.
+All 346 host cases plus the actual source actor probe pass. The usual Clean
+image includes API24 and regenerated gear/aim art; all 1,458 files match staging.
+Main .bss ends at 0x06083900 (1,792 B spare); resident core is 510,184 B.
+Both integer audits and all 388 room records pass. See the
+[inventory handoff](INVENTORY_HANDOFF_2026-10-08.md). Human acceptance remains
+open; C/proxy Player remains live.
+Complete remaining inventory via mandatory real Player migration, not a permanent
+expanded proxy. Hammer/lens/spells/bottles/trades/masks/beans remain incomplete.
+
+Previous requested follow-up: water shore step-up and region-based Debug Level
+Select, exposed below save options after Start. Source implemented; 119 host
+checks and matching Clean build pass. Main .bss 0x06083740, 2,240 B spare;
+both math audits and all 1,457 disc file comparisons pass. See [water/menu handoff](WATER_MENU_HANDOFF_2026-10-08.md).
+Preserve the shore fix in Player cutover; human runtime checks remain open.
+
+Immediate map fix (human, 2026-10-08): Level Select omitted major dungeons.
+All 101 retail maps now register; 75 old IDs stay fixed and 26 append.
+All 388 room rows bake and the matching Clean target builds. Source faces and complete collision
+remain; optional subdivisions and texture density obey existing room limits.
+Exact C collision allocations and SCENETAB metadata/portal storage preserve
+global heap/actor capacities. Nine debug-only entries have no retail inputs.
+Old core resources and idle music caches release before new native asset loads;
+this removes the measured Ranch-to-Gohma allocation overlap. Prior all-map target main
+.bss ends at 0x06083110 (3,824 B spare); core remains 508,560 B. Runtime acceptance
+and allocator-fragmentation checks remain open.
+Final combined host run: 184 checks, no skips. All 101 OOCs and 1,457 ISO files
+pass validation/byte comparison; core and main math audits pass.
+See [ALL_MAPS_HANDOFF_2026-10-08.md](ALL_MAPS_HANDOFF_2026-10-08.md).
+This map task adds no actors and does not complete Player/collision migration.
+
+Parallel enemy work (human, 2026-10-08): Astra owns W0a in
+[ENEMY_ROLLOUT_PLAN.md](ENEMY_ROLLOUT_PLAN.md). Five source/design reviews are
+resolved; fixed code packs, full NPC SPR2 preload/cel cache, roster/audio tools,
+combat boundary and effect views are shared groundwork only. No actors imported.
+Matching W0a host/target evidence and open runtime/content gates are in
+[ENEMY_W0A_HANDOFF_2026-10-08.md](ENEMY_W0A_HANDOFF_2026-10-08.md). Actual boss-category
+profiles alone are exempt, hazards retain geometry, original 20 missing enemy
+scenes stay in scope. Grab/capture/gear enemies wait for real Player cutover.
+Player remains the required migration endpoint, not a permanent expanded proxy.
+
 Claude integration step 1 (2026-10-06): strict bank (uncertain clips strict) worst
 scene 554,668 B; placed into real old allocations, worst pack fits. Two-pack
 rollback does not fit (reload-from-disc rollback proposed). Frame-bank adapter,
 region loader (both host-tested, isolated) and 5-region partition (2,514 B
-main free) done; 110 collision call sites listed. Next: core collision API +
+main free in that historical layout) done; 110 collision call sites listed.
+Remeasure combined retention/placement against the current W0a core before
+accepting the partition; no old margin carries forward. Next: core collision API +
 port non-Player callers, then resolved build. See PLAYER_MIGRATION.md.
 
 Claude (2026-10-06, Codex out): proxies use real transformFlags + core carry path;
@@ -440,14 +515,16 @@ wide math remains migration debt. RECOMP_PLAN.md holds the current queue;
 TOMB_RAIDER_POLY_NOTES.md retains the evidence and rejected variants.
 BURNING_RANGERS_POLY_NOTES.md: BR static study (small tile faces, no clip/split).
 
-Latest (2026-10-04, tools): Link's C-button tools now run the real decomp
+Historical (2026-10-04, tools; firing defects found 2026-10-08): Link's C-button tools import the real decomp
 actors En_Arrow, En_Bom, En_Bom_Chu, En_Boom and Arms_Hook (importer SOURCES;
 API v19 `tool`/`tool_view`; oot-core/src/bridge_items.cpp plays z_player's
 spawn/release/carry/hookshot side). Bow + fire/ice/light arrows, bombs (carry,
 C/A throw), Bombchu, boomerang (child), hookshot/longshot (pulls Link via the
 source velocity) are wired in C (gameplay.c dispatch, first-person aim for
 bow/hook/boomerang, ammo + magic 4/4/8 spent on spawn). C enemies take the tools'
-source dmgFlags through C AT mirrors. Pause equips Biggoron (DMG_SLASH_GIANT,
+source dmgFlags through C AT mirrors. This baseline omitted R_UPDATE_RATE
+initialization, projectile Draw-side collisions and MISC boomerang views; its
+build did not prove working firing. Pause equips Biggoron (DMG_SLASH_GIANT,
 no shield), Mirror Shield, Kokiri/Iron/Hover boots (save v12 adds `boots`;
 iron sinks/walks underwater, hover holds ~19 source frames). Visuals: 13
 ITM*.SPR sheets from tools/build_item_sprites.py (pitch bands as poses,
@@ -538,8 +615,9 @@ Current continuation additionally rolls actual failed story/emerald loads back;
 NULL/double-free stubs test partial loads, repeated cleanup and retry. Generic
 handle doors/shutters now retain source gates and layers, with shared scripted
 entrance forwarding. Unsupported routes remain blocked and named in
-[WORLD_ROUTE_AUDIT.json](WORLD_ROUTE_AUDIT.json); 75 scenes have registered assets,
-35 source destinations still lack them, and full connectivity is unfinished.
+[WORLD_ROUTE_AUDIT.json](WORLD_ROUTE_AUDIT.json). All-map registration now covers
+101 retail scenes; nine debug-only entries lack
+retail source payloads. Full connectivity remains unfinished.
 Save v11 preserves v2-v10 and adds source-scene flags, keys/items, bottles,
 era/time and stable source resume identifiers. The mirror seeds saved scene flags
 before actor initialization and restores equipment/quest/ocarina predicates.
@@ -560,8 +638,8 @@ Current Clean target verification passes; horse gameplay remains unfinished.
 Follow [NEXT_CHAT_WORLD_COMPLETION.md](NEXT_CHAT_WORLD_COMPLETION.md).
 Prior build success does not supersede the human failures.
 
-Level Select ALL ITEMS + MAX STATS defaults No; L toggles items and R selects
-Child/Adult (default Child). Applies on confirmed test entry only. All source quest bits include
+Level Select All Items? defaults Off; A toggles the highlighted items or
+Link age option (default Child). Applies only on Begin Play Test. All source quest bits include
 the three stones/Emerald, medallions and songs; source inventory/owned gear,
 20 hearts, capped ammo/magic/upgrades, 500 rupees, tokens and dungeon test keys
 are included. No new story completion flags. Mutually exclusive slots use

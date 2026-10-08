@@ -79,6 +79,32 @@ DUNGEON_CHANNELS = (
     ('box_item', 'CHAN_5CB9'),
 
 )
+# Decomp tool sounds (human 2026-10-08: every C item needs SFX). Resident:
+# tools work in every scene. (name, source symbol, seconds kept, held loop).
+# Held loops render one source pass and repeat in SCSP while the actor holds.
+ITEM_SOUNDS = (
+    ('it_arrow_shot', 'NA_SE_IT_ARROW_SHOT', .35, False),
+    ('it_arrow_stick', 'NA_SE_IT_ARROW_STICK_OBJ', .30, False),
+    ('it_bow_draw', 'NA_SE_IT_BOW_DRAW', .15, False),
+    ('it_sling_draw', 'NA_SE_IT_SLING_DRAW', .15, False),
+    ('it_hook_ready', 'NA_SE_IT_HOOKSHOT_READY', .17, False),
+    ('it_hook_chain', 'NA_SE_IT_HOOKSHOT_CHAIN', .15, True),
+    ('it_hook_stick', 'NA_SE_IT_HOOKSHOT_STICK_OBJ', .33, False),
+    ('it_hook_reflect', 'NA_SE_IT_HOOKSHOT_REFLECT', .20, False),
+    ('it_boom_throw', 'NA_SE_IT_BOOMERANG_THROW', .39, False),
+    ('it_boom_fly', 'NA_SE_IT_BOOMERANG_FLY', .35, True),
+    ('it_bomb_fuse', 'NA_SE_IT_BOMB_IGNIT', .25, True),
+    ('it_bomb_blast', 'NA_SE_IT_BOMB_EXPLOSION', .60, False),
+    ('it_bomb_dud', 'NA_SE_IT_BOMB_UNEXPLOSION', .20, False),
+    ('it_bomb_bound', 'NA_SE_EV_BOMB_BOUND', .10, False),
+    ('it_chu_move', 'NA_SE_IT_BOMBCHU_MOVE', .20, True),
+    ('pl_throw', 'NA_SE_PL_THROW', .25, False),
+)
+# Variants that reuse a resident item sound (same source family).
+ITEM_ALIASES = (
+    ('NA_SE_IT_MAGIC_ARROW_SHOT', 'it_arrow_shot'),
+    ('NA_SE_IT_ARROW_STICK_CRE', 'it_arrow_stick'),
+)
 AREA_SOUNDS = ('cut', 'wall_hit', 'reflect', 'nut_break',
                'baba_mouth', 'baba_dead', 'baba_awaken', 'baba_ground', 'tree_open') + tuple(n for n, _ in DUNGEON_CHANNELS)
 AREA_BANKS = (
@@ -89,6 +115,44 @@ AREA_BANKS = (
     ('SFXTREE.PCM', tuple(n for n in AREA_SOUNDS if n not in ('tree_open','gohma_hit','gohma_dead','owl_flap'))),
     ('SFXBOSS.PCM', ('wall_hit','reflect','nut_break','larva_hit','larva_dead','gohma_hit','gohma_dead','door_open','door_close','freeze','correct')),
 )
+
+# Source names, not copied numeric ids: the generator resolves the local
+# decomp tables and preserves the existing resident/area dispatch contract.
+CORE_SFX_MAP = (
+    ('NA_SE_EV_PLANT_BROKEN', 1, 'AREA_SFX_CUT', 26),
+    ('NA_SE_SY_GET_RUPY', 2, '0', 0),
+    ('NA_SE_SY_GET_ITEM', 0, 'ACTION_GET_ITEM', 27),
+    ('NA_SE_SY_CAMERA_ZOOM_DOWN_2', 0, 'ACTION_CAMERA_ZOOM_DOWN_2', 27),
+    ('NA_SE_SY_HP_RECOVER', 0, 'ACTION_HP_RECOVER', 27),
+    ('NA_SE_SY_MESSAGE_PASS', 0, 'ACTION_MESSAGE', 27),
+    ('NA_SE_SY_MESSAGE_END', 0, 'ACTION_MESSAGE', 27),
+    ('NA_SE_SY_DECIDE', 0, 'ACTION_MESSAGE', 27),
+    ('NA_SE_SY_CURSOR', 0, 'ACTION_MESSAGE', 27),
+) + tuple((sym, 3 if loop else 0, 'ACTION_' + name.upper(), 26 if loop else 28)
+          for name, sym, _, loop in ITEM_SOUNDS) + tuple(
+    (sym, 0, 'ACTION_' + name.upper(), 28) for sym, name in ITEM_ALIASES)
+
+
+def write_core_sfx_map(oot, out):
+    from build_enemy_roster import sfx_table
+    source = sfx_table(oot)
+    rows = sorted((source[name]['id'], kind, slot, channel, name)
+                  for name, kind, slot, channel in CORE_SFX_MAP)
+    # Actors send held sounds as `id - SFX_FLAG` (z_en_bom, z_arms_hook...).
+    rows = sorted(rows + [(r[0] - 0x800, r[1], r[2], r[3], r[4] + ' - SFX_FLAG')
+                          for r in rows if r[1] == 3])
+    if len({r[0] for r in rows}) != len(rows):
+        raise ValueError('duplicate core SFX id')
+    lines = ['/* Generated from the local decomp SFX tables. */',
+             '#ifndef ACTION_DECOMP_SFX_H', '#define ACTION_DECOMP_SFX_H',
+             'typedef struct { unsigned short id; unsigned char kind, slot, channel; } action_decomp_sfx_t;',
+             '#define ACTION_DECOMP_SFX_COUNT %d' % len(rows),
+             'static const action_decomp_sfx_t action_decomp_sfx[] = {']
+    lines += ['    { 0x%04X, %d, %s, %d }, /* %s */' % row for row in rows]
+    lines += ['};', '#endif']
+    out.mkdir(parents=True, exist_ok=True)
+    (out / 'action_decomp_sfx.h').write_text('\n'.join(lines) + '\n', encoding='utf-8')
+    return rows
 
 
 def note(name):
@@ -214,19 +278,22 @@ class Unsupported(Exception):
     pass
 
 
-def layer_body(seq, label, visited=()):
-    """Follow bounded source layer calls, fallthrough and unconditional tail jumps."""
-    if label in visited: raise Unsupported('layer cycle: '+label)
+def layer_body(seq, label, visited=(), once=False):
+    """Follow bounded source layer calls, fallthrough and unconditional tail jumps.
+    once: a jump back into the layer ends it (one pass of a held loop)."""
+    if label in visited:
+        if once: return ''
+        raise Unsupported('layer cycle: '+label)
     match=re.search(r'(?m)^(?:\.layer\s+'+label+r'\b[^\n]*|'+label+r':)\n',seq)
     if not match: raise Unsupported('missing layer: '+label)
     body=[]
     for line in seq[match.end():].splitlines():
         jump=re.search(r'\*/\s*(?:rjump|jump)\s+(LAYER_\w+)',line)
         if jump:
-            return '\n'.join(body)+'\n'+layer_body(seq,jump[1],visited+(label,))
+            return '\n'.join(body)+'\n'+layer_body(seq,jump[1],visited+(label,),once)
         call=re.search(r'\*/\s*call\s+(LAYER_\w+)',line)
         if call:
-            nested=layer_body(seq,call[1],visited+(label,))
+            nested=layer_body(seq,call[1],visited+(label,),once)
             body.append(re.sub(r'(?m)^.*\*/\s*end\b.*$', '', nested))
             continue
         body.append(line)
@@ -234,11 +301,35 @@ def layer_body(seq, label, visited=()):
     raise Unsupported('unterminated layer: '+label)
 
 
-def channel_layers(seq, chan):
+def channel_body(seq, label, visited=(), once=False):
+    """Expand unconditional source channel tails, including interior labels."""
+    if label in visited:
+        if once:
+            return ''
+        raise Unsupported('channel cycle: ' + label)
+    match = re.search(r'(?m)^(?:\.channel\s+' + re.escape(label) +
+                      r'\b[^\n]*|' + re.escape(label) + r':)\n', seq)
+    if not match:
+        raise Unsupported('missing channel: ' + label)
+    lines = []
+    for line in seq[match.end():].splitlines():
+        jump = re.search(r'\*/\s*(?:rjump|jump)\s+(CHAN_\w+)', line)
+        if jump:
+            return '\n'.join(lines) + '\n' + channel_body(seq, jump[1], visited + (label,), once)
+        if line.startswith('.'):
+            break
+        lines.append(line)
+        if re.search(r'\*/\s*end\b', line):
+            return '\n'.join(lines)
+    raise Unsupported('unterminated channel: ' + label)
+
+
+def channel_layers(seq, chan, once=False):
     """A simple SFX channel: channel instr/transpose + its ldlayer blocks.
     Each layer -> (instr, transpose, [(key, ticks, velocity)]). Any opcode
-    this cannot follow (calls, self-modifying stseq, jumps) raises."""
-    body = seq.split('.channel %s\n' % chan, 1)[1].split('\n.', 1)[0]
+    this cannot follow (calls, self-modifying stseq, jumps) raises.
+    once: held loops render one pass; a channel that only jumps is followed."""
+    body = channel_body(seq, chan, once=once)
     chan_instr = re.search(r'\binstr\s+(\w+)', body)
     layers = re.findall(r'ldlayer\s+\d+,\s*(LAYER_\w+)', body)
     if not layers or re.search(r'\b(stseq|ldptr|jump|rjump|call|dyncall)\b', body):
@@ -248,7 +339,7 @@ def channel_layers(seq, chan):
         # The shared FONTANY_INSTR_SFX layer is a reduced-bank omission,
         # matching the existing withered-Baba exporter (no runtime N64 synth).
         if label == 'LAYER_4829': continue
-        block=layer_body(seq,label)
+        block=layer_body(seq,label,once=once)
         if re.search(r'\b(call|jump|rjump|stseq)\b', block):
             raise Unsupported(label)
         instr = re.search(r'\binstr\s+(\w+)', block)
@@ -268,10 +359,18 @@ def channel_layers(seq, chan):
     return out
 
 
-def render_channel(seq, chan, fonts, source, output_rate):
-    """Mix a simple channel's layers; notes restart the sample (no legato)."""
+def render_channel(seq, chan, fonts, source, output_rate, once=False, cap=None):
+    """Mix a simple channel's layers; notes restart the sample (no legato).
+    cap: seconds kept per layer (held loops, long one-shot tails; faded)."""
     mix = []
-    for instr, transpose, notes in channel_layers(seq, chan):
+    for instr, transpose, notes in channel_layers(seq, chan, once):
+        if cap is not None:
+            kept, total = [], 0
+            for p, tk, v in notes:
+                if total >= cap * 96: break
+                tk = min(tk, int(cap * 96) - total) if tk else tk
+                kept.append((p, tk, v)); total += tk
+            notes = kept
         run = bytearray()
         if instr in ('FONTANY_INSTR_TRIANGLE', 'FONTANY_INSTR_SAWTOOTH', 'FONTANY_INSTR_SQUARE'):
             shape = instr.rsplit('_', 1)[1].lower()
@@ -298,6 +397,11 @@ def render_channel(seq, chan, fonts, source, output_rate):
                 seconds=tk/96 if tk else len(pcm)/rate/2**((key-unity)/12)
                 part = render_path(pcm, rate, unity, [(key, key, seconds, (v / 127) ** 2)], output_rate)
                 run += part + bytes(max(0, round(seconds * output_rate) - len(part)))
+        if cap is not None:
+            run = run[:round(cap * output_rate)]
+            for i in range(min(64, len(run))):
+                value = run[-1-i]
+                run[-1-i] = round((value - 256 if value > 127 else value) * i / 64) & 255
         mix.append(run)
     length = max(len(r) for r in mix)
     out = bytearray()
@@ -594,6 +698,12 @@ def build(oot, source, out):
     simple.append(('tree_open',render_channel(seq,'CHAN_24A1',fonts,source,RATE/2),'CHAN_24A1'))
     for name, chan in DUNGEON_CHANNELS:
         simple.append((name,render_channel(seq,chan,fonts,source,RATE/2),chan))
+    from build_enemy_roster import sfx_table
+    item_source = sfx_table(oot)
+    for name, symbol, seconds, loop in ITEM_SOUNDS:
+        chan = item_source[symbol]['channel']
+        simple.append((name, render_channel(seq, chan, fonts, source, RATE / 2, once=True,
+                                            cap=seconds), chan + ' / ' + symbol))
     for name, chan in (('pl_damage', 'CHAN_076A'), ('body_hit', 'CHAN_0753'),
                        ('alarm', 'CHAN_5AA5'), ('heart_piece', 'CHAN_5B5B'),
                        ('decide', 'CHAN_58E9'), ('cursor', 'CHAN_5933')):
@@ -667,11 +777,28 @@ def build(oot, source, out):
     bank.extend(bytes(4 + (-len(bank) % 2)))
     area_base = BASE + len(bank)
     area_limit = 0x80000 - area_base
-    area_banks = []
+    area_banks, area_trims = [], {}
     for file_name, names in AREA_BANKS:
         blob, table = bytearray(), {}
+        # Human 2026-10-08: trim area banks to make room for resident item
+        # sounds. Water-fill one length cap; only the longest tails shorten.
+        lengths = {n: len(area_pcm[n][0]) for n in names}
+        def fits(cap):
+            return sum(min(l, cap) + 4 + 1 for l in lengths.values()) <= area_limit
+        cap = max(lengths.values(), default=0)
+        while cap > 0 and not fits(cap):
+            cap -= 64
+        trims = {n: l - cap for n, l in lengths.items() if l > cap}
+        if file_name and trims:
+            area_trims[file_name] = dict(cap=cap, trimmed=trims)
         for name in names:
             pcm, record = area_pcm[name]
+            if name in trims:
+                pcm = bytearray(pcm[:cap])
+                for i in range(min(64, len(pcm))):
+                    value = pcm[-1-i]
+                    pcm[-1-i] = round((value - 256 if value > 127 else value) * i / 64) & 255
+                pcm = bytes(pcm)
             table[name] = (len(blob), len(pcm))
             blob.extend(pcm)
             blob.extend(bytes(4 + (-len(blob) % 2)))
@@ -725,18 +852,23 @@ def build(oot, source, out):
     lines += ['};']
     lines += ['#endif']
     (out/'action_audio_data.h').write_text('\n'.join(lines)+'\n')
+    write_core_sfx_map(oot, out)
     area_json = [dict(file=f, bytes=len(b), samples=[dict(area_pcm[n][1], offset=o, length=l)
                                                      for n, (o, l) in t.items()])
                  for f, b, t in area_banks]
     (out/'action_audio.json').write_text(json.dumps(dict(base=BASE, bytes=len(bank), rate=RATE,
         limitations=__doc__, samples=records, adult_samples=adult_records, rupee_melody=melody,
-        area_base=area_base, area_limit=area_limit, area_banks=area_json), indent=2)+'\n')
+        area_base=area_base, area_limit=area_limit, area_banks=area_json,
+        area_trims=area_trims), indent=2)+'\n')
     worst = max(len(b) for _, b, _ in area_banks)
     print('Action audio: core %d samples, %d bytes; area slot %d bytes, largest bank %d, '
           '%d sound RAM bytes spare' % (len(records), len(bank), area_limit, worst,
                                          area_limit - worst))
     for f, b, t in area_banks:
         print('  area bank %-12s %5d bytes  %s' % (f or '(none)', len(b), ' '.join(t) or '-'))
+    for f, trim in area_trims.items():
+        print('  trimmed %s to %d bytes/sound: %s' % (f, trim['cap'], ' '.join(
+            '%s-%d' % kv for kv in sorted(trim['trimmed'].items()))))
 
 
 if __name__ == '__main__':
