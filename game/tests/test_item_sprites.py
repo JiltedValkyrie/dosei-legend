@@ -81,5 +81,26 @@ class ItemSprites(unittest.TestCase):
                     self.assertTrue(any(cel(s, 0, 0)))
 
 
+class ThickenArrow(unittest.TestCase):
+    def test_one_texel_shaft_grows_without_changing_size_or_clut(self):
+        import build_item_sprites as items
+        w, h = 8, 4
+        cels = bytearray(w * h // 2 * 5)
+        cels[1 * w // 2 + 1] = 0x30          # one texel, index 3, row 1 x 2
+        head = struct.pack('>4s5HhHh', b'SPR1', w, h, 5, 1, 1, 0, 256, 0)
+        head += struct.pack('>16H', *range(16)) + struct.pack('>H', 0) + bytes(2)
+        with tempfile.TemporaryDirectory() as t:
+            dest = Path(t) / 'A.SPR'
+            dest.write_bytes(head + cels)
+            items.thicken_sprite(dest, 1)
+            out = dest.read_bytes()
+        self.assertEqual(len(out), len(head + cels))
+        self.assertEqual(out[:len(head)], head)
+        self.assertTrue(valid(out))
+        px = [b for v in cel(out, 0, 0) for b in (v >> 4, v & 15)]
+        self.assertEqual(sorted(i for i, v in enumerate(px) if v), [2, 9, 10, 11, 18])
+        self.assertEqual({v for v in px if v}, {3})
+
+
 if __name__ == '__main__':
     unittest.main()

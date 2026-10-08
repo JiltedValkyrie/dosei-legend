@@ -61,8 +61,14 @@ class Assets(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             hearts.build(OOT, tmp)
             blob = Path(tmp,'HEARTS.BIN').read_bytes()
-            self.assertEqual(len(blob),672)
+            self.assertEqual(len(blob),823)
             self.assertEqual(len({blob[32+i*128:32+(i+1)*128] for i in range(5)}),5)
+            # Hearts keep CLUT 1-11; the magic meter owns 12-15.
+            self.assertLessEqual(max(n for b in blob[32:672] for n in (b>>4,b&15)),11)
+            end, mid, fill = blob[672:800], blob[800:816], blob[816:823]
+            self.assertEqual(set(end) | set(mid), {0,12,13})
+            self.assertEqual(mid[0], 0); self.assertEqual(mid[1], 13); self.assertEqual(mid[5], 12)
+            self.assertEqual(set(fill), {14,15})
 
 
 @unittest.skipUnless(GCC.exists(), 'host compiler required')

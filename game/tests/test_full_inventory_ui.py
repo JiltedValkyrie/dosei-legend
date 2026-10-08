@@ -37,7 +37,9 @@ class Hearts(unittest.TestCase):
     def test_old_front_pixels_survive_full_back_buffer_composition(self):
         # Production drawing function on fake bounded VRAM. A changed pulse
         # must leave every currently displayed pixel intact until map swap.
-        draw=backend.function(ROOT/'src/health_hud.c','void health_hud_draw(')
+        draw=(backend.function(ROOT/'src/health_hud.c','static void hud_pixel(')+
+              backend.function(ROOT/'src/health_hud.c','static void magic_meter(')+
+              backend.function(ROOT/'src/health_hud.c','void health_hud_draw('))
         self.run_c(r'''
 #include <assert.h>
 #include <stdbool.h>
@@ -47,10 +49,14 @@ static unsigned short vram[0x1800],names[2048],saved[960];
 #define HEART_ATLAS (vram+0x400)
 #define HEART_BACK_CELLS (vram+0x800)
 #define HEART_MAP names
+#define MAGIC_CELLS (vram+0x1000)
+#define MAGIC_BACK_CELLS (vram+0x1400)
+#define HUD_CELLS 90
+static unsigned char meter_end[128], meter_mid[16], meter_fill[7];
 static bool ready=true;
 static int last_key=-2;
 static unsigned front,tick;
-static struct {unsigned health,health_capacity;} save_state;
+static struct {unsigned health,health_capacity;unsigned char source_magic_level,source_magic;} save_state;
 static unsigned recomp_clock(void) {return tick;}
 '''+(ROOT/'src/health_hud_state.h').read_text()+draw+r'''
 int main(void) {
@@ -70,8 +76,27 @@ int main(void) {
     for(i=0;i<16;++i) assert(vram[i]==0xa5a5);
     assert(vram[0x800+960]==0xa5a5);
     health_hud_draw(false);
-    for(i=0;i<60;++i) assert(names[(2+i/15)*64+2+i%15]==0x2000/32);
+    for(i=0;i<90;++i) assert(names[(2+i/15)*64+2+i%15]==0x2000/32);
     save_state.health=1; health_hud_draw(true);
+    /* Magic_DrawMeter: double meter below two heart rows (y 42 -> region 26),
+     * fill from x 26 (region 10), 0x60 wide; one heart row moves it to 34. */
+    for(i=0;i<128;++i) meter_end[i]=13; for(i=0;i<16;++i) meter_mid[i]=12;
+    for(i=0;i<7;++i) meter_fill[i]=14;
+    memset(vram+0x1000,0,0x800*2);
+    save_state.health=save_state.health_capacity=320;
+    save_state.source_magic_level=2; save_state.source_magic=40; tick=6;
+    health_hud_draw(true);
+    {
+        volatile unsigned short *m=front?MAGIC_BACK_CELLS:MAGIC_CELLS;
+        #define PX(x,y) ((((x)/8+((y)/8)*15)<60?0:(m[(((y)/8)*15+(x)/8-60)*16+((y)%8)*2+(x)%8/4]>>((3-(x)%4)*4)))&15)
+        assert(PX(2,33)==13);          /* left end */
+        assert(PX(10+39,32)==14);      /* last full unit (y 26+3+3) */
+        assert(PX(10+40,32)==12);      /* empty meter body */
+        assert(PX(10+96,33)==13);      /* right end */
+        assert(PX(10+96+8,33)==0);
+        for(i=60;i<90;++i) assert(names[(2+i/15)*64+2+i%15]==(0x4000|((front?0x11780u:0x10B00u)/32+i-60)));
+    }
+    save_state.health_capacity=160; save_state.source_magic=0; tick=9; health_hud_draw(true);
     return 0;
 }
 ''')

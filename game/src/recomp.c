@@ -2376,7 +2376,9 @@ void recomp_update(void)
                 /* Iron Boots: Link sinks and walks the bottom instead of swimming. */
                 bool iron = !save_state.link_age && save_state.boots == SAVE_BOOTS_IRON;
                 bool was_water = link_water.phase != PLAYER_WATER_DRY;
-                if (iron && was_water) { player_water_reset(&link_water); was_water = false; }
+                /* Leave the swim clip too: SWIM state locks land movement. */
+                if (iron && was_water) { link_anim_move_end(); player_water_reset(&link_water); was_water = false; }
+                if (!was_water && st == LINK_STATE_SWIM) { link_anim_move_end(); st = link_anim_state(); }
                 bool eligible = !iron && (was_water || st == LINK_STATE_IDLE ||
                     st == LINK_STATE_WALK || st == LINK_STATE_RUN ||
                     st == LINK_STATE_FALL || st == LINK_STATE_JUMP ||

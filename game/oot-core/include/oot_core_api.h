@@ -169,10 +169,13 @@ typedef struct OotCoreSave {
 #define OOT_CORE_TOOL_VIEWS_MAX 8
 typedef struct OotCoreToolView {
     short id, params;            /* ACTOR_EN_ARROW/BOM/BOM_CHU/BOOM, ARMS_HOOK */
+    unsigned short attack_id;    /* spawn serial; stable across view reordering */
     int x, y, z;                 /* world.pos */
+    int previous_x, previous_y, previous_z; /* source sweep start */
     short yaw, pitch;            /* shape.rot.y, pitch +up */
     unsigned short timer;        /* bomb/chu fuse */
-    unsigned char held, flash;   /* parent is Link; bomb flash 0..140 */
+    unsigned char held, flash;   /* actually held; bomb flash 0..140 */
+    unsigned char damage;        /* source collider fallback; victim tables override */
     int radius;                  /* bomb blast sphere radius, 0 = none */
     unsigned int dmg;            /* AT dmgFlags (C contacts mirror them) */
 } OotCoreToolView;

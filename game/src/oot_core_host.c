@@ -579,7 +579,18 @@ static void tools_draw(void)
     for (i = 0; i < n; ++i) {
         unsigned int band = pitch_band(v[i].pitch);
         switch (v[i].id) {
-        case ACTOR_EN_ARROW: tool_put(TOOL_ARW, band, v[i].x, v[i].y, v[i].z, v[i].yaw); break;
+        case ACTOR_EN_ARROW: {
+            /* EnArrow_Draw's EffectBlure tail, reduced: three trailing cels
+             * every 16 units back along the last core step while in flight. */
+            int k, dx = v[i].x - v[i].previous_x, dy = v[i].y - v[i].previous_y,
+                dz = v[i].z - v[i].previous_z, len = abs(dx) + abs(dy) + abs(dz);
+            tool_put(TOOL_ARW, band, v[i].x, v[i].y, v[i].z, v[i].yaw);
+            if (!v[i].dmg || v[i].held || len < 16) break;
+            for (k = 1; k <= 3 && 16 * k < len; ++k)
+                tool_put(TOOL_ARW, band, v[i].x - dx * 16 * k / len, v[i].y - dy * 16 * k / len,
+                         v[i].z - dz * 16 * k / len, v[i].yaw);
+            break;
+        }
         case ACTOR_EN_BOM:
             if (v[i].params) tool_put(TOOL_EXP, recomp_world_clock() / 2, v[i].x, v[i].y, v[i].z, 0);
             else { npc_sprite_shadow_off = v[i].held; tool_put(TOOL_BOM, 0, v[i].x, v[i].y, v[i].z, v[i].yaw);

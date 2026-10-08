@@ -369,6 +369,11 @@ int OotCore_ToolView(const OotCoreToolView** out) {
             v->x = (s32)a->world.pos.x;
             v->y = (s32)a->world.pos.y;
             v->z = (s32)a->world.pos.z;
+            v->attack_id = 0;
+            v->previous_x = (s32)a->prevPos.x;
+            v->previous_y = (s32)a->prevPos.y;
+            v->previous_z = (s32)a->prevPos.z;
+            v->damage = 0;
             v->yaw = a->shape.rot.y;
             v->pitch = (s16)-a->shape.rot.x;
             v->held = a->parent == &GET_PLAYER(play)->actor;

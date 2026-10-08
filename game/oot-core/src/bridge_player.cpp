@@ -178,6 +178,9 @@ static void PlayerProxy_Sync(Actor* thisx) {
 static void PlayerProxy_Init(Actor* thisx, PlayState* play) {
     Player* this = (Player*)thisx;
     sSariaSongTalk = 0;
+    /* Player_Init: thisx->room = -1. Otherwise func_80031B14 deletes Player
+     * on the first room change and every tool/talk loses GET_PLAYER. */
+    thisx->room = -1;
 
     Collider_InitCylinder(play, &this->cylinder);
     Collider_SetCylinder(play, &this->cylinder, thisx, &sBodyCylinderInit);

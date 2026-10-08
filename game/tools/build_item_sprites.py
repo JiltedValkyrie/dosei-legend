@@ -52,7 +52,8 @@ HAND_TEXTURE = ('Hand', 'Gauntlet')   # texture names of the hand in held-item D
 SHEETS = {
     # EnArrow_Draw: SkelAnime_DrawLod(gArrowSkel), near LOD, last frame of
     # gArrow1_Anim (played once on release).
-    'ITMARW': ('gameplay_keep', ['gArrowSkel'], 0.01, 32, dict(pitch=True, skel='gArrow1_Anim')),
+    # thicken: the 1-texel shaft vanishes in flight (human 2026-10-08).
+    'ITMARW': ('gameplay_keep', ['gArrowSkel'], 0.01, 32, dict(pitch=True, skel='gArrow1_Anim', thicken=1)),
     # EnBom_Draw: gBombCapDL, then RotateZYX(0x4000,0,0) gBombBodyDL, billboard.
     'ITMBOM': ('gameplay_keep', ['gBombCapDL', ('gBombBodyDL', 90)], 0.01, 32, dict(billboard=True)),
     'ITMCHU': ('gameplay_keep', ['gBombchuDL'], 0.01, 32, {}),
@@ -193,6 +194,31 @@ def kfr_faces(faces, tmp):
     return sprite_faces, pts
 
 
+def thicken_sprite(dest, passes):
+    """Grow opaque texels into 4-neighbour transparent ones (SPR1 cels in
+    place). Same cel size, CLUT and VRAM; a thin shaft reads at speed."""
+    data = bytearray(dest.read_bytes())
+    w, h, dirs, poses, ticks = struct.unpack_from('>5H', data, 4)
+    base = 20 + 32 + 2 * ticks + (-2 * ticks) % 4
+    cel = w * h // 2
+    for n in range(dirs * poses):
+        off = base + n * cel
+        px = [data[off + i // 2] >> 4 if not i & 1 else data[off + i // 2] & 15 for i in range(w * h)]
+        for _ in range(passes):
+            grown = list(px)
+            for y in range(h):
+                for x in range(w):
+                    if px[y * w + x]: continue
+                    for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+                        nx, ny = x + dx, y + dy
+                        if 0 <= nx < w and 0 <= ny < h and px[ny * w + nx]:
+                            grown[y * w + x] = px[ny * w + nx]; break
+            px = grown
+        for i in range(0, w * h, 2):
+            data[off + i // 2] = px[i] << 4 | px[i + 1]
+    dest.write_bytes(bytes(data))
+
+
 def bake_sheet(name, oot, rom_dir, out, preview_dir, keep):
     obj, dls, scale, max_h, opts = SHEETS[name]
     faces, dropped = item_faces(oot, rom_dir, obj, dls, opts, keep)
@@ -231,6 +257,8 @@ def bake_sheet(name, oot, rom_dir, out, preview_dir, keep):
             spr.view = orig
     else:
         spr.write_sprite(sfaces, poses, list(range(len(poses))), dest, preview, layout)
+    if opts.get('thicken'):
+        thicken_sprite(dest, opts['thicken'])
     data = dest.read_bytes()
     w, h, dirs, np_ = struct.unpack_from('>4H', data, 4)
     cy, tq = struct.unpack_from('>hH', data, 14)
