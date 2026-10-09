@@ -1,5 +1,57 @@
 # Real Player migration — working inventory, 2026-10-06
 
+## Cutover plan (human-approved 2026-10-08)
+
+Goal: one authoritative source Player and one collision world; C Link retired;
+main work RAM freed; decomp enemies targetable and shieldable. Today's C Link
+build stays as rollback (`PLAYER_SOURCE=0`) until human acceptance.
+
+| Phase | Work | Owner | Gate |
+| --- | --- | --- | --- |
+| 0 | Remeasure retention/placement against the current core | Claude | done below |
+| 1 | Move scene-specific resident actors into per-scene OAP packs (Field pack path) | Astra | free >= deficit + 24 KB; pack fits worst scene carve; NPC/prop tests unchanged |
+| 2 | One collision world: port 22 files / 110 C call sites to core bgcheck via `bg_core_shim.c`; C dyna props become core proxies; retire C collision storage (~130 KB heap) | Claude | core bgcheck/dyna tests, probe rows, Fx corner/line cases classified |
+| 3 | Frame bank (strict) as `AnimTaskQueue_AddLoadPlayerFrame`, common set + cache handles, whole-cutscene preload/pin | Claude | decoder/cache tests, real cutscene manifests fit |
+| 4 | Link real Player behind `PLAYER_SOURCE=1`: regions loader, 9 duplicates deleted, 46 hooks as host adapters, link skeleton blobs | Claude | resolved link, region guards, wide audit 0, main .bss margin |
+| 5 | Host becomes I/O: input adapter (+ Y jump, B walk, custom jump), camera reads core focus/lock-on, Saturn renderer fed from jointTable/model types, one-way state snapshots, source Attention replaces `attention.c` | Claude + Astra review | per-row host tests |
+| 6 | Parity pass over the preservation table below; human Kronos batches: movement / combat+items / water+climb / talk+cutscenes / era switch | both | human acceptance per batch |
+| 7 | Delete C Link (`player_*.c`, `link_anim_state.c`, C Link paths in recomp/gameplay, C seeds, `attention.c`, magic mirror); then C enemies per enemy plan | Claude | measured main RAM freed |
+
+Rules carried: no FPU/soft 64-bit helpers, no CD reads during play, sprite-only
+NPCs, bosses exempt, Clean image name, Linux builds, RECOMP_PLAN updated per phase.
+
+### Phase 0 remeasure (Claude, 2026-10-08)
+
+`measure_player_placement.sh` (WSL, current Clean objects; the tool now takes
+the live object set from `build/oot-core/oot-core.map`, so Field pack objects
+are excluded, and records the ld -r vs final-link gap instead of aborting).
+
+| Item | Bytes |
+| --- | ---: |
+| Resident core ELF (`_oot_core_end` - load) | 522,904 |
+| Probe baseline (ld -r; link packing gap 2,216) | 520,688 |
+| Core + Player, duplicates removed | 671,564 |
+| + 521 LinkAnimationHeader records | 675,732 |
+| Player net growth (code+data+bss) | 150,876 (+4,168 headers) |
+| Capacity: core carve 589,824 + low 0x21D800 40,960 | 630,784 -> **-44,948** |
+| + retired cart MUSICTRG 20,480 + FAIRY 4,096 | 655,360 -> **-20,372** |
+| + low gap 0x2FB000 20,480 (was 24,576 at 0x2FA000) | 675,840 -> **+108** |
+
+All before the ~8.9 KB hooks, frame-bank adapter (2.7 KB), cache (6.2 KB),
+region loader and alignment: **real deficit about 20-25 KB**, target free
+space ~45-50 KB. Unresolved in the probe: 3,250 symbols (692 new with Player).
+
+Resident actors that phase 1 can move to packs (bytes in the current core
+link map): En_Kanban 12,918, En_Ta 11,216, En_Niw 10,734, En_Ko 10,399,
+En_In 8,402, En_Gs 7,740, En_Md 7,546, En_Cow 4,200, En_Wood02 3,900,
+Obj_Tsubo 3,704, En_Ma1 3,290, Obj_Kibako 3,208, En_Ma2 3,194,
+En_Wonder_Item 2,844, Obj_Syokudai 2,623, Obj_Mure2 2,298, En_Wonder_Talk2
+1,370. NPCs alone (Ta/Niw/Ko/In/Md/Cow/Ma1/Ma2/Kanban/Gs) are ~87 KB. Tools,
+magic arrows, En_Item00 and En_Kusa stay resident. Other large residents for
+later review: z_message 47 KB, oot_core_draw 26 KB, z_eff_blure 14 KB (Player
+sword trails need it), lookathil 7.8 KB.
+
+
 Inventory preservation follow-up (2026-10-08): human requests all inventory via
 source Player paths, retaining the digital aiming crosshair. Source first-person
 sprites are allowed when meshes cannot fit. Preserve Biggoron/Mirror equip fixes

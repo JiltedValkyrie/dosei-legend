@@ -11,11 +11,18 @@ WEAPON_PATCH_CELLS = [(y,x) for y in range(2,7) for x in range(1,5)]
 CAMERA_X, CAMERA_Y, CAMERA_W, CAMERA_H = 216, 64, 88, 24
 
 
-def camera_strip():
-    """Native pixel artwork for the approved Z / B+Z overhead-camera hint."""
+# Overhead-camera turn (human 2026-10-08): C-Up / B+C-Up, labelled like the
+# preset's C header (ui_labels() * 2 + analog). Z stays Z-targeting.
+CAMERA_TURN = ('C+UP', 'D-UP', 'C+UP', 'D-UP', 'C-UP', 'C-UP',
+               'CS-UP', 'CS-UP', 'L1+UP', 'D-UP')
+CAMERA_STRIPS = tuple(dict.fromkeys(CAMERA_TURN))
+
+
+def camera_strip(turn='C+UP'):
+    """Native pixel artwork for the overhead-camera hint: turn / B+turn."""
     im = Image.new('RGBA', (W, H))
     d = ImageDraw.Draw(im)
-    glyphs = dict(zip('CAMERZB+', (
+    glyphs = dict(zip('CAMERZB+UPDSL1-', (
         ('0111','1000','1000','1000','0111'),
         ('0110','1001','1111','1001','1001'),
         ('10001','11011','10101','10001','10001'),
@@ -23,7 +30,16 @@ def camera_strip():
         ('1110','1001','1110','1010','1001'),
         ('1111','0001','0010','0100','1111'),
         ('1110','1001','1110','1001','1110'),
-        ('000','010','111','010','000'))))
+        ('000','010','111','010','000'),
+        ('1001','1001','1001','1001','0110'),
+        ('1110','1001','1110','1000','1000'),
+        ('1110','1001','1001','1001','1110'),
+        ('0111','1000','0110','0001','1110'),
+        ('100','100','100','100','111'),
+        ('010','110','010','010','111'),
+        ('000','000','111','000','000'))))
+    def width(word):
+        return sum(len(glyphs[ch][0]) + 1 for ch in word) - 1
     def text(word, x, y):
         for dx, colour in ((1, (8,12,24,255)), (0, (248,248,224,255))):
             at = x
@@ -33,15 +49,19 @@ def camera_strip():
                         if bit == '1': d.point((at+col+dx,y+row+dx),fill=colour)
                 at += len(glyphs[ch][0])+1
     text('CAMERA', 28, 1)
-    for left, right in ((2,40),(46,85)):
+    # Label left in each box, turn arrow at its right: widest pair is
+    # 'CS-UP' (23 px) / 'B+CS-UP' (33 px).
+    boxes = ((2,38),(40,86))
+    for left, right in boxes:
         d.rounded_rectangle((left,9,right,23),radius=2,fill=(8,12,24,255))
         d.rectangle((left+2,10,right-2,20),fill=(40,48,88,255))
         d.line((left+2,10,right-2,10),fill=(136,152,192,255))
         d.line((left+2,11,left+2,19),fill=(88,104,152,255))
-    text('Z', 13, 14)
-    text('B+Z', 51, 14)
+    for (left, right), word in zip(boxes, (turn, 'B+' + turn)):
+        if width(word) > right - left - 13: raise ValueError('camera hint label too wide: ' + word)
+        text(word, left + 3 + (right - left - 13 - width(word)) // 2, 14)
     arrow = [(3,0),(2,1),(1,2),(2,3),(3,4),(2,2),(5,2),(6,3),(7,4),(7,5),(6,6),(5,7),(3,7)]
-    for ox, mirror in ((26,False),(73,True)):
+    for ox, mirror in ((boxes[0][1]-10,False),(boxes[1][1]-10,True)):
         for shadow, colour in ((1,(8,12,24,255)),(0,(248,248,224,255))):
             for x,y in arrow:
                 d.point((ox+(7-x if mirror else x)+shadow,12+y+shadow),fill=colour)
@@ -134,7 +154,7 @@ def encode(images):
     atlas = Image.new('RGB',(W,H*len(images)))
     for i, im in enumerate(images): atlas.paste(im.convert('RGB'),(0,i*H))
     pal_image = atlas.quantize(colors=15, method=Image.Quantize.MEDIANCUT)
-    palette = pal_image.getpalette()[:45]
+    palette = (pal_image.getpalette() + [0] * 45)[:45]  # Pillow trims short palettes
     colours = [tuple(palette[i:i+3]) for i in range(0,45,3)]
     words = [0] + [0x8000 | (b>>3)<<10 | (g>>3)<<5 | (r>>3) for r,g,b in colours]
     tiles, ids, maps = [bytes(32)], {bytes(32):0}, []
@@ -192,10 +212,11 @@ def build(oot, out_cd, out_gen):
     # Name-map reservation is full. Store this single strip in contiguous cells
     # so runtime derives tile IDs without another map or main-RAM table.
     camera_tile = len(blob)//32
-    camera_blob, camera_palette, camera_maps = encode([camera_strip()])
-    camera_cells = [camera_maps[0][y*(W//8)+x]
-                    for y in range(CAMERA_H//8) for x in range(CAMERA_W//8)]
-    blob += b''.join(camera_blob[tile*32:tile*32+32] for tile in camera_cells)
+    camera_blob, camera_palette, camera_maps = encode([camera_strip(t) for t in CAMERA_STRIPS])
+    for strip in range(len(CAMERA_STRIPS)):   # contiguous cells per strip
+        camera_cells = [camera_maps[strip][y*(W//8)+x]
+                        for y in range(CAMERA_H//8) for x in range(CAMERA_W//8)]
+        blob += b''.join(camera_blob[tile*32:tile*32+32] for tile in camera_cells)
     camera_palette_offset = len(blob)
     blob += struct.pack('>16H', *camera_palette)
     if len(blob)>CELL_LIMIT: raise ValueError('Camera HUD exceeds button cell reservation')
@@ -233,6 +254,9 @@ def build(oot, out_cd, out_gen):
          '#define HUD_CAMERA_Y %d' % (CAMERA_Y//8),
          '#define HUD_CAMERA_W %d' % (CAMERA_W//8),
          '#define HUD_CAMERA_H %d' % (CAMERA_H//8),
+         '/* ui_labels() * 2 + analog -> overhead-camera hint strip */',
+         'static const unsigned char hud_camera_strip[10] = {%s};' %
+             ','.join(str(CAMERA_STRIPS.index(t)) for t in CAMERA_TURN),
          '#define HUD_PATCH_OFFSET %d' % (32*W*H//64),
          '#define HUD_PATCH_COUNT %d' % len(patch_cells),
          'static const unsigned short hud_patch_positions[] = {%s};' %

@@ -78,7 +78,7 @@ static void border_white(void)
 
 /* FileSelect_LoadGame, z_select and KaleidoScope continue: magicCapacity and
  * magic restart at 0, then STEP_CAPACITY (+8) and FILL (+4) rebuild them. */
-void health_hud_magic_start(void)
+void __attribute__((optimize("Os"))) health_hud_magic_start(void)
 {
     magic_capacity = 0;
     magic_fill_target = save_state.source_magic;
@@ -111,7 +111,7 @@ void health_hud_magic_reset(void)
         magic_state = MAGIC_RESET;
 }
 
-void health_hud_magic_update(void)
+void __attribute__((optimize("Os"))) health_hud_magic_update(void)
 {
     static const short colours[2][3] = { { 255, 255, 255 }, { 150, 150, 150 } };
     static const unsigned char indices[4] = { 0, 1, 1, 0 }, ratios[4] = { 2, 1, 2, 1 }; /* YREG(40-43) */

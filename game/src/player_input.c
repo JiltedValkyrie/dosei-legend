@@ -132,9 +132,12 @@ void player_input_sample_pad(uint16_t held, bool analog, uint8_t x, uint8_t y)
         b_ticks = 0;
     }
     if (!(held & CAMERA_B)) orbit_b_claimed=false;
-    if (orbit_active && !dialogue_open && !view_look && (held & CAMERA_Z)) {
-        if (!edge_recenter.held) orbit_direction=(held & CAMERA_B) ? -1 : 1;
-        /* Claim B until release, including when B was held before Z. */
+    /* Overhead camera (human 2026-10-08): C-Up turns one way, B+C-Up the
+     * other; Z stays Z-targeting. C-Up is C+Up digital, D-pad Up analog. */
+    if (orbit_active && !dialogue_open && !view_look &&
+        (analog || (held & CAMERA_C)) && (held & CAMERA_UP)) {
+        if (!edge_c[0].held) orbit_direction=(held & CAMERA_B) ? -1 : 1;
+        /* Claim B until release, including when B was held before C-Up. */
         if (held & CAMERA_B) orbit_b_claimed=true;
     }
     if (orbit_b_claimed) { held &= (uint16_t)~CAMERA_B; b_down=false; }
@@ -402,9 +405,10 @@ void player_input_step(bool in_gameplay, player_input_t *out)
     look_was_active = false;
 
     if (orbit_active) {
-        if (recentered) out->camera_orbit_turn=orbit_direction;
-        recentered=false;
-        held &= (uint16_t)~CAMERA_Z;
+        /* C-Up is the camera turn here, never first person or an item. */
+        if (c_pressed[0]) out->camera_orbit_turn=orbit_direction;
+        c_pressed[0]=c_released[0]=false;
+        if (c_mode) held &= (uint16_t)~CAMERA_UP;
     }
     if (c_mode)
     {

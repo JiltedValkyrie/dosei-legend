@@ -39,6 +39,7 @@ class TraversalCamera(unittest.TestCase):
         cls.lib.player_camera_crawl_line.argtypes=[C.POINTER(bg.Mesh),C.c_uint,
                                                  C.POINTER(bg.Vec),C.POINTER(C.c_int32)]
         cls.lib.player_camera_crawl_line.restype=C.c_bool
+        cls.lib.player_camera_orbit_active.restype=C.c_bool
     @classmethod
     def tearDownClass(cls): cls.tmp.cleanup()
     def setUp(self):
@@ -77,8 +78,8 @@ class TraversalCamera(unittest.TestCase):
             self.step()
             self.assertEqual(self.yaw.value,32768)
             self.assertEqual(self.eye.x,self.player.x)
-            self.assertEqual(self.eye.z,self.player.z+600)
-            self.assertEqual(self.eye.y,self.player.y-90+44+360)
+            self.assertEqual(self.eye.z,self.player.z+360)
+            self.assertEqual(self.eye.y,self.player.y-90+44+216)
             self.assertEqual(self.lib.player_camera_experiment_cycle(),0)
             self.step()
             self.assertLess(self.eye.y,self.player.y+200)
@@ -94,7 +95,7 @@ class TraversalCamera(unittest.TestCase):
         self.lib.player_camera_scene_default(True)
         self.step()
         self.assertEqual(self.yaw.value,32768)
-        self.assertEqual(self.eye.z,self.player.z+600)
+        self.assertEqual(self.eye.z,self.player.z+360)
 
     def test_first_raised_camera_quarter_turns_orbit_link(self):
         self.lib.player_camera_experiment_cycle()
@@ -118,7 +119,7 @@ class TraversalCamera(unittest.TestCase):
         for _ in range(16):
             self.step()
             angles.append(self.yaw.value)
-            self.assertAlmostEqual((self.eye.x**2+self.eye.z**2)**0.5,600,delta=2)
+            self.assertAlmostEqual((self.eye.x**2+self.eye.z**2)**0.5,360,delta=2)
         speeds=[b-a for a,b in zip(angles,angles[1:])]
         self.assertTrue(all(v>0 for v in speeds))
         self.assertLess(speeds[0],speeds[7])

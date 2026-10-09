@@ -122,9 +122,9 @@ static struct {unsigned char source_magic_level,source_magic;} save_state;
 static unsigned sfx,sfx_calls;
 static void action_audio_decomp_sfx(unsigned id){sfx=id;++sfx_calls;}
 '''+state+fn('static void border_upload(')+fn('static void border_white(')+
-            fn('void health_hud_magic_start(')+fn('bool health_hud_magic_idle(')+
+            fn('void __attribute__((optimize("Os"))) health_hud_magic_start(')+fn('bool health_hud_magic_idle(')+
             fn('bool health_hud_magic_available(')+fn('bool health_hud_magic_consume(')+
-            fn('void health_hud_magic_reset(')+fn('void health_hud_magic_update(')+r'''
+            fn('void health_hud_magic_reset(')+fn('void __attribute__((optimize("Os"))) health_hud_magic_update(')+r'''
 int main(void) {
     int i, frames=0;
     save_state.source_magic_level=2; save_state.source_magic=90;

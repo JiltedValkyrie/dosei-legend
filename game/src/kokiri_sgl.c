@@ -2381,6 +2381,12 @@ static void         world_sparkle(int32_t x, int32_t y, int32_t z, FIXED scale, 
     if (slPutSprite(pos, &attr, spin) == FALSE) ++kokiri_rejected;
 }
 
+/* En_Arrow ARROW_SEED from the core: the same 14-unit spun sparkle. */
+void kokiri_seed_draw(int32_t x, int32_t y, int32_t z)
+{
+    if (sparkle_ready) world_sparkle(x, y, z, 114688, (ANGLE)(recomp_world_clock() * 4000u));
+}
+
 static void         item_billboard(unsigned int sprite, int x, int y, int z)
 {
     FIXED pos[5];

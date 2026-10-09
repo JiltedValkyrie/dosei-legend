@@ -159,7 +159,7 @@ static bool exit_blocker(unsigned int npc)
 
 /* EnKo func_80A995CC: stand on the 80-unit ring around home, facing Link.
  * Its source path is only used after the Emerald (M5/M6). */
-static void update_exit_blocker(const gameplay_input_t *in)
+static void __attribute__((optimize("Os"))) update_exit_blocker(const gameplay_input_t *in)
 {
     unsigned int i;
     if (!in_forest()) return;
@@ -475,7 +475,7 @@ static void         mido_place(void)
 /* EnMd_BlockPath while idle: stand 60 units from home toward Link. EnMd_Walk
 ** afterwards: along path 1 to its last point, then EnMd_Watch there. Not run
 ** while his box is open (talkState != IDLE freezes the block position). */
-static void         update_mido(const gameplay_input_t *in)
+static void __attribute__((optimize("Os"))) update_mido(const gameplay_input_t *in)
 {
     if (!gameplay.talking)
         mido_yaw = gameplay_facing(in->x - gameplay.mido_x, in->z - gameplay.mido_z);
@@ -814,7 +814,7 @@ static bool         health_critical(void)
 static void         drop_target(void);
 
 /* Lethal exactly once, on the ground (z_player.c: health 0 and ground). */
-static void         check_death(const gameplay_input_t *in)
+static void __attribute__((optimize("Os"))) check_death(const gameplay_input_t *in)
 {
     if (gameplay.dead || save_state.health != 0 || !in->grounded)
         return;
@@ -1181,7 +1181,7 @@ static void         wonder_room_reset(void)
 
 static bool         rupee_near(const gameplay_input_t *in, int x, int y, int z, int room);
 
-static void         update_wonders(const gameplay_input_t *in)
+static void __attribute__((optimize("Os"))) update_wonders(const gameplay_input_t *in)
 {
     unsigned int i;
     if (in->room != gameplay.room) {
@@ -3280,12 +3280,15 @@ void                gameplay_step(const gameplay_input_t *in)
             yaw = gameplay_facing(dx,dz);
             pitch = (int16_t)gameplay_facing(focus[1]-(in->y+35),distance>12?distance-12:1);
         }
-        if (item >= 0x20) {
+        if (item >= 0x20 || (item == PLAYER_ITEM_SEED && oot_core_is_playing())) {
             /* Decomp tools (bridge_items.cpp): from the eye when aiming,
-             * else from the right hand (PLAYER_LIMB_R_HAND). */
+             * else from the right hand (PLAYER_LIMB_R_HAND). The slingshot
+             * fires En_Arrow ARROW_SEED (human 2026-10-08), so decomp and C
+             * targets both take its source damage. */
             int32_t hand[3] = { in->x, in->y + 35, in->z };
             if (!in->item_from_eye) gameplay_link_point(18, hand);
-            if (!oot_core_tool_use(item - 0x20, in->item_from_eye ? in->item_eye : hand, yaw, pitch))
+            if (!oot_core_tool_use(item == PLAYER_ITEM_SEED ? 6u : item - 0x20,
+                                   in->item_from_eye ? in->item_eye : hand, yaw, pitch))
                 gameplay.events |= GP_EVENT_DENIED;
         } else if (!(in->item_from_eye && item == PLAYER_ITEM_SEED ?
                 player_items_use_from(item, in->item_eye, yaw, pitch) :

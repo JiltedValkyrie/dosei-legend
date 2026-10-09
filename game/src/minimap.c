@@ -288,7 +288,8 @@ static void hud_visibility(int variant)
     for (y=0; y<HUD_CAMERA_H; ++y)
         for (x=0; x<HUD_CAMERA_W; ++x)
             map[(HUD_CAMERA_Y+y)*64u+HUD_CAMERA_X+x] = camera
-                ? 0xB000u | (base+HUD_CAMERA_TILE+y*HUD_CAMERA_W+x)
+                ? 0xB000u | (base+HUD_CAMERA_TILE+
+                             (hud_camera_strip[preset]*HUD_CAMERA_H+y)*HUD_CAMERA_W+x)
                 : (MINIMAP_VRAM_CELLS-MINIMAP_VRAM_MAP)/32u;
     hud_variant = key;
 }

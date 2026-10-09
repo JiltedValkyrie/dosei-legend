@@ -159,6 +159,11 @@ int main(void) {
         reset();save_state.source_items[slots[i]]=items[i];save_state.source_items[3]=0xff;
         assert(!use(slots[i]));assert(calls==0 && save_state.source_magic==24);
     }
+    /* Slingshot (slot 6) fires the decomp seed from the legacy seed count. */
+    reset();save_state.link_age=1;save_state.slingshot=1;save_state.ammo_seeds=2;
+    assert(use(6));assert(last[0]==6 && save_state.ammo_seeds==1);
+    save_state.ammo_seeds=0;assert(!use(6));assert(calls==1);
+    reset();save_state.link_age=1;save_state.ammo_seeds=5;assert(!use(6));
     /* func_8083442C: a busy meter refuses the next magic arrow (error). */
     reset();save_state.source_items[4]=4;magic_busy=true;
     assert(!use(4));assert(calls==0 && errors==1 && save_state.source_magic==24);

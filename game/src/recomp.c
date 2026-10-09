@@ -121,7 +121,7 @@ static player_camera_t link_camera;
 /* Existing scene bushes: child-without-strength attempts do not detach or
  * destroy the prop, so no collectible/drop path runs. Successful actor carry
  * needs the prop owner to consume player_lift's events (M3 integration). */
-static int lift_bush_candidate(void)
+static int __attribute__((optimize("Os"))) lift_bush_candidate(void)
 {
     int found=-1;
     int32_t best=50*50;
@@ -413,7 +413,7 @@ static void link_local_move(int32_t local_x_q8, int32_t local_z_q8, uint16_t yaw
 
 /* func_8083A5C4, then the source's next floor ray from +50, which stands the
 ** actor on the ledge top while the clip hangs the body below it. */
-static bool link_start_hang(const bg_hit_t *wall, int32_t dist, bg_vec_t feet,
+static bool __attribute__((optimize("Os"))) link_start_hang(const bg_hit_t *wall, int32_t dist, bg_vec_t feet,
                             bool walk_off)
 {
     int32_t floor;
@@ -1286,7 +1286,7 @@ bool __attribute__((optimize("Os"))) recomp_init(void)
 static unsigned int knock_steps;
 static int32_t      knock_rx, knock_rz;     /* Q16 remainders */
 
-static void link_knockback(void)
+static void __attribute__((optimize("Os"))) link_knockback(void)
 {
     int32_t sine, cosine, dx, dz;
     if (gameplay_blocks_world() || gameplay.knock_speed <= 0)
@@ -1307,7 +1307,7 @@ static void link_knockback(void)
 
 /* En_Goroiwa OC (MASS_HEAVY): Link is pushed out of the sphere's footprint
  * when their heights overlap. */
-static void boulder_push_link(void)
+static void __attribute__((optimize("Os"))) boulder_push_link(void)
 {
     int32_t bx, by, bz, dx, dz, dist2, dist, push, feet;
     const int32_t reach = GP_BOULDER_RADIUS + GP_LINK_BODY_RADIUS;
@@ -1606,7 +1606,7 @@ static bool evade_floor_ok(void)
     return bg_floor_type(&floor) != 7 && bg_floor_effect(&floor) != 1;
 }
 
-static void mido_push_link(void)
+static void __attribute__((optimize("Os"))) mido_push_link(void)
 {
     int32_t mx, mz, dx, dz, dist2, dist, push;
     if (save_state.scene_id != SAVE_SCENE_KOKIRI_FOREST ||
@@ -3264,6 +3264,12 @@ void recomp_update(void)
 int recomp_save_report(void)
 {
     return (!save_reported ? -1 : (save_succeeded ? 1 : 0));
+}
+
+/* Started from Level Select's Begin Play Test (no save slot behind it). */
+bool recomp_play_test(void)
+{
+    return active_slot == SAVE_FILE_SLOTS;
 }
 
 bool recomp_file_select_is_visible(void)

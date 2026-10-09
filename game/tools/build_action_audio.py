@@ -116,6 +116,8 @@ ITEM_SOUNDS = (
 )
 # Variants that reuse a resident item sound (same source family).
 ITEM_ALIASES = (
+    ('NA_SE_IT_SLING_SHOT', 'seed_fire'),       # decomp slingshot seeds
+    ('NA_SE_IT_SLING_REFLECT', 'seed_impact'),
     ('NA_SE_IT_ARROW_STICK_CRE', 'it_arrow_stick'),
 )
 AREA_SOUNDS = ('cut', 'wall_hit', 'reflect', 'nut_break',

@@ -61,7 +61,13 @@ def main():
     parser.add_argument('--out', type=Path, default=GAME / 'build/player-migration/placement')
     args = parser.parse_args()
     args.out.mkdir(parents=True, exist_ok=True)
-    live = sorted(args.live.glob('*.o'))
+    # Objects actually linked into the resident core (its link map). The same
+    # directory also holds scene actor-pack objects (Field enemies), which are
+    # linked into OAP packs, not the core.
+    core_map = GAME / 'build/oot-core/oot-core.map'
+    linked = {Path(line.split()[1]).name for line in core_map.read_text(errors='ignore').splitlines()
+              if line.startswith('LOAD ') and line.endswith('.o')} if core_map.exists() else None
+    live = sorted(p for p in args.live.glob('*.o') if linked is None or p.name in linked)
     if not live:
         raise ValueError('no core objects')
     replacements = {}
@@ -173,10 +179,14 @@ def main():
     if not end:
         raise ValueError('missing baseline ELF end symbol')
     elf_bytes = int(end[1], 16) - load
+    # ld -r keeps C++ inline (comdat) sections and skips the production
+    # script's alignment, so the probe and the real link differ by a little.
+    # Record the gap; a large one means the object set is wrong.
+    gap = elf_bytes - old['sizes']['total']
     report['baseline_elf'] = dict(sha256=hashlib.sha256(elf.read_bytes()).hexdigest(), bytes=elf_bytes,
-                                 same_size=elf_bytes == old['sizes']['total'])
-    if not report['baseline_elf']['same_size']:
-        raise ValueError('retention baseline differs from current ELF size; reconcile artifacts first')
+                                 same_size=gap == 0, link_minus_probe_bytes=gap)
+    if abs(gap) > 4096:
+        raise ValueError('retention baseline differs from current ELF by %d B; reconcile artifacts first' % gap)
     report['placement_accepted'] = False
     (args.out / 'report.json').write_text(json.dumps(report, indent=2) + '\n', encoding='utf-8')
     print(json.dumps({key: report[key] for key in ('retained_growth_bytes',

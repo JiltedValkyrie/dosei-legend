@@ -400,6 +400,25 @@ int OotCore_ToolCommand(unsigned int command, int* io) {
                 io[1] = (s32)(player->actor.velocity.y * 256.0f);
                 io[2] = (s32)(player->actor.velocity.z * 256.0f);
             }
+            /* Arrow*_Draw's full-screen hit fill, prim (rgb * k, alpha 150 * k)
+             * over the scene, as a VDP2 colour-offset per channel in io[3..5]
+             * (approximate: blended against mid grey). Strongest arrow wins. */
+            io[3] = io[4] = io[5] = 0;
+            for (Actor* m = play->actorCtx.actorLists[ACTORCAT_ITEMACTION].head; m != NULL; m = m->next) {
+                static const u8 prim[3][3] = { { 40, 0, 0 }, { 0, 10, 50 }, { 30, 40, 0 } };
+                s32 e, k, c;
+                if (m->update == NULL) continue;
+                if (m->id == ACTOR_ARROW_FIRE) { e = 0; k = (s32)(((ArrowFire*)m)->unk_15C * 256.0f); }
+                else if (m->id == ACTOR_ARROW_ICE) { e = 1; k = (s32)(((ArrowIce*)m)->unk_164 * 256.0f); }
+                else if (m->id == ACTOR_ARROW_LIGHT) { e = 2; k = (s32)(((ArrowLight*)m)->unk_164 * 256.0f); }
+                else continue;
+                if (k <= 0) continue;
+                if (k > 256) k = 256;
+                for (c = 0; c < 3; ++c) {
+                    s32 offset = (prim[e][c] * k / 256 - 128) * (150 * k / 255) / 256;
+                    if (offset < io[3 + c]) io[3 + c] = offset;
+                }
+            }
             return bits;
         }
         case OOT_CORE_TOOL_CANCEL:

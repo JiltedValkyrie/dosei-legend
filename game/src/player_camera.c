@@ -54,7 +54,8 @@ void player_camera_scene_default(bool overhead)
 static void experiment_eye(const camera_position_t *player, camera_position_t *eye,
                            uint16_t *yaw, int32_t *pitch)
 {
-    const int back=600, rise=360;
+    /* Human 2026-10-08: 40% closer than 600/360, same pitch. */
+    const int back=360, rise=216;
     *eye=*player;
     eye->y+=oot_follow_scale.height-OOT_CAM_PLAYER_ORIGIN+rise;
     eye->z+=back;

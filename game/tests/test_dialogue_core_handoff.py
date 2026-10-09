@@ -78,19 +78,25 @@ int main(void) {
 }
 ''')
 
-    def test_boot_font_bolds_without_crossing_glyph_rows(self):
-        code = graphics.function(ROOT / 'src/main.c',
-            'static void __attribute__((optimize("Os"))) dialogue_font_init(')
+    def test_only_emphasis_uses_bold_glyph_copies(self):
+        # Human rule 2026-10-08: regular text keeps SGL's glyphs; coloured
+        # emphasis swaps to widened copies stored after the font.
+        main = ROOT / 'src/main.c'
+        code = graphics.function(main, 'static void __attribute__((optimize("Os"))) dialogue_font_init(')
+        code += graphics.function(main, 'void __attribute__((optimize("Os"))) recomp_text_embolden(')
         code = code.replace('(volatile uint8_t *)0x25E60000u', 'font')
         self.run_c(r'''
 #include <assert.h>
 #include <stdint.h>
-static uint8_t font[128*64];
-static uint16_t map;
+static uint8_t font[1024*32];
+static uint16_t map, row[8];
+static int locate_row;
 static void jo_printf(int x,int y,const char *fmt,...) {
     static unsigned ch=33;(void)x;(void)y;(void)fmt;map=ch++*2;
 }
-static void *slLocate(int x,int y) { (void)x;(void)y;return &map; }
+static void *slLocate(int x,int y) { (void)x; return y==31 ? (void *)&map : (void *)row; }
+static uint16_t bold_base;
+#define BOLD(ch) (bold_base + 2u*((ch)-33u))
 ''' + code + r'''
 int main(void) {
     for(unsigned ch=33;ch<127;++ch) {
@@ -98,10 +104,15 @@ int main(void) {
     }
     dialogue_font_init();
     for(unsigned ch=33;ch<127;++ch) {
-        assert(font[ch*64+1]==7 && font[ch*64+2]==7);
-        assert(!font[ch*64+3] && !font[ch*64+8]);
+        assert(font[ch*64+1]==7 && !font[ch*64+2]);          /* regular untouched */
+        assert(bold_base >= 254 && bold_base % 2 == 0);
+        uint8_t *b=font+BOLD(ch)*32;
+        assert(b[1]==7 && b[2]==7 && !b[3] && !b[8]);        /* widened, rows kept */
     }
-    assert(!font[32*64] && !font[127*64]);
+    for(unsigned i=0;i<4;++i) row[i]=0x3000|(('A'+i)*2);
+    recomp_text_embolden(0,5,"AB C",4);
+    assert(row[0]==(0x3000|BOLD('A')) && row[1]==(0x3000|BOLD('B')));
+    assert(row[2]==(0x3000|(('C')*2)) && row[3]==(0x3000|BOLD('C')));
     return 0;
 }
 ''')

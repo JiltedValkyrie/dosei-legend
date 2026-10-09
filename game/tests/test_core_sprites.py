@@ -150,7 +150,8 @@ static bool load_scene_blob(unsigned s) { return true; }
 typedef void OotSceneBlob;
 static bool sprites_preload(const OotSceneBlob *s) { return true; }
 static struct { unsigned missing; } sprite_stats;
-static void jo_core_error(const char *s,unsigned n) { assert(0); }
+static void jo_core_error(const char *s,...) { assert(0); }
+static int jo_memory_usage_percent(void) { return 0; }
 static void jo_printf(int x,int y,const char *s,...) {}
 static void destroy(void) {}
 static int release(void) { return 1; }
@@ -360,16 +361,17 @@ int main(void) {
     sprites_reset(); assert(!live);
     /* Failed scene admission is reported; refresh never retries I/O. */
     count=1; fail_file=1; unsigned before=opens;
-    assert(!sprites_preload(&blob) && sprite_stats.missing==2 && opens==before+2);
+    /* count | object << 8 | row << 20 | reason << 26 (1 file, 2 heap, 3 read) */
+    assert(!sprites_preload(&blob) && sprite_stats.missing==((1u<<26)|(0x18bu<<8)|2u) && opens==before+2);
     assert(!sprites_refresh() && opens==before+2);
     sprites_reset(); fail_file=0; fail_alloc=1;
-    assert(!sprites_preload(&blob) && !live && sprite_stats.missing==2);
+    assert(!sprites_preload(&blob) && !live && sprite_stats.missing==((2u<<26)|(0x18bu<<8)|2u));
     sprites_reset(); fail_alloc=0; fail_read=1;
-    assert(!sprites_preload(&blob) && !live);
+    assert(!sprites_preload(&blob) && !live && (sprite_stats.missing>>26)==3u);
     sprites_reset(); fail_read=0; invalid_packet=1;
     assert(!sprites_preload(&blob) && !live);
     sprites_reset(); invalid_packet=0; heap_percent=86;
-    assert(!sprites_preload(&blob) && !live && sprite_stats.missing==2);
+    assert(!sprites_preload(&blob) && !live && sprite_stats.missing==((2u<<26)|(0x18bu<<8)|2u));
     sprites_reset(); heap_percent=50;
     assert(sprites_preload(&blob) && live==2);
     sprites_reset(); sprites_reset(); assert(!live);

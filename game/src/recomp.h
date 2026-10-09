@@ -16,6 +16,7 @@ int32_t recomp_screen_distance(void);
 /* True while the file select owns the pad. The world does not step and the
 ** gameplay HUD must stay off, same as the title. */
 bool recomp_file_select_is_visible(void);
+bool recomp_play_test(void);
 /* Outcome of the last pause-menu save: -1 none yet, 0 failed, 1 succeeded. */
 int recomp_save_report(void);
 unsigned int recomp_clock(void);
@@ -66,4 +67,6 @@ unsigned int recomp_aim_inventory_slot(void);
 bool recomp_target_marker(int32_t *x, int32_t *y, bool *locked, unsigned *kind);
 /* Sword and shield in hand (drawn) rather than on Link's back. */
 bool recomp_sword_out(void);
+/* Bold glyphs for a just-printed emphasised (coloured) text run (main.c). */
+void recomp_text_embolden(int x, int y, const char *text, unsigned length);
 #endif

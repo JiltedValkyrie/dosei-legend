@@ -100,13 +100,20 @@ class PlayerControls(unittest.TestCase):
         self.lib.control_step(True)
         self.assertTrue(self.lib.control_camera_experiment())
 
-    def test_orbit_z_edges_and_reverse_do_not_target_or_cancel(self):
+    def test_orbit_c_up_edges_and_reverse_leave_z_targeting(self):
+        # Human 2026-10-08: overhead camera turns on C-Up / B+C-Up; Z targets.
         self.lib.player_input_set_orbit(True)
-        for keys,direction in ((Z,1),(Z,0),(0,0),(B|Z,-1),(B|Z,0),(B,0),(0,0)):
+        for keys,direction in ((C|UP,1),(C|UP,0),(0,0),(B|C|UP,-1),(B|C|UP,0),(B,0),(0,0)):
             self.lib.control_sample(keys);self.lib.control_step(True)
             self.assertEqual(self.lib.control_orbit_turn(),direction)
+            self.assertEqual(self.lib.control_c_pressed(), C_NONE)   # no first person
             self.assertFalse(self.lib.control_cancel())
-            self.assertFalse(self.lib.control_target_held())
+        self.lib.control_sample(Z);self.lib.control_step(True)
+        self.assertEqual(self.lib.control_orbit_turn(),0)
+        self.assertTrue(self.lib.control_target_held())
+        self.lib.control_sample(0);self.lib.control_step(True)
+        self.lib.control_sample(UP);self.lib.control_step(True)       # digital Up still walks
+        self.assertEqual(self.lib.control_orbit_turn(),0)
 
     def test_camera_chord_short_tap_latched_but_menu_and_title_discarded(self):
         self.lib.control_sample(L|R|B)

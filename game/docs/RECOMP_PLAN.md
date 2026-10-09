@@ -131,6 +131,14 @@ Magic meter (source Magic_DrawMeter on the VDP2 heart cells) implemented and
 host-tested. Arrow_Fire/Ice/Light imported (source gameplay/SFX, host ITMMAG
 sprites, hit tint), source magic meter states, charge SFX; forest/boss
 tails trimmed for sound RAM. Room bakes now parallel. Human check open.
+Text (human 2026-10-08): only coloured emphasis is bold (bold glyph copies in
+free B1 text cells); Debug Play Test shows the source room on row 29. Main
+.bss ends 0x06083FB0 (80 B spare); magic state code is -Os to fit.
+Player cutover plan approved 2026-10-08 (PLAYER_MIGRATION.md "Cutover plan"):
+phase 0 remeasure done - Player is ~20-25 KB short in the five-region design;
+phase 1 (Astra) moves scene NPC/prop actors into OAP packs (~87 KB of NPCs),
+phase 2 (Claude) unifies collision. Overhead camera turn is C-Up/B+C-Up, Z
+targets; slingshot fires source ARROW_SEED. Main .bss margin 208 B.
 
 Enemy groundwork (Astra, 2026-10-08): [ENEMY_ROLLOUT_PLAN.md](ENEMY_ROLLOUT_PLAN.md)
 and [source design review](ENEMY_DESIGN_REVIEW.md). All five review choices are

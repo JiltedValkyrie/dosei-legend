@@ -57,6 +57,7 @@
 #include "message.h"
 #include "cutscene.h"
 #include "cutscene_actor.h"
+#include "game_mode.h"
 
 /*
 ** Baseline camera, in the scene's native source space.
@@ -85,6 +86,7 @@ static void __attribute__((optimize("Os"))) game_over_screen(void);
 static void __attribute__((optimize("Os"))) file_select_screen(void);
 static void __attribute__((optimize("Os"))) cutscene_text(void);
 static void         cutscene_fade(void);
+static void         play_test_room(void);
 
 /* Read DIALOG.TXT into its cart carve and bind it. jo_fs_read_file holds a
 ** transient work-RAM copy; only the cart copy stays. */
@@ -552,6 +554,7 @@ static void __attribute__((optimize("Os"))) viewer_draw(void)
         ocarina_hint=active;
     }
 #endif
+    play_test_room();
     game_over_screen();
     file_select_screen();
     if (!gameplay_blocks_world() && !cutscene_is_playing()) viewer_hud();
@@ -797,10 +800,14 @@ static void __attribute__((optimize("Os"))) cutscene_text(void)
             if (shown)
                 /* Typed out a character at a time, so only the part of the
                 ** run that has appeared so far is drawn. */
+            {
                 jo_printf_with_color(column, text_row + (int)line,
                                      cutscene_text_colour(
                                          message_run_colour(line, run)),
                                      "%.*s", (int)shown, text);
+                if (cutscene_text_colour(message_run_colour(line, run)) != JO_COLOR_INDEX_White)
+                    recomp_text_embolden(column, text_row + (int)line, text, shown);
+            }
             column += (int)length;
             if (shown < length)
                 break;          /* nothing later on this line is visible yet */
@@ -838,26 +845,60 @@ static void __attribute__((optimize("Os"))) cutscene_text(void)
 
 /* All dialogue uses the retained SGL font. Thicken ASCII once at boot;
  * palette variants share these glyphs, and pause restores the same font VRAM. */
+/* Human rule 2026-10-08: only emphasised (coloured) text is bold. Regular
+ * glyphs stay as SGL loaded them; widened copies of glyphs 33-126 sit in
+ * order in free text-layer cells after the font (same 32 KB B1 window, 10-bit
+ * cell numbers, two units per 256-colour cell), at bold_base + 2*(ch - 33).
+ * recomp_text_embolden swaps a coloured run's map entries; 0 = no bold. */
+static uint16_t bold_base;
 static void __attribute__((optimize("Os"))) dialogue_font_init(void)
 {
-    unsigned ch, y, x;
+    unsigned ch, y, x, top = 0;
+    uint16_t regular[127];
     for (ch=33;ch<127;++ch) {
         char text[2]={(char)ch,0};
-        volatile uint16_t *map;
-        volatile uint8_t *cell;
         jo_printf(0,31,"%s",text);
-        map=(volatile uint16_t *)slLocate(0,31);
-        cell=(volatile uint8_t *)0x25E60000u+(*map&0x3ffu)*32u;
+        regular[ch] = *(volatile uint16_t *)slLocate(0,31) & 0x3ffu;
+        if (regular[ch] > top) top = regular[ch];
+    }
+    jo_printf(0,31," ");
+    top = (top + 2u) & ~1u;
+    if (top + 2u * (127u - 33u) > 1024u) return;   /* no room: emphasis stays regular */
+    for (ch=33;ch<127;++ch) {
+        volatile uint8_t *from = (volatile uint8_t *)0x25E60000u + regular[ch]*32u;
+        volatile uint8_t *cell = (volatile uint8_t *)0x25E60000u + (top + 2u*(ch-33u))*32u;
+        for (x = 0; x < 64; ++x) cell[x] = from[x];
         for (y=0;y<8;++y)
             for (x=7;x>0;--x)
                 if (!cell[y*8+x]) cell[y*8+x]=cell[y*8+x-1];
     }
-    jo_printf(0,31," ");
+    bold_base = (uint16_t)top;
 }
-static void print_bold(unsigned int x, unsigned int y, const char *text)
+
+void __attribute__((optimize("Os"))) recomp_text_embolden(int x, int y, const char *text, unsigned length)
 {
-    jo_printf((int)x,(int)y,"%-38s",text);
+    volatile uint16_t *map = (volatile uint16_t *)slLocate(x, y);
+    unsigned i;
+    for (i = 0; bold_base && i < length && text[i]; ++i) {
+        unsigned ch = (unsigned char)text[i];
+        if (ch > 32 && ch < 127) map[i] = (uint16_t)((map[i] & ~0x3ffu) | (bold_base + 2u*(ch-33u)));
+    }
 }
+
+/* Debug Play Test (Level Select): current source room on the bottom row.
+ * Pause owns the text layer; its close restores these rows. */
+static void __attribute__((optimize("Os"))) play_test_room(void)
+{
+    static int room_shown = -1;
+    int room = recomp_play_test() && game_mode() == GAME_MODE_PLAY &&
+               !recomp_title_is_visible() && !cutscene_is_playing()
+               ? (int)kokiri_scene_room() : -1;
+    if (gameplay_is_paused() || room == room_shown) return;
+    if (room >= 0) jo_printf(1, 29, "Room %-3d", room);
+    else jo_printf(1, 29, "        ");
+    room_shown = room;
+}
+
 
 static uint32_t dialogue_row_hash(const char *text, unsigned marker)
 {
@@ -909,7 +950,7 @@ static void __attribute__((optimize("Os"))) dialogue_box(void)
     const char *speaker = gameplay_speaker_name();
     uint32_t hash = dialogue_row_hash(speaker, 0);
     if (repaint || row_hash[0] != hash) {
-        print_bold(1, DIALOGUE_ROW, speaker);
+        jo_printf(1, DIALOGUE_ROW, "%-38s", speaker);
         row_hash[0] = hash;
     }
     {

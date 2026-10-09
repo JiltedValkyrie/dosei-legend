@@ -98,6 +98,7 @@ extern unsigned int kokiri_sprite_peak;  /* peak sprite slots used */
 void            kokiri_navi_draw(int x, int y, int z);
 void            kokiri_grass_draw(void);
 unsigned int    kokiri_scene_room(void);
+void            kokiri_seed_draw(int32_t x, int32_t y, int32_t z);
 /* Room of the loaded bank (any scene). */
 unsigned int    kokiri_bank_room(void);
 void            kokiri_rupees_draw(unsigned int tick);

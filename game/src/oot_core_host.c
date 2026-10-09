@@ -630,27 +630,14 @@ static void __attribute__((noinline)) tool_put(unsigned int t, unsigned int fram
         npc_sprite_draw(CORE_DRAW->tool_sheet[t], &CORE_DRAW->tool_inst[t], frame, x, y, z, yaw);
 }
 
-/* Arrow*_Draw's full-screen XLU fill on hit (unk_15C/unk_164 from the Hit
- * timer: +0.25 per frame while timer >= 9, then -0.125). VDP2 colour offset
- * approximates prim blended at alpha 150*k over a mid-grey scene. */
-static int16_t hit_tint[3];
+/* Arrow*_Draw's hit screen fill: the core writes a VDP2 colour offset per
+ * channel into tool_pull[3..5] with each source-frame tool state. */
 bool oot_core_hit_tint(int16_t rgb[3])
 {
-    rgb[0] = hit_tint[0]; rgb[1] = hit_tint[1]; rgb[2] = hit_tint[2];
-    return hit_tint[0] || hit_tint[1] || hit_tint[2];
-}
-
-static void tint_from_hit(unsigned int element, unsigned int t)
-{
-    static const unsigned char prim[3][3] = { { 40, 0, 0 }, { 0, 10, 50 }, { 30, 40, 0 } };
-    int k = t >= 9 ? (int)(32 - t) * 64 : 256 - (int)(9 - t) * 32, alpha, c;
-    if (k > 256) k = 256;
-    if (k <= 0 || element > 2) return;
-    alpha = 150 * k / 255;                     /* Q8 */
-    for (c = 0; c < 3; ++c) {
-        int offset = (prim[element][c] * k / 256 - 128) * alpha / 256;
-        if (offset < hit_tint[c]) hit_tint[c] = (int16_t)offset;
-    }
+    rgb[0] = (int16_t)CORE_DRAW->tool_pull[3];
+    rgb[1] = (int16_t)CORE_DRAW->tool_pull[4];
+    rgb[2] = (int16_t)CORE_DRAW->tool_pull[5];
+    return playing && (rgb[0] || rgb[1] || rgb[2]);
 }
 
 static void tools_draw(void)
@@ -658,7 +645,6 @@ static void tools_draw(void)
     const OotCoreToolView *v;
     int n = playing ? ENTRY->tool_view(&v) : 0, i;
     int32_t a[3], b[3];
-    hit_tint[0] = hit_tint[1] = hit_tint[2] = 0;
     npc_sprite_shadow_off = 1;
     for (i = 0; i < n; ++i) {
         unsigned int band = pitch_band(v[i].pitch);
@@ -668,6 +654,7 @@ static void tools_draw(void)
              * every 16 units back along the last core step while in flight. */
             int k, dx = v[i].x - v[i].previous_x, dy = v[i].y - v[i].previous_y,
                 dz = v[i].z - v[i].previous_z, len = abs(dx) + abs(dy) + abs(dz);
+            if (v[i].params == 9) { kokiri_seed_draw(v[i].x, v[i].y, v[i].z); break; } /* ARROW_SEED */
             tool_put(TOOL_ARW, band, v[i].x, v[i].y, v[i].z, v[i].yaw);
             if (!v[i].dmg || v[i].held || len < 16) break;
             for (k = 1; k <= 3 && 16 * k < len; ++k)
@@ -685,7 +672,6 @@ static void tools_draw(void)
             /* ITMMAG pose element*4: glow in flight; Arrow*_Hit's 32-step
              * timer grows the burst; alpha is 0 below 8 and when faded. */
             unsigned int t = v[i].timer, frame = !t ? 0 : t >= 24 ? 1 : t >= 16 ? 2 : 3;
-            if (t) tint_from_hit(v[i].params, t);
             if (v[i].flash < 35 || (t && t < 8)) break;
             tool_put(TOOL_MAG, v[i].params * 4u + frame, v[i].x, v[i].y, v[i].z, 0);
             break;
@@ -741,7 +727,9 @@ void oot_core_tool_register(void)
  * func_8083442C falls back to ARROW_NORMAL when magic cannot be consumed. */
 bool oot_core_tool_use(unsigned int slot, const int32_t origin[3], uint16_t yaw, int16_t pitch)
 {
-    unsigned int item = save_inventory_item(slot), ammo = slot, cost = 0;
+    /* Slot 6 (slingshot) keeps the legacy owned flag and seed count. */
+    unsigned int item = slot == 6 ? (save_state.slingshot && save_state.ammo_seeds ? 6u : 0xffu)
+                                  : save_inventory_item(slot), ammo = slot, cost = 0;
     int io[6];
     if (!playing || item == 0xff || !save_inventory_slot_usable(slot) ||
         CORE_DRAW->tool_bits & OOT_CORE_TOOL_HOLDING) return false;
@@ -766,6 +754,7 @@ bool oot_core_tool_use(unsigned int slot, const int32_t origin[3], uint16_t yaw,
     io[4] = yaw; io[5] = pitch;
     if (!ENTRY->tool(OOT_CORE_TOOL_USE, io)) return false;
     if (ammo == 2 || ammo == 3 || ammo == 8) --save_state.source_ammo[ammo];
+    if (slot == 6) --save_state.ammo_seeds;
     if (cost) health_hud_magic_consume(cost); /* MAGIC_CONSUME_NOW: drains 2/frame */
     if (ammo == 2 || ammo == 8) CORE_DRAW->tool_bits |= OOT_CORE_TOOL_HOLDING;
     return true;
@@ -993,7 +982,10 @@ void oot_core_frame(const gameplay_input_t *in)
         if (!sprites_preload((const OotSceneBlob *)OOT_SCENECOL_ADDR)) {
             scene_load_failed = true;
             ENTRY->pack_release();
-            jo_core_error("Scene sprite preload failed: %u missing", sprite_stats.missing);
+            /* OotCore_SpritePreload: count | object << 8 | row << 20 | reason << 26
+             * (1 file, 2 heap, 3 read/validate). */
+            jo_core_error("Sprite preload failed %08X heap %d%%", sprite_stats.missing,
+                          jo_memory_usage_percent());
             return;
         }
         mirror_save(); /* age/time/flags before play_init picks the layer */
@@ -1144,6 +1136,9 @@ bool oot_core_message_box(void)
                 while (c < limit && (v->colour[r][c] & 7) == colour) ++c;
                 jo_printf_with_color(1 + (int)start + (choice_row ? 2 : 0), row, colour_map[colour],
                                      "%.*s", (int)(c - start), &v->text[r][start]);
+                if (colour_map[colour] != 0) /* emphasis (z_message colour) is bold */
+                    recomp_text_embolden(1 + (int)start + (choice_row ? 2 : 0), row,
+                                         &v->text[r][start], c - start);
             }
         }
         jo_set_printf_color_index(JO_COLOR_INDEX_White);
