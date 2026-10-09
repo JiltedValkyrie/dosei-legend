@@ -93,3 +93,6 @@ Ninth build (autonomous, not run): SGL-aware schedule (PLAYER_MIGRATION.md
 "SGL-aware slave scheduling"). Expect `sc` near 1 ms with `dr` small; `sk`
 is now the master pose only; `S` counts core + prepare jobs (Link's skin
 runs during the steps and is not in `S`).
+Tenth build: + side-frustum cull in the scene prepare (`subm` on the old
+debug page drops when looking along a wall of the forest; fewer polygons for
+SGL on the slave and the master).

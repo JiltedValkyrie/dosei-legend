@@ -92,6 +92,10 @@ static unsigned short forest_scene;
 #define tile_fog ((unsigned char *)RAM_LOW(RAM_LOW_TILE_FOG_OFFSET))
 #define forest_mesh ((unsigned char *)RAM_LOW(RAM_LOW_FOREST_MESH_OFFSET))
 typedef char forest_depth_fits[KOKIRI_VERTEX_COUNT * sizeof(short) <= RAM_LOW_FOREST_DEPTH_BYTES ? 1 : -1];
+/* Lateral (camera-right) offset per vertex, after the depths in the same
+ * carve (side-frustum cull, scene_prepare). */
+#define forest_side (forest_depth + KOKIRI_VERTEX_COUNT)
+typedef char forest_side_fits[2 * KOKIRI_VERTEX_COUNT * sizeof(short) <= RAM_LOW_FOREST_DEPTH_BYTES ? 1 : -1];
 typedef char tile_depth_fits[KOKIRI_TILE_COUNT * sizeof(short) <= RAM_LOW_TILE_DEPTH_BYTES ? 1 : -1];
 typedef char tile_fog_fits[KOKIRI_TILE_COUNT <= RAM_LOW_TILE_FOG_BYTES ? 1 : -1];
 typedef char forest_mesh_fits[KOKIRI_POLYGON_COUNT <= RAM_LOW_FOREST_MESH_BYTES ? 1 : -1];
@@ -158,6 +162,7 @@ static bool forest_prepared;
 ** figures -- and must not be read as this frame's work. */
 static bool forest_reused;
 static int prepared_x, prepared_y, prepared_z, prepared_pitch;
+static int prepared_dist, prepared_roll;   /* side cull depends on both */
 static int prepared_link_x, prepared_link_z;
 #ifdef DOSEI_ACTOR_ORDER_PROBE
 static void actor_order_prepare(int x, int y, int z, int yaw);
@@ -1786,6 +1791,35 @@ static bool forest_lod_changed(void)
 ** actors; kokiri_scene_draw then only waits and submits. On the slave the
 ** frame timers are skipped: they extend the master's FRT. */
 static unsigned char prep_on_slave;
+/* 2026-10-09 speed: side-frustum cull. Polygons wholly beyond one side plane
+** of the view (plus a 32-unit margin) are not submitted; SGL would clip them
+** away after paying their per-polygon cost. Exact and conservative: the side
+** planes pass through the eye and contain the pitched view axis, so a vertex
+** is outside when |side| * dist > zb * 160 with zb an upper bound of its
+** pitched depth: depth * cos(pitch) + |dy| * |sin(pitch)| (rounded up).
+** Host check: tools-free random test (0 violations, pitch +-33 degrees).
+** Off when the camera rolls. 32-bit: |side|,|depth| < 32768, |dy| < 65536,
+** dist <= 1024. */
+static int side_cull_dist, side_sin_q8, side_cos_q8;
+static int side_out(const unsigned short *corner)
+{
+    int i, right = 1, left = 1;
+    for (i = 0; i < 4; ++i) {
+        unsigned int v = corner[i];
+        int depth = forest_depth[v];
+        int dy = -(kokiri_pdata.pntbl[v][1] >> 16) - recomp_camera.y;
+        int zb, sd, lim;
+        if (dy < 0) dy = -dy;
+        zb = depth >= 0 ? depth : ((depth * side_cos_q8) >> 8) + 1;
+        zb += ((dy * side_sin_q8 + 255) >> 8) + 2;
+        lim = zb * 160 + 32 * side_cull_dist;
+        sd = forest_side[v] * side_cull_dist;
+        if (sd <= lim) right = 0;
+        if (-sd <= lim) left = 0;
+        if (!right && !left) return 0;
+    }
+    return 1;
+}
 #define PREP_TIMER_BEGIN(p) do { if (!prep_on_slave) frame_timer_begin(p); } while (0)
 #define PREP_TIMER_END(p) do { if (!prep_on_slave) frame_timer_end(p); } while (0)
 static unsigned int scene_prepare(void)
@@ -1797,7 +1831,8 @@ static unsigned int scene_prepare(void)
         (forest_scene != SCENE_SPOT00 ||
          (prepared_link_x==recomp_link.x && prepared_link_z==recomp_link.z)) &&
         prepared_y == recomp_camera.y && prepared_z == recomp_camera.z &&
-        prepared_yaw == recomp_yaw && prepared_pitch == recomp_pitch
+        prepared_yaw == recomp_yaw && prepared_pitch == recomp_pitch &&
+        prepared_dist == recomp_screen_distance() && prepared_roll == cutscene_camera_roll()
 #ifdef KOKIRI_STREAM_ROOMS
         && !forest_lod_changed()
 #endif
@@ -1831,10 +1866,20 @@ static unsigned int scene_prepare(void)
             object_visible[m->lod0_object] = state == MESH_LOD_NEAR;
     }
 #endif
+    {
+        int pitch = (int16_t)recomp_pitch, dist = recomp_screen_distance();
+        int32_t ps, pc;
+        kokiri_camera_sincos((uint16_t)pitch, &ps, &pc);
+        side_sin_q8 = ((ps < 0 ? -ps : ps) + 255) >> 8;   /* rounded up */
+        side_cos_q8 = pc >> 8;                            /* rounded down */
+        side_cull_dist = (!cutscene_camera_roll() && pitch > -8192 && pitch < 8192 &&
+                          pc > 0 && dist > 0 && dist <= 1024) ? dist : 0;
+    }
     for (i = 0; i < forest_vertex_count; ++i) {
         int x = (kokiri_pdata.pntbl[i][0] >> 16) - recomp_camera.x;
         int z = (kokiri_pdata.pntbl[i][2] >> 16) - recomp_camera.z;
         forest_depth[i] = (short)(((int64_t)x * sine + (int64_t)z * cosine) >> 16);
+        forest_side[i] = (short)(((int64_t)x * cosine - (int64_t)z * sine) >> 16);
     }
     PREP_TIMER_END(FRAME_PHASE_DEPTH);
     PREP_TIMER_BEGIN(FRAME_PHASE_PARTITION);
@@ -1881,6 +1926,7 @@ static unsigned int scene_prepare(void)
         ** FARTHEST vertex keeps any polygon with a vertex still in front,
         ** including one straddling the camera plane. */
         if (farthest < 0 || nearest > ((forest_mesh[i] & FOREST_FACE_LANDMARK) ? FIELD_LANDMARK_FAR : FOREST_FAR)
+            || (side_cull_dist && side_out(kokiri_pdata.pltbl[i].Vertices))
 #ifdef KOKIRI_STREAM_ROOMS
             || (!(forest_mesh[i] & FOREST_FACE_LANDMARK) && !object_visible[kokiri_objects[i]])
 #endif
@@ -1900,6 +1946,7 @@ static unsigned int scene_prepare(void)
                     if (d3 > farthest) farthest = d3;
                 }
             } while (farthest < 0 || nearest > ((forest_mesh[visible] & FOREST_FACE_LANDMARK) ? FIELD_LANDMARK_FAR : FOREST_FAR)
+                     || (side_cull_dist && side_out(kokiri_pdata.pltbl[visible].Vertices))
 #ifdef KOKIRI_STREAM_ROOMS
                      || (!(forest_mesh[visible] & FOREST_FACE_LANDMARK) && !object_visible[kokiri_objects[visible]])
 #endif
@@ -2093,6 +2140,7 @@ static unsigned int scene_prepare(void)
     prepared_link_x=recomp_link.x;prepared_link_z=recomp_link.z;
     prepared_z = recomp_camera.z; prepared_yaw = recomp_yaw;
     prepared_pitch = recomp_pitch; prepared_visible = visible;
+    prepared_dist = recomp_screen_distance(); prepared_roll = cutscene_camera_roll();
     return visible;
 }
 

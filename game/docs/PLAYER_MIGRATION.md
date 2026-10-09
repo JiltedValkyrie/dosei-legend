@@ -79,6 +79,13 @@ New schedule:
   transforms the forest while the master transforms Link.
 - C collision queries while the slave runs: shadow floor misses are deferred
   and resolved after the join (`kokiri_shadow_resolve`).
+Side-frustum cull (scene_prepare, `side_out`): polygons wholly beyond one
+side plane of the pitched view (+32 units) are no longer submitted, so SGL
+skips their per-polygon work on whichever CPU transforms the forest. Exact
+conservative bound (pitched depth <= depth*cos + |dy|*|sin|), off when the
+camera rolls; tests/test_side_cull.py runs the production function on random
+cameras/quads against a float projection (0 visible quads culled, >50 %
+culled). Prepare reuse also keys on screen distance and roll.
 Also: per-scene index lists instead of whole-table scans every step for
 portals (438, dungeon_doors.c and kokiri_scene_update) and scene exits
 (1356, scene_flow_door_at); world_props_step finds spawned props with one
