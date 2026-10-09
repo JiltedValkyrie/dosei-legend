@@ -93,7 +93,20 @@ JO_MAX_FS_BACKGROUND_JOBS = 2
 # added in ram_cart_claim_second_bank); total malloc capacity unchanged.
 JO_GLOBAL_MEMORY_SIZE_FOR_MALLOC ?= 35840
 
-SRCS = src/main.c src/ram_cart.c src/game_mode.c src/message.c src/cutscene.c src/cutscene_actor.c src/save_state.c src/item_drop.c src/world_props.c src/world_signs.c src/world_props_draw.c src/actor_sys.c src/attention.c src/karebaba.c src/karebaba_draw.c src/game_over.c src/collide.c src/save_file.c src/save_device.c src/ui_preferences.c src/file_select.c src/scene_flow.c src/kokiri_sgl.c ../shared/lib/music/music.c src/music_banks.c src/recomp.c src/navi.c src/player_input.c src/gameplay.c src/dialogue_text.c src/text_pool.c src/minimap.c src/health_hud.c src/pause_windows.c src/pause_window_state.c src/cdda.c src/music_songs.c src/action_audio.c src/recomp_camera.c src/recomp_collision.c src/recomp_follow.c src/link_anim.c src/link_anim_state.c src/player_air.c src/player_bg.c src/player_climb.c src/player_crawl.c src/frame_timer.c build/generated/kokiri_scene.c build/generated/kokiri_textures.c build/generated/link_scene.c build/generated/link_textures.c build/generated/link_clips.c build/generated/scene_table.c build/generated/kokiri_actors.c build/generated/kokiri_dialogue.c build/generated/cutscenes.c
+# CORE_COLLISION=1 (default with OOT_CORE=1): the core's z_bgcheck is the only
+# collision world. C bg_* go through src/bg_core_shim.c, C Link's wrappers
+# through src/bg_core_link.c; no C scene buffer/index/dyna carve. 0 links the
+# old C library (shared/lib/collision) as the rollback. Player migration
+# phase 2, docs/PLAYER_MIGRATION.md. Chosen before SRCS: jo_engine_makefile
+# expands its target's objects from SRCS when included.
+OOT_CORE ?= 0
+CORE_COLLISION ?= $(OOT_CORE)
+ifeq ($(OOT_CORE)$(CORE_COLLISION),11)
+COLLISION_SRCS = src/bg_core_shim.c src/bg_core_link.c
+else
+COLLISION_SRCS = src/recomp_collision.c
+endif
+SRCS = src/main.c src/ram_cart.c src/game_mode.c src/message.c src/cutscene.c src/cutscene_actor.c src/save_state.c src/item_drop.c src/world_props.c src/world_signs.c src/world_props_draw.c src/actor_sys.c src/attention.c src/karebaba.c src/karebaba_draw.c src/game_over.c src/collide.c src/save_file.c src/save_device.c src/ui_preferences.c src/file_select.c src/scene_flow.c src/kokiri_sgl.c ../shared/lib/music/music.c src/music_banks.c src/recomp.c src/navi.c src/player_input.c src/gameplay.c src/dialogue_text.c src/text_pool.c src/minimap.c src/health_hud.c src/pause_windows.c src/pause_window_state.c src/cdda.c src/music_songs.c src/action_audio.c src/recomp_camera.c $(COLLISION_SRCS) src/recomp_follow.c src/link_anim.c src/link_anim_state.c src/player_air.c src/player_bg.c src/player_climb.c src/player_crawl.c src/frame_timer.c build/generated/kokiri_scene.c build/generated/kokiri_textures.c build/generated/link_scene.c build/generated/link_textures.c build/generated/link_clips.c build/generated/scene_table.c build/generated/kokiri_actors.c build/generated/kokiri_dialogue.c build/generated/cutscenes.c
 override ASSETS_DIR = ./build/cd
 
 JO_ENGINE_SRC_DIR = ../../joengine/jo_engine
@@ -189,12 +202,17 @@ MY_OBJS = $(patsubst %.c,$(OBJDIR)/%.o,$(notdir $(SRCS)))
 # (build.sh does). Flags mirror oot-core/oot-core-flags.sh. See
 # docs/OOT_CORE_PIPELINE_PLAN.md and docs/BUILD.md.
 OOT_CORE ?= 0
+PLAYER_SOURCE ?= $(OOT_CORE)
+OOT_CORE_MODE = $(OOT_CORE)$(if $(filter 1,$(OOT_CORE)),c$(CORE_COLLISION)p$(PLAYER_SOURCE))
 # OOT_CORE changes ram_cart.h carves and many #ifdefs: a flip must recompile
 # every game object (2026-10-05: a stale non-core ram_cart.o in an OOT_CORE=1
-# image refused the OOTCORE carve, "oc load failed f 0").
+# image refused the OOTCORE carve, "oc load failed f 0"). CORE_COLLISION too.
 OOT_CORE_STAMP = build/generated/oot_core_mode.stamp
-$(shell mkdir -p build/generated; [ "$$(cat $(OOT_CORE_STAMP) 2>/dev/null)" = "$(OOT_CORE)" ] || echo "$(OOT_CORE)" > $(OOT_CORE_STAMP))
+$(shell mkdir -p build/generated; [ "$$(cat $(OOT_CORE_STAMP) 2>/dev/null)" = "$(OOT_CORE_MODE)" ] || echo "$(OOT_CORE_MODE)" > $(OOT_CORE_STAMP))
 ifeq ($(OOT_CORE),1)
+ifeq ($(CORE_COLLISION),1)
+_CCFLAGS += -DCORE_COLLISION
+endif
 ifeq ($(OS),Windows_NT)
 # Jo's Windows SDK has no C++ front end; use the sibling sh2eb-elf g++.
 OOT_CORE_CXX ?= ../../sh2eb-elf/bin/sh2eb-elf-g++
@@ -209,12 +227,15 @@ OOT_CORE_D = build/oot-core/decomp
 OOT_CORE_OBJDIR = $(OBJDIR)/oot-core
 # Cached cart alias of the RAM_CART_OOTCORE carve (src/ram_cart.h; ram_cart.c
 # checks the carve sits here). 0x2xxxxxxx is cache-through: never run code there.
-OOT_CORE_LOAD_ADDR = 0x02770000
-OOT_CORE_MAX_BYTES = 0x90000
+OOT_CORE_LOAD_ADDR = 0x02760000
+OOT_CORE_MAX_BYTES = 0xA0000
+# Low Work RAM span for the core's large BSS (src/ram_low.h RAM_LOW_OOTCORE_BSS).
+OOT_CORE_LOW_BSS_ADDR = 0x0021D800
+OOT_CORE_LOW_BSS_BYTES = 0xA000
 # Scene collision blobs (RAM_CART_SCENECOL carve, cached alias). One per scene in
 # tools/oot_core_import.py SCENE_COLLISION; data only, nothing executes there.
 OOT_SCENECOL_ADDR = 0x02730000
-OOT_SCENECOL_MAX_BYTES = 0x40000
+OOT_SCENECOL_MAX_BYTES = 0x30000
 OOT_CORE_CXXFLAGS = -x c++ -std=gnu++17 -fno-exceptions -fno-rtti -fpermissive -funsigned-char -w \
 	-DOOT_CORE_LOAD_ADDR=$(OOT_CORE_LOAD_ADDR)u -DOOT_SCENECOL_ADDR=$(OOT_SCENECOL_ADDR)u \
 	-DOOT_SCENECOL_MAX_BYTES=$(OOT_SCENECOL_MAX_BYTES)u \
@@ -228,21 +249,37 @@ OOT_CORE_CXXFLAGS = -x c++ -std=gnu++17 -fno-exceptions -fno-rtti -fpermissive -
 	-I$(OOT_CORE_DECOMP)/extracted/ntsc-1.2 -I$(OOT_CORE_DECOMP)
 # Decomp file list: tools/oot_core_import.py SOURCES (writes sources.mk).
 -include build/oot-core/sources.mk
+# PLAYER_SOURCE=1 (default with OOT_CORE=1): the real decomp Player owns Link
+# (z_player*, frame bank, host I/O glue in bridge_player_source.cpp). 0 keeps
+# the C Link + bridge_player.cpp proxy as the rollback. Player migration
+# phase 4, docs/PLAYER_MIGRATION.md.
+PLAYER_SOURCE ?= $(OOT_CORE)
+ifeq ($(PLAYER_SOURCE),1)
+OOT_PLAYER_OWNER_SRCS = $(OOT_PLAYER_SRCS) oot-core/src/player_frame_bank.cpp oot-core/src/player_frame_decode.cpp oot-core/src/bridge_player_source.cpp
+OOT_CORE_CXXFLAGS += -DPLAYER_SOURCE=1 -DPFB_CORE=1
+_CCFLAGS += -DPLAYER_SOURCE=1
+else
+OOT_PLAYER_OWNER_SRCS = oot-core/src/bridge_player.cpp
+endif
 OOT_CORE_SRCS = $(OOT_CORE_DECOMP_SRCS) \
 	oot-core/src/oot_math.cpp oot-core/src/oot_rand.cpp \
 	oot-core/src/oot_core_bench.cpp oot-core/src/oot_core_link_stubs.cpp \
 	oot-core/src/oot_core_api.cpp oot-core/src/bridge_tables.cpp oot-core/src/bridge_libc.cpp \
-	oot-core/src/bridge_play.cpp oot-core/src/bridge_assets.cpp oot-core/src/bridge_player.cpp \
+	oot-core/src/bridge_play.cpp oot-core/src/bridge_assets.cpp $(OOT_PLAYER_OWNER_SRCS) \
 	oot-core/src/bridge_message.cpp oot-core/src/oot_core_views.cpp \
 	oot-core/src/oot_core_draw.cpp build/oot-core/keep_ph.cpp oot-core/src/bridge_npc.cpp \
-	oot-core/src/bridge_items.cpp oot-core/src/bridge_actor_pack.cpp oot-core/src/oot_core_sprite.cpp
+	oot-core/src/bridge_items.cpp oot-core/src/bridge_actor_pack.cpp oot-core/src/oot_core_sprite.cpp oot-core/src/oot_core_bg.cpp
 OOT_CORE_OBJS = $(patsubst %.cpp,$(OOT_CORE_OBJDIR)/%.o,$(notdir $(OOT_CORE_SRCS)))
 OOT_FIELD_SRCS = $(OOT_FIELD_ENEMY_SRCS) oot-core/src/field_enemy_sprite.cpp oot-core/src/field_enemy_pack.cpp
 OOT_FIELD_OBJS = $(patsubst %.cpp,$(OOT_CORE_OBJDIR)/%.o,$(notdir $(OOT_FIELD_SRCS)))
+# Scene-owned NPC/prop actors (tools/scene_pack_actors.py): compiled once,
+# linked into each scene's OAP that can spawn them, never into the core.
+OOT_PACK_ACTOR_OBJS = $(patsubst %.cpp,$(OOT_CORE_OBJDIR)/%.o,$(notdir $(OOT_PACK_ACTOR_SRCS)))
 _CCFLAGS += -DDOSEI_OOT_CORE -DOOT_CORE_LOAD_ADDR=$(OOT_CORE_LOAD_ADDR)u \
 	-DOOT_SCENECOL_ADDR=$(OOT_SCENECOL_ADDR)u -Ioot-core/include
 vpath %.cpp $(sort $(dir $(OOT_CORE_SRCS)))
 vpath %.cpp $(sort $(dir $(OOT_FIELD_SRCS)))
+vpath %.cpp $(sort $(dir $(OOT_PACK_ACTOR_SRCS))) build/oot-core/packs build/oot-core/player
 $(OOT_CORE_OBJDIR):
 	mkdir -p $@
 # Static ctors are fine: OotCoreEntry.init runs the blob's ctor table.
@@ -254,24 +291,42 @@ $(OOT_CORE_OBJDIR)/z_bgcheck.o: oot-core/include/bgcheck_bounds.h
 $(OOT_CORE_OBJDIR)/bridge_player.o: oot-core/include/bgcheck_bounds.h
 $(OOT_FIELD_OBJS): oot-core/include/field_enemy_sprite.h
 $(OOT_CORE_OBJDIR)/field_enemy_sprite.o: build/oot-core/field_anchors.inc
-build/oot-core/field_exports.ld: $(OOT_FIELD_OBJS) $(OOT_CORE_OBJS) tools/build_pack_exports.py
-	"$(PYTHON)" tools/build_pack_exports.py --nm $(patsubst %g++,%nm,$(patsubst %gcc,%nm,$(OOT_CORE_CXX))) --pack $(OOT_FIELD_OBJS) --resident $(OOT_CORE_OBJS) --out $@
+build/oot-core/field_exports.ld: $(OOT_FIELD_OBJS) $(OOT_PACK_ACTOR_OBJS) $(OOT_CORE_OBJS) tools/build_pack_exports.py
+	"$(PYTHON)" tools/build_pack_exports.py --nm $(patsubst %g++,%nm,$(patsubst %gcc,%nm,$(OOT_CORE_CXX))) --pack $(OOT_FIELD_OBJS) $(OOT_PACK_ACTOR_OBJS) --resident $(OOT_CORE_OBJS) --out $@
 build/oot-core/oot-core.elf: $(OOT_CORE_OBJS) build/oot-core/sources.mk oot-core/oot-core.ld build/oot-core/obj_syms.ld build/oot-core/msg_syms.ld build/oot-core/field_exports.ld
 	$(OOT_CORE_CXX) -m2 -nostdlib -nostartfiles -T oot-core/oot-core.ld \
 		-Wl,--defsym,OOT_CORE_LOAD_ADDR=$(OOT_CORE_LOAD_ADDR) \
 		-Wl,--defsym,OOT_CORE_MAX_BYTES=$(OOT_CORE_MAX_BYTES) \
+		-Wl,--defsym,OOT_CORE_LOW_BSS_ADDR=$(OOT_CORE_LOW_BSS_ADDR) \
+		-Wl,--defsym,OOT_CORE_LOW_BSS_BYTES=$(OOT_CORE_LOW_BSS_BYTES) \
 		-Wl,--gc-sections -Wl,-Map,build/oot-core/oot-core.map \
 		$(OOT_CORE_OBJS) build/oot-core/msg_syms.ld build/oot-core/obj_syms.ld build/oot-core/field_exports.ld -lgcc -o $@
 $(ASSETS_DIR)/OOTCORE.BIN: build/oot-core/oot-core.elf
 	$(CONV) -O binary $< $@
-# Field code and data must fit the existing scene carve together. Bind the
-# pack to the exact resident image; changing the core always relinks it.
-OOT_FIELD_PAYLOADS = SA.OOC O018.OOB O06D.OOB O07C.OOB O0C5.OOB O12F.OOB O184.OOB
-build/oot-core/field/SA.OAP: build/oot-core/oot-core.elf $(ASSETS_DIR)/OOTCORE.BIN $(OOT_FIELD_OBJS) $(addprefix $(ASSETS_DIR)/,$(OOT_FIELD_PAYLOADS)) tools/build_actor_packs.py oot-core/pack.ld
-	"$(PYTHON)" tools/build_actor_packs.py --core build/oot-core/oot-core.elf --core-bin $(ASSETS_DIR)/OOTCORE.BIN --obj-syms build/oot-core/obj_syms.ld --output $@ --cxx $(OOT_CORE_CXX) --scene 10 --objects $(OOT_FIELD_OBJS) $(foreach p,$(OOT_FIELD_PAYLOADS),--payload $(p)=$(ASSETS_DIR)/$(p)) --carve-base $(OOT_SCENECOL_ADDR) --carve-bytes $(OOT_SCENECOL_MAX_BYTES)
-$(ASSETS_DIR)/SA.OAP: build/oot-core/field/SA.OAP
+# One OAP per scene that owns pack actors (OOT_SCENE_PACKS, generated by
+# oot_core_import.py): its NPC/prop actors plus, for Hyrule Field (SA), the
+# Field enemies. Scene code and data must fit the scene carve together. Bind
+# each pack to the exact resident image; changing the core relinks them all.
+define SCENE_PACK_RULE
+OOT_PACK_$(1)_OBJS = $$(patsubst %,$$(OOT_CORE_OBJDIR)/%.o,$$(OOT_PACK_$(1)_ACTORS) $(1)_profiles) $$(if $$(filter SA,$(1)),$$(OOT_FIELD_OBJS))
+OOT_PACK_$(1)_PAYLOADS = $(1).OOC $$(addsuffix .OOB,$$(OOT_PACK_$(1)_OBJECTS))
+build/oot-core/packs/$(1).OAP: build/oot-core/oot-core.elf $$(ASSETS_DIR)/OOTCORE.BIN $$(OOT_PACK_$(1)_OBJS) $$(addprefix $$(ASSETS_DIR)/,$$(OOT_PACK_$(1)_PAYLOADS)) tools/build_actor_packs.py oot-core/pack.ld
+	"$$(PYTHON)" tools/build_actor_packs.py --core build/oot-core/oot-core.elf --core-bin $$(ASSETS_DIR)/OOTCORE.BIN --obj-syms build/oot-core/obj_syms.ld --output $$@ --cxx $$(OOT_CORE_CXX) --scene $$(OOT_PACK_$(1)_SCENE) --objects $$(OOT_PACK_$(1)_OBJS) $$(foreach p,$$(OOT_PACK_$(1)_PAYLOADS),--payload $$(p)=$$(ASSETS_DIR)/$$(p)) --carve-base $$(OOT_SCENECOL_ADDR) --carve-bytes $$(OOT_SCENECOL_MAX_BYTES)
+$$(ASSETS_DIR)/$(1).OAP: build/oot-core/packs/$(1).OAP
+	cp $$< $$@
+$$(TARGET2): $$(ASSETS_DIR)/$(1).OAP
+endef
+$(foreach s,$(OOT_SCENE_PACKS),$(eval $(call SCENE_PACK_RULE,$(s))))
+# Real Player frames (PLAYER_SOURCE): the whole bank, resident for the
+# session. build.sh regenerates bank_full when its inputs change.
+ifeq ($(PLAYER_SOURCE),1)
+$(ASSETS_DIR)/PLAYANIM.PFB: build/player-migration/bank_full/ALL.PFB
 	cp $< $@
-$(TARGET2): $(ASSETS_DIR)/SA.OAP
+$(TARGET2): $(ASSETS_DIR)/PLAYANIM.PFB
+endif
+# Core + every scene pack without mastering a disc (link/fit check).
+.PHONY: oot-scene-packs
+oot-scene-packs: $(patsubst %,build/oot-core/packs/%.OAP,$(OOT_SCENE_PACKS))
 # Infrastructure fixture is never staged on the disc or registered as an actor.
 .PHONY: oot-actor-pack-test
 oot-actor-pack-test: build/oot-core/generic_sprites.h build/oot-core/pack-test/TEST.OAP

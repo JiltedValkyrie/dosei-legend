@@ -23,7 +23,7 @@ GAME = Path(__file__).resolve().parent.parent
 
 # Astra's five-region design (PLAYER_MIGRATION.md), cached addresses.
 REGIONS = [
-    ('CORE', 0x02770000, 589824),
+    ('CORE', 0x02760000, 655360),
     ('LOWA', 0x0021D800, 40960),
     ('LOWB', 0x002FA000, 24576),
     ('MUSIC', 0x026EC800, 20480),

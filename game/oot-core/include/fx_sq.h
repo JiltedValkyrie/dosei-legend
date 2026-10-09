@@ -127,6 +127,15 @@ static inline Fx OotFx_Q15Normal(long n) {
     return Fx::raw(n < 0 ? -m : m);
 }
 
+/* COLPOLY_SNORMAL (importer rewrites bgcheck.h): (s16)(x * 32767) with the
+ * same truncation, 32-bit integer only; constant-folds for FXL literals. */
+static constexpr inline short OotFx_Q15SNormal(Fx x) {
+    fx_uraw m = fx_abs_u(x.v);
+    if (m > 0x10000u) m = 0x10000u;      /* normals are within +-1.0 */
+    m = (m * 32767u) >> 16;
+    return (short)(x.v < 0 ? -(fx_raw)m : (fx_raw)m);
+}
+
 #define FX_SQ_CMP(op)                                                                            \
     static inline bool operator op(const FxSqExpr& a, const FxSqExpr& b) { return OotFx_SqCompare(a, b) op 0; } \
     static inline bool operator op(const FxSqExpr& a, Fx b) { return OotFx_SqCompareValue(a, b) op 0; }        \

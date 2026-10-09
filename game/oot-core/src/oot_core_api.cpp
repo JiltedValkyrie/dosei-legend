@@ -14,6 +14,7 @@
 #include "segmented_address.h"
 #include "z_actor_dlftbls.h"
 #include "zelda_arena.h"
+#include "oot_core_bg.h"
 #include "item.h"
 #include "save.h"
 #include "message.h"
@@ -344,6 +345,7 @@ static int oot_core_play_init(void* block, unsigned int bytes, int scene_id, con
     THA_Init(&play->state.tha, mem, OOT_CORE_PLAY_THA_BYTES);
     mem += OOT_CORE_PLAY_THA_BYTES;
     ZeldaArena_Init(mem, OOT_CORE_PLAY_ARENA_BYTES);
+    OotCoreBg_FastReset();
     mem += OOT_CORE_PLAY_ARENA_BYTES;
     OotCore_GfxInit(mem); /* scratch display lists (never executed) */
 
@@ -414,9 +416,24 @@ static int oot_core_play_init(void* block, unsigned int bytes, int scene_id, con
     sPlayerEntry.rot.y = yaw;
     sPlayerEntry.rot.z = 0;
     sPlayerEntry.params = 0;
+#ifdef PLAYER_SOURCE
+    /* Real Player: arrive standing (or swimming); no title card, no N64
+     * scene table entry (loadedScene only feeds the title card). A void-out
+     * or respawn set gSaveContext.respawnFlag before this reload; Player_Init
+     * consumes it, then Play_Init's reset follows. */
+    sPlayerEntry.params = PLAYER_PARAMS(PLAYER_START_MODE_IDLE, PLAYER_START_BG_CAM_DEFAULT);
+    {
+        static SceneTableEntry sSaturnScene;
+        play->loadedScene = &sSaturnScene;
+    }
+    gSaveContext.showTitleCard = false;
+#endif
     play->playerEntry = &sPlayerEntry;
     seed_scene_save(scene_id);
     Actor_InitContext(play, &play->actorCtx, play->playerEntry);
+#ifdef PLAYER_SOURCE
+    gSaveContext.respawnFlag = 0;
+#endif
     load_transition_actors(play);
     Actor_SpawnTransitionActors(play, &play->actorCtx);
     load_room_actors(play, room);
@@ -469,6 +486,7 @@ static void oot_core_player_push(int* x, int* z) {
 
 static Input sHostInput;
 static s8 sPendingStickY;
+static s8 sHeldStickY;   /* PLAYER_SOURCE: the stick as held, for the real Player */
 
 static void oot_core_set_input(unsigned short held, unsigned short press, signed char stick_x, signed char stick_y) {
     sHostInput.prev = sHostInput.cur;
@@ -484,6 +502,7 @@ static void oot_core_set_input(unsigned short held, unsigned short press, signed
     if (stick_y != 0) {
         sPendingStickY = stick_y;
     }
+    sHeldStickY = stick_y;
 }
 
 static void oot_core_set_player(int x, int y, int z, short yaw) {
@@ -659,6 +678,31 @@ static void oot_core_set_save(const OotCoreSave* in) {
     inv->ammo[SLOT_DEKU_STICK] = in->stick_ammo;
     inv->ammo[SLOT_DEKU_NUT] = in->nut_ammo;
     inv->ammo[SLOT_SLINGSHOT] = in->seed_ammo;
+    /* B is the equipped sword, C buttons the host's assignments (source
+     * buttonItems/cButtonSlots): the real Player uses items from these. */
+    {
+        static const u8 swords[4] = { ITEM_NONE, ITEM_SWORD_KOKIRI, ITEM_SWORD_MASTER, ITEM_SWORD_BIGGORON };
+        ItemEquips* eq = &gSaveContext.save.info.equips;
+        eq->buttonItems[0] = swords[in->equip_sword & 3];
+        for (i = 0; i < 3; i++) {
+            u8 slot = in->c_slots[i];
+            eq->cButtonSlots[i] = slot;
+            eq->buttonItems[i + 1] = slot < ARRAY_COUNT(inv->items) ? inv->items[slot] : ITEM_NONE;
+        }
+        eq->equipment = (eq->equipment & ~0x0F00) | (((in->tunic > 2 ? 0 : in->tunic) + 1) << 8);
+#ifdef PLAYER_SOURCE
+        /* KaleidoScope's equip path: the real Player re-reads its sword,
+         * shield, tunic and boots when the pause menu changed them. */
+        {
+            static u16 sLastEquips = 0xFFFF;
+            Player* player = gOotCorePlay != NULL ? GET_PLAYER(gOotCorePlay) : NULL;
+            if (eq->equipment != sLastEquips && player != NULL) {
+                Player_SetEquipmentData(gOotCorePlay, player);
+            }
+            sLastEquips = player != NULL ? eq->equipment : 0xFFFF;
+        }
+#endif
+    }
 }
 
 /* Room_RequestNewRoom + Room_ProcessRoomRequest (actor list) +
@@ -722,6 +766,12 @@ static u32 Phase_Us(u32 t0) {
     return (gOotCoreHost != NULL && gOotCoreHost->ticks_to_us != NULL) ? gOotCoreHost->ticks_to_us(Phase_Now() - t0)
                                                                         : 0;
 }
+u32 OotCore_PhaseNow(void) {
+    return Phase_Now();
+}
+u32 OotCore_PhaseUs(u32 t0) {
+    return Phase_Us(t0);
+}
 
 static void oot_core_update(void) {
     PlayState* play = gOotCorePlay;
@@ -732,6 +782,12 @@ static void oot_core_update(void) {
     }
     sHostInput.rel.stick_y = sPendingStickY;
     sHostInput.cur.stick_y = sPendingStickY;
+#ifdef PLAYER_SOURCE
+    /* Walking reads the held stick; only text choices step on a flick. */
+    if (play->msgCtx.msgMode == MSGMODE_NONE) {
+        sHostInput.rel.stick_y = sHostInput.cur.stick_y = sHeldStickY;
+    }
+#endif
     sPendingStickY = 0;
     play->state.input[0] = sHostInput;
     sHostInput.press.button = 0;
@@ -938,6 +994,14 @@ static unsigned int oot_core_water_boxes(const void** boxes) {
     *boxes = col->waterBoxes;
     return col->waterBoxes ? col->numWaterBoxes : 0;
 }
+#ifdef PLAYER_SOURCE
+int OotCore_PlayerBank(const void* bank, unsigned int bytes);   /* bridge_player_source.cpp */
+int OotCore_PlayerView(OotCorePlayerView* out);
+void OotCore_PlayerDamage(int damage);
+int OotCore_PlayerPose(unsigned int id, unsigned int frame, short* out);
+int OotCore_PlayerJump(void);
+void OotCore_PlayerWarp(int x, int y, int z, short yaw);
+#endif
 unsigned int OotCore_SpritePreload(const void*, const OotCoreSpriteLibrary*, unsigned int,
                                   unsigned char**, unsigned int*);
 const unsigned char* OotCore_SpriteClip(const unsigned char*, unsigned int);
@@ -994,4 +1058,20 @@ extern "C" const OotCoreEntry oot_core_entry __attribute__((section(".oot_entry"
     OotCore_SpritePreload,
     OotCore_SpriteClip,
     oot_core_water_boxes,
+    OotCoreBg_Api,
+#ifdef PLAYER_SOURCE
+    OotCore_PlayerBank,
+    OotCore_PlayerView,
+    OotCore_PlayerDamage,
+    OotCore_PlayerPose,
+    OotCore_PlayerJump,
+    OotCore_PlayerWarp,
+#else
+    NULL,
+    NULL,
+    NULL,
+    NULL,
+    NULL,
+    NULL,
+#endif
 };

@@ -17,6 +17,7 @@
 #define OOT_SQ(x) OotSq(x)
 #define OOT_IS_ZERO(f) OotIsZero(f)
 #define OOT_Q15_NORMAL(n) OotFx_Q15Normal(n)
+#define OOT_Q15_SNORMAL(x) OotFx_Q15SNormal(x)
 #define float Fx
 #define double Fx
 /* The importer wraps every floating literal: FXL(0.5f) is an Fx constant. */
@@ -26,6 +27,7 @@
 #define OOT_SQ(x) ((x) * (x))
 #define OOT_IS_ZERO(f) (fabsf(f) < 0.008f)
 #define OOT_Q15_NORMAL(n) ((n) * COLPOLY_NORMAL_FRAC)
+#define OOT_Q15_SNORMAL(x) ((s16)((x) * SHT_MAX))
 typedef float FxSq;
 #define OotFx_Det2(a, b, c, d) (((a) * (b)) - ((c) * (d)))
 #define OotFx_ScaleWrap16(x, K) ((short)(long)((x) * ((K) / 65536.0f)))

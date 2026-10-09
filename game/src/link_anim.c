@@ -127,6 +127,9 @@ static void publish_frames(unsigned char *data)
 bool link_anim_load(void)
 {
     unsigned char *data;
+#ifdef PLAYER_SOURCE
+    return true;    /* PLAYER_SOURCE: poses come from the core's frame bank */
+#endif
     if(link_root)return true;
     data=read_frames(false);
     if(!data)return false;
@@ -178,6 +181,10 @@ bool __attribute__((optimize("Os"))) link_anim_prepare_age(bool adult)
         }
         for(i=0;i<model->vertices;++i)if(!(visited&(1u<<owners[i])))return false;
     }
+#ifdef PLAYER_SOURCE
+    pending_model=adult ? model : 0;   /* skin only; frames are the bank's */
+    return true;
+#endif
     pending_frames=read_frames(adult);
     if(!pending_frames)return false;
     pending_model=adult ? model : 0;
@@ -262,7 +269,10 @@ void            link_anim_upper_clear(void)
 ** The measured ~97 ms regression was the runtime toFIXED conversions below,
 ** not evidence that every int64 multiply calls libgcc: the forest depth loop
 ** compiles its int64 products to native dmuls.l as well. Inspect target code. */
-#define FIXED_MUL(a, b)  slMulFX((a), (b))
+/* 2026-10-09 speed: inline. slMulFX is an out-of-line SGL call; this is the
+ * same native dmuls.l (allowed hardware 32x32 product, CLAUDE.md), same
+ * truncation, no libgcc helper. */
+#define FIXED_MUL(a, b)  ((FIXED)(((int64_t)(a) * (int64_t)(b)) >> 16))
 /* SGL's toFIXED macro multiplies by 65536.0: runtime integers therefore
  * become SOFTWARE DOUBLE calls on SH-2. These coordinates are integers in
  * signed 16-bit range; multiplication is exact and defined for negative
@@ -425,30 +435,43 @@ static void     pose_skeleton(const int16_t *root, const int16_t *rotations)
 */
 /* Shared by Link and his adult gear meshes (kokiri_sgl.c): pose `count`
 ** limb-local vertices by their owning limb into SGL POINTs. */
-void link_anim_skin(const uint8_t *owners, const link_vec3_t *locals, unsigned int count, POINT *out)
+static void skin_raw(const uint8_t *owners, const link_vec3_t *locals, unsigned int count, POINT *out)
 {
     unsigned int    i;
+    const FIXED     sx = INTEGER_FIXED(link_anim_shift(0));
+    const FIXED     sy = INTEGER_FIXED(link_anim_shift(1));
+    const FIXED     sz = INTEGER_FIXED(link_anim_shift(2));
 
     for (i = 0; i < count; ++i)
     {
         const limb_matrix_t *m = &limb_matrices[owners[i] < LINK_LIMB_COUNT ? owners[i] : 0];
         const link_vec3_t   *local = &locals[i];
+        int32_t             lx = local->x, ly = local->y, lz = local->z;
         int32_t             posed[3];
         unsigned int        axis;
 
+        /* FIXED_MUL(m, local << 16) is exactly m * local: one 32-bit mul.l
+         * each (2026-10-09 speed; was 9 slMulFX calls per vertex). |m| <=
+         * 65536 and Link/gear locals are < 2000 model units (max 1666), so
+         * every sum stays far below 2^31. */
         for (axis = 0; axis < 3; ++axis)
             posed[axis] = m->origin[axis]
-                + (FIXED_MUL(m->m[axis][0], INTEGER_FIXED(local->x))
-                 + FIXED_MUL(m->m[axis][1], INTEGER_FIXED(local->y))
-                 + FIXED_MUL(m->m[axis][2], INTEGER_FIXED(local->z))) / 65536;
+                + (m->m[axis][0] * lx + m->m[axis][1] * ly + m->m[axis][2] * lz) / 65536;
 
         /* Integer model * Q16 scale is ALREADY fixed world position. Keep its
          * fraction: shifting down and back up collapses small face triangles
          * and makes silhouettes jump by a whole world unit while animating. */
-        out[i][X] = posed[0] * LINK_ANIM_SCALE_Q16 + INTEGER_FIXED(link_anim_shift(0));
-        out[i][Y] = -(posed[1] * LINK_ANIM_SCALE_Q16 + INTEGER_FIXED(link_anim_shift(1)));
-        out[i][Z] = posed[2] * LINK_ANIM_SCALE_Q16 + INTEGER_FIXED(link_anim_shift(2));
+        out[i][X] = posed[0] * LINK_ANIM_SCALE_Q16 + sx;
+        out[i][Y] = -(posed[1] * LINK_ANIM_SCALE_Q16 + sy);
+        out[i][Z] = posed[2] * LINK_ANIM_SCALE_Q16 + sz;
     }
+}
+
+/* Gear meshes (kokiri_sgl.c) from the master: wait for the slave's skin. */
+void link_anim_skin(const uint8_t *owners, const link_vec3_t *locals, unsigned int count, POINT *out)
+{
+    link_anim_sync();
+    skin_raw(owners, locals, count, out);
 }
 
 static void     skin_vertices(void)
@@ -461,9 +484,132 @@ static void     skin_vertices(void)
         owners=(const uint8_t *)(link_age_model+1);
         locals=(const link_vec3_t *)(owners+((count+3u)&~3u));
     }
-    link_anim_skin(owners, locals, count, link_points);
+    skin_raw(owners, locals, count, link_points);
 }
 
+#ifdef PLAYER_SOURCE
+#include "oot_core_host.h"
+#include "../build/oot-core/player/link_clip_bank.h"
+typedef char link_clip_bank_matches[LINK_CLIP_BANK_COUNT == LINK_CLIP_COUNT ? 1 : -1];
+#define OOT_CORE_ENTRY ((const OotCoreEntry *)OOT_CORE_LOAD_ADDR)
+
+/* C clip frame -> source frame: build_link_model samples first + f * stride,
+** wrapping a partial clip, clamping a complete one (the core clamps too). */
+static bool bank_frame(unsigned int clip, unsigned int frame, int16_t out[OOT_CORE_PLAYER_JOINTS])
+{
+    unsigned int src = link_clip_bank[clip].first + frame * link_clip_bank[clip].stride;
+    unsigned int i;
+    if (!OOT_CORE_ENTRY->player_pose ||
+        !OOT_CORE_ENTRY->player_pose(link_clip_bank[clip].id, src, out)) return false;
+    if (!link_clip_bank[clip].raw && !link_anim_is_adult())
+        for (i = 0; i < 3; ++i)   /* build_link_model child_root: x0.64, half up */
+            out[i] = (int16_t)((out[i] * 41943 + 32768) >> 16);
+    return true;
+}
+
+void            link_anim_pose(unsigned int clip, unsigned int frame,
+                               unsigned int fraction)
+{
+    link_anim_sync();
+    static int16_t a[OOT_CORE_PLAYER_JOINTS], b[OOT_CORE_PLAYER_JOINTS];
+    int16_t root[3], rotations[LINK_LIMB_COUNT * 3];
+    const link_clip_t *entry;
+    unsigned int i, next;
+
+    if (clip >= LINK_CLIP_COUNT)
+        clip = LINK_CLIP_IDLE;
+    entry = &link_clips[clip];
+    if (entry->count == 0)
+        return;
+    frame %= entry->count;
+    fraction &= 255;
+    if ((int)(entry->first + frame) == posed_frame && fraction == posed_fraction)
+        return;
+    next = frame + 1 < entry->count ? frame + 1 : (link_clip_pinned[clip] ? frame : 0);
+    if (!bank_frame(clip, frame, a)) return;
+    if (fraction && !bank_frame(clip, next, b)) return;
+    posed_frame = (int)(entry->first + frame);
+    posed_fraction = fraction;
+    for (i = 0; i < 3; ++i)
+        root[i] = fraction ? (int16_t)(a[i] + (b[i] - a[i]) * (int)fraction / 256) : a[i];
+    if (link_clip_pinned[clip]) {
+        root[0] = link_anim_pinned_root(0);
+        if (link_clip_pinned[clip] == 1)
+            root[1] = link_anim_pinned_root(1);
+        root[2] = link_anim_pinned_root(2);
+    }
+    for (i = 0; i < LINK_LIMB_COUNT * 3; ++i) {
+        int32_t delta = fraction ? (int16_t)(uint16_t)(b[3 + i] - a[3 + i]) : 0;
+        rotations[i] = (int16_t)(a[3 + i] + delta * (int)fraction / 256);
+    }
+    pose_skeleton(root, rotations);
+    skin_vertices();
+}
+
+/* The real Player's jointTable (root xyz, 21 limb rotations, face), as its
+** own Draw would walk it. Re-skins only when the pose changed. */
+static void pose_joints_raw(const int16_t *joints)
+{
+    static int16_t last[3 + LINK_LIMB_COUNT * 3];
+    if (posed_frame == -2 && !memcmp(last, joints, sizeof last)) return;
+    memcpy(last, joints, sizeof last);
+    posed_frame = -2;
+    pose_skeleton(joints, joints + 3);
+    skin_vertices();
+}
+
+/* 2026-10-09: Link's skin runs on the slave SH-2 at the start of the draw
+** (kokiri_frame_slave_kick). recomp.c only records the joints; every master
+** reader of his bones/points calls link_anim_sync first: it waits for the
+** slave's skin, or skins here when no job took it. */
+static const int16_t *pending_joints;
+static unsigned int skin_kicked, skin_done;
+#define SKIN_DONE (*(volatile unsigned int *)((uintptr_t)&skin_done | 0x20000000u))
+
+void link_anim_request_joints(const int16_t *joints)
+{
+    link_anim_sync();
+    pending_joints = joints;
+}
+
+const int16_t *link_anim_take_joints(void)
+{
+    const int16_t *joints = pending_joints;
+    pending_joints = 0;
+    if (joints) {
+        SKIN_DONE = 0;
+        skin_kicked = 1;
+    }
+    return joints;
+}
+
+/* Slave side only. */
+void link_anim_skin_on_slave(const int16_t *joints)
+{
+    pose_joints_raw(joints);
+    SKIN_DONE = 1;
+}
+
+void link_anim_sync(void)
+{
+    if (skin_kicked) {
+        while (!SKIN_DONE) ;
+        slCashPurge();             /* see the slave's matrices and points */
+        skin_kicked = 0;
+    } else if (pending_joints) {
+        const int16_t *joints = pending_joints;
+        pending_joints = 0;
+        pose_joints_raw(joints);
+    }
+}
+
+void link_anim_pose_joints(const int16_t *joints)
+{
+    link_anim_sync();
+    pose_joints_raw(joints);
+}
+#else
+void link_anim_sync(void) {}
 void            link_anim_pose(unsigned int clip, unsigned int frame,
                                unsigned int fraction)
 {
@@ -553,9 +699,11 @@ void            link_anim_pose(unsigned int clip, unsigned int frame,
     pose_skeleton(root, rotations);
     skin_vertices();
 }
+#endif
 
 void            link_anim_reset(void)
 {
+    link_anim_sync();
     posed_frame = -1;
     upper_clip = -1;    /* a scene or file reload never keeps a carry pose */
     /* Low RAM has no boot-zero guarantee. Anchors can be queried before the
@@ -568,6 +716,7 @@ void            link_anim_reset(void)
  * (1100, -700, 0). Link-local Q16, like link_anim_blade. Navi's anchor. */
 void link_anim_focus(int32_t out[3])
 {
+    link_anim_sync();
     const limb_matrix_t *head = &limb_matrices[10];
     unsigned int axis;
     for (axis = 0; axis < 3; ++axis) {
@@ -583,6 +732,7 @@ void link_anim_focus(int32_t out[3])
 
 void link_anim_limb(unsigned int limb, int32_t out[3])
 {
+    link_anim_sync();
     const limb_matrix_t *m = &limb_matrices[limb < 21 ? limb : 0];
     unsigned int axis;
     for (axis = 0; axis < 3; ++axis)
@@ -593,6 +743,7 @@ void link_anim_limb(unsigned int limb, int32_t out[3])
  * z_player_lib.c Kokiri sword: base (0,400,0), tip (3000,400,0). */
 void link_anim_blade(int32_t out[2][3])
 {
+    link_anim_sync();
     const limb_matrix_t *hand = &limb_matrices[15];
     unsigned int end, axis;
     for (end = 0; end < 2; ++end) {
@@ -615,6 +766,7 @@ void link_anim_blade(int32_t out[2][3])
  * Keep separate from the sword: the stick uses a one-hand slash. */
 void link_anim_stick(int32_t out[2][3])
 {
+    link_anim_sync();
     const limb_matrix_t *hand = &limb_matrices[15];
     static const int32_t offsets[2][3] = {
         { 0, 400, 0 }, { 5000, 400, 0 }

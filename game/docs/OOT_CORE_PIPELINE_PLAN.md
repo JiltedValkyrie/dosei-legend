@@ -133,6 +133,25 @@ Removal and vertically locked restoration superseded.
 
 ## NEXT SESSION: mandatory Link migration (human, 2026-10-06)
 
+2026-10-09 (Claude): real decomp Player is live in Clean (`PLAYER_SOURCE=1`,
+API v28, phases 1/3/4/5 first cut). Next: human test batch, fix what it
+finds, then phase 6 parity and phase 7 C Link deletion. See
+PLAYER_MIGRATION.md "Real Player live in Clean".
+Performance work: read the Debug overlay rows as documented in
+[DEBUG_OVERLAY.md](DEBUG_OVERLAY.md) (human report: ~6 FPS Kokiri, CPU bound).
+Goal (human 2026-10-09): 20 FPS minimum, no 64-bit maths. Latest (Claude):
+decomp core update runs on the slave SH-2 during the scene/Link draw
+(PLAYER_MIGRATION.md "Core update on the slave SH-2"); Navi is En_Elf. Second Debug build
+(2026-10-09) adds catch-up cap 2, camera constraint once per frame, z_bgcheck
+integer fast paths (host-identical) and sub-timer rows 10-12; awaiting human
+Kokiri overlay screenshots before the next cut.
+
+Cutover phase 2 done in code (Claude, 2026-10-09): one collision world, core
+z_bgcheck behind `CORE_COLLISION=1` in the usual Clean image (API v27,
+.bss 10,080 B spare, audits clean). Human Clean runtime batch + speed vs C
+open. Next Claude work: phase 3 (frame bank as AnimTaskQueue_AddLoadPlayerFrame,
+common set, cutscene preload/pin). See PLAYER_MIGRATION.md "Phase 2".
+
 Latest human ordering (2026-10-08): Field enemies, then Water Temple enemies,
 obstacles and puzzles. Mandatory Player migration remains required, especially
 for horseback Big Poes, Like Like capture and Dark Link; neither a proxy nor an

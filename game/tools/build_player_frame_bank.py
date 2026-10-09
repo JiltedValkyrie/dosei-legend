@@ -489,8 +489,20 @@ def main():
     if args.oot is None:
         raise SystemExit('set OOT or --oot')
     heads, counts = frames.headers(args.oot), frames.frame_counts(args.oot)
-    refs = frames.relocated(args.objdump, args.player_gc)
-    reach = sorted(h for h in heads if h in refs)
+    # The GC probe object is optional: the source text scan below covers
+    # every clip the Player and the Saturn C clips name.
+    refs = frames.relocated(args.objdump, args.player_gc) if args.player_gc.exists() else set()
+    # Fail safe (Player cutover, 2026-10-09): the GC probe's relocations
+    # missed clips the linked Player reaches through age/action tables (child
+    # ladder, chest, guard, jump slash...). Every header the Player sources
+    # name, and every clip the Saturn C cutscenes pose (build_link_model
+    # CLIPS), is in the bank: a missing id is a fatal error at runtime.
+    text = ''
+    for rel in ('src/code/z_player_lib.c', 'src/overlays/actors/ovl_player_actor/z_player.c'):
+        text += (args.oot / rel).read_text(encoding='utf-8')
+    text += (GAME / 'tools/build_link_model.py').read_text(encoding='utf-8')
+    named = set(re.findall(r'\bgPlayerAnim_\w+', text))
+    reach = sorted(h for h in heads if h in refs or h in named)
     resident_h, packs_h, unreachable_h = residency(args.oot, set(reach))
     context = clip_context(args.oot, set(reach))
     per_data = {}

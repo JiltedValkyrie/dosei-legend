@@ -43,6 +43,7 @@
 #include "link_anim_state.h"
 #include "link_clips.h"
 #include "frame_timer.h"
+#include "perf_sub.h"
 #include "oot_follow.h"
 #include "ram_cart.h"
 #include "ram_low.h"
@@ -145,6 +146,9 @@ static bool __attribute__((optimize("Os"))) dialogue_text_load(void)
 /* oot-core: decomp code in OOTCORE.BIN (oot_core_host.c); the header gives
 ** inline no-op stubs when DOSEI_OOT_CORE is off. */
 #include "oot_core_host.h"
+#ifdef CORE_COLLISION
+#include "bg_core_shim.h"
+#endif
 
 #ifdef DOSEI_TEXTURE_PROBE
 #include "texture_probe.h"
@@ -191,6 +195,14 @@ int32_t             recomp_screen_distance(void)
 }
 
 /* Text diagnostics are cold glue, not geometry. Keep their code compact. */
+unsigned int perf_sub[PS_COUNT];
+unsigned int perf_sub_last[PS_COUNT];
+void perf_sub_latch(void)
+{
+    unsigned int i;
+    for (i = 0; i < PS_COUNT; ++i) { perf_sub_last[i] = perf_sub[i]; perf_sub[i] = 0; }
+}
+
 static void __attribute__((optimize("Os"))) diagnostic_overlay(void)
 {
     {
@@ -200,8 +212,19 @@ static void __attribute__((optimize("Os"))) diagnostic_overlay(void)
         unsigned int work = frame_timer_frame();
         unsigned int total = work + frame_timer_cost(FRAME_PHASE_SYNC);
         unsigned int cpu = total ? work * 100u / total : 0;
-        jo_printf(1, JO_TV_HEIGHT / 8 - 1, "VRAM %3u%%   CPU~ %3u%%   ",
-                  kokiri_scene_vram_percent(), cpu);
+        /* Per SH-2 (2026-10-09): M = master frame-callback share; S = the
+         * slave's jobs (Link skin + scene prepare + decomp core update); its
+         * SGL polygon work is not counted. */
+        static unsigned int slave_smooth;
+#ifdef DOSEI_OOT_CORE
+        unsigned int slave = total ? (oot_core_slave_job_us() + kokiri_frame_slave_us()) * 100u / total : 0;
+#else
+        unsigned int slave = total ? kokiri_frame_slave_us() * 100u / total : 0;
+#endif
+        if (slave > 100u) slave = 100u;
+        slave_smooth += (int)(slave - slave_smooth) >> 2;
+        jo_printf(1, JO_TV_HEIGHT / 8 - 1, "VRAM %3u%%  M %3u%%  S %3u%%  ",
+                  kokiri_scene_vram_percent(), cpu, slave_smooth);
     }
     /* Last text writer: available on Clean, title, menus and cutscenes too.
      * recomp_clock is normalized to 60 Hz, independent of rendering rate/PAL.
@@ -273,12 +296,15 @@ static void __attribute__((optimize("Os"))) viewer_draw(void)
     frame_timer_sample_vdp1();
     frame_timer_frame_begin();
     frame_timer_begin(FRAME_PHASE_MOVEMENT);
+    PS_T0();
     recomp_update();
+    PS_ADD(PS_RU);
     if (!recomp_code_fanfare_active() && !kokiri_scene_update()) {
         scene_ready = false;
         jo_printf(2, 2, "room load FAILED");
         return;
     }
+    PS_ADD(PS_KS);
 #if defined(DOSEI_PERF_PROBE) && DOSEI_PERF_PROBE == 1
     /* Repeatable no-input render baseline. Never enabled in normal builds. */
     recomp_camera.x = -300; recomp_camera.y = 141; recomp_camera.z = -260;
@@ -378,6 +404,49 @@ static void __attribute__((optimize("Os"))) viewer_draw(void)
     slRotX((ANGLE)(0u-recomp_pitch));
     slRotY((ANGLE)(0u-recomp_yaw));
     jo_3d_translate_matrix(-recomp_camera.x, recomp_camera.y, -recomp_camera.z);
+    /* 2026-10-09: the slave SH-2 skins Link and prepares the scene (depth,
+     * culling, fog) while the master submits the actors below. */
+    kokiri_frame_slave_kick(!kokiri_scene_backdrop_active() && !cutscene_hides_scene());
+    /* 2026-10-09 async core: everything that reads the decomp core (grass,
+     * drops, NPC/prop/tool/effect views) is submitted first; then the
+     * slave SH-2 runs the queued core update while the master submits the
+     * scene, Link and Navi from host copies. Joined before text/HUD.
+     * Depth sorting, not submission order, decides occlusion. */
+#if !defined(DOSEI_PERF_PROBE) || DOSEI_PERF_PROBE != 3
+    /* Link has priority over optional actors in SGL's finite work area.
+     * Depth sorting still controls occlusion, independent of submission order. */
+    /* The opening cutscenes play in scenes the gameplay actors do not belong
+     * to, so they suppress them. An in-scene cutscene is the opposite case:
+     * it plays inside a live room, and the grass, NPCs and items standing in
+     * that room must keep being drawn or the shot cuts to an empty forest. */
+    if (!kokiri_scene_backdrop_active() && !cutscene_hides_scene() &&
+        (!cutscene_is_playing() || cutscene_is_in_scene()) &&
+        (save_state.scene_id == SAVE_SCENE_KOKIRI_FOREST || oot_core_owns_kokiri_props())) {
+        PS_RESET();
+        /* With the decomp playing, these draw its En_Kusa/En_Item00 in any scene. */
+        kokiri_grass_draw();
+        kokiri_rupees_draw(recomp_world_clock());
+        if (save_state.scene_id == SAVE_SCENE_KOKIRI_FOREST) kokiri_boulder_draw();
+        PS_ADD(PS_DGR);
+    }
+    if (recomp_link_active && !recomp_title_is_visible() &&
+          (!cutscene_is_playing() || cutscene_is_in_scene())) {
+        unsigned int da0 = frame_timer_ticks();
+        PS_RESET();
+        kokiri_nut_draw();
+        kokiri_babas_draw();
+        PS_ADD(PS_DNB);
+        npc_draw(recomp_world_clock());
+        PS_ADD(PS_DNPC);
+        story_route_draw(recomp_world_clock());
+        kokiri_items_draw(recomp_world_clock());
+        PS_RESET();
+        kokiri_fairies_draw(recomp_world_clock());
+        PS_ADD(PS_DFY);
+        perf_sub[PS_DAC] += frame_timer_ticks_to_us(ps_t0 - da0);
+    }
+#endif
+    oot_core_async_kick();
     frame_timer_begin(FRAME_PHASE_SCENE);
 #if !defined(DOSEI_PERF_PROBE) || DOSEI_PERF_PROBE != 3
     /* A prerendered interior IS its backdrop: it has no geometry, and the
@@ -456,7 +525,11 @@ static void __attribute__((optimize("Os"))) viewer_draw(void)
          * The independent VDP2 crosshair keeps the same aiming position. */
         if (!gameplay_blocks_world() && !gameplay.dead) oot_core_tool_aim_draw();
     } else if (recomp_link_active && !recomp_title_is_visible() && !recomp_first_person() &&
-               !recomp_shop_browsing()) {
+               !recomp_shop_browsing()
+#ifdef PLAYER_SOURCE
+               && !(oot_core_player_valid && oot_core_player.hidden)
+#endif
+               ) {
         frame_timer_begin(FRAME_PHASE_LINK);
         /* shape.yOffset: a ledge step-up draws him from where he stood
          * while the actor is already on the ledge. */
@@ -474,40 +547,23 @@ static void __attribute__((optimize("Os"))) viewer_draw(void)
         frame_timer_end(FRAME_PHASE_LINK);
         /* Link's own fairy, drawn with him and only with him: the title
          * shot and the file select are not gameplay. */
+#ifdef PLAYER_SOURCE
+        if (oot_core_player_valid && oot_core_player.navi_shown)
+            kokiri_navi_draw_colour(oot_core_player.navi[0], oot_core_player.navi[1],
+                                    oot_core_player.navi[2], oot_core_player.navi_colour, false);
+#else
         if (navi_active())
             kokiri_navi_draw(navi_x(), navi_y(), navi_z());
-    }
-#if !defined(DOSEI_PERF_PROBE) || DOSEI_PERF_PROBE != 3
-    /* Link has priority over optional actors in SGL's finite work area.
-     * Depth sorting still controls occlusion, independent of submission order. */
-    /* The opening cutscenes play in scenes the gameplay actors do not belong
-     * to, so they suppress them. An in-scene cutscene is the opposite case:
-     * it plays inside a live room, and the grass, NPCs and items standing in
-     * that room must keep being drawn or the shot cuts to an empty forest. */
-    if (!kokiri_scene_backdrop_active() && !cutscene_hides_scene() &&
-        (!cutscene_is_playing() || cutscene_is_in_scene()) &&
-        (save_state.scene_id == SAVE_SCENE_KOKIRI_FOREST || oot_core_owns_kokiri_props())) {
-        /* With the decomp playing, these draw its En_Kusa/En_Item00 in any scene. */
-        kokiri_grass_draw();
-        kokiri_rupees_draw(recomp_world_clock());
-        if (save_state.scene_id == SAVE_SCENE_KOKIRI_FOREST) kokiri_boulder_draw();
-    }
-    if (recomp_link_active && !recomp_title_is_visible() &&
-          (!cutscene_is_playing() || cutscene_is_in_scene())) {
-        kokiri_nut_draw();
-        kokiri_babas_draw();
-        npc_draw(recomp_world_clock());
-        story_route_draw(recomp_world_clock());
-        kokiri_items_draw(recomp_world_clock());
-        kokiri_fairies_draw(recomp_world_clock());
-    }
 #endif
+    }
     if (!cutscene_is_playing() && (!recomp_link_active || recomp_title_is_visible()))
         action_audio_navi_flight(0, false);
     if (cutscene_is_playing() && !cutscene_hides_scene())
         kokiri_cutscene_effects_draw();
     if(!cutscene_hides_scene())emerald_story_draw();
+    oot_core_async_join();
     rejected_total += kokiri_scene_rejected();
+    PS_RESET();
     cutscene_fade();
     dialogue_box(); /* Clear outgoing dialogue before cutscene writes its rows. */
     cutscene_text();
@@ -587,7 +643,9 @@ static void __attribute__((optimize("Os"))) viewer_draw(void)
         kokiri_rupee_hud_draw();
         minimap_draw(recomp_link.x, recomp_link.z, recomp_link_yaw);
     }
+    PS_ADD(PS_DUI);
     diagnostic_overlay();
+    perf_sub_latch();
     frame_timer_frame_end();
     frame_timer_begin(FRAME_PHASE_SYNC);
 }
@@ -1176,158 +1234,82 @@ static void __attribute__((optimize("Os"))) viewer_hud(void)
                   kokiri_sprite_peak);
     }
     if (!debug_visible) {
-        if (rejected_total || !music_ready)
-            jo_printf(0, 0, "music %s refusals %d", music_ready ? "ON" : "FAIL", (int)rejected_total);
-        /* Link's pose stays visible without the debug toggle: it is the
-        ** quickest way to tell a framing problem from a movement one. */
-        /* Switch timing stays visible without the debug toggle: the budget
-        ** for title -> forest is two seconds and this is the measurement. */
-        /* Kept inside 40 columns: the Saturn screen truncates past that and
-        ** the stall figure was being cut off. a=audible f=full s=worst stall. */
-        jo_printf(0, 0, "%s n%d a%d f%d s%d%s   ",
-                  music_current() == &music_bank_kokiri ? "kokiri" : "title",
-                  (int)music_swap_count(),
-                  (int)(music_audible_frames() * 1000 / 60),
-                  (int)(music_transition_frames() * 1000 / 60),
-                  (int)(music_worst_stall() * 1000 / 60),
-                  music_failed() ? " FAIL" : "");
-        if (recomp_link_active)
-            jo_printf(0, 1, "L %d,%d,%d yaw %d   ",
-                      (int)recomp_link.x, (int)recomp_link.y, (int)recomp_link.z,
-                      (int)recomp_link_yaw);
-        /* Exact heap (dosei_heap_profile, M2a): work-RAM zone 0 live/peak
-        ** bytes incl. headers, cart zones' summed peak KB, failed allocations.
-        ** The SDK's jo_memory_usage_percent mixes zones and is not used. */
-        {
-            /* Assigned first: casting an enum-returning call directly trips
-            ** -Wbad-function-cast, and this build treats warnings as noise to
-            ** stay out of. */
-            link_state_t pose = link_anim_state();
-            unsigned int z, cart = 0;
-            for (z = 1; z < dosei_heap_profile.zones && z < HEAP_PROFILE_ZONES; ++z)
-                cart += dosei_heap_profile.zone[z].peak_live;
-            jo_printf(0, 2, "w%u/%u c%uK f%u a%d f%d %s  ",
-                      (unsigned int)dosei_heap_profile.zone[0].live,
-                      (unsigned int)dosei_heap_profile.zone[0].peak_live,
-                      (cart + 1023) / 1024,
-                      (unsigned int)dosei_heap_profile.failed_allocations,
-                      (int)pose,
-                      (int)link_anim_frame(),
-                      player_input_move_mode() == PLAYER_MOVE_WALK ? "walk"
-                                                                   : "run");
-            /* The 2026-09-18 inputs whose gameplay systems do not exist yet.
-            ** This is the only evidence that A, X and the routed C buttons
-            ** actually arrive, since none of them can do anything yet. */
-            /* ev: last Z+A refusal bits (1 A claimed, 2 A cleared later,
-             * 4 climb/ledge/bonk, 8 air, 16 world blocked, 32 swing,
-             * 64 guard, 128 indoors, 256 floor, 512 pose) and pose id. */
-            jo_printf(0, 4, "pend a%d x%d c%d ev%03x/%u   ",
-                      (int)recomp_interact_requests, (int)recomp_attack_requests,
-                      (int)recomp_last_c_button, recomp_evade_gates, recomp_evade_pose);
-            /* Gear/target/sword readout. sw and sh are owned+equipped, tgt is
-             * the locked kokiri_npcs index, sg the swing steps left with a '*'
-             * while the blade is live, cut the tufts cleared so far. */
-            jo_printf(0, 5, "sw%d sh%d tgt%-3d sg%d%c cut%-2d  ",
-                      (gameplay.equipped & GP_SWORD) ? 1 : 0,
-                      (gameplay.equipped & GP_SHIELD) ? 1 : 0,
-                      (int)gameplay.target, (int)gameplay.swing,
-                      gameplay_sword_active() ? '*' : (gameplay.shielding ? 'R' : ' '),
-                      (int)gameplay.cut_count);
-            /* One line, because the question is whether the visible rolling
-            ** and the state machine agree -- reading that across two rows is
-            ** exactly how a wrong answer gets recorded.
-            **
-            ** s = current state (0 idle, 1 walk, 2 run, 3 fall, 4 landing,
-            ** 5 roll), g = grounded now, L = landings seen, d = the fall
-            ** distance the last landing decided on.
-            **
-            ** If Link looks like he is rolling while s is NOT 5, the pose is
-            ** wrong and the landing logic is innocent -- that is the corrupted
-            ** -frame case, not a state bug. If s is 5 and L is climbing on flat
-            ** ground, a real grounded transition is firing and d names the gate
-            ** that chose the roll. */
-            jo_printf(0, 3, "s%d g%d L%d d%d      ",
-                      (int)pose,
-                      link_anim_last_grounded() ? 1 : 0,
-                      (int)link_anim_landings(),
-                      (int)link_anim_last_fall());
-        }
-        /* Outside the Link guard: the title screen is reported slow too, and
-        ** Link is not drawn there. If the forest alone is the cost, these rows
-        ** show it with no player on screen. */
-        /* Microseconds against a 16700 us frame budget. mv=movement,
-        ** sk=skinning, sc=forest submit, lk=Link submit, sy=sync wait,
-        ** ot=everything none of those accounted for. */
-        jo_printf(0, 4, "mv%u sk%u sc%u lk%u   ",
-                  frame_timer_cost(FRAME_PHASE_MOVEMENT),
-                  frame_timer_cost(FRAME_PHASE_SKINNING),
-                  frame_timer_cost(FRAME_PHASE_SCENE),
-                  frame_timer_cost(FRAME_PHASE_LINK));
-        jo_printf(0, 5, "sy%u ot%u WORK%u us   ",
-                  frame_timer_cost(FRAME_PHASE_SYNC),
-                  frame_timer_other(), frame_timer_frame());
-        jo_printf(0, 7, "prep%u us %s      ",
-                  frame_timer_cost(FRAME_PHASE_PREP),
-                  kokiri_scene_reused() ? "CACHED" : "rebuilt");
+        /* Performance overlay (2026-10-09, real Player). 0.1 ms units.
+        ** Row 0: whole frame, CPU work, wait for VDP1/VBlank.
+        ** Row 1: host phases: mv = gameplay step incl. the core update and
+        **   camera, sk = Link skinning, sc = scene submit, lk = Link submit,
+        **   ot = everything not named (NPC sprites, HUD, text, audio...).
+        ** Row 2: core update per 20 Hz step: total, then collision checks /
+        **   actor updates / messages+env / draw shim, pd = Player anchor draw.
+        ** Row 3: top 3 actor ids by update cost (id x 0.1 ms; Player is 0).
+        ** Row 4: host collision queries and proxy rebuilds this refresh,
+        **   core actors player/npc/enemy/prop/misc, scene index. */
+        unsigned int work = frame_timer_frame();
+        unsigned int sync = frame_timer_cost(FRAME_PHASE_SYNC);
+        jo_printf(0, 0, "fr%-4u wk%-4u sy%-4u          ",
+                  (work + sync) / 100, work / 100, sync / 100);
+        jo_printf(0, 1, "mv%-3u sk%-3u sc%-3u lk%-3u ot%-3u   ",
+                  frame_timer_cost(FRAME_PHASE_MOVEMENT) / 100,
+                  frame_timer_cost(FRAME_PHASE_SKINNING) / 100,
+                  frame_timer_cost(FRAME_PHASE_SCENE) / 100,
+                  frame_timer_cost(FRAME_PHASE_LINK) / 100,
+                  frame_timer_other() / 100);
 #ifdef DOSEI_OOT_CORE
-        /* ns per call: ma=Fx mul-add dv=divide ss=SmoothStepToF
-        ** ds=3D distance sn=SinS+sinf at=Atan2S. */
-        /* Row 15: play state on (p1), actor counts player/prop/misc. */
-        if (!oot_core_is_loaded()) jo_printf(0, 13, "oc OOTCORE.BIN not loaded ");
-        else {
-            const OotCoreBench *b = oot_core_bench_result();
-            jo_printf(0, 13, "oc ma%u dv%u ss%u   ", b->ns[OOT_BENCH_MULADD],
-                      b->ns[OOT_BENCH_DIV], b->ns[OOT_BENCH_SMOOTHSTEP]);
-            jo_printf(0, 14, "oc ds%u sn%u at%u   ", b->ns[OOT_BENCH_DIST],
-                      b->ns[OOT_BENCH_SIN], b->ns[OOT_BENCH_ATAN2]);
-            jo_printf(0, 15, "oc p%d pl%d pr%d mi%d   ", (int)oot_core_is_playing(),
-                      oot_core_actors(2), oot_core_actors(6), oot_core_actors(8));
-            /* Row 16: decomp update cost per 20 Hz step (budget check). */
-            jo_printf(0, 16, "ou %uus %-28s", oot_core_update_us(), oot_core_debug_text());
-            jo_printf(0, 17, "op %-36s", oot_core_debug_text2());
-        }
+        if (oot_core_is_loaded()) {
+            const char *t = oot_core_debug_text2();
+            char phases[24];
+            unsigned int i = 0;
+            /* debug_text2: "col/act/msg/drw <top3 or tool text>" */
+            while (t[i] && t[i] != ' ' && i < sizeof phases - 1) { phases[i] = t[i]; ++i; }
+            phases[i] = 0;
+            jo_printf(0, 2, "cu%-4u %-15s pd%-3u      ", oot_core_update_us() / 100, phases,
+                      oot_core_player_draw_us() / 100);
+            jo_printf(0, 7, "top %-34s", t[i] ? t + i + 1 : "");
+            {
+                uint32_t q = 0, r = 0;
+#ifdef CORE_COLLISION
+                bg_core_shim_counts(&q, &r);
 #endif
-        /* Marked when stale: on a cache hit these hold the last rebuild's
-        ** figures, not this frame's work. */
-        jo_printf(0, 8, "%sdp%u po%u fg%u    ",
-                  kokiri_scene_reused() ? "~" : " ",
-                  frame_timer_cost(FRAME_PHASE_DEPTH),
-                  frame_timer_cost(FRAME_PHASE_PARTITION), frame_timer_cost(FRAME_PHASE_FOG));
-        /* copr is the share of recent frames where VDP1's command address
-        ** moved between two adjacent reads. It is NOT a busy measurement and
-        ** no CPU-versus-fill verdict follows from it -- see frame_timer.h. */
-        jo_printf(0, 6, "cam %s copr%u%%  ",
-                  oot_follow_legacy() ? "LEGACY 260" : "OoT 125-188",
-                  frame_timer_copr_changed());
-        /* Closest distance-stippled polygon: index, its tile, near..far
-        ** extent, and its first two vertex ids. Tiles are shared, so the
-        ** polygon and vertex ids are what identify the surface. */
-        jo_printf(0, 9, "msh p%d t%d %d..%d v%u,%u  ",
-                  kokiri_scene_mesh_near_polygon(),
-                  kokiri_scene_mesh_near_tile(),
-                  kokiri_scene_mesh_near_depth(),
-                  kokiri_scene_mesh_near_far(),
-                  (unsigned int)kokiri_scene_mesh_near_vertex(0),
-                  (unsigned int)kokiri_scene_mesh_near_vertex(1));
-#ifdef DOSEI_WARP_PROBE
-        /* Probe rows: nearest polygon, then the worst projected-span
-        ** candidate. Vertex ids identify the surface through a turn. */
-        jo_printf(0, 10, "nr r%d f%d e%d t%d v%d,%d   ",
-                  kokiri_warp_probe(0), kokiri_warp_probe(1),
-                  kokiri_warp_probe(2), kokiri_warp_probe(3),
-                  kokiri_warp_probe(4), kokiri_warp_probe(5));
-        jo_printf(0, 11, "sp s%d r%d f%d e%d t%d v%d,%d  ",
-                  kokiri_warp_probe(6), kokiri_warp_probe(7),
-                  kokiri_warp_probe(8), kokiri_warp_probe(9),
-                  kokiri_warp_probe(10), kokiri_warp_probe(11),
-                  kokiri_warp_probe(12));
-        /* Submission accounting at the probe pose: refusals this frame, the
-        ** running total, and how many forest polygons were handed to SGL.
-        ** Zero refusals does not prove every face was drawn; a non-zero count
-        ** does prove something was dropped. */
-        jo_printf(0, 12, "rej%d tot%d sub%d   ",
-                  (int)kokiri_scene_rejected(), (int)rejected_total,
-                  (int)kokiri_scene_submitted());
+                int fd = 0;
+#ifdef CORE_COLLISION
+                fd = bg_core_fast_data(-1);
+#endif
+                jo_printf(0, 8, "bgq%-4u rb%-2u a%d/%d/%d/%d/%d s%u fd%d   ", (unsigned)q, (unsigned)r,
+                          oot_core_actors(2), oot_core_actors(4), oot_core_actors(5),
+                          oot_core_actors(6), oot_core_actors(8), scene_flow_scene(), fd);
+            }
+#ifdef PLAYER_SOURCE
+            {
+                unsigned int h[5];
+                recomp_step_perf(h);
+                jo_printf(0, 9, "gs%-4u co%-4u cm%-4u st%-4u n%u   ",
+                          h[0] / 100, h[1] / 100, h[2] / 100, h[3] / 100, h[4]);
+            }
+#endif
+            {
+                const unsigned int *p = perf_sub_last;
+                jo_printf(0, 10, "nc%u wp%u en%u at%u bb%u tk%u it%u rc%u     ",
+                          p[PS_NC] / 100, p[PS_WP] / 100, p[PS_EN] / 100, p[PS_AT] / 100,
+                          p[PS_BB] / 100, p[PS_TK] / 100, p[PS_IT] / 100, p[PS_RC] / 100);
+                jo_printf(0, 11, "pr%u po%u ac%u dp%u nv%u     ",
+                          p[PS_PRE] / 100, p[PS_POST] / 100, p[PS_AC] / 100, p[PS_DP] / 100,
+                          p[PS_NV] / 100);
+                jo_printf(0, 12, "ks%u dg%u da%u ui%u ru%u     ",
+                          p[PS_KS] / 100, p[PS_DGR] / 100, p[PS_DAC] / 100, p[PS_DUI] / 100,
+                          p[PS_RU] / 100);
+                jo_printf(0, 13, "nb%u np%u wc%u wp%u fy%u     ",
+                          p[PS_DNB] / 100, p[PS_DNPC] / 100, p[PS_DWC] / 100, p[PS_DWP] / 100,
+                          p[PS_DFY] / 100);
+                jo_printf(0, 14, "r0%u r1%u pd%u dw%u     ",
+                          p[PS_R0] / 100, p[PS_R1] / 100, p[PS_PRD] / 100, p[PS_DPW] / 100);
+                {
+                    unsigned int a[5];
+                    oot_core_async_stats(a);
+                    jo_printf(0, 15, "as k%u ov%u jw%u cv%u bv%u     ",
+                              a[0], a[1] / 100, a[2] / 100, a[3], a[4]);
+                }
+            }
+        }
 #endif
         return;
     }

@@ -286,6 +286,11 @@ typedef struct
      * ray, so the centre cursor is where it goes. Off for quick shots. */
     bool        item_from_eye;
     int32_t     item_eye[3];
+    /* PLAYER_SOURCE: the Saturn pad as the N64 controller the real Player
+    ** reads (BTN_* bits held/pressed, stick -80..80, camera-relative through
+    ** Camera_GetInputDirYaw). 0 when the world does not take pad input. */
+    uint16_t    n64_held, n64_press;
+    int8_t      n64_stick_x, n64_stick_y;
 }               gameplay_input_t;
 
 typedef struct

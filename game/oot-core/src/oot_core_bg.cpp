@@ -1,6 +1,6 @@
 /*
  * Core collision queries and C-prop DynaPoly proxies for the Saturn C side
- * (Player migration, isolated: not in the live OOT_CORE_SRCS list yet).
+ * (Player migration phase 2: OotCoreEntry.bg_api, live with CORE_COLLISION).
  *
  * Same contract as shared/lib/collision/kokiri_collision.h (feet positions,
  * world units, hit = owner-local poly, owner, raw SurfaceType), answered by
@@ -16,11 +16,15 @@
 #include "play_state.h"
 #include "z_math.h"
 #include "oot_core_bg.h"
+#include "zelda_arena.h"
 
 /* z_bgcheck.c local raycast flags (not in a header). */
 #define BGCHECK_RAYCAST_DOWN_CHECK_FLOORS (1 << 2)
 #define BGCHECK_RAYCAST_DOWN_CHECK_WALLS_SIMPLE (1 << 3)
 #define BGCHECK_RAYCAST_DOWN_CHECK_GROUND_ONLY (1 << 4)
+/* z_bgcheck.c local SphVsFirstPoly flags. */
+#define BGCHECK_IGNORE_NONE 0
+#define BGCHECK_IGNORE_CEILING (1 << 0)
 #define PROXY_TRANSFORM_POS 0x01   /* = BG_DYNA_POS */
 #define PROXY_TRANSFORM_ROT_Y 0x02 /* = BG_DYNA_ROT_Y */
 
@@ -33,6 +37,8 @@ s32 BgCheck_CheckCeilingImpl(CollisionContext* colCtx, u16 xpFlags, f32* outY, V
 s32 BgCheck_CheckLineImpl(CollisionContext* colCtx, u16 xpFlags1, u16 xpFlags2, Vec3f* posA, Vec3f* posB,
                           Vec3f* posResult, CollisionPoly** outPoly, s32* outBgId, Actor* actor, f32 chkDist,
                           u32 bccFlags);
+s32 BgCheck_SphVsFirstPolyImpl(CollisionContext* colCtx, u16 xpFlags, CollisionPoly** outPoly, s32* outBgId,
+                               Vec3f* center, f32 radius, Actor* actor, u16 bciFlags);
 s32 BgCheck_GetWaterSurface(PlayState* play, CollisionContext* colCtx, f32 x, f32 z, f32* outWaterSurface,
                             WaterBox** outWaterBox);
 u32 SurfaceType_GetData(CollisionContext* colCtx, CollisionPoly* poly, s32 bgId, s32 dataIdx);
@@ -91,10 +97,11 @@ int OotCoreBg_Floor(CollisionContext* colCtx, const int* pos, unsigned ignore, O
     Vec3f p = vec(pos);
     CollisionPoly* poly = 0;
     s32 bgId = BGCHECK_SCENE;
-    f32 y = BgCheck_RaycastDownImpl(NULL, colCtx, (u16)ignore, &poly, &bgId, &p, NULL,
-                                    BGCHECK_RAYCAST_DOWN_CHECK_WALLS_SIMPLE | BGCHECK_RAYCAST_DOWN_CHECK_FLOORS |
-                                        BGCHECK_RAYCAST_DOWN_CHECK_GROUND_ONLY,
-                                    FXL(1.0f));
+    u32 flags = (ignore & OOT_CORE_BG_FLOOR_ONLY)
+                    ? BGCHECK_RAYCAST_DOWN_CHECK_FLOORS
+                    : BGCHECK_RAYCAST_DOWN_CHECK_WALLS_SIMPLE | BGCHECK_RAYCAST_DOWN_CHECK_FLOORS |
+                          BGCHECK_RAYCAST_DOWN_CHECK_GROUND_ONLY;
+    f32 y = BgCheck_RaycastDownImpl(NULL, colCtx, (u16)(ignore & 7), &poly, &bgId, &p, NULL, flags, FXL(1.0f));
     fill(colCtx, poly, bgId, hit);
     return (int)y;
 }
@@ -170,22 +177,57 @@ static PlayState* play_of(void) {
     return sBgPlay ? sBgPlay : gOotCorePlay;
 }
 
+/* Scene collision present: between scenes every query misses. */
+static PlayState* live(void) {
+    PlayState* play = play_of();
+    return play && play->colCtx.colHeader ? play : 0;
+}
+
 static int api_floor(const int pos[3], unsigned ignore, OotCoreBgHit* hit) {
-    return OotCoreBg_Floor(&play_of()->colCtx, pos, ignore, hit);
+    PlayState* play = live();
+    if (!play) { fill(0, 0, 0, hit); return BGCHECK_Y_MIN; }
+    return OotCoreBg_Floor(&play->colCtx, pos, ignore, hit);
 }
 static int api_wall(int result[3], const int next[3], const int prev[3], int radius, int checkHeight,
                     unsigned ignore, int skipLine, OotCoreBgHit* hit) {
-    return OotCoreBg_Wall(&play_of()->colCtx, result, next, prev, radius, checkHeight, ignore, skipLine, hit);
+    PlayState* play = live();
+    if (!play) {
+        result[0] = next[0]; result[1] = next[1]; result[2] = next[2];
+        fill(0, 0, 0, hit);
+        return 0;
+    }
+    return OotCoreBg_Wall(&play->colCtx, result, next, prev, radius, checkHeight, ignore, skipLine, hit);
 }
 static int api_ceiling(int* outY, const int pos[3], int checkHeight, unsigned ignore, OotCoreBgHit* hit) {
-    return OotCoreBg_Ceiling(&play_of()->colCtx, outY, pos, checkHeight, ignore, hit);
+    PlayState* play = live();
+    if (!play) { *outY = pos[1]; fill(0, 0, 0, hit); return 0; }
+    return OotCoreBg_Ceiling(&play->colCtx, outY, pos, checkHeight, ignore, hit);
 }
 static int api_line(const int a[3], const int b[3], int at[3], unsigned checks, unsigned ignore,
                     OotCoreBgHit* hit) {
-    return OotCoreBg_Line(&play_of()->colCtx, a, b, at, checks, ignore, hit);
+    PlayState* play = live();
+    if (!play) { fill(0, 0, 0, hit); return 0; }
+    return OotCoreBg_Line(&play->colCtx, a, b, at, checks, ignore, hit);
 }
 static int api_water(int x, int z, int* surface) {
-    return OotCoreBg_Water(play_of(), x, z, surface);
+    PlayState* play = live();
+    return play ? OotCoreBg_Water(play, x, z, surface) : 0;
+}
+static int api_sphere(const int center[3], int radius, unsigned ignore, int skipCeilings) {
+    PlayState* play = live();
+    if (!play) return 0;
+    Vec3f c = vec(center);
+    CollisionPoly* poly = 0;
+    s32 bgId = BGCHECK_SCENE;
+    return BgCheck_SphVsFirstPolyImpl(&play->colCtx, (u16)ignore, &poly, &bgId, &c, (f32)radius, NULL,
+                                      skipCeilings ? BGCHECK_IGNORE_CEILING : BGCHECK_IGNORE_NONE) != 0;
+}
+static unsigned api_frame(void) {
+    PlayState* play = play_of();
+    return play ? (unsigned)play->state.frames : 0;
+}
+static int api_ready(void) {
+    return live() != 0;
 }
 
 /* Water level changes (puzzles): the first set saves the authored surface. */
@@ -194,8 +236,9 @@ static s16 sWaterOrig[WATER_SAVED_MAX];
 static u8 sWaterSaved[WATER_SAVED_MAX];
 
 static int api_water_set(unsigned index, int surface) {
-    CollisionHeader* h = play_of()->colCtx.colHeader;
-    if (index >= h->numWaterBoxes || index >= WATER_SAVED_MAX) {
+    PlayState* play = live();
+    CollisionHeader* h = play ? play->colCtx.colHeader : 0;
+    if (!h || index >= h->numWaterBoxes || index >= WATER_SAVED_MAX) {
         return 0;
     }
     if (!sWaterSaved[index]) {
@@ -206,15 +249,18 @@ static int api_water_set(unsigned index, int surface) {
     return 1;
 }
 static void api_water_reset(unsigned index) {
-    CollisionHeader* h = play_of()->colCtx.colHeader;
-    if (index < h->numWaterBoxes && index < WATER_SAVED_MAX && sWaterSaved[index]) {
+    PlayState* play = live();
+    CollisionHeader* h = play ? play->colCtx.colHeader : 0;
+    if (h && index < h->numWaterBoxes && index < WATER_SAVED_MAX && sWaterSaved[index]) {
         h->waterBoxes[index].ySurface = sWaterOrig[index];
         sWaterSaved[index] = 0;
     }
 }
 
 static int api_poly_vertices(unsigned bgId, unsigned poly, short out[3][3]) {
-    CollisionContext* col = &play_of()->colCtx;
+    PlayState* play = live();
+    if (!play) return 0;
+    CollisionContext* col = &play->colCtx;
     CollisionPoly* p = poly_of(col, bgId, poly);
     if (!p) {
         return 0;
@@ -230,7 +276,8 @@ static int api_poly_vertices(unsigned bgId, unsigned poly, short out[3][3]) {
 }
 
 static int api_poly_plane(unsigned bgId, unsigned poly, short normal[3], int* dist) {
-    CollisionPoly* p = poly_of(&play_of()->colCtx, bgId, poly);
+    PlayState* play = live();
+    CollisionPoly* p = play ? poly_of(&play->colCtx, bgId, poly) : 0;
     if (!p) {
         return 0;
     }
@@ -304,9 +351,9 @@ static u32 isqrt(u32 v) {
  * copy). info: per-triangle surface/ignore/conveyor word (NULL = 0). */
 static unsigned api_dyna_register(const void* tris, unsigned stride, const unsigned short* info, unsigned count,
                                   const unsigned* surfaces, unsigned surfaceCount, unsigned transform) {
-    PlayState* play = play_of();
+    PlayState* play = live();
     u32 triStart, surfStart = 0;
-    if (count == 0 || count > OOT_CORE_BG_PROXY_TRIS || !fit(count, OOT_CORE_BG_PROXY_TRIS, 0, &triStart) ||
+    if (!play || count == 0 || count > OOT_CORE_BG_PROXY_TRIS || !fit(count, OOT_CORE_BG_PROXY_TRIS, 0, &triStart) ||
         (surfaceCount && !fit(surfaceCount, PROXY_SURFACES, 1, &surfStart))) {
         return OOT_CORE_BG_NONE;
     }
@@ -418,8 +465,8 @@ static void api_dyna_set(unsigned id, const int pos[3], unsigned short rotY, int
 }
 
 static void api_dyna_enable(unsigned id, int enabled) {
-    PlayState* play = play_of();
-    if (!proxy(id)) return;
+    PlayState* play = live();
+    if (!play || !proxy(id)) return;
     if (enabled) {
         DynaPoly_EnableCollision(play, &play->colCtx.dyna, id);
     } else {
@@ -428,10 +475,10 @@ static void api_dyna_enable(unsigned id, int enabled) {
 }
 
 static void api_dyna_remove(unsigned id) {
-    PlayState* play = play_of();
+    PlayState* play = live();
     Proxy* px = proxy(id);
     if (!px) return;
-    DynaPoly_DeleteBgActor(play, &play->colCtx.dyna, id);
+    if (play) DynaPoly_DeleteBgActor(play, &play->colCtx.dyna, id);
     px->used = 0;
     px->triCount = 0;
     px->surfCount = 0;
@@ -441,16 +488,18 @@ static void api_dyna_remove(unsigned id) {
 s32 DynaPolyActor_TransformCarriedActor(CollisionContext* colCtx, s32 bgId, Actor* carriedActor);
 
 /* C rider: the same path core riders take (DynaPolyActor_TransformCarriedActor
- * reads the proxy's real transformFlags). */
+ * reads the real transformFlags). Any live BgActor: proxies and real core
+ * DynaPolyActors (buildings, platforms, the Kakariko gallery). */
 static int api_dyna_carry(unsigned id, int pos[3], unsigned short* yaw) {
-    if (!proxy(id)) return 0;
+    PlayState* play = live();
+    if (!play || id >= BG_ACTOR_MAX || !(play->colCtx.dyna.bgActorFlags[id] & BGACTOR_IN_USE)) return 0;
     Actor rider = {};
     rider.world.pos.x = pos[0];
     rider.world.pos.y = pos[1];
     rider.world.pos.z = pos[2];
     rider.shape.rot.y = yaw ? (s16)*yaw : 0;
     rider.world.rot.y = rider.shape.rot.y;
-    if (!DynaPolyActor_TransformCarriedActor(&play_of()->colCtx, (s32)id, &rider)) return 0;
+    if (!DynaPolyActor_TransformCarriedActor(&play->colCtx, (s32)id, &rider)) return 0;
     pos[0] = (int)rider.world.pos.x;
     pos[1] = (int)rider.world.pos.y;
     pos[2] = (int)rider.world.pos.z;
@@ -478,17 +527,17 @@ static void api_reset(void) {
 }
 
 static void api_dyna_step(void) {
-    PlayState* play = play_of();
-    DynaPoly_UpdateBgActorTransforms(play, &play->colCtx.dyna);
+    PlayState* play = live();
+    if (play) DynaPoly_UpdateBgActorTransforms(play, &play->colCtx.dyna);
 }
 
 static void api_dyna_update(void) {
-    PlayState* play = play_of();
-    DynaPoly_UpdateContext(play, &play->colCtx.dyna);
+    PlayState* play = live();
+    if (play) DynaPoly_UpdateContext(play, &play->colCtx.dyna);
 }
 
 static int api_scene(OotCoreBgScene* out) {
-    PlayState* play = play_of();
+    PlayState* play = live();
     CollisionHeader* h = play ? play->colCtx.colHeader : 0;
     if (!h) return 0;
     out->water = h->waterBoxes;
@@ -505,10 +554,64 @@ static int api_scene(OotCoreBgScene* out) {
     return 1;
 }
 
+static CollisionHeader sFastHeader;
+static CollisionHeader* sCartHeader;
+static void* sFastBlock;
+
+static void copy16(void* to, const void* from, u32 bytes) {
+    u16* d = (u16*)to;
+    const u16* f = (const u16*)from;
+    for (u32 i = 0; i < bytes / 2; i++) d[i] = f[i];
+}
+
+void OotCoreBg_FastReset(void) {
+    sCartHeader = NULL;
+    sFastBlock = NULL;
+}
+
+static int api_fast_data(int mode) {
+    PlayState* play = play_of();
+    CollisionContext* col;
+    if (play == NULL || play->colCtx.colHeader == NULL) return 0;
+    col = &play->colCtx;
+    if (col->colHeader != &sFastHeader) sCartHeader = col->colHeader;
+    if (mode < 0) return col->colHeader == &sFastHeader;
+    if (mode == 0 || sCartHeader == NULL) {
+        if (sCartHeader != NULL) col->colHeader = sCartHeader;
+        return 0;
+    }
+    if (sFastBlock == NULL) {
+        CollisionHeader* h = sCartHeader;
+        u32 surfaces = 0, i, vb, pb, sb, maxFree, freeBytes, allocBytes;
+        u8* p;
+        for (i = 0; i < h->numPolygons; i++) {
+            if (h->polyList[i].type + 1u > surfaces) surfaces = h->polyList[i].type + 1u;
+        }
+        vb = ALIGN16(h->numVertices * sizeof(Vec3s));
+        pb = ALIGN16(h->numPolygons * sizeof(CollisionPoly));
+        sb = ALIGN16(surfaces * sizeof(SurfaceType));
+        ZeldaArena_GetSizes(&maxFree, &freeBytes, &allocBytes);
+        if (h->surfaceTypeList == NULL || maxFree < vb + pb + sb + 0x18000u) return 0;
+        p = (u8*)ZeldaArena_Malloc(vb + pb + sb);
+        if (p == NULL) return 0;
+        sFastHeader = *h;
+        sFastHeader.vtxList = (Vec3s*)p;
+        sFastHeader.polyList = (CollisionPoly*)(p + vb);
+        sFastHeader.surfaceTypeList = (SurfaceType*)(p + vb + pb);
+        copy16(sFastHeader.vtxList, h->vtxList, h->numVertices * sizeof(Vec3s));
+        copy16(sFastHeader.polyList, h->polyList, h->numPolygons * sizeof(CollisionPoly));
+        copy16(sFastHeader.surfaceTypeList, h->surfaceTypeList, surfaces * sizeof(SurfaceType));
+        sFastBlock = p;
+    }
+    col->colHeader = &sFastHeader;
+    return 1;
+}
+
 static const OotCoreBgApi sApi = {
     OOT_CORE_BG_VERSION, api_floor, api_wall, api_ceiling, api_line, api_water, api_water_set,
     api_water_reset, api_poly_vertices, api_poly_plane, api_dyna_register, api_dyna_set, api_dyna_enable,
     api_dyna_remove, api_dyna_carry, api_dyna_step, api_dyna_update, api_scene, api_reset,
+    api_sphere, api_frame, api_ready, api_fast_data,
 };
 
 extern "C" const OotCoreBgApi* OotCoreBg_Api(void) {

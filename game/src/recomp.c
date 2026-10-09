@@ -25,6 +25,7 @@
 #include "action_audio.h"
 #include "oot_follow.h"
 #include "frame_timer.h"
+#include "perf_sub.h"
 #include "input_edge.h"
 #include "skip_input.h"
 #include "player_input.h"
@@ -113,7 +114,15 @@ static bool lift_bomb, bomb_throw;
 /* Sword/shield in hand (z_player heldItemAction >= SWORD) vs sheathed. */
 static bool link_sword_out;
 static uint8_t putaway_wait;
-bool recomp_sword_out(void) { return link_sword_out; }
+bool recomp_sword_out(void)
+{
+#ifdef PLAYER_SOURCE
+    /* Player_SetModels: a drawn sword is the left hand's model type. */
+    return oot_core_player_valid && oot_core_player.left_hand >= 2 && oot_core_player.left_hand <= 4;
+#else
+    return link_sword_out;
+#endif
+}
 static player_slope_t link_slope;
 static player_water_t link_water;
 static player_camera_t link_camera;
@@ -336,16 +345,25 @@ static void __attribute__((optimize("Os"), noinline)) cutscene_sky_update(void)
     int key = nightmare | (alpha << 2) | (field << 10);
     unsigned short top = environment_map_top(scene_flow_scene(), oot_core_skybox_time(), oot_core_skybox_settings());
     unsigned short floor = environment_map_floor(scene_flow_scene(),oot_core_skybox_time());
+    static unsigned drift;
     if (last_key == key && last_top == top && last_floor == floor) return;
+    /* 2026-10-09 speed: time of day nudges these colours almost every frame,
+     * and a rebuild is 239 rows of mixes and divides (~10 ms). A plain colour
+     * drift waits 16 frames; fades and scene/cutscene changes are immediate. */
+    if (last_key == key && ++drift < 16) return;
+    drift = 0;
     last_key = key;
     last_top = top; last_floor = floor;
     for (row = 0; row < lines - 1; ++row) {
         unsigned c = nightmare==2 ? JO_COLOR_RGB(0,0,0) : nightmare ? JO_COLOR_RGB(0, 20, 35) :
             environment_field_horizon(row * 240 / lines, top, floor);
-        unsigned scale = 255 - alpha;
-        sky[row] = 0x8000u | (((c & 31u) * scale / 255u)) |
-            ((((c >> 5) & 31u) * scale / 255u) << 5) |
-            ((((c >> 10) & 31u) * scale / 255u) << 10);
+        if (!alpha) { sky[row] = 0x8000u | c; continue; }
+        {
+            unsigned scale = 255 - alpha;
+            sky[row] = 0x8000u | (((c & 31u) * scale / 255u)) |
+                ((((c >> 5) & 31u) * scale / 255u) << 5) |
+                ((((c >> 10) & 31u) * scale / 255u) << 10);
+        }
     }
 }
 
@@ -714,6 +732,9 @@ static void __attribute__((optimize("Os"))) place_at_spawn(unsigned int scene, u
     recomp_link.y = point->y + RECOMP_LINK_EYE_HEIGHT;
     recomp_link.z = point->z;
     recomp_link_yaw = point->yaw;
+#ifdef PLAYER_SOURCE
+    oot_core_player_resync();
+#endif
     link_velocity_y_q8 = 0;
     link_fall_remainder_q8 = 0;
     link_fall_peak_y = recomp_link.y;
@@ -1434,6 +1455,14 @@ static void charge_walk(const player_input_t *pad, bool allowed)
 static void link_focus(int32_t out[3])
 {
     int32_t local[3], sine, cosine;
+#ifdef PLAYER_SOURCE
+    if (oot_core_player_valid) {
+        out[0] = oot_core_player.focus_x;
+        out[1] = oot_core_player.focus_y;
+        out[2] = oot_core_player.focus_z;
+        return;
+    }
+#endif
     link_anim_focus(local);
     kokiri_camera_sincos(recomp_link_yaw, &sine, &cosine);
     out[0] = recomp_link.x + (int32_t)((((int64_t)cosine * local[0]) + ((int64_t)sine * local[2])) >> 32);
@@ -1450,6 +1479,15 @@ bool gameplay_blade_points(int32_t base[3], int32_t tip[3])
     unsigned int end;
     if (!recomp_link_active)
         return false;
+#ifdef PLAYER_SOURCE
+    /* The real Player's meleeWeaponInfo[0] line (sword or Deku Stick). */
+    if (!oot_core_player_valid || !oot_core_player.weapon_state) return false;
+    for (end = 0; end < 3; ++end) {
+        base[end] = oot_core_player.blade_base[end];
+        tip[end] = oot_core_player.blade_tip[end];
+    }
+    return true;
+#endif
     if (player_items_stick()) link_anim_stick(blade);
     else link_anim_blade(blade);
     kokiri_camera_sincos(recomp_link_yaw, &sine, &cosine);
@@ -1606,6 +1644,68 @@ static bool evade_floor_ok(void)
     return bg_floor_type(&floor) != 7 && bg_floor_effect(&floor) != 1;
 }
 
+#ifdef PLAYER_SOURCE
+#define RECOMP_MAX_CATCHUP 3
+#else
+#define RECOMP_MAX_CATCHUP 4
+#endif
+#ifdef PLAYER_SOURCE
+/* Debug overlay (DEBUG_OVERLAY.md row 9): host step split, us summed over
+ * the last frame's steps: gameplay_step, core frame (incl. update), camera,
+ * whole step, step count. */
+static unsigned int perf_gs, perf_co, perf_cam, perf_step, perf_steps;
+static unsigned int perf_out[5];
+void recomp_step_perf(unsigned int out[5])
+{
+    unsigned int i;
+    for (i = 0; i < 5; ++i) out[i] = perf_out[i];
+}
+#define PERF_T0() unsigned int perf_t0 = frame_timer_ticks()
+#define PERF_ADD(acc) do { unsigned int t1 = frame_timer_ticks(); \
+    acc += frame_timer_ticks_to_us(t1 - perf_t0); perf_t0 = t1; } while (0)
+/* N64 BTN_* (include/libu64/pad.h). */
+#define N64_A 0x8000u
+#define N64_B 0x4000u
+#define N64_Z 0x2000u
+#define N64_R 0x0010u
+#define N64_CUP 0x0008u
+#define N64_CDOWN 0x0004u
+#define N64_CLEFT 0x0002u
+#define N64_CRIGHT 0x0001u
+/* Saturn layout (OPUS_HANDOFF.md) -> the controller the real Player reads:
+ * A interact = A, X attack = B, R shield = R, Z target = Z, C items = C.
+ * B held = walk: the stick stays under Player's run threshold. Stick is the
+ * raw controller direction; Camera_GetInputDirYaw makes it camera-relative. */
+static void player_source_pad(const player_input_t *in, bool interact, bool attack,
+                              gameplay_input_t *a)
+{
+    static const uint16_t c_bits[4] = { 0, N64_CDOWN, N64_CLEFT, N64_CRIGHT };
+    static bool z_was;
+    int32_t sx = 0, sy = 0;
+    if (in->analog) {
+        sx = in->stick_x * 80 / 127;
+        sy = in->stick_y * 80 / 127;
+    } else {
+        sx = (in->move_buttons & CAMERA_RIGHT ? 80 : 0) - (in->move_buttons & CAMERA_LEFT ? 80 : 0);
+        sy = (in->move_buttons & CAMERA_UP ? 80 : 0) - (in->move_buttons & CAMERA_DOWN ? 80 : 0);
+        if (sx && sy) { sx = sx * 57 / 80; sy = sy * 57 / 80; }
+    }
+    if (in->move_mode == PLAYER_MOVE_WALK) { sx = sx * 2 / 5; sy = sy * 2 / 5; }
+    a->n64_stick_x = (int8_t)sx;
+    a->n64_stick_y = (int8_t)sy;
+    a->n64_held = (in->interact_held ? N64_A : 0) | (in->attack_held ? N64_B : 0) |
+                  (in->shield_held ? N64_R : 0) | (in->target_held ? N64_Z : 0);
+    if (in->c_held >= PLAYER_C_DOWN && in->c_held <= PLAYER_C_RIGHT)
+        a->n64_held |= c_bits[in->c_held - PLAYER_C_DOWN + 1];
+    a->n64_press = (interact ? N64_A : 0) | (attack ? N64_B : 0) |
+                   (in->target_held && !z_was ? N64_Z : 0);
+    if (in->c_pressed >= PLAYER_C_DOWN && in->c_pressed <= PLAYER_C_RIGHT)
+        a->n64_press |= c_bits[in->c_pressed - PLAYER_C_DOWN + 1];
+    a->n64_held |= a->n64_press;
+    z_was = in->target_held;
+}
+#endif
+
 static void __attribute__((optimize("Os"))) mido_push_link(void)
 {
     int32_t mx, mz, dx, dz, dist2, dist, push;
@@ -1657,6 +1757,7 @@ void recomp_update(void)
 #endif
     uint16_t buttons = 0;
     bool recenter = false;
+    unsigned int r0_start = frame_timer_ticks();
     bool start_pressed = input_edge_consume(&start_edge);
     if(gohma_cinematic()) {
         if(input_edge_consume(&skip_input.request)&&skip_input.request_shot==gohma_shot_key())gohma_skip_shot();
@@ -1829,7 +1930,11 @@ void recomp_update(void)
     /* 30 Hz gameplay; movement uses time-scaled native world units.
      * Cap catch-up so a slow frame cannot create a long input stall. */
     steps = elapsed / 2;
-    if (steps > 4) { steps = 4; previous_tick = now - now % 2; }
+    /* Real Player (2026-10-09): three steps at most. Four let a slow frame
+     * buy more steps, which made the next frame slower still (6 FPS spiral);
+     * two slowed Link visibly at 10 FPS (human). Below 10 FPS the world
+     * slows instead. */
+    if (steps > RECOMP_MAX_CATCHUP) { steps = RECOMP_MAX_CATCHUP; previous_tick = now - now % 2; }
     else previous_tick += steps * 2;
     if (file_select_visible) {
         /* The screen owns the pad; nothing in the world advances behind it.
@@ -1914,6 +2019,274 @@ void recomp_update(void)
             }
             player_input_reset();
         }
+#ifdef PLAYER_SOURCE
+    } else if (recomp_link_active) {
+        /* Real decomp Player (Player migration phase 5): the core moves,
+         * animates and collides Link. The host feeds the pad, reads him back
+         * after each core update (oot_core_host.c read_player) and keeps the
+         * camera, doors, pause/HUD, story and C-side systems. */
+        bool attack_edge = input.attack_pending;
+        uint16_t walk = buttons & (CAMERA_UP | CAMERA_DOWN | CAMERA_LEFT | CAMERA_RIGHT);
+        unsigned int step_start = frame_timer_ticks();
+        perf_sub[PS_R0] += frame_timer_ticks_to_us(step_start - r0_start);
+        perf_gs = perf_co = perf_cam = perf_steps = 0;
+        player_camera_defer_constrain(true);
+        if (!music_busy()) scene_music();
+        while (steps--) {
+            gameplay_input_t action = {0};
+            PERF_T0();
+            PS_T0();
+            ++perf_steps;
+            bool blocked_before = gameplay_blocks_world();
+            bool paused_before = gameplay_is_paused();
+            int32_t step_x = recomp_link.x, step_z = recomp_link.z;
+            bg_dyna_step();
+            action.room = scene_flow_is_interior() ? 0 : (uint8_t)kokiri_scene_room();
+            action.x = recomp_link.x;
+            action.y = recomp_link.y - RECOMP_LINK_EYE_HEIGHT;
+            action.z = recomp_link.z;
+            action.yaw = recomp_link_yaw;
+            link_focus(action.focus);
+            action.c_up = c_up_pending;
+            action.interact = interact_pending;
+            action.cancel = cancel_pending;
+            action.pause = pause_pending;
+            action.menu_step = menu_step;
+            action.menu_dx = menu_dx;
+            action.menu_dy = menu_dy;
+            action.menu_page = menu_page;
+            action.menu_hold_x = input.menu_hold_x;
+            action.menu_hold_y = input.menu_hold_y;
+            action.c_assign = c_assign;
+            action.grounded = oot_core_player_valid && oot_core_player.ground;
+            action.moving = input.analog ? (input.stick_x || input.stick_y)
+                                         : (walk & (CAMERA_UP | CAMERA_DOWN | CAMERA_LEFT | CAMERA_RIGHT)) != 0;
+            action.stick_dir = -1;
+            if (!blocked_before && !paused_before && !view_first_person && !input.look_mode)
+                player_source_pad(&input, interact_pending, attack_edge, &action);
+            attack_edge = false;
+            {
+            unsigned int prd0 = frame_timer_ticks();
+            if (!gameplay_blocks_world() && !action.pause &&
+                (!dungeon_webs_step(save_state.scene_id,action.room) ||
+                 !dungeon_puzzles_sync(save_state.scene_id,action.room)))
+                jo_core_error("Dungeon web collision pool exhausted");
+            if (save_state.scene_id == SAVE_SCENE_DEKU_TREE && kokiri_scene_room() < 12)
+                save_state.deku_visited_rooms |= (uint16_t)(1u << kokiri_scene_room());
+            perf_sub[PS_PRD] += frame_timer_ticks_to_us(frame_timer_ticks() - prd0);
+            }
+            if (!gameplay_blocks_world() && !action.pause) {
+                unsigned door_action=dungeon_doors_step(&action);
+                if (door_action) {
+                    action.interact = false;
+                    interact_pending = false;
+                    action.n64_press &= (uint16_t)~N64_A;
+                    if (door_action==2) action_audio_events(GP_EVENT_DENIED);
+                }
+            }
+            gohma_notice(recomp_camera.x,recomp_camera.y,recomp_camera.z,recomp_yaw,recomp_pitch);
+            field_music_motion(action.moving);
+            if(story_owl_talking()) action.cancel=false;
+            {
+                /* A decomp talk offer or conversation owns A/B: the C game
+                 * must not open its own prompt with the same press. */
+                bool a = action.interact, b = action.cancel;
+                unsigned int talk = oot_core_talk();
+                if (talk) action.interact = false;
+                if (talk & 1u) action.cancel = false;
+                PS_ADD(PS_PRE);
+                perf_t0 = frame_timer_ticks();
+                gameplay_step(&action);
+                PERF_ADD(perf_gs);
+                action.interact = a; action.cancel = b;
+            }
+            if (jump_pending && !blocked_before && !paused_before && !gameplay_blocks_world() &&
+                !view_first_person)
+                (void)oot_core_player_jump();   /* Y: Saturn extension */
+            jump_pending = false;
+            perf_t0 = frame_timer_ticks();
+            if (step_core_gameplay(&action, paused_before)) {
+                interact_pending=cancel_pending=pause_pending=jump_pending=false;
+                c_assign=c_use=0;menu_step=menu_dx=menu_dy=menu_page=0;
+                walk=0;break;
+            }
+            PERF_ADD(perf_co);
+            PS_RESET();
+            {
+                /* Z with nothing to lock = Player parallel mode
+                 * (PLAYER_STATE1_PARALLEL): OoT turns the camera behind Link
+                 * (Camera_Parallel1). Rising edge only, after the core read. */
+                static bool parallel_was;
+                bool parallel = oot_core_player_valid && (oot_core_player.state1 & (1u << 17)) != 0;
+                if (parallel && !parallel_was && !gameplay_blocks_world() && !view_first_person)
+                    oot_follow_recenter(&link_follow);
+                parallel_was = parallel;
+            }
+            story_route_step();
+            tree_mouth_step();
+            if (finish_boss_warp()) { walk=0; jump_pending=false; break; }
+            if (cutscene_is_playing()) {
+                interact_pending = cancel_pending = pause_pending = false;
+                jump_pending = false;
+                break;
+            }
+            if (action.c_up && !blocked_before && !gameplay_blocks_world() && !gameplay.dead &&
+                action.grounded && !input.look_mode) {
+                if (scene_flow_is_interior()) {
+                    scene_flow_toggle_view();
+                    interior_camera();
+                } else {
+                    view_first_person = true;
+                    oot_follow_look_exit(&link_follow);
+                    oot_follow_look(&link_follow, 0, 0);
+                }
+            }
+            if (view_first_person && (gameplay_blocks_world() || gameplay.dead)) {
+                view_first_person = false;
+                snap_camera_to_link();
+            }
+            if (input.look_mode && (cancel_pending || input.look_exited || pause_pending) && view_first_person) {
+                view_first_person = false;
+                snap_camera_to_link();
+            }
+            c_up_pending = false;
+            input.c_pressed = input.c_released = PLAYER_C_NONE;
+            if (gameplay.events2 & (GP2_EVENT_LABELS | GP2_EVENT_JUMP_BINDING | GP2_EVENT_RESET_PREFS)) {
+                if (gameplay.events2 & GP2_EVENT_RESET_PREFS) ui_preferences_reset();
+                else ui_preferences_cycle((gameplay.events2 & GP2_EVENT_JUMP_BINDING) != 0);
+                save_device_write_preferences();
+                player_input_set_jump_button(ui_jump_mask());
+            }
+            if (gameplay.events2 & (GP2_EVENT_LOAD_MENU | GP2_EVENT_RETURN_TITLE)) {
+                bool load = (gameplay.events2 & GP2_EVENT_LOAD_MENU) != 0;
+                if (game_mode() == GAME_MODE_PLAY) game_mode_set(GAME_MODE_PAUSE);
+                if (game_mode_set(load ? GAME_MODE_FILE_SELECT : GAME_MODE_TITLE)) {
+                    minimap_session_reset();
+                    gameplay_reset();
+                    recomp_link_active = false;
+                    combat_input_cancel(&combat_input);
+                    player_input_reset();
+                    player_input_set_dialogue(load);
+                    interact_pending = cancel_pending = pause_pending = jump_pending = false;
+                    menu_step = menu_dx = menu_dy = menu_page = 0;
+                    c_assign = c_use = 0;
+                    if (load) file_select_open();
+                    break;
+                }
+            }
+            if (gameplay.events & GP_EVENT_SAVE) {
+                save_succeeded = active_slot<SAVE_FILE_SLOTS && save_device_write(active_slot);
+                save_reported = true;
+                if (!save_succeeded)
+                    gameplay.events |= GP_EVENT_SAVE_FAILED;
+            }
+            if (m2e_reactions()) {
+                walk = 0;
+                jump_pending = false;
+                interact_pending = cancel_pending = pause_pending = false;
+                menu_step = menu_dx = menu_dy = menu_page = 0;
+                c_assign = c_use = 0;
+                player_input_set_dialogue(false);
+                break;
+            }
+            if(frozen_fanfare) {
+                previous_tick=now;
+                interact_pending=cancel_pending=pause_pending=jump_pending=false;
+                c_assign=c_use=0;
+                combat_input_cancel(&combat_input);player_input_reset();
+                return;
+            }
+            action_audio_events(gameplay.events);
+            interact_pending = false;
+            cancel_pending = false;
+            pause_pending = false;
+            jump_pending = false;
+            menu_step = menu_dx = menu_dy = menu_page = 0;
+            c_assign = c_use = 0;
+            player_input_set_dialogue(gameplay_blocks_world() || gameplay.dead);
+            if (gameplay_is_paused())
+                break;
+            PS_ADD(PS_POST);
+            {
+                /* C-side rider/puzzle state reads Link's feet; actor_sys
+                 * steps the C actors that still exist. */
+                gameplay_input_t puzzle_input = {0};
+                puzzle_input.x = recomp_link.x;
+                puzzle_input.y = recomp_link.y - RECOMP_LINK_EYE_HEIGHT;
+                puzzle_input.z = recomp_link.z;
+                puzzle_input.grounded = action.grounded;
+                dungeon_puzzles_step(&puzzle_input);
+                actor_sys_update();
+            }
+            PS_ADD(PS_AC);
+            {
+                /* C-side blockers and pushers move recomp_link; the next core
+                 * step warps the Player there (oot_core_host push_host_moves). */
+                static int32_t air_peak_y;
+                static bool was_ground = true;
+                int32_t push[2];
+                bool ground = action.grounded;
+                unsigned int dpw0 = frame_timer_ticks();
+                world_props_displace(recomp_link.x,recomp_link.y-RECOMP_LINK_EYE_HEIGHT,recomp_link.z,
+                                     scene_flow_is_interior()?0:kokiri_scene_room(),push);
+                if(push[0] || push[1]) kokiri_collision_move_actor(&recomp_link,push[0],0,push[1]);
+                perf_sub[PS_DPW] += frame_timer_ticks_to_us(frame_timer_ticks() - dpw0);
+                dungeon_doors_constrain(&recomp_link.x,&recomp_link.z,recomp_link.y-RECOMP_LINK_EYE_HEIGHT);
+                mido_push_link();
+                boulder_push_link();
+                /* Deku webs break under a long fall (dungeon_webs_land). */
+                if (!ground && (was_ground || recomp_link.y > air_peak_y)) air_peak_y = recomp_link.y;
+                if (ground && !was_ground)
+                    (void)dungeon_webs_land(recomp_link.x, recomp_link.y - RECOMP_LINK_EYE_HEIGHT,
+                                            recomp_link.z, air_peak_y - recomp_link.y);
+                was_ground = ground;
+            }
+            PS_ADD(PS_DP);
+            /* Navi is the core's En_Elf (Player_SpawnFairy); main.c draws
+             * her from oot_core_player. No C Navi step. */
+            PS_ADD(PS_NV);
+            perf_t0 = frame_timer_ticks();
+            if (view_first_person)
+                first_person_camera_step(&input);
+            else if (scene_flow_is_interior())
+                interior_camera();
+            else
+            {
+                /* The async core moves Link once per frame (at the join), so
+                 * "moved this step" was false on every step and the follow
+                 * camera stopped swinging behind a sideways run. Moving =
+                 * displaced since the last camera step, held for 3 steps. */
+                static int32_t cam_x, cam_z;
+                static unsigned moving_hold;
+                if (recomp_link.x != cam_x || recomp_link.z != cam_z) moving_hold = 3;
+                else if (moving_hold) --moving_hold;
+                cam_x = recomp_link.x; cam_z = recomp_link.z;
+                (void)step_x; (void)step_z;
+                player_camera_update(&link_camera, &link_follow, PLAYER_CAMERA_NORMAL,
+                                     &recomp_link, recomp_link_yaw, moving_hold != 0,
+                                     &recomp_camera, &recomp_yaw, &recomp_pitch);
+            }
+            PERF_ADD(perf_cam);
+            recomp_collision_indexed = scene_collision_indexed;
+            if (take_door()) {
+                walk = 0;
+                jump_pending = false;
+                break;
+            }
+        }
+        player_camera_defer_constrain(false);
+        player_camera_flush_constrain(&recomp_camera, &recomp_pitch);
+        perf_step = frame_timer_ticks_to_us(frame_timer_ticks() - step_start);
+        perf_out[0] = perf_gs; perf_out[1] = perf_co; perf_out[2] = perf_cam;
+        perf_out[3] = perf_step; perf_out[4] = perf_steps;
+        frame_timer_begin(FRAME_PHASE_SKINNING);
+        /* Skinned on the slave SH-2 at the start of the draw (main.c
+         * kokiri_frame_slave_kick); any earlier reader skins here. */
+        if (oot_core_player_valid)
+            link_anim_request_joints(oot_core_player.joints);
+        frame_timer_end(FRAME_PHASE_SKINNING);
+        r0_start = frame_timer_ticks();   /* now: start of PS_R1 */
+#else
     } else if (recomp_link_active) {
         /* A fast door crossing can finish during the preceding music fade.
          * Retry the current area's request until the player accepts it. */
@@ -3220,6 +3593,7 @@ void recomp_update(void)
             }
         }
         frame_timer_end(FRAME_PHASE_SKINNING);
+#endif
 
     } else {
         while (steps--) kokiri_camera_update(&recomp_camera, &recomp_yaw,
@@ -3252,12 +3626,29 @@ void recomp_update(void)
                   ((title_visible ||
                     (kokiri_scene_backdrop_active() &&
                      !cutscene_hides_scene())) ? NBG1ON : 0);
-    if (gameplay_is_paused() && recomp_link_active && !pause_windows_failed()) {
-        /* RGB page on NBG0; preserve NBG1's frozen interior underneath.
-         * RGB carousel uses enlargement, with explicit fetch scheduling. */
-        slScrDisp(layers & ~NBG2ON);
-        slScrCycleSet(0x5555FEEEu,0x05555EEEu,0x4444EEEEu,0x4444EEEEu);
-    } else slScrAutoDisp(layers);
+    {
+        /* 2026-10-09 speed: SGL recomputes VRAM access cycles on every
+         * slScrAutoDisp. In live gameplay apply only on a change (twice a
+         * second as a backstop); pause, title and menus apply every frame. */
+        static unsigned last_mode = ~0u, since;
+        bool paused_rgb = gameplay_is_paused() && recomp_link_active && !pause_windows_failed();
+        unsigned mode = layers | (paused_rgb ? 0x80000000u : 0u);
+        bool cacheable = recomp_link_active && !title_visible && !paused_rgb;
+        if (!cacheable || mode != last_mode || ++since >= 30) {
+            last_mode = mode;
+            since = 0;
+            if (paused_rgb) {
+                /* RGB page on NBG0; preserve NBG1's frozen interior underneath.
+                 * RGB carousel uses enlargement, with explicit fetch scheduling. */
+                slScrDisp(layers & ~NBG2ON);
+                slScrCycleSet(0x5555FEEEu,0x05555EEEu,0x4444EEEEu,0x4444EEEEu);
+            } else slScrAutoDisp(layers);
+        }
+    }
+#ifdef PLAYER_SOURCE
+    if (recomp_link_active && !title_visible)
+        perf_sub[PS_R1] += frame_timer_ticks_to_us(frame_timer_ticks() - r0_start);
+#endif
 }
 
 /* -1 no attempt yet this session, 0 failed, 1 succeeded. */

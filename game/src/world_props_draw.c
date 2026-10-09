@@ -3,6 +3,8 @@
 #endif
 #include <jo/jo.h>
 #include "world_props_draw.h"
+#include "perf_sub.h"
+#include "npc_sprite.h"
 #include "world_props.h"
 #include "world_signs.h"
 #include "item_drop.h"
@@ -168,9 +170,11 @@ static void draw_sign(unsigned int mask,int x,int y,int z,uint16_t yaw,bool fall
 void world_props_draw(unsigned int tick)
 {
     actor_t *a=0; unsigned int i,delta=tick-last_tick;last_tick=tick;
+    PS_T0();
 #ifdef DOSEI_OOT_CORE
     oot_core_meshes_draw();
 #endif
+    PS_ADD(PS_DWC);
     if(delta>12) delta=12;
     if(tree_mouth && kokiri_scene_room()==1) {
         int32_t x,y,z;tree_mouth_position(&x,&y,&z);actor_mesh_draw_static(tree_mouth,x,y,z,0);
@@ -180,6 +184,9 @@ void world_props_draw(unsigned int tick)
         {
             const kokiri_world_prop_t *p=&kokiri_world_props[a->data[0]];
             bool is_bush=p->id==0x14F && (p->param&3)==2;
+            /* 2026-10-09 speed: off-screen props were transformed by SGL
+             * every frame (all of Kokiri's pots, rocks, bushes, stones). */
+            if(!npc_sprite_in_view(a->x,a->y+20,a->z,80)) continue;
             /* Bit 0: pots and rocks.  Bit 2: gossip stones.  Bit 3: bushes. */
             if((dosei_draw_mask & 1) && (p->id==0x111 || p->id==0x14E ||
                                          (p->id==0x14F && !is_bush))) continue;
@@ -195,6 +202,7 @@ void world_props_draw(unsigned int tick)
             jo_3d_pop_matrix();
         }
     }
+    PS_ADD(PS_DWP);
     while((a=actor_sys_find(DROP_ACTOR_ID,a))) {
         int y=a->y;
         if(a->scene!=save_state.scene_id || (a->room!=ACTOR_ROOM_NONE && a->room!=(int)(scene_flow_is_interior()?0:kokiri_scene_room()))) continue;

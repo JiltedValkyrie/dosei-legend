@@ -40,9 +40,9 @@
 #define RAM_CART_MSGDATA_BYTES   0x38400u
 /* Scene blob (<scene>.OOC) followed by the scene's object data blobs (.OOB). */
 #define RAM_CART_SCENECOL_OFFSET 0xBA800u
-#define RAM_CART_SCENECOL_BYTES  0x40000u
-#define RAM_CART_OOTCORE_OFFSET 0xFA800u
-#define RAM_CART_OOTCORE_BYTES  0x90000u
+#define RAM_CART_SCENECOL_BYTES  0x30000u   /* largest scene+objects+pack fits; 64 KB moved to the core 2026-10-09 */
+#define RAM_CART_OOTCORE_OFFSET 0xEA800u
+#define RAM_CART_OOTCORE_BYTES  0xA0000u
 #define RAM_CART_FIXED_BYTES    0x18A800u
 #else
 #define RAM_CART_FIXED_BYTES    0x82400u

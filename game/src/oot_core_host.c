@@ -21,6 +21,9 @@
 #include "npc_draw.h"
 #include "collide.h"
 #include "kokiri_collision.h"
+#ifdef CORE_COLLISION
+#include "bg_core_shim.h"
+#endif
 #include "player_items.h"
 #include "player_attack.h"
 #include <stdlib.h>
@@ -98,13 +101,70 @@ static void core_draw_init(void)
 }
 
 
-#define ENTRY ((const OotCoreEntry *)OOT_CORE_LOAD_ADDR)
+#define ENTRY_RAW ((const OotCoreEntry *)OOT_CORE_LOAD_ADDR)
+#ifdef PLAYER_SOURCE
+#define OOT_CORE_ASYNC 1
+#endif
+#ifdef OOT_CORE_ASYNC
+/* Async core update (2026-10-09): the slave SH-2 runs Actor_UpdateAll while
+ * the master draws. SH-2 caches are write-through but not coherent: the
+ * slave purges before it starts, the master after the join, and flags the
+ * other CPU polls are read and written cache-through. */
+#define UNCACHED(v) (*(volatile __typeof__(v) *)((uintptr_t)&(v) | 0x20000000u))
+static unsigned char async_busy;
+static unsigned int async_violations;
+static inline const OotCoreEntry *entry_checked(void)
+{
+    if (async_busy) ++async_violations;   /* master entered the core mid-update */
+    return ENTRY_RAW;
+}
+#define ENTRY (entry_checked())
+#define ASYNC_BUSY() (UNCACHED(async_busy) != 0)
+/* Core callbacks that touch hardware (sound) or fail fatally are queued while
+ * the slave runs and replayed by the master at the join. */
+#define SFX_QUEUE 32
+static unsigned short sfx_queue[SFX_QUEUE];
+static unsigned int sfx_queued;
+static unsigned int deferred_fatal[4];
+#else
+#define ENTRY ENTRY_RAW
+#define ASYNC_BUSY() 0
+#endif
 
 /* ---- OotCoreHost: decomp -> C backends ---- */
+static void host_sfx_now(unsigned short sfx_id)
+{
+#ifdef PLAYER_SOURCE
+    /* Real Player movement: NA_SE_PL_WALK_* (0x800 + surface), NA_SE_PL_JUMP*
+     * (0x810), NA_SE_PL_LAND* (0x820) -> the host's step/jump samples. */
+    if (sfx_id >= 0x800 && sfx_id < 0x830) {
+        action_audio_events(sfx_id >= 0x810 && sfx_id < 0x820 ? GP_EVENT_JUMP : GP_EVENT_FOOTSTEP);
+        return;
+    }
+#endif
+    action_audio_decomp_sfx(sfx_id);
+}
+
 static void host_sfx(unsigned short sfx_id, int x, int y, int z)
 {
     (void)x; (void)y; (void)z;
-    action_audio_decomp_sfx(sfx_id);
+#ifdef OOT_CORE_ASYNC
+    if (ASYNC_BUSY()) {
+        unsigned int n = UNCACHED(sfx_queued);
+        if (n < SFX_QUEUE) {
+            ((volatile unsigned short *)((uintptr_t)sfx_queue | 0x20000000u))[n] = sfx_id;
+            UNCACHED(sfx_queued) = n + 1;
+        }
+        return;
+    }
+#endif
+    host_sfx_now(sfx_id);
+}
+
+/* Profiling clock: the master's FRT extension is not the slave's to touch. */
+static unsigned int host_ticks(void)
+{
+    return ASYNC_BUSY() ? 0u : frame_timer_ticks();
 }
 
 /* Decomp ItemId (include/item.h) -> C save item. */
@@ -149,6 +209,17 @@ static unsigned char host_give_item(unsigned char item)
  * source call does not incorrectly report survival before C consumes it. */
 static int host_health_change(short amount)
 {
+#ifdef PLAYER_SOURCE
+    /* z_parameter Health_ChangeBy on the C save (the one owner): the real
+     * Player plays its own damage reaction and i-frames. */
+    if (amount >= 0) save_heal((unsigned int)amount);
+    else {
+        unsigned int damage = (unsigned int)-(int)amount;
+        if (save_state.source_double_defense) damage >>= 1;
+        save_state.health = save_state.health > damage ? save_state.health - damage : 0;
+    }
+    return save_state.health != 0;
+#endif
     if (amount >= 0) save_heal((unsigned int)amount);
     else if (!gameplay.intangible && !gameplay.hurt_pending && !gameplay.dead) {
         /* Actor-origin damage shares C Link's next-step reaction/i-frames. */
@@ -220,10 +291,95 @@ static void host_rupees_change(short amount)
     gameplay.rupees = save_state.rupees;
 }
 
+#ifdef PLAYER_SOURCE
+/* Inventory_ChangeAmmo on the C save: source ItemId -> its ammo counter.
+ * Capacities: the C save's own (seeds) or the source cap of 99. */
+static void host_ammo_change(unsigned char item, short amount)
+{
+    uint8_t *ammo = 0;
+    int value, cap = 99;
+    switch (item) {
+    case 0x00: ammo = &save_state.stick_ammo; break;            /* ITEM_DEKU_STICK */
+    case 0x01: ammo = &save_state.nut_ammo; break;              /* ITEM_DEKU_NUT */
+    case 0x06: case 0x58: ammo = &save_state.ammo_seeds;        /* ITEM_SLINGSHOT/SEEDS */
+        cap = (int)save_seed_capacity(); break;
+    case 0x02: ammo = &save_state.source_ammo[2]; break;        /* ITEM_BOMB */
+    case 0x03: ammo = &save_state.source_ammo[3]; break;        /* ITEM_BOW */
+    case 0x09: ammo = &save_state.source_ammo[8]; cap = 50; break; /* ITEM_BOMBCHU */
+    case 0x10: ammo = &save_state.source_ammo[14]; break;       /* ITEM_MAGIC_BEAN */
+    default: return;
+    }
+    value = (int)*ammo + amount;
+    *ammo = (uint8_t)(value < 0 ? 0 : value > cap ? cap : value);
+}
+
+/* Magic_RequestChange through health_hud.c's meter (MAGIC_CONSUME_NOW is
+ * what Player items use); OOT_CORE_MAGIC_FILL = Magic_Fill. */
+static int host_magic_request(short amount, short type)
+{
+    if (type == OOT_CORE_MAGIC_FILL) {
+        save_state.source_magic = (uint8_t)(save_state.source_magic_level >= 2 ? 96 :
+                                            save_state.source_magic_level ? 48 : 0);
+        return 1;
+    }
+    if (!save_state.source_magic_level) return 0;
+    if (type == 5) {                                   /* MAGIC_ADD */
+        unsigned int cap = save_state.source_magic_level >= 2 ? 96 : 48;
+        unsigned int v = save_state.source_magic + (unsigned int)amount;
+        save_state.source_magic = (uint8_t)(v > cap ? cap : v);
+        return 1;
+    }
+    if (!health_hud_magic_idle() || !health_hud_magic_available((unsigned)amount)) {
+        host_sfx(0x4806, 0, 0, 0);                     /* NA_SE_SY_ERROR */
+        return 0;
+    }
+    return health_hud_magic_consume((unsigned)amount);
+}
+
+/* Inventory_UpdateBottleItem / Inventory_ConsumeFairy on the C bottles. */
+static int host_bottle_update(unsigned char item, unsigned char button)
+{
+    unsigned int i;
+    if (button == 0xFF) {                              /* consume a fairy */
+        for (i = 0; i < 4; ++i)
+            if (save_state.bottle_items[i] == 0x18) {  /* ITEM_BOTTLE_FAIRY */
+                save_state.bottle_items[i] = 0x14;     /* ITEM_BOTTLE_EMPTY */
+                return 1;
+            }
+        return 0;
+    }
+    if (button >= 1 && button <= 3) {
+        unsigned int slot = save_c_item_inventory_slot(save_state.c_items[button - 1]);
+        if (slot >= 18 && slot <= 21) {               /* SLOT_BOTTLE_1..4 */
+            if (save_state.bottle_items[slot - 18] == 0x1A && item == 0x14)
+                item = 0x1F;                           /* milk full -> half */
+            save_state.bottle_items[slot - 18] = item;
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static void host_fatal(unsigned int code, unsigned int a, unsigned int b)
+{
+#ifdef OOT_CORE_ASYNC
+    if (ASYNC_BUSY()) {   /* the slave cannot show an error: the join does */
+        volatile unsigned int *f = (volatile unsigned int *)((uintptr_t)deferred_fatal | 0x20000000u);
+        if (!f[0]) { f[1] = code; f[2] = a; f[3] = b; f[0] = 1; }
+        return;
+    }
+#endif
+    jo_core_error("oot-core fatal %08X %X %X", code, a, b);
+}
+#endif
+
 static int host_scene_file(const char* name, void* data, unsigned int bytes)
 {
     jo_file file;
     int length, got;
+#ifdef OOT_CORE_ASYNC
+    if (ASYNC_BUSY()) { host_fatal(0xA5F11E00u, 0, 0); return -1; }  /* no CD from the slave */
+#endif
     if (GFS_NameToId((Sint8*)name) < 0) return 0;
     if (!jo_fs_open(&file, name)) return -1;
     length = file.size;
@@ -237,6 +393,9 @@ static int host_scene_file(const char* name, void* data, unsigned int bytes)
 
 static void* host_sprite_memory(void* memory, unsigned int bytes)
 {
+#ifdef OOT_CORE_ASYNC
+    if (ASYNC_BUSY()) { host_fatal(0xA5A110C0u, 0, 0); return 0; }  /* jo heap is master-only */
+#endif
     if (memory) { jo_free(memory); return 0; }
     memory=jo_malloc(bytes);
     if (memory && jo_memory_usage_percent()>CORE_SPRITE_HEAP_PERCENT) {
@@ -246,8 +405,14 @@ static void* host_sprite_memory(void* memory, unsigned int bytes)
 }
 
 static const OotCoreHost host = { host_sfx, host_give_item, host_health_change,
-                                  frame_timer_ticks, frame_timer_ticks_to_us, host_rupees_change,
-                                  host_player_combat, host_player_hit, host_scene_file, host_sprite_memory };
+                                  host_ticks, frame_timer_ticks_to_us, host_rupees_change,
+                                  host_player_combat, host_player_hit, host_scene_file, host_sprite_memory,
+#ifdef PLAYER_SOURCE
+                                  host_ammo_change, host_magic_request, host_bottle_update, host_fatal
+#else
+                                  0, 0, 0, 0
+#endif
+};
 
 static OotCoreBench bench;
 /* Last decomp update (Actor_UpdateAll etc.), microseconds. */
@@ -260,6 +425,9 @@ static unsigned int core_image_crc;
 ** a failed scene is not retried every frame. */
 static unsigned int play_scene = 0xFFFFu;
 static unsigned int step_phase;
+#ifdef OOT_CORE_ASYNC
+static unsigned int core_due;        /* updates owed since the last kick */
+#endif
 static int meshes_room = -1; /* assets follow Actor_UpdateAll's deferred room spawn */
 
 /* Read a disc file into a cache-through cart carve: zero the carve first
@@ -306,13 +474,36 @@ bool oot_core_boot(void)
     }
     jo_printf(0, 20, "oc 2 init  ");
     core_image_crc = OotActorPack_Crc((const void*)OOT_CORE_LOAD_ADDR, core_file_bytes, 0);
+    /* oot-core.ld .lowbss lives in Low RAM, which boot does not clear. */
+    memset(RAM_LOW(RAM_LOW_OOTCORE_BSS_OFFSET), 0, RAM_LOW_OOTCORE_BSS_BYTES);
     ENTRY->init(&host);
+#ifdef CORE_COLLISION
+    /* One collision world: C bg_* queries answer from the core's z_bgcheck;
+     * its Actor_UpdateAll owns the DynaPoly frame boundary. */
+    bg_core_shim_set_api(ENTRY->bg_api());
+    bg_core_shim_frame_owner(true);
+#endif
     {
         /* ROM message text (NESMSG.BIN): z_message DMAs from it. */
         int bytes = load_carve("NESMSG.BIN", RAM_CART_MSGDATA_OFFSET, RAM_CART_MSGDATA_BYTES);
         if (bytes) ENTRY->set_text(ram_cart_fixed(RAM_CART_MSGDATA_OFFSET, RAM_CART_MSGDATA_BYTES),
                                    (unsigned int)bytes);
     }
+#ifdef PLAYER_SOURCE
+    {
+        /* Real Player frames: the whole strict bank, resident for the session
+         * (no CD reads during play). Cart heap; replaces LINKANIM/ADULTANM. */
+        static void *bank;
+        int bytes = 0;
+        jo_printf(0, 20, "oc 3 anim  ");
+        if (!bank) bank = jo_fs_read_file("PLAYANIM.PFB", &bytes);
+        if (!bank || !ENTRY->player_bank || !ENTRY->player_bank(bank, (unsigned int)bytes)) {
+            jo_core_error("Player animation bank failed (%d bytes)", bytes);
+            loaded = false;
+            return false;
+        }
+    }
+#endif
     jo_printf(0, 20, "oc 3 bench ");
     ENTRY->bench(&bench, frame_timer_ticks, frame_timer_ticks_to_us);
     jo_printf(0, 20, "                    ");
@@ -321,8 +512,71 @@ bool oot_core_boot(void)
 
 /* C Link -> player proxy: recomp_link is the eye, OoT pos is the feet.
 ** World units are OoT units (1:1). */
+#ifdef PLAYER_SOURCE
+/* Real Player: the core owns Link; the host reads him back once per update. */
+OotCorePlayerView oot_core_player;
+bool oot_core_player_valid;
+
+/* recomp_link as last read: a later difference is a host move (spawn
+** placement, story events, C pushes) that the Player must take. */
+static camera_position_t read_link;
+static uint16_t read_yaw;
+
+static void read_player(void)
+{
+    oot_core_player_valid = ENTRY->player_view(&oot_core_player) != 0;
+    if (!oot_core_player_valid) return;
+    recomp_link.x = oot_core_player.x;
+    recomp_link.y = oot_core_player.y + RECOMP_LINK_EYE_HEIGHT;
+    recomp_link.z = oot_core_player.z;
+    recomp_link_yaw = (uint16_t)oot_core_player.yaw;
+    read_link = recomp_link;
+    read_yaw = recomp_link_yaw;
+}
+
+static void push_host_moves(void)
+{
+    if (!oot_core_player_valid || !ENTRY->player_warp) return;
+    if (recomp_link.x == read_link.x && recomp_link.y == read_link.y &&
+        recomp_link.z == read_link.z && recomp_link_yaw == read_yaw) return;
+    ENTRY->player_warp(recomp_link.x, recomp_link.y - RECOMP_LINK_EYE_HEIGHT, recomp_link.z,
+                       (short)recomp_link_yaw);
+    read_link = recomp_link;
+    read_yaw = recomp_link_yaw;
+}
+
+unsigned int oot_core_player_draw_us(void)
+{
+    return oot_core_player_valid ? oot_core_player.draw_us : 0;
+}
+
+void oot_core_player_resync(void)
+{
+    if (playing) read_player();
+}
+
+int oot_core_player_room_request(void)
+{
+    return oot_core_player_valid ? oot_core_player.room_request : -1;
+}
+
+void oot_core_player_damage(int damage)
+{
+    if (playing && ENTRY->player_damage) ENTRY->player_damage(damage);
+}
+
+bool oot_core_player_jump(void)
+{
+    return playing && ENTRY->player_jump && ENTRY->player_jump();
+}
+#endif
+
 static void sync_player(void)
 {
+#ifdef PLAYER_SOURCE
+    push_host_moves();
+    return;
+#endif
     ENTRY->set_player(recomp_link.x, recomp_link.y - RECOMP_LINK_EYE_HEIGHT, recomp_link.z,
                       (short)recomp_link_yaw);
 }
@@ -410,6 +664,16 @@ static void mirror_save(void)
         mirror.magic = save_state.source_magic;
         mirror.double_defense = save_state.source_double_defense;
         mirror.boots = save_state.boots;
+        {
+            /* C 0 green, 1 blue, 2 red -> PLAYER_TUNIC_KOKIRI/ZORA/GORON. */
+            static const unsigned char tunic[3] = { 0, 2, 1 };
+            unsigned int i;
+            mirror.tunic = tunic[save_state.tunic < 3 ? save_state.tunic : 0];
+            for (i = 0; i < 3; ++i) {
+                unsigned int slot = save_c_item_inventory_slot(save_state.c_items[i]);
+                mirror.c_slots[i] = slot < 24 && save_inventory_slot_usable(slot) ? (unsigned char)slot : 0xFF;
+            }
+        }
         memcpy(mirror.player_name, "Link    ", 8); /* no file name in the C save */
         mirror.generic_scene = save_scene >= SAVE_SCENE_COUNT;
         ENTRY->set_save(&mirror);
@@ -489,6 +753,7 @@ static bool sprites_refresh(void)
 ** C Link collides with the same source mesh. Converted once per actor into
 ** the cart heap; transform refreshed after every decomp update. Normals are
 ** the source's n / 32767 halved to Q14, as build_kokiri_scene does offline. */
+#ifndef CORE_COLLISION
 static void core_dyna_drop(core_dyna_t *d, bool remove)
 {
     if (remove && d->id != BG_NONE) bg_dyna_remove(d->id);
@@ -568,6 +833,8 @@ static void core_dyna_sync(void)
         }
     }
 }
+
+#endif
 
 static void tools_free(void)
 {
@@ -920,6 +1187,9 @@ void oot_core_meshes_draw(void)
         const OotCoreDrawItem *it = &items[i];
         int dx = it->x - recomp_camera.x, dz = it->z - recomp_camera.z;
         if (dx < -2000 || dx > 2000 || dz < -2000 || dz > 2000) continue;
+        /* Off-screen: skip SGL's transform of the whole mesh. 400 covers
+         * the largest prop meshes (scaled). */
+        if (!npc_sprite_in_view(it->x, it->y, it->z, 400)) continue;
         for (m = 0; m < core_mesh_count; ++m)
             if (core_mesh_ready[m] && core_mesh_key[m].kind == it->kind &&
                 core_mesh_key[m].object == it->object && core_mesh_key[m].index == it->index) {
@@ -937,6 +1207,15 @@ static bool npc_text_opened;
 static void send_input(const gameplay_input_t *in)
 {
     unsigned short press = (unsigned short)((in->interact ? 0x8000u : 0u) | (in->cancel ? 0x4000u : 0u));
+#ifdef PLAYER_SOURCE
+    /* The real Player reads the whole controller. A text box or the Ocarina
+     * keeps the menu-style mapping below (A/B/C presses, stick flicks). */
+    if (!(ENTRY->ocarina(0) & 2u) && !(ENTRY->talk_state() & 1u) && !npc_text_opened &&
+        !ENTRY->message_view()->active) {
+        ENTRY->set_input(in->n64_held, in->n64_press, in->n64_stick_x, in->n64_stick_y);
+        return;
+    }
+#endif
     if (ENTRY->ocarina(0) & 2u) {
         /* Ocarina owns the menu-style D-pad edges, including C+direction on
          * digital pads. Warp choices still use ordinary message navigation. */
@@ -951,13 +1230,21 @@ static void send_input(const gameplay_input_t *in)
 
 void oot_core_scene_unload(void)
 {
+    oot_core_async_join();   /* never free a play state the slave is updating */
     playing = false;
+#ifdef CORE_COLLISION
+    /* C proxies and raised water go with the PlayState that holds them. */
+    bg_core_shim_scene_reset();
+#else
     bg_water_bind(NULL, 0); /* borrowed OOC memory must not survive release */
+#endif
     /* Keep source actors' code and objects valid through their destructors. */
     if (loaded) ENTRY->play_destroy();
     sprites_reset();
     tools_free();
+#ifndef CORE_COLLISION
     core_dyna_reset();
+#endif
     meshes_free();
     if (loaded) ENTRY->pack_release();
     scene_objects = NULL;
@@ -966,6 +1253,69 @@ void oot_core_scene_unload(void)
     oot_core_scene_restart();
 }
 
+/* Scene blob, sprite libraries and PlayState for `scene`; Player proxy at the
+ * feet position. False leaves no PlayState (CORE_COLLISION: no collision). */
+static bool scene_enter(unsigned int scene, int room, int x, int y, int z, unsigned int yaw)
+{
+    oot_core_scene_unload();
+    play_scene = scene;
+    if (!load_scene_blob(scene)) {
+        if (scene_load_failed) jo_printf(0, 20, "Actor pack load failed: %u", scene);
+        return false;
+    }
+    if (!sprites_preload((const OotSceneBlob *)OOT_SCENECOL_ADDR)) {
+        scene_load_failed = true;
+        ENTRY->pack_release();
+        /* OotCore_SpritePreload: count | object << 8 | row << 20 | reason << 26
+         * (1 file, 2 heap, 3 read/validate). */
+        jo_core_error("Sprite preload failed %08X heap %d%%", sprite_stats.missing,
+                      jo_memory_usage_percent());
+        return false;
+    }
+    mirror_save(); /* age/time/flags before play_init picks the layer */
+    playing = ENTRY->play_init(RAM_LOW(RAM_LOW_OOTPLAY_OFFSET), RAM_LOW_OOTPLAY_BYTES,
+                               scene_flow_entry()->oot_scene, (const void *)OOT_SCENECOL_ADDR,
+                               room, (short)x, (short)y, (short)z, (short)yaw) != 0;
+    if (playing) {
+        ENTRY->set_objects(scene_objects, scene_object_count);
+#ifdef PLAYER_SOURCE
+        read_player();   /* spawn / respawn position is the Player's */
+#endif
+        ENTRY->set_flags(
+#ifdef CORE_SPRITES
+            OOT_CORE_FLAG_NPC_SPRITES |
+#endif
+            (scene_flow_is_interior() ? OOT_CORE_FLAG_FIXED_CAMERA : 0u));
+        /* Sprite libraries are ready for every scene room/layer. Actor
+         * instances and static prop views appear on the first core step. */
+    } else {
+        scene_load_failed = true;
+        ENTRY->play_destroy();
+        ENTRY->pack_release();
+    }
+    step_phase = 0;
+#ifdef OOT_CORE_ASYNC
+    core_due = 0;   /* owed updates belonged to the previous play state */
+#endif
+    return playing;
+}
+
+#ifdef CORE_COLLISION
+/* scene_flow_load, inside the loading screen: the core scene is the only
+ * collision, so it must exist before C Link spawns or C props register. */
+bool oot_core_scene_enter(unsigned int scene, unsigned int spawn)
+{
+    const scene_spawn_t *at = scene_flow_spawn(scene, spawn);
+    int room = scene_flow_is_interior() ? 0 : (int)kokiri_bank_room();
+    if (!loaded) return false;
+    if (!scene_enter(scene, room, at->x, at->y, at->z, at->yaw)) {
+        if (!scene_load_failed) jo_core_error("Scene %u has no core collision", scene);
+        return false;
+    }
+    return true;
+}
+#endif
+
 void oot_core_frame(const gameplay_input_t *in)
 {
     unsigned int scene = scene_flow_scene();
@@ -973,40 +1323,8 @@ void oot_core_frame(const gameplay_input_t *in)
     int room = scene_flow_is_interior() ? 0 : (int)kokiri_bank_room();
     if (!loaded || gameplay_is_paused()) return;
     if (scene != play_scene) {
-        oot_core_scene_unload();
-        play_scene = scene;
-        if (!load_scene_blob(scene)) {
-            if (scene_load_failed) jo_printf(0, 20, "Actor pack load failed: %u", scene);
-            return;
-        }
-        if (!sprites_preload((const OotSceneBlob *)OOT_SCENECOL_ADDR)) {
-            scene_load_failed = true;
-            ENTRY->pack_release();
-            /* OotCore_SpritePreload: count | object << 8 | row << 20 | reason << 26
-             * (1 file, 2 heap, 3 read/validate). */
-            jo_core_error("Sprite preload failed %08X heap %d%%", sprite_stats.missing,
-                          jo_memory_usage_percent());
-            return;
-        }
-        mirror_save(); /* age/time/flags before play_init picks the layer */
-        playing = ENTRY->play_init(RAM_LOW(RAM_LOW_OOTPLAY_OFFSET), RAM_LOW_OOTPLAY_BYTES,
-                                   scene_flow_entry()->oot_scene, (const void *)OOT_SCENECOL_ADDR,
-                                   room,
-                                   (short)recomp_link.x, (short)(recomp_link.y - RECOMP_LINK_EYE_HEIGHT),
-                                   (short)recomp_link.z, (short)recomp_link_yaw) != 0;
-        if (playing) {
-            ENTRY->set_objects(scene_objects, scene_object_count);
-#ifdef CORE_SPRITES
-            ENTRY->set_flags(OOT_CORE_FLAG_NPC_SPRITES);
-#endif
-            /* Sprite libraries are ready for every scene room/layer. Actor
-             * instances and static prop views appear on the first core step. */
-        } else {
-            scene_load_failed = true;
-            ENTRY->play_destroy();
-            ENTRY->pack_release();
-        }
-        step_phase = 0;
+        scene_enter(scene, room, recomp_link.x, recomp_link.y - RECOMP_LINK_EYE_HEIGHT, recomp_link.z,
+                    recomp_link_yaw);
     }
     if (!playing) {
         if (scene_load_failed) jo_printf(0, 20, "Scene load failed. Pause: reload");
@@ -1017,11 +1335,13 @@ void oot_core_frame(const gameplay_input_t *in)
     send_input(in);
     mirror_save();
     ENTRY->set_room(room);
+#ifndef CORE_COLLISION
     {
         const void *water;
         unsigned count=ENTRY->water_boxes(&water);
         bg_water_bind((const bg_waterbox_t *)water,count);
     }
+#endif
     {
         int32_t base[3], tip[3];
         bool have = gameplay_blade_points(base, tip);
@@ -1032,13 +1352,23 @@ void oot_core_frame(const gameplay_input_t *in)
     step_phase += 2;
     if (step_phase >= 3) {
         step_phase -= 3;
+#ifdef OOT_CORE_ASYNC
+        /* Runs on the slave at the draw window (oot_core_async_kick). */
+        if (core_due < 2) ++core_due;
+        return;
+#endif
         unsigned int t0 = frame_timer_ticks();
         {
             int32_t hand[3];
             if (gameplay_link_point(18, hand)) ENTRY->tool(OOT_CORE_TOOL_HAND, (int *)hand);
         }
         ENTRY->update();
+#ifndef CORE_COLLISION
         core_dyna_sync();
+#endif
+#ifdef PLAYER_SOURCE
+        read_player();
+#endif
         CORE_DRAW->tool_bits = (unsigned int)ENTRY->tool(OOT_CORE_TOOL_STATE, CORE_DRAW->tool_pull);
         if (CORE_DRAW->tool_bits & OOT_CORE_TOOL_MAGIC_RESET) health_hud_magic_reset();
         health_hud_magic_update(); /* Magic_Update, once per source frame */
@@ -1084,7 +1414,13 @@ int oot_core_transition_request(bool consume)
     return playing ? ENTRY->transition_request(consume) : -1;
 }
 bool oot_core_ocarina_start(void) { return playing && ENTRY->ocarina(1) != 0; }
-unsigned int oot_core_ocarina_state(void) { return playing ? ENTRY->ocarina(0) : 0; }
+unsigned int oot_core_ocarina_state(void)
+{
+    /* Link's draw reads this mid-update: answer from the last master read. */
+    static unsigned int cached;
+    if (!ASYNC_BUSY()) cached = playing ? ENTRY->ocarina(0) : 0;
+    return cached;
+}
 unsigned int oot_core_ocarina_note(void) { return playing ? ENTRY->ocarina(2) : 0; }
 unsigned int oot_core_ocarina_song(void) { return playing ? ENTRY->ocarina(3) : 0; }
 bool oot_core_ocarina_sun_allowed(void) { return playing && ENTRY->ocarina(4) != 0; }
@@ -1160,4 +1496,130 @@ int oot_core_view(int category, OotCoreActorView *out, int max)
 {
     return playing ? ENTRY->actor_view(category, out, max) : 0;
 }
+#endif
+
+#ifdef OOT_CORE_ASYNC
+/* ---- Second-CPU core update -------------------------------------------- */
+typedef struct { unsigned int updates, done, us; } slave_box_t;
+static slave_box_t slave_box;
+#define BOX ((volatile slave_box_t *)((uintptr_t)&slave_box | 0x20000000u))
+static unsigned int async_updates, async_overlap_us, async_join_us, async_kick_tick;
+static unsigned int async_slave_us;
+unsigned int oot_core_slave_job_us(void) { return async_slave_us; }
+
+/* Slave side: only the core, nothing of the host but the queued callbacks. */
+static void slave_job_body(void)
+{
+    /* The slave's own FRT, read only (SGL owns its setup; TCR CKS picks
+     * clock / 8, 32 or 128). Timed per update so a 16-bit wrap stays rare. */
+    volatile uint16_t *frc = (volatile uint16_t *)0xFFFFFE12;
+    unsigned int cks = *(volatile uint8_t *)0xFFFFFE16 & 3u;
+    unsigned int i, n = BOX->updates, ticks = 0;
+    slCashPurge();                       /* the master wrote input/state */
+    for (i = 0; i < n; ++i) {
+        uint16_t t0 = *frc;
+        ENTRY_RAW->update();
+        ticks += (uint16_t)(*frc - t0);
+    }
+    /* 28.64 MHz: 8 -> 0.279 us, 32 -> 1.117, 128 -> 4.47 (x1000 / 1000). */
+    BOX->us = cks == 0 ? ticks * 279u / 1000u : cks == 1 ? ticks * 1117u / 1000u :
+              ticks * 4470u / 1000u;
+    BOX->done = 1;
+}
+
+/* slSlaveFunc entry: switch to the Low RAM stack, run, switch back. */
+static void __attribute__((noinline)) slave_job(void *arg)
+{
+    void *top = (void *)(RAM_LOW_ADDRESS + RAM_LOW_SLAVE_STACK_OFFSET + RAM_LOW_SLAVE_STACK_BYTES);
+    (void)arg;
+    __asm__ volatile(
+        "mov    r15,r1\n\t"
+        "mov    %0,r15\n\t"
+        "mov.l  r1,@-r15\n\t"
+        "jsr    @%1\n\t"
+        "nop\n\t"
+        "mov.l  @r15,r15\n\t"
+        :
+        : "r"(top), "r"(slave_job_body)
+        : "r0", "r1", "r2", "r3", "r4", "r5", "r6", "r7", "mach", "macl", "pr", "t", "memory");
+}
+
+bool oot_core_async_busy(void) { return ASYNC_BUSY(); }
+
+void oot_core_async_kick(void)
+{
+    int32_t hand[3];
+    if (async_busy || !playing || !core_due || gameplay_is_paused()) return;
+    if (gameplay_link_point(18, hand)) ENTRY_RAW->tool(OOT_CORE_TOOL_HAND, (int *)hand);
+    async_updates = core_due;
+    core_due = 0;
+    BOX->updates = async_updates;
+    BOX->done = 0;
+    UNCACHED(sfx_queued) = 0;
+    UNCACHED(async_busy) = 1;
+    async_kick_tick = frame_timer_ticks();
+    slSlaveFunc(slave_job, 0);
+}
+
+void oot_core_async_join(void)
+{
+    unsigned int t0, i, n;
+    volatile unsigned int *f;
+    if (!async_busy) return;
+    t0 = frame_timer_ticks();
+    async_overlap_us = frame_timer_ticks_to_us(t0 - async_kick_tick);
+    while (!BOX->done)
+        if (frame_timer_ticks_to_us(frame_timer_ticks() - t0) > 250000u)
+            jo_core_error("oot-core slave update did not finish");
+    async_join_us = frame_timer_ticks_to_us(frame_timer_ticks() - t0);
+    async_slave_us = BOX->us;
+    slCashPurge();                       /* see the slave's writes */
+    UNCACHED(async_busy) = 0;
+    n = sfx_queued;
+    for (i = 0; i < n && i < SFX_QUEUE; ++i) host_sfx_now(sfx_queue[i]);
+    sfx_queued = 0;
+    f = deferred_fatal;
+    if (f[0]) { f[0] = 0; host_fatal(f[1], f[2], f[3]); }
+    /* Post-update work the synchronous path did after ENTRY->update(). */
+    read_player();
+    CORE_DRAW->tool_bits = (unsigned int)ENTRY->tool(OOT_CORE_TOOL_STATE, CORE_DRAW->tool_pull);
+    if (CORE_DRAW->tool_bits & OOT_CORE_TOOL_MAGIC_RESET) health_hud_magic_reset();
+    for (i = 0; i < async_updates; ++i) health_hud_magic_update(); /* once per source frame */
+    update_us = async_join_us;
+    {
+        int room = scene_flow_is_interior() ? 0 : (int)kokiri_bank_room();
+        if (meshes_room != room) {
+            meshes_room = room;
+            load_meshes();
+        } else if (sprites_refresh()) npc_draw_reupload();
+    }
+    {
+        int dx, dz;
+        ENTRY->player_push(&dx, &dz);
+        recomp_link.x += dx;
+        recomp_link.z += dz;
+    }
+}
+
+void oot_core_async_stats(unsigned int out[5])
+{
+    uint32_t q = 0, r = 0;
+    out[0] = async_updates;
+    out[1] = async_overlap_us;
+    out[2] = async_join_us;
+    out[3] = async_violations;
+#ifdef CORE_COLLISION
+    out[4] = bg_core_shim_busy_hits();
+#else
+    out[4] = 0;
+#endif
+    async_violations = 0;
+    (void)q; (void)r;
+}
+#else
+unsigned int oot_core_slave_job_us(void) { return 0; }
+void oot_core_async_kick(void) {}
+void oot_core_async_join(void) {}
+bool oot_core_async_busy(void) { return false; }
+void oot_core_async_stats(unsigned int out[5]) { out[0] = out[1] = out[2] = out[3] = out[4] = 0; }
 #endif

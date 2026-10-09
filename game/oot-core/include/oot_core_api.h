@@ -16,13 +16,16 @@
 #include "oot_core_bench.h"
 #include "oot_core_host.h"
 #include "oot_core_effects.h"
+#include "oot_core_bg.h"
 
 #define OOT_CORE_MAGIC 0x4F4F5443u /* 'OOTC' */
-#define OOT_CORE_VERSION 26u
+#define OOT_CORE_VERSION 30u
 #define OOT_CORE_TRANSITION_RELOAD 0x10000 /* debug scene has no source entrance */
 /* set_flags bits. NPC_SPRITES: generic NPCs are host sprites (NPC views carry
  * object/anim/frame; their Actor_Draw is skipped, no limb matrices). */
 #define OOT_CORE_FLAG_NPC_SPRITES 1u
+/* Prerendered interior / fixed view: Play_CamIsNotFixed is false. */
+#define OOT_CORE_FLAG_FIXED_CAMERA 2u
 
 /* PlayState (~78 KB with Fx) + TwoHeadArena + ZeldaArena come from one block
  * the host allocates, so they never take the blob's fixed cart carve. */
@@ -157,6 +160,10 @@ typedef struct OotCoreSave {
     unsigned char player_cutscene; /* C player cutscene/game-over ownership for dawn textbox */
     unsigned int* total_days; /* source Save.totalDays; copied both ways */
     unsigned int* bgs_day_count; /* source Save.bgsDayCount; copied both ways */
+    /* v28: C-button inventory slots (SLOT_*, 0xFF empty) and tunic
+     * (PLAYER_TUNIC_*): the real Player's item buttons and equipment. */
+    unsigned char c_slots[3];
+    unsigned char tunic;
 } OotCoreSave;
 
 /* Link's tools on the decomp actors (v19, bridge_items.cpp). io is int[6]. */
@@ -202,6 +209,36 @@ typedef struct OotCoreDynaView {
     unsigned char enabled;       /* !BGACTOR_COLLISION_DISABLED */
     int scale_q16;               /* actor scale.x, Q16 */
 } OotCoreDynaView;
+
+/* Real decomp Player, read once after each update (v28, PLAYER_SOURCE=1).
+ * Units are the decomp's (world units, binary angles). */
+#define OOT_CORE_PLAYER_JOINTS 67 /* jointTable: root xyz, 21 limb rotations xyz, face */
+typedef struct OotCorePlayerView {
+    int x, y, z;                 /* actor.world.pos (feet) */
+    int focus_x, focus_y, focus_z; /* actor.focus.pos */
+    short yaw;                   /* shape.rot.y */
+    short room_request;          /* door Room_RequestNewRoom, -1 none; cleared by this read */
+    unsigned int state1, state2, state3; /* PLAYER_STATE1/2/3_* */
+    short joints[OOT_CORE_PLAYER_JOINTS];
+    unsigned char left_hand, right_hand, sheath, waist; /* PLAYER_MODELTYPE_* */
+    unsigned char age;           /* LINK_AGE_* the skeleton uses */
+    unsigned char boots, tunic, shield; /* currentBoots/Tunic/Shield */
+    signed char item_action, held_item; /* heldItemAction, heldItemId */
+    unsigned char weapon_state;  /* meleeWeaponState */
+    unsigned char ground;        /* BGCHECKFLAG_GROUND */
+    unsigned char water;         /* BGCHECKFLAG_WATER */
+    unsigned char invincible;    /* invincibilityTimer: flicker while nonzero */
+    unsigned char hidden;        /* actor.draw == NULL (start mode NOTHING, some cutscenes) */
+    unsigned char pad;
+    int blade_tip[3], blade_base[3]; /* meleeWeaponInfo[0] tip (posA) / base (posB) */
+    unsigned int draw_us;        /* last anchor draw pass (debug overlay) */
+    /* v29: Player naviActor (En_Elf FAIRY_NAVI). */
+    short navi[3];               /* world.pos */
+    unsigned char navi_shown;    /* EnElf_Draw would draw her */
+    unsigned char navi_colour;   /* 0 plain, 1 NPC, 2 enemy (focusActor category) */
+    /* v30: actor.floorHeight (Link's shadow without a host floor query). */
+    int floor_y;
+} OotCorePlayerView;
 
 typedef struct OotCoreSpriteLibrary {
     unsigned short object;
@@ -322,6 +359,26 @@ typedef struct OotCoreEntry {
     /* Borrowed source WaterBox array (five s16 fields, u32 properties, 16-byte
      * stride). Valid only during this PlayState; no host writes or ownership. */
     unsigned int (*water_boxes)(const void** boxes);
+    /* v27: the one collision world (oot_core_bg.h). C bg_* queries go
+     * through src/bg_core_shim.c when built with CORE_COLLISION. */
+    const OotCoreBgApi* (*bg_api)(void);
+    /* v28, real Player (PLAYER_SOURCE=1; NULL in the C Link rollback core).
+     * Once at boot, before any play_init: the resident frame bank (PFB2,
+     * build_player_frame_bank.py), kept for the session. 1 accepted. */
+    int (*player_bank)(const void* bank, unsigned int bytes);
+    /* After update: Link's state for the Saturn renderer/camera/HUD. 0 = no Player. */
+    int (*player_view)(OotCorePlayerView* out);
+    /* A C-side enemy hit Link (temporary until those enemies are decomp):
+     * Player_InflictDamage, 1/16 heart units. */
+    void (*player_damage)(int damage);
+    /* One frame of bank clip `id` (OOT_CORE_PLAYER_JOINTS shorts) for the
+     * host's own Link poses; frame clamped to the clip. 0 = not in the bank. */
+    int (*player_pose)(unsigned int id, unsigned int frame, short* out);
+    /* Saturn Y jump extension: 1 when the Player could jump now. */
+    int (*player_jump)(void);
+    /* The host moved Link (spawn placement, story events, C pushes): feet
+     * position and facing; speed is kept. */
+    void (*player_warp)(int x, int y, int z, short yaw);
 } OotCoreEntry;
 
 #endif

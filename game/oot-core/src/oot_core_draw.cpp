@@ -22,6 +22,7 @@
 #include "actor.h"
 #include "gfx.h"
 #include "play_state.h"
+#include "player.h"
 #include "segmented_address.h"
 #include "skin_matrix.h"
 #include "sys_math.h"
@@ -443,6 +444,12 @@ int OotCore_SkinList(const unsigned short** out) {
 
 /* Actor_DrawAll's actor loop for the generic-draw actors only (culling flag
  * from OotCore_CullActors). Returns the item count. */
+#ifdef PLAYER_SOURCE
+u32 OotCore_PhaseNow(void);        /* oot_core_api.cpp */
+u32 OotCore_PhaseUs(u32 t0);
+u32 gOotCorePlayerDrawUs;          /* debug overlay: Player anchor draw */
+#endif
+
 s32 OotCore_DrawActors(PlayState* play) {
     GraphicsContext* gfx = OotCore_GfxCtx();
     Walker w;
@@ -452,6 +459,43 @@ s32 OotCore_DrawActors(PlayState* play) {
     sDropped = 0;
     sSkinCount = 0;
     w.cap = NULL;
+#ifdef PLAYER_SOURCE
+    /* Real Player: its (pose-split) Draw walks the skeleton once for the
+     * source anchors (weapon quads, feet, held actor, shield). The Saturn
+     * renderer poses Link from player_view, so the display list is dropped. */
+    {
+        Player* player = GET_PLAYER(play);
+        /* The pass costs ~11 ms on SH-2 (Kokiri, 2026-10-09). Run it every
+         * update only while an anchor feeds gameplay: sword/stick swing or
+         * held stick, shield, carried actor, bow/slingshot/hookshot, bottle;
+         * otherwise every 8th update (focus, hands, feet; 2.5 Hz is enough
+         * for Navi/targeting, 2026-10-09 speed: the pass is ~7 ms). */
+        static u8 sAnchorPhase;
+        bool needed = player != NULL &&
+            (player->meleeWeaponState != 0 || player->heldActor != NULL ||
+             player->itemAction == PLAYER_IA_DEKU_STICK ||
+             (player->stateFlags1 & (PLAYER_STATE1_SHIELDING | PLAYER_STATE1_9 | PLAYER_STATE1_CARRYING_ACTOR)) ||
+             player->rightHandType == PLAYER_MODELTYPE_RH_BOW_SLINGSHOT ||
+             player->rightHandType == PLAYER_MODELTYPE_RH_HOOKSHOT ||
+             player->leftHandType == PLAYER_MODELTYPE_LH_BOTTLE);
+        if (!needed && (++sAnchorPhase & 7) != 0) {
+            player = NULL;
+        }
+        if (player != NULL && player->actor.draw != NULL && player->actor.init == NULL) {
+            Gfx* opa = gfx->polyOpa.p;
+            Gfx* xlu = gfx->polyXlu.p;
+            Gfx* opaEnd = gfx->polyOpa.d;
+            Gfx* xluEnd = gfx->polyXlu.d;
+            u32 t0 = OotCore_PhaseNow();
+            Actor_Draw(play, &player->actor);
+            gOotCorePlayerDrawUs = OotCore_PhaseUs(t0);
+            gfx->polyOpa.p = opa;
+            gfx->polyXlu.p = xlu;
+            gfx->polyOpa.d = opaEnd;
+            gfx->polyXlu.d = xluEnd;
+        }
+    }
+#endif
     for (i = 0; i < ACTORCAT_MAX; i++) {
         Actor* actor;
 

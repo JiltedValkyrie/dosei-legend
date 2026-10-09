@@ -23,7 +23,7 @@
 /* Cached addresses and sizes: core carve, two Low RAM gaps, retired cart
  * MUSICTRG and FAIRY reservations (PLAYER_MIGRATION.md placement design). */
 const oot_region_span_t oot_region_spans[OOT_REGION_SPANS] = {
-    { 0x02770000u, 589824u },
+    { 0x02760000u, 655360u },
     { 0x0021D800u, 40960u },
     { 0x002FA000u, 24576u },
     { 0x026EC800u, 20480u },

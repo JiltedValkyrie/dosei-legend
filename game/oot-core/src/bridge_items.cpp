@@ -74,7 +74,9 @@ static u16 tool_identity(Actor* actor, bool spawned) {
 /* Draw-only symbols of the tool actors: the host draws baked sprites, so
  * these display lists are never sent anywhere (one word each, as keep_ph). */
 Gfx gBombCapDL[1], gBombBodyDL[1], gBombchuDL[1], gBoomerangRefDL[1], gEffSparklesDL[1];
+#ifndef PLAYER_SOURCE /* object_link_boy placeholders own them with the real Player */
 Gfx gLinkAdultHookshotTipDL[1], gLinkAdultHookshotChainDL[1];
+#endif
 /* gameplay_keep arrow clips: the sprite keeps only their clock (frames). */
 AnimationHeader gArrow1_Anim = { { 5 } };
 AnimationHeader gArrow2_Anim = { { 5 } };
@@ -84,6 +86,7 @@ s32 Camera_RequestQuake(Camera* camera, s32 unused, s16 y, s32 duration) {
 }
 
 /* ---- z_player_lib functions the tool actors call --------------------- */
+#ifndef PLAYER_SOURCE   /* real z_player_lib owns these with the source Player */
 int Player_HoldsHookshot(Player* this) {
     return (this->heldItemAction == PLAYER_IA_HOOKSHOT) || (this->heldItemAction == PLAYER_IA_LONGSHOT);
 }
@@ -93,6 +96,7 @@ int Player_IsBurningStickInRange(PlayState* play, Vec3f* pos, f32 xzRange, f32 y
 int Player_InBlockingCsMode(PlayState* play, Player* this) {
     return false;
 }
+#endif
 
 static s32 count_live(s16 id) {
     s32 n = 0;

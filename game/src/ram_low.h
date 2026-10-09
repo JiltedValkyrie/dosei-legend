@@ -56,6 +56,12 @@
 ** before submission; in the free span between LINK_SKIN and SAVE. */
 #define RAM_LOW_LINK_GEAR_POINTS_OFFSET 0x1B800u
 #define RAM_LOW_LINK_GEAR_POINTS_BYTES  0x2000u
+/* oot-core's large zero-initialised state (oot-core.ld .lowbss: draw shim
+** captures, collision proxies) linked at this fixed address, outside the
+** cart carve so the real Player fits. NOLOAD: cleared by oot_core_boot
+** before the blob's constructors run. In the free span before SAVE. */
+#define RAM_LOW_OOTCORE_BSS_OFFSET  0x1D800u
+#define RAM_LOW_OOTCORE_BSS_BYTES   0xA000u
 /* MUSICTRG.BIN is ~90 KB (2026-10-02); the carve shrank to grow the CD directory. */
 #define RAM_LOW_MUSICTRG_OFFSET     0x59500u
 #define RAM_LOW_MUSICTRG_BYTES      0x18000u
@@ -106,7 +112,13 @@
 ** a heap zone after the backup workspace. Zeroed by jo_add_memory_zone. */
 #define RAM_LOW_HEAP_OFFSET         0xF8000u
 #define RAM_LOW_HEAP_BYTES          0x3000u
-#define RAM_LOW_USED_BYTES          (RAM_LOW_HEAP_OFFSET + RAM_LOW_HEAP_BYTES)
+/* Slave SH-2 stack for the async core update (oot_core_host.c): SGL's own
+** slave stack (0x06001E00 down) is ~3.5 KB, too shallow for Player_Update. */
+#define RAM_LOW_SLAVE_STACK_OFFSET  0xFB000u
+#define RAM_LOW_SLAVE_STACK_BYTES   0x4000u
+#define RAM_LOW_USED_BYTES          (RAM_LOW_SLAVE_STACK_OFFSET + RAM_LOW_SLAVE_STACK_BYTES)
+typedef char ram_low_slave_stack_after_heap[RAM_LOW_HEAP_OFFSET + RAM_LOW_HEAP_BYTES
+                                            <= RAM_LOW_SLAVE_STACK_OFFSET ? 1 : -1];
 typedef char ram_low_heap_after_backup[RAM_LOW_BACKUP_WORK_OFFSET + RAM_LOW_BACKUP_WORK_BYTES
                                        <= RAM_LOW_HEAP_OFFSET ? 1 : -1];
 typedef char ram_low_backup_fits[RAM_LOW_GAME_END <= RAM_LOW_BACKUP_LIB_OFFSET &&
@@ -170,4 +182,7 @@ typedef char ram_low_ordered[RAM_LOW_EQUIP_POLY_OFFSET + RAM_LOW_EQUIP_POLY_BYTE
 typedef char ram_low_gear_points_fit[RAM_LOW_LINK_SKIN_OFFSET + RAM_LOW_LINK_SKIN_BYTES <=
     RAM_LOW_LINK_GEAR_POINTS_OFFSET && RAM_LOW_LINK_GEAR_POINTS_OFFSET +
     RAM_LOW_LINK_GEAR_POINTS_BYTES <= RAM_LOW_SAVE_OFFSET ? 1 : -1];
+typedef char ram_low_ootcore_bss_fits[RAM_LOW_LINK_GEAR_POINTS_OFFSET + RAM_LOW_LINK_GEAR_POINTS_BYTES <=
+    RAM_LOW_OOTCORE_BSS_OFFSET && RAM_LOW_OOTCORE_BSS_OFFSET + RAM_LOW_OOTCORE_BSS_BYTES <=
+    RAM_LOW_SAVE_OFFSET ? 1 : -1];
 #endif

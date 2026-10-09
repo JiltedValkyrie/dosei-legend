@@ -151,6 +151,7 @@ void Audio_StopSfxByPosAndId(Vec3f* pos, u16 id) {
 }
 
 /* ---- z_player_lib.c: Link is the C player until z_player is imported ---- */
+#ifndef PLAYER_SOURCE   /* real z_player_lib owns these with the source Player */
 int Player_InCsMode(PlayState* play) { /* STUB */
     return false;
 }
@@ -161,6 +162,7 @@ s32 Player_GetExplosiveHeld(Player* this) { /* STUB: no explosives yet (real ret
 
 void Player_ReleaseLockOn(Player* this) { /* STUB: C attention system owns lock-on */
 }
+#endif
 
 /* ---- z_parameter.c: save-owned state stays on the C side for now ---- */
 u8 Item_Give(PlayState* play, u8 item) { /* HOST */
@@ -203,11 +205,13 @@ void Magic_Reset(PlayState* play) {
 void GetItem_Draw(PlayState* play, s16 giDrawId) { /* STUB: Phase 2 draw shim */
 }
 
+#ifndef PLAYER_SOURCE
 u8 Player_GetMask(PlayState* play) { /* REAL (z_player_lib.c) */
     Player* this = GET_PLAYER(play);
 
     return this->currentMask;
 }
+#endif
 
 /* ---- z_quake.c / rumble: the C camera owns shake; Saturn has no rumble ---- */
 #include "quake.h"
@@ -256,4 +260,30 @@ s32 OotCore_ActorInCameraView(PlayState* play, Actor* actor) {
 }
 s32 OnePointCutscene_Attention(PlayState* play, Actor* actor) { /* STUB: no attention shots */
     return CAM_ID_NONE;
+}
+
+/* En_Elf (Navi, 2026-10-09) links these. Saturn: no light adjustment (no
+ * N64 lighting), no Fixed-shop viewpoint camera, positional SFX plays plain. */
+#include "environment.h"
+void Environment_AdjustLights(PlayState* play, f32 arg1, f32 arg2, f32 arg3, f32 arg4) {
+}
+s32 Play_CheckViewpoint(PlayState* play, s16 viewpoint) {
+    return false;
+}
+/* Source z_kankyo.c. */
+f32 Environment_LerpWeight(u16 max, u16 min, u16 val) {
+    f32 diff = max - min;
+
+    if (diff != 0.0f) {
+        f32 ret = 1.0f - (max - val) / diff;
+
+        if (!(ret >= 1.0f)) {
+            return ret;
+        }
+    }
+    return 1.0f;
+}
+void func_800F4524(Vec3f* pos, u16 sfxId, s8 arg2) {
+    Audio_PlaySfxGeneral(sfxId, pos, 4, &gSfxDefaultFreqAndVolScale, &gSfxDefaultFreqAndVolScale,
+                         &gSfxDefaultReverb);
 }

@@ -21,6 +21,8 @@ void player_camera_constrain(const oot_follow_t *follow,
 /* Validated Camera_Subj4 line: reject unrelated, truncated or zero-length data. */
 bool player_camera_crawl_line(const bg_mesh_t *mesh, unsigned index,
                              bg_vec_t *point, int32_t direction[3]);
+void player_camera_defer_constrain(bool on);
+void player_camera_flush_constrain(camera_position_t *eye, int32_t *pitch);
 void player_camera_update(player_camera_t *camera, oot_follow_t *follow,
     unsigned mode, const camera_position_t *player, uint16_t facing, bool moving,
     camera_position_t *eye, uint16_t *yaw, int32_t *pitch);

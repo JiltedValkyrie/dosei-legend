@@ -1759,28 +1759,19 @@ static bool forest_lod_changed(void)
 
 #include "field_haze.h"
 
-void                kokiri_scene_draw(void)
+/* Scene prepare (vertex depth, cull/partition, sort keys, tile fog): pure
+** maths on the resident bank, no SGL. 2026-10-09: it can run on the slave
+** SH-2 (kokiri_scene_prepare_kick) while the master draws the core-reading
+** actors; kokiri_scene_draw then only waits and submits. On the slave the
+** frame timers are skipped: they extend the master's FRT. */
+static unsigned char prep_on_slave;
+#define PREP_TIMER_BEGIN(p) do { if (!prep_on_slave) frame_timer_begin(p); } while (0)
+#define PREP_TIMER_END(p) do { if (!prep_on_slave) frame_timer_end(p); } while (0)
+static unsigned int scene_prepare(void)
 {
     unsigned int i, j, visible = forest_polygon_count;
     int32_t sine, cosine;
     int32_t fog_offset=0;
-    frame_timer_begin(FRAME_PHASE_PREP);
-    if (forest_scene == STORY_BANK_PANORAMA) {
-        /* Original pre-rendered house panorama, centred on the eye just as
-         * Skybox_Draw does. Large radius sorts the art behind Link/Navi. */
-        kokiri_rejected = 0;
-        kokiri_accepted_mask = 0;
-        submitted = 0;
-        frame_timer_end(FRAME_PHASE_PREP);
-        jo_3d_push_matrix();
-        jo_3d_translate_matrix(recomp_camera.x, -recomp_camera.y, recomp_camera.z);
-        submit(&kokiri_pdata, 1u);
-        jo_3d_pop_matrix();
-        field_haze_draw();
-        return;
-    }
-    /* Geometry/fog depend on the camera. Unaccepted actor-order experiments
-     * are excluded from normal builds. */
     if (forest_prepared && prepared_x == recomp_camera.x &&
         (forest_scene != SCENE_SPOT00 ||
          (prepared_link_x==recomp_link.x && prepared_link_z==recomp_link.z)) &&
@@ -1790,12 +1781,11 @@ void                kokiri_scene_draw(void)
         && !forest_lod_changed()
 #endif
         ) {
-        visible = prepared_visible;
         forest_reused = true;
-        goto prepared;
+        return prepared_visible;
     }
     forest_reused = false;
-    frame_timer_begin(FRAME_PHASE_DEPTH);
+    PREP_TIMER_BEGIN(FRAME_PHASE_DEPTH);
     kokiri_camera_sincos(recomp_yaw, &sine, &cosine);
     /* Field fade starts ahead of Link, not the raised/rotating camera.
      * Q8 trig keeps this bounded 32-bit; visibility retains eye depths. */
@@ -1825,8 +1815,8 @@ void                kokiri_scene_draw(void)
         int z = (kokiri_pdata.pntbl[i][2] >> 16) - recomp_camera.z;
         forest_depth[i] = (short)(((int64_t)x * sine + (int64_t)z * cosine) >> 16);
     }
-    frame_timer_end(FRAME_PHASE_DEPTH);
-    frame_timer_begin(FRAME_PHASE_PARTITION);
+    PREP_TIMER_END(FRAME_PHASE_DEPTH);
+    PREP_TIMER_BEGIN(FRAME_PHASE_PARTITION);
     for (i = 0; i < forest_tile_count; ++i) tile_depth[i] = 32767;
     mesh_near_depth = 32767;
 #ifdef DOSEI_WARP_PROBE
@@ -2044,8 +2034,8 @@ void                kokiri_scene_draw(void)
             ++i;
         }
     }
-    frame_timer_end(FRAME_PHASE_PARTITION);
-    frame_timer_begin(FRAME_PHASE_FOG);
+    PREP_TIMER_END(FRAME_PHASE_PARTITION);
+    PREP_TIMER_BEGIN(FRAME_PHASE_FOG);
     /* Shared tiles use the nearest referencing surface to avoid fogging a
      * nearby floor simply because the same tile occurs on a distant wall. */
     for (i = 0; i < forest_tile_count; ++i) {
@@ -2076,13 +2066,92 @@ void                kokiri_scene_draw(void)
             palette[j] = (unsigned short)(0x8000 | r | (g << 5) | (b << 10));
         }
     }
-    frame_timer_end(FRAME_PHASE_FOG);
+    PREP_TIMER_END(FRAME_PHASE_FOG);
     forest_prepared = true;
     prepared_x = recomp_camera.x; prepared_y = recomp_camera.y;
     prepared_link_x=recomp_link.x;prepared_link_z=recomp_link.z;
     prepared_z = recomp_camera.z; prepared_yaw = recomp_yaw;
     prepared_pitch = recomp_pitch; prepared_visible = visible;
-prepared:
+    return visible;
+}
+
+static unsigned int prep_kicked, prep_done;
+static unsigned char job_prep;
+static const int16_t *job_joints;
+#define PREP_DONE (*(volatile unsigned int *)((uintptr_t)&prep_done | 0x20000000u))
+/* One slave job per frame: Link's skin first (the master may need his bones
+** soon: link_anim_sync waits for just that part), then the scene prepare. */
+static unsigned int frame_job_us;
+static void frame_slave_job(void *arg)
+{
+    /* Slave FRT, read only (see oot_core_host.c slave_job_body). */
+    volatile uint16_t *frc = (volatile uint16_t *)0xFFFFFE12;
+    unsigned int cks = *(volatile uint8_t *)0xFFFFFE16 & 3u, ticks;
+    uint16_t t0 = *frc;
+    (void)arg;
+    slCashPurge();                 /* camera, bank, joints from the master */
+    if (job_joints) link_anim_skin_on_slave(job_joints);
+    if (job_prep) (void)scene_prepare();
+    ticks = (uint16_t)(*frc - t0);
+    *(volatile unsigned int *)((uintptr_t)&frame_job_us | 0x20000000u) =
+        cks == 0 ? ticks * 279u / 1000u : cks == 1 ? ticks * 1117u / 1000u : ticks * 4470u / 1000u;
+    if (job_prep) PREP_DONE = 1;
+}
+
+unsigned int kokiri_frame_slave_us(void)
+{
+    return *(volatile unsigned int *)((uintptr_t)&frame_job_us | 0x20000000u);
+}
+
+/* main.c, first thing in the draw (before the core-reading actors). */
+void kokiri_frame_slave_kick(bool scene)
+{
+    const int16_t *joints = link_anim_take_joints();
+    bool prep = scene && !prep_kicked && forest_scene != STORY_BANK_PANORAMA;
+    if (!joints && !prep) return;
+    job_joints = joints;
+    job_prep = prep;
+    if (prep) {
+        PREP_DONE = 0;
+        *(volatile unsigned char *)((uintptr_t)&prep_on_slave | 0x20000000u) = 1;
+        prep_kicked = 1;
+    }
+    slSlaveFunc(frame_slave_job, 0);
+}
+
+static void prep_wait(void)
+{
+    if (!prep_kicked) return;
+    while (!PREP_DONE) ;
+    slCashPurge();                 /* see the slave's tables */
+    prep_on_slave = 0;
+    prep_kicked = 0;
+}
+
+void                kokiri_scene_draw(void)
+{
+    unsigned int visible;
+    frame_timer_begin(FRAME_PHASE_PREP);
+    if (forest_scene == STORY_BANK_PANORAMA) {
+        /* Original pre-rendered house panorama, centred on the eye just as
+         * Skybox_Draw does. Large radius sorts the art behind Link/Navi. */
+        kokiri_rejected = 0;
+        kokiri_accepted_mask = 0;
+        submitted = 0;
+        frame_timer_end(FRAME_PHASE_PREP);
+        jo_3d_push_matrix();
+        jo_3d_translate_matrix(recomp_camera.x, -recomp_camera.y, recomp_camera.z);
+        submit(&kokiri_pdata, 1u);
+        jo_3d_pop_matrix();
+        field_haze_draw();
+        return;
+    }
+    /* Geometry/fog depend on the camera. Unaccepted actor-order experiments
+     * are excluded from normal builds. */
+    if (prep_kicked) {
+        prep_wait();
+        visible = prepared_visible;
+    } else visible = scene_prepare();
     kokiri_rejected = 0;
     kokiri_accepted_mask = 0;
     submitted = 0;
@@ -2096,6 +2165,7 @@ prepared:
 /* A twelve-sided circular contact disk per visible character. SGL queues pointers,
  * so all instances share immutable geometry and use independent matrices.
  * Ground lookup uses the existing spatial index, not a whole-scene scan. */
+static void shadow_submit(int x, int y, int z, unsigned radius, int floor);
 void __attribute__((optimize("Os"))) kokiri_actor_shadow(int x, int y, int z, unsigned radius)
 {
     static POINT points[12]={{0,0,-65536},{32768,0,-56756},{56756,0,-32768},{65536,0,0},{56756,0,32768},{32768,0,56756},{0,0,65536},{-32768,0,56756},{-56756,0,32768},{-65536,0,0},{-56756,0,-32768},{-32768,0,-56756}};
@@ -2108,8 +2178,50 @@ void __attribute__((optimize("Os"))) kokiri_actor_shadow(int x, int y, int z, un
     bg_vec_t origin;
     int floor,height;
     if(!radius || !npc_sprite_in_view(x,y,z,radius))return;
-    origin=(bg_vec_t){x,y+8,z};
-    floor=bg_floor(&origin,0,0);
+    {
+        /* Reuse the floor under a nearby position instead of a collision
+        ** raycast every rendered frame. Keyed on 16-unit cells (2026-10-09
+        ** speed): walking NPCs, Link and bobbing fairies moved every frame,
+        ** so an exact-position key always missed and every shadow cost a
+        ** core floor query. The shadow may sit up to a cell's slope off. */
+        static int cache_x[16], cache_y[16], cache_z[16], cache_floor[16];
+        static unsigned cache_next, cache_scene = ~0u;
+        int qx = x >> 4, qy = y >> 4, qz = z >> 4;
+        unsigned k;
+        if (cache_scene != scene_flow_scene()) {
+            cache_scene = scene_flow_scene();
+            for (k = 0; k < 16; ++k) cache_y[k] = 0x7FFFFFFF;
+        }
+        for (k = 0; k < 16; ++k)
+            if (cache_x[k] == qx && cache_y[k] == qy && cache_z[k] == qz) break;
+        if (k < 16) floor = cache_floor[k];
+        else {
+            origin=(bg_vec_t){(qx << 4) + 8,(qy << 4) + 16,(qz << 4) + 8};
+            floor=bg_floor(&origin,0,0);
+            k = cache_next++ & 15;
+            cache_x[k] = qx; cache_y[k] = qy; cache_z[k] = qz; cache_floor[k] = floor;
+        }
+    }
+    shadow_submit(x,y,z,radius,floor);
+}
+
+/* Known floor (the real Player's actor.floorHeight): no collision query. */
+void kokiri_actor_shadow_floor(int x, int y, int z, unsigned radius, int floor)
+{
+    if(!radius || !npc_sprite_in_view(x,y,z,radius))return;
+    shadow_submit(x,y,z,radius,floor);
+}
+
+static void __attribute__((optimize("Os"))) shadow_submit(int x, int y, int z, unsigned radius, int floor)
+{
+    static POINT points[12]={{0,0,-65536},{32768,0,-56756},{56756,0,-32768},{65536,0,0},{56756,0,32768},{32768,0,56756},{0,0,65536},{-32768,0,56756},{-56756,0,32768},{-65536,0,0},{-56756,0,-32768},{-32768,0,-56756}};
+    static POLYGON faces[5]={{{0,-65536,0},{0,1,2,3}},{{0,-65536,0},{0,3,4,5}},{{0,-65536,0},{0,5,6,7}},{{0,-65536,0},{0,7,8,9}},{{0,-65536,0},{0,9,10,11}}};
+#define SHADOW_ATTR ATTRIBUTE(Dual_Plane,SORT_CEN,0,C_RGB(0,0,0), \
+        No_Gouraud,MESHon | ECdis | SPdis,sprPolygon,UseNearClip)
+    static ATTR attrs[5]={SHADOW_ATTR,SHADOW_ATTR,SHADOW_ATTR,SHADOW_ATTR,SHADOW_ATTR};
+#undef SHADOW_ATTR
+    static PDATA data={points,12,faces,5,attrs};
+    int height;
     if(floor==BG_Y_MIN || floor>y+8)return;
     height=y-floor;
     if(height>512)return;
@@ -2126,6 +2238,14 @@ void __attribute__((optimize("Os"))) kokiri_actor_shadow(int x, int y, int z, un
 
 void                kokiri_link_draw(int x, int y, int z, int yaw)
 {
+    link_anim_sync();   /* the slave may still be skinning him */
+#ifdef PLAYER_SOURCE
+    /* Drawn while the slave runs the core update: use the Player's own
+     * floor height instead of a collision query. */
+    if (oot_core_player_valid && !cutscene_is_playing())
+        kokiri_actor_shadow_floor(x,y,z,18,oot_core_player.floor_y);
+    else
+#endif
     kokiri_actor_shadow(x,y,z,18);
 #ifdef DOSEI_ACTOR_ORDER_PROBE
     actor_order_prepare(x, y, z, yaw);
@@ -2301,7 +2421,8 @@ static void         fairy_draw(int x, int y, int z, unsigned int tick,
                                unsigned int phase, const unsigned int *glow,
                                unsigned int colour)
 {
-    kokiri_actor_shadow(x,y,z,6);
+    /* Human 2026-10-09: fairies (Navi, Kokiri fairies, drops) need no
+     * shadow, so no floor query per fairy per frame. */
     FIXED pos[5];
     SPR_ATTR attr = SPR_ATTRIBUTE(0, No_Palet, No_Gouraud, ECdis,
                                   sprNoflip | FUNC_Sprite);
@@ -2339,12 +2460,19 @@ static void         fairy_draw(int x, int y, int z, unsigned int tick,
 /* Navi in gameplay. Her position is En_Elf's, stepped in src/navi.c. */
 void                kokiri_navi_draw(int x, int y, int z)
 {
+    kokiri_navi_draw_colour(x, y, z, navi_colour(), true);
+}
+
+/* Navi glow with a given colour (the real Player's En_Elf passes its own);
+ * sparkles only for the C Navi (src/navi.c owns them). */
+void                kokiri_navi_draw_colour(int x, int y, int z, unsigned int colour, bool sparkles)
+{
     unsigned int i;
-    unsigned int colour = navi_colour();     /* attention_colour_t */
     /* NPC 1, ENEMY 2; PLAYER and OTHER (green, no set yet) draw white/blue. */
     if (colour > 2u) colour = 0;
     fairy_draw(x, y, z, recomp_world_clock(), 0,
                navi_glow_pixels ? (const unsigned int *)0 : fairy_glow, colour);
+    if (!sparkles) return;
     /* EffectSsKiraKira: a 28-unit quad x scale 1000 / 10000 = 2.8 units
     ** over 8 texels, billboarded and turned by its yaw. */
     for (i = 0; sparkle_ready && i < NAVI_SPARKLES; ++i) {

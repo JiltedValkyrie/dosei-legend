@@ -278,16 +278,26 @@ template <class T> static constexpr FX_INL fx_raw fx_mul_int(fx_raw a, T b) {
     return OotFx_MulInt(a, ub, nb);
 }
 /* Fx / integer: divide the raw value directly (exact, no saturated Fx(b)). */
-template <class T> static constexpr fx_raw fx_div_int(fx_raw a, T b) {
+template <class T> static constexpr FX_INL fx_raw fx_div_int(fx_raw a, T b) {
     bool nb = false;
     fx_uraw ub = fx_int_mag(b, &nb);
     if (ub == 0) {
         return a < 0 ? -FX_MAX : FX_MAX;
     }
-    /* Out of line at runtime: a constant divisor would otherwise become a
-     * dmulu.l reciprocal multiply (64-bit product). */
-    return __builtin_is_constant_evaluated() ? fx_signed(fx_abs_u(a) / ub, (a < 0) != nb)
-                                             : OotFx_DivInt(a, ub, nb);
+    if (__builtin_is_constant_evaluated()) {
+        return fx_signed(fx_abs_u(a) / ub, (a < 0) != nb);
+    }
+    /* Constant divisor (x / 2, x / 3 ...), 2026-10-09: a power of two is a
+     * shift; any other constant is GCC's reciprocal multiply, a native
+     * dmulu.l (allowed) instead of a libgcc ___udivsi3 call (~100+ cycles).
+     * Same truncation toward zero as the runtime divide. 32-bit values only. */
+    if (__builtin_constant_p(ub)) {
+        if ((ub & (ub - 1)) == 0) {
+            return fx_signed(fx_abs_u(a) >> __builtin_ctz(ub), (a < 0) != nb);
+        }
+        return fx_signed(fx_abs_u(a) / ub, (a < 0) != nb);
+    }
+    return OotFx_DivInt(a, ub, nb);
 }
 /* integer / Fx: |i| * 2^32 / |b.v| without first saturating Fx(i). */
 template <class T> static constexpr fx_raw fx_int_div(T a, fx_raw b) {

@@ -1,8 +1,8 @@
 /*
- * Core collision API for the Saturn C side (Player migration, isolated: the
- * live blob does not export it yet). C callers keep shared/lib/collision's
- * bg_* functions; src/bg_core_shim.c implements them over this table, so the
- * C scene buffer, its index and the dyna carve can be retired.
+ * Core collision API for the Saturn C side (Player migration phase 2). The
+ * blob exports it as OotCoreEntry.bg_api (v27). C callers keep
+ * shared/lib/collision's bg_* functions; src/bg_core_shim.c implements them
+ * over this table, so the C scene buffer, its index and the dyna carve go.
  * Integer world units; feet positions; Y up.
  */
 #ifndef OOT_CORE_BG_H
@@ -12,11 +12,14 @@
 extern "C" {
 #endif
 
-#define OOT_CORE_BG_VERSION 1u
+#define OOT_CORE_BG_VERSION 3u
 #define OOT_CORE_BG_SCENE 50
 #define OOT_CORE_BG_NONE 0xFF
 #define OOT_CORE_BG_PROXIES 16       /* = BG_DYNA_MAX in the C library */
-#define OOT_CORE_BG_PROXY_TRIS 128   /* all proxies together (static store) */
+#define OOT_CORE_BG_PROXY_TRIS 192   /* all proxies together; worst room 108 (Deku Tree 3) */
+/* floor(): `ignore` bit 8 = floor-class polys only (no ground-facing walls);
+ * the C Link wrappers' kokiri_collision_floor contract. */
+#define OOT_CORE_BG_FLOOR_ONLY 0x100u
 
 typedef struct OotCoreBgHit {
     short normal[3];          /* Q14, world space */
@@ -76,7 +79,25 @@ typedef struct OotCoreBgApi {
     int (*scene)(OotCoreBgScene* out);
     /* Scene exit: remove all proxies, forget saved water levels. */
     void (*reset)(void);
+    /* v2. Any poly within radius of center (source BgCheck_SphVsFirstPolyImpl);
+     * skip_ceilings ignores ceiling polys. */
+    int (*sphere)(const int center[3], int radius, unsigned ignore, int skip_ceilings);
+    /* v2. Core steps since load (DynaPoly frame boundaries): riders carry once
+     * per step. 0 with no PlayState. */
+    unsigned (*frame)(void);
+    /* v2. 1 while a PlayState with collision exists (every query misses
+     * otherwise). */
+    int (*ready)(void);
+    /* v3 (2026-10-09 speed experiment). Static scene collision (vertices,
+     * polys, surface types) normally stays in the cart blob. mode 1 copies it
+     * once per scene into the Work-RAM ZeldaArena (only with >= 96 KB left
+     * over) and points the context at the copy; 0 points back at the cart;
+     * -1 queries. Returns 1 while the copy is in use. */
+    int (*fast_data)(int mode);
 } OotCoreBgApi;
+#ifdef __cplusplus
+void OotCoreBg_FastReset(void); /* oot_core_play_init: new arena, no copy */
+#endif
 
 /* The core's table (oot_core_bg.cpp). */
 const OotCoreBgApi* OotCoreBg_Api(void);

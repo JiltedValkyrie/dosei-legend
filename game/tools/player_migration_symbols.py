@@ -16,7 +16,7 @@ from pathlib import Path
 
 GAME = Path(__file__).resolve().parent.parent
 CARVE_BYTES = 0x90000          # makefile OOT_CORE_MAX_BYTES
-LOAD_ADDR = 0x02770000         # makefile OOT_CORE_LOAD_ADDR
+LOAD_ADDR = 0x02760000         # makefile OOT_CORE_LOAD_ADDR
 DEFINED = set('TDBRGSCWV')
 WEAK = set('WV')  # inline copies merge at link: resolve, never duplicate
 LIBGCC = re.compile(r'^_{2,3}(ashiftrt_r4_\d+|ashrsi3|ashlsi3|lshrsi3|movmem\w*|sdivsi3\w*|udivsi3\w*|mulsi3|clzsi2)$')

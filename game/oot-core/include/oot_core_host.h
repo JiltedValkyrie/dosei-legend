@@ -32,6 +32,20 @@ typedef struct OotCoreHost {
     /* Scene-only sprite storage: free non-NULL memory, otherwise allocate
      * bytes under the unchanged live-heap admission guard. */
     void* (*sprite_memory)(void* memory, unsigned int bytes);
+    /* Real decomp Player (PLAYER_SOURCE=1): the C save stays the one owner
+     * of ammo, magic and bottles. z_parameter Inventory_ChangeAmmo (source
+     * ItemId, signed change). */
+    void (*ammo_change)(unsigned char item, short amount);
+    /* Magic_RequestChange (amount, MAGIC_* type; OOT_CORE_MAGIC_FILL = Magic_Fill).
+     * Nonzero = accepted. */
+    int (*magic_request)(short amount, short type);
+    /* Inventory_UpdateBottleItem (item, C button 1..3); button 0xFF with
+     * ITEM_BOTTLE_FAIRY = Inventory_ConsumeFairy (nonzero = a fairy was used). */
+    int (*bottle_update)(unsigned char item, unsigned char button);
+    /* Unrecoverable core error (e.g. missing Player animation clip). */
+    void (*fatal)(unsigned int code, unsigned int a, unsigned int b);
 } OotCoreHost;
+
+#define OOT_CORE_MAGIC_FILL 0x7F
 
 #endif

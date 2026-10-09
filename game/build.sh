@@ -228,7 +228,8 @@ for cs_bank in CSGANON CSNAVI CSDEKU; do
 done
 
 cd "$here"
-"$python" "$here/tools/check_disc_directory.py"
+# Directory capacity: checked by the makefile before mastering, after the
+# core-collision / real-Player retirements below (BUILD.md 50).
 "$python" "$here/tools/check_forest_budget.py"
 # Field floor (STM) and C collision (COL) must come from one retopo bundle.
 "$python" "$here/tools/field_retopo.py" --check-pairing stm,col
@@ -248,7 +249,27 @@ oot_core=0
 for arg in "$@"; do
     [ "$arg" = OOT_CORE=1 ] && oot_core=1
 done
+core_collision=$oot_core
+player_source=$oot_core
+for arg in "$@"; do
+    [ "$arg" = CORE_COLLISION=0 ] && core_collision=0
+    [ "$arg" = PLAYER_SOURCE=0 ] && player_source=0
+done
+# Files the core-collision / real-Player disc no longer reads are parked in
+# build/disc-retired (the GFS directory holds 1536 entries). Restore them
+# first: the Field pairing check and the host probes read the .COL files.
+mkdir -p "$here/build/disc-retired"
+for f in "$here"/build/disc-retired/*; do [ -e "$f" ] && mv -f "$f" "$here/build/cd/"; done || true
 if [ "$oot_core" = 1 ]; then
+    # Real Player frame bank (PLAYER_SOURCE): ids feed the importer's anim
+    # headers, ALL.PFB becomes PLAYANIM.PFB. Rebuilt when its tools change.
+    bank="$here/build/player-migration/bank_full"
+    if [ ! -f "$bank/ALL.PFB" ] || [ "$here/tools/build_player_frame_bank.py" -nt "$bank/ALL.PFB" ] ||
+       [ "$here/tools/player_frame_pack.py" -nt "$bank/ALL.PFB" ] || [ "$here/tools/build_link_model.py" -nt "$bank/ALL.PFB" ]; then
+        "$python" "$here/tools/build_player_frame_bank.py" --oot "$oot" \
+            --objdump "$sh_elf/bin/sh-elf-objdump" \
+            --out "$here/build/player-migration/frame_bank_full.json" --bank "$bank"
+    fi
     "$python" "$here/tools/oot_core_import.py" --oot "$oot"
     "$python" "$here/tools/build_field_enemy_anchors.py" --oot "$oot" --rom-dir "$roms"
     # oot-core scene collision (SA.OOC) must match the Field STM/COL bundle.
@@ -266,6 +287,9 @@ if [ "$oot_core" = 1 ]; then
 else
     rm -f "$here/build/cd/OOTCORE.BIN"
 fi
+[ "$core_collision" = 1 ] && { mv -f "$here"/build/cd/*.COL "$here/build/disc-retired/" 2>/dev/null || true; }
+[ "$player_source" = 1 ] && mv -f "$here/build/cd/LINKANIM.BIN" "$here/build/cd/ADULTANM.BIN" \
+    "$here/build/disc-retired/" 2>/dev/null || true
 # jo_engine_makefile picks its toolchain from $(OS), which does not reach make
 # from every shell that can run this script; it then falls back to the LINUX
 # binaries and dies with "Exec format error". Compiler/WINDOWS is already

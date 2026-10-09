@@ -1,4 +1,5 @@
 #include "gameplay.h"
+#include "perf_sub.h"
 #include "oot_core_host.h"
 #include "player_items.h"
 #include "dungeon_puzzles.h"
@@ -743,6 +744,17 @@ static void         consume_link_damage(const gameplay_input_t *in)
     if (!gameplay.hurt_pending)
         return;
     gameplay.hurt_pending = 0;
+#ifdef PLAYER_SOURCE
+    /* A C-side enemy hit the real Player: Player_InflictDamage plays the
+    ** source reaction, i-frames and Health_ChangeBy (host_health_change). */
+    (void)lock; (void)side; (void)in;
+    if (!gameplay.invulnerable) oot_core_player_damage(gameplay.hurt_damage);
+    gameplay.hurt_speed = 0;
+    gameplay.hurt_large = 0;
+    gameplay.hurt_core = 0;
+    gameplay.hurt_effect = 0;
+    return;
+#endif
     /* Invulnerable (dodge): the hit lands, knocks back, but costs nothing,
     ** and Player_SetIntangibility leaves an invulnerable timer alone. */
     if (gameplay.invulnerable) {
@@ -3179,8 +3191,10 @@ void                gameplay_step(const gameplay_input_t *in)
     /* A conversation owns the input. Nothing else in the world advances from
     ** the pad while a box is open -- no pickup grab, no lock change, no swing,
     ** no guard -- so a held button cannot leak an action through the box. */
+    PS_T0();
     update_exit_blocker(in);
     sync_npc_actors();
+    PS_ADD(PS_NC);
     if (gameplay.talking) {
         if (gameplay.get_item && gameplay.get_item_age < 65535) ++gameplay.get_item_age;
         update_talk(in);
@@ -3192,6 +3206,7 @@ void                gameplay_step(const gameplay_input_t *in)
     if (gameplay.talking) return;
     collect_rupees(in);
     if (!oot_core_owns_kokiri_npcs()) update_wonders(in);   /* else En_Wonder_Item */
+    PS_ADD(PS_WP);
     if(gameplay.hurt_flash_timer){
         unsigned rate=50-gameplay.hurt_flash_timer*2/3;
         if(rate<8)rate=8;if(rate>40)rate=40;
@@ -3225,14 +3240,18 @@ void                gameplay_step(const gameplay_input_t *in)
     } else {
         gameplay.alarm_steps = 0;
     }
+    PS_RESET();
     update_boulder(in);
     update_nut(in);
     if (in_forest())
         update_mido(in);
+    PS_ADD(PS_EN);
     update_target(in);
     update_attention(in);
     update_navi(in);
+    PS_ADD(PS_AT);
     update_babas(in);
+    PS_ADD(PS_BB);
     if (gameplay.talking || gohma_cinematic() || gohma_warp_active()) {
         gameplay.shielding = false;
         return;
@@ -3245,6 +3264,7 @@ void                gameplay_step(const gameplay_input_t *in)
         gameplay_attack_cancel();gameplay.shielding=false;run_contacts(in);return;
     }
     update_talk(in);
+    PS_ADD(PS_TK);
     if (gameplay.talking) {
         /* Opened this step: drop anything the same frame would have started. */
         gameplay.shielding = false;
@@ -3311,5 +3331,7 @@ void                gameplay_step(const gameplay_input_t *in)
         update_sword(in);
     }
     update_shield(in);
+    PS_ADD(PS_IT);
     run_contacts(in);
+    PS_ADD(PS_RC);
 }

@@ -139,6 +139,28 @@ phase 0 remeasure done - Player is ~20-25 KB short in the five-region design;
 phase 1 (Astra) moves scene NPC/prop actors into OAP packs (~87 KB of NPCs),
 phase 2 (Claude) unifies collision. Overhead camera turn is C-Up/B+C-Up, Z
 targets; slingshot fires source ARROW_SEED. Main .bss margin 208 B.
+Phase 2 (Claude, 2026-10-09): core z_bgcheck is now the only collision world
+in Clean (`CORE_COLLISION=1`; `=0` = C library rollback). C bg_* and C Link
+wrappers run over the core (bg_core_shim.c / bg_core_link.c); core scene loads
+inside scene_flow_load; C props are core DynaPoly proxies; C scene buffer,
+index and core->C dyna mirror gone. Core API v27. Host probe/focused tests pass
+(6 pre-existing fixture errors); Clean rebuilt, audits clean, main .bss
+0x060818A0 (10,080 B spare). Speed vs C and runtime acceptance open (human
+Clean play). Next: phase 3 frame bank; phase 4 waits on phase 1 space.
+Real Player first cut (Claude, 2026-10-09, human "replace all of the player
+C with decomp"): `PLAYER_SOURCE=1` in Clean. Scene NPC/prop actors moved to
+63 per-scene packs (phase 1, Claude by human choice), real z_player linked
+in the core with 46 host hooks (API v28), whole frame bank resident
+(PLAYANIM.PFB 626 KB, no LINKANIM), host feeds the pad and draws Link from
+the jointTable. C Link kept only as `PLAYER_SOURCE=0` rollback. Human Kronos
+runs (2026-10-09): animations good, talk closes, Navi is now the decomp
+En_Elf (C-up prompt live). Speed work toward the 20 FPS goal (Debug readings,
+Kokiri): 6 FPS -> 15 FPS via z_bgcheck integer fast paths, catch-up cap,
+camera constraint once per frame, Link skin inline, shadow/HUD caches, and the
+second SH-2 running the decomp core update, Link's skin and the scene prepare
+(PLAYER_MIGRATION.md speed sections, DEBUG_OVERLAY.md). Open: 20 FPS, SGL
+slave contention, runtime confirmation of the latest builds; gap list in
+PLAYER_MIGRATION.md.
 
 Enemy groundwork (Astra, 2026-10-08): [ENEMY_ROLLOUT_PLAN.md](ENEMY_ROLLOUT_PLAN.md)
 and [source design review](ENEMY_DESIGN_REVIEW.md). All five review choices are

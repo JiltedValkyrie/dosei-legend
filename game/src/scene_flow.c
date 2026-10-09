@@ -37,6 +37,7 @@ static bool         door_armed;
 ** bgCams. Reused across scenes so a transition does not fragment the arena;
 ** sized to this scene's complete decoded data. New storage is admitted before
 ** replacing the old world; small scenes release the larger scene's storage. */
+#ifndef CORE_COLLISION
 #define SCENE_COLLISION_MAX   5096  /* largest retail source scene: ganontika */
 #define SCENE_COLLISION_BYTES \
     (SCENE_COLLISION_MAX * (36 + 2) + 256 * 8 + 64 * 16 + 64 * 8 + 512 * 6)
@@ -56,6 +57,11 @@ bool                         scene_collision_indexed;
 /* World copies of actor-owned (DynaPoly) collision live in the cart's fixed
 ** carve (ram_cart.h), never the work-RAM arena jo_malloc would fill first. */
 static bool                  dyna_ready;
+#else
+/* CORE_COLLISION: the core scene (oot_core_scene_enter) is the only world;
+** no C scene copy, index or dyna carve. */
+bool                         scene_collision_indexed = true;
+#endif
 
 /* SAVE_SCENE_* -> index into the scene table. The save records where the
 ** player is by the id the flag store uses, not by table position, so a scene
@@ -146,6 +152,18 @@ const scene_spawn_t *scene_flow_spawn(unsigned int scene, unsigned int spawn)
     return (&scene_spawns[entry->first_spawn + spawn]);
 }
 
+#ifdef CORE_COLLISION
+/* Actors own their dyna collision and are gone with the old scene; their
+** core proxies are removed while the old PlayState still exists. */
+static bool collision_load(unsigned int scene)
+{
+    (void)scene;
+    tree_mouth_reset();dungeon_doors_reset();
+    actor_sys_scene_unload();
+    bg_dyna_clear();
+    return (true);
+}
+#else
 /* Read one scene's collision file into the shared buffer. */
 static bool __attribute__((optimize("Os"))) collision_load(unsigned int scene)
 {
@@ -200,6 +218,7 @@ static bool __attribute__((optimize("Os"))) collision_load(unsigned int scene)
         kokiri_collision_index(collision_index, SCENE_COLLISION_INDEX_BYTES);
     return (true);
 }
+#endif
 
 bool __attribute__((optimize("Os"))) scene_flow_load(unsigned int scene, unsigned int spawn)
 {
@@ -247,7 +266,13 @@ bool __attribute__((optimize("Os"))) scene_flow_load(unsigned int scene, unsigne
         jo_core_error("NPC model load failed: scene %u", entry->save_scene);
         return false;
     }
+#ifdef CORE_COLLISION
+    /* Spawn placement and C props query collision right after this returns. */
+    if (!oot_core_scene_enter(scene, spawn))
+        return false;
+#else
     oot_core_scene_restart();
+#endif
     return (true);
 }
 

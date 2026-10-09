@@ -10,7 +10,7 @@ build stays as rollback (`PLAYER_SOURCE=0`) until human acceptance.
 | --- | --- | --- | --- |
 | 0 | Remeasure retention/placement against the current core | Claude | done below |
 | 1 | Move scene-specific resident actors into per-scene OAP packs (Field pack path) | Astra | free >= deficit + 24 KB; pack fits worst scene carve; NPC/prop tests unchanged |
-| 2 | One collision world: port 22 files / 110 C call sites to core bgcheck via `bg_core_shim.c`; C dyna props become core proxies; retire C collision storage (~130 KB heap) | Claude | core bgcheck/dyna tests, probe rows, Fx corner/line cases classified |
+| 2 | One collision world: port 22 files / 110 C call sites to core bgcheck via `bg_core_shim.c`; C dyna props become core proxies; retire C collision storage (~130 KB heap) | Claude | **code + host + Clean target done 2026-10-09** (below); human runtime batch open |
 | 3 | Frame bank (strict) as `AnimTaskQueue_AddLoadPlayerFrame`, common set + cache handles, whole-cutscene preload/pin | Claude | decoder/cache tests, real cutscene manifests fit |
 | 4 | Link real Player behind `PLAYER_SOURCE=1`: regions loader, 9 duplicates deleted, 46 hooks as host adapters, link skeleton blobs | Claude | resolved link, region guards, wide audit 0, main .bss margin |
 | 5 | Host becomes I/O: input adapter (+ Y jump, B walk, custom jump), camera reads core focus/lock-on, Saturn renderer fed from jointTable/model types, one-way state snapshots, source Attention replaces `attention.c` | Claude + Astra review | per-row host tests |
@@ -51,6 +51,166 @@ magic arrows, En_Item00 and En_Kusa stay resident. Other large residents for
 later review: z_message 47 KB, oot_core_draw 26 KB, z_eff_blure 14 KB (Player
 sword trails need it), lookathil 7.8 KB.
 
+### Link skin + scene prepare on the slave SH-2 (Claude, 2026-10-09)
+
+Second human reading: 15 FPS (`fr667`), slave core job only 7-9 %. Second
+slave job per frame (`kokiri_frame_slave_kick`, queued first in the draw):
+Link's skin from the Player joints (`link_anim_take_joints`), then the scene
+prepare (`scene_prepare`: vertex depth, cull/partition, sort keys, tile fog;
+split out of `kokiri_scene_draw`, which now waits and submits). Every master
+reader of Link's bones/points calls `link_anim_sync` (waits for the skin, or
+skins on the master if no job took it). Prepare skips frame timers on the
+slave (`prep_on_slave`). Bottom line `S` = skin/prepare job + core job.
+
+### Core update on the slave SH-2 (Claude, 2026-10-09, human GO)
+
+Human: carve logic into clean pieces; one CPU for logic, one for drawing.
+Code (Debug build, not yet run):
+- Host steps (30 Hz) queue decomp updates (`core_due`, 2 per 3 steps, cap 2)
+  instead of running them. `main.c` submits everything that reads the core
+  first (grass, drops, NPC/prop/tool/effect views), then
+  `oot_core_async_kick()` runs the queued `ENTRY->update()`s on the slave via
+  `slSlaveFunc` while the master submits the scene, Link and Navi from host
+  copies; `oot_core_async_join()` before text/HUD does the post-update work
+  (read_player, tool bits, magic, meshes/sprites, En_Ko push).
+- Slave job: own 16 KB stack in Low RAM (`RAM_LOW_SLAVE_STACK`, SGL's slave
+  stack is ~3.5 KB), slCashPurge before the update; master purges after the
+  join. Flags/queues the other CPU polls are cache-through (0x2xxxxxxx).
+- Core callbacks while busy: SFX queued and replayed at the join; fatal,
+  scene_file, sprite_memory deferred/refused (fatal at the join); profiling
+  ticks return 0 (the master FRT extension is master-only). Save/HUD
+  callbacks (health, rupees, ammo, magic, bottles, items) run on the slave:
+  plain C save memory, no hardware.
+- Master entering the core between kick and join is counted (`ENTRY` guard,
+  overlay row 15 `cv`); C bg_* queries then miss and are counted (`bv`).
+  Link's shadow uses OotCorePlayerView.floor_y (API v30), no query.
+- Join waits at most 250 ms, then `jo_core_error` (slave never ran the job).
+- First run (human): runs, `st` 37 -> 16 ms, join wait 0, no violations;
+  ~12 FPS. Camera stopped swinging on sideways runs (fixed: "moving" held 3
+  steps). Bottom line now M/S per SH-2. The 11.8 ms `r1` was the heart HUD
+  rebuilding in VRAM every pulse (fixed in health_hud.c).
+- Also: sky gradient rebuild only every 16 frames of plain colour drift
+  (fades/scene changes immediate); `slScrAutoDisp` only on a layer change in
+  live gameplay (r1 was 11.8 ms).
+
+### Navi = decomp En_Elf + speed batch (Claude, 2026-10-09, human directive)
+
+Human: Navi and Kokiri fairies need no shadow or collision; Navi goes to
+the decomp. Code (Debug build, not yet run):
+- `z_en_elf.c` + `z_elf_message.c` in the core. The real Player spawns
+  FAIRY_NAVI (Player_SpawnFairy); C-up hints use QuestHint. Saturn cuts
+  (importer MACRO_REWRITES): no skeleton (SkelAnime_Init/Update removed),
+  no sparkle trail, no floor raycast/shadow. Stubs in bridge_play.cpp:
+  Environment_AdjustLights (no-op), Play_CheckViewpoint (false),
+  Environment_LerpWeight (source), func_800F4524 (plain SFX).
+- API v29: OotCorePlayerView `navi[3]`, `navi_shown` (EnElf_Draw test),
+  `navi_colour` (focusActor category). Host draws her glow sprite
+  (`kokiri_navi_draw_colour`); the C Navi step (navi_step_hover) is off
+  under PLAYER_SOURCE; C Navi sparkles not drawn.
+- No fairy shadow (fairy_draw): Navi, Kokiri fairies, drop fairies.
+- Kokiri fairies stay C: their parents (Kokiri kids, En_Ko/En_Md) are C
+  since a8c238e (cost). Decomp FAIRY_KOKIRI comes with decomp En_Ko.
+- Cart carves: SCENECOL 0x40000 -> 0x30000 (largest scene + objects + pack
+  fits; build_actor_packs checks), core 0x90000 -> 0xA0000 at 0x02760000.
+  Core end 0x027F19C8 (~58 KB spare).
+- Speed: Link skinning inline 32-bit (sk 7.1 -> 3.4 ms), anchor pass every
+  8th idle update, shadow floor cache on 16-unit cells (16 entries),
+  overlay rows 12-14 timers. Kokiri 2026-10-09 reading before this batch:
+  ~10-11 FPS (fr 89.7 ms). Goal 20 FPS.
+
+### Real Player live in Clean: phases 1, 3, 4, 5 first cut (Claude, 2026-10-09)
+
+Human: "replace all of the player C with decomp then we will test"; Claude
+took phase 1 (human choice). `PLAYER_SOURCE=1` (default with OOT_CORE=1);
+`PLAYER_SOURCE=0` keeps the C Link + bridge_player.cpp proxy rollback.
+- **Phase 1 (packs):** `tools/scene_pack_actors.py` moves 19 NPC/prop actors
+  (En_Ko/Md/Ta/Niw/In/Ma1/Ma2/Cow/Gs/Kanban/Wood02, Wonder_Item/Talk2,
+  Obj_Tsubo/Kibako/Syokudai/Mure2/Hana, Bg_Spot01_Objects2) out of the core.
+  Each scene's OAP carries what its room/transition lists spawn plus child
+  spawns (63 packs, SA keeps the Field enemies; tightest SA 116 KB free).
+  Core 543,764 -> 442,892 B.
+- **Phase 4 (link):** importer adds z_player_call/z_player_lib/z_player
+  (`OOT_PLAYER_SRCS`), generated `player_anim_headers.cpp` (segment = bank id,
+  aliases by data symbol), resident object_link_boy/child skeletons with
+  `.keep_ph` DL placeholders. bridge_player_source.cpp: 46 hooks (camera/
+  audio/scene-flow adapters, REAL z_parameter/z_play bodies, HOST inventory
+  callbacks: ammo, magic, bottles; C save stays the one owner). Duplicates
+  guarded in bridge_play/bridge_items. Low BSS (oot_core_draw + oot_core_bg,
+  36,516 B) moved to Low RAM 0x0021D800 (`RAM_LOW_OOTCORE_BSS`, NOLOAD,
+  cleared at boot). Core 576,128 / 589,824 B.
+- **Phase 3 (frames):** bank tool made fail-safe (every clip the Player or
+  C clips name; GC probe optional): `bank_full`, 521 clips, ALL.PFB
+  626,212 B = `PLAYANIM.PFB`, loaded once at boot (no CD during play),
+  replaces LINKANIM/ADULTANM. C cutscene/chest/get-item poses read the same
+  bank (`link_clip_bank.h`, child root x0.64 as before). Demand loading per
+  the 2026-10-06 directive is still open (whole bank resident instead).
+- **API v28:** player_bank, player_view (pos, focus, yaw, jointTable,
+  state flags, hand/sheath models, boots/tunic/shield, blade, ground/water,
+  invincible, hidden, door room request), player_damage (C enemies ->
+  Player_InflictDamage), player_pose, player_jump (Saturn Y: func_80838940,
+  v 8.0), player_warp (host moves). OotCoreSave + c_slots/tunic ->
+  buttonItems/cButtonSlots; Player_SetEquipmentData on equip change.
+- **Phase 5 (host):** recomp.c PLAYER_SOURCE step: Saturn pad -> N64 pad
+  (A=A, X=B, R=R, Z=Z, C items, B-held walk = 40% stick), core update, read
+  view -> recomp_link/yaw; Saturn camera, doors, pause/HUD, story, Navi,
+  C actors unchanged; C pushers/doors/web landings move recomp_link and the
+  Player is warped there. Link drawn from the jointTable; sword-in-hand from
+  the left-hand model type. Core Player_Draw (pose split) runs each update
+  for anchors, its display list dropped. Stick Y held outside text boxes.
+- **Known gaps (test will show more):** C push blocks, C pot/grass lifting,
+  C sword grass cutting, C torches, C enemy knockback (damage+flash only),
+  host lock-on camera, Navi actor (En_Elf not imported), door rooms from
+  source doors (request surfaced, host loading not wired), Player sword
+  trail, Player camera settings/door cams, sequence/filter audio hooks.
+- Clean target (WSL, 2026-10-09): built; core 576,128 / 589,824 B; low
+  BSS 36,516 / 40,960 B; main .bss ends 0x06078380 (48,256 B spare); core
+  and main wide audits 0 failing; 1,434 disc files (COL/LINKANIM/ADULTANM
+  parked in build/disc-retired); ISO 81,901,568 B, SHA256
+  `a11475c6cb94effaf93c4e188603924e43faa0d5994fdb29c4ce4fd7861f4962`.
+  No runtime test yet.
+- C Link code (player_*.c, link_anim_state.c, physics in recomp.c) is not
+  run with PLAYER_SOURCE=1 but stays for the rollback until acceptance;
+  phase 7 deletes it.
+
+### Phase 2: one collision world, live in Clean (Claude, 2026-10-09)
+
+`CORE_COLLISION=1` (default with `OOT_CORE=1`): core z_bgcheck is the only
+collision. `CORE_COLLISION=0` links the old C library unchanged (rollback).
+- Core API v27: `OotCoreEntry.bg_api` -> bg API v2 (`oot_core_bg.h`): adds
+  `sphere` (source SphVsFirstPolyImpl), `frame` (core step count), `ready`;
+  `floor` ignore bit 8 = floor-class only; every entry misses with no
+  PlayState; `dyna_carry` works on any live BgActor, not only proxies.
+- `src/bg_core_shim.c`: all C bg_* over the core; carry applied once per core
+  step (core Actor_UpdateAll owns the frame boundary); scene camera view cached
+  per scene; `bg_water_bind` no-op (core water read directly).
+- `src/bg_core_link.c`: C Link wrappers (`kokiri_collision_floor/clear/spawn/
+  move/move_actor/fall/jump/actor_*`) on the shim, same constants and order.
+- `scene_flow_load` calls `oot_core_scene_enter` inside the loading screen, so
+  the core scene exists before spawn placement and C prop registration. No C
+  scene buffer, XZ index or dyna carve init; core->C dyna mirror and water bind
+  compiled out. `BG_DYNA_MAX` = 50 core bgIds. Proxy store 192 tris (worst
+  C-prop room: Deku Tree room 3, 108 tris).
+- Probe part 4 (`run_bg_port_probe.sh`, `bg_link_scenario.c`,
+  `compare_bg_link.py`): Kokiri floors 1,477/1,638 exact, rest +-1-2 (float
+  truncation vs C rounding), 3 hit/miss; spawn (-300,90,0) vs C (-300,91,0);
+  camera spheres 71/71; walks 1,079/1,872 rows exact, wall slides follow source
+  push-out (worst end drift 105 units on one diagonal wall run). Parts 1-3
+  unchanged (known Fx corner + line 2981 still open). No-scene guard passes.
+- Host: focused 212-case batch; only 6 errors, all pre-existing on HEAD
+  (hit-tint test fixtures, -fPIC fixture links). test_core_sprites updated.
+- Clean target (WSL): builds; core 543,764 B (carve 589,824; oot_core_bg.o
+  19,224 B); main .bss ends 0x060818A0, **10,080 B** below SGL (was 80-208 B).
+  Core + main wide audits 0 failing. ISO 84,604,928 B, SHA256
+  `9610cb1bbb34f857cf01671fcd1a53c3f886abade2476347bf4397419f4b2d30`.
+- Freed per scene: C scene buffer (scene-sized jo heap, up to ~200 KB for
+  ganontika), 20 KB index, core-dyna mirror copies. RAM_CART_DYNA (18 KB)
+  is unused under CORE_COLLISION but still reserved: release it in phase 4
+  placement. No speculative credit taken.
+- Open: speed vs C not measured (human judges on normal Clean play, CPU~);
+  runtime acceptance batch (walk/slopes/walls/ledges/ladder/crawl/water shore,
+  push blocks, webs, Deku mouth, platforms, Kakariko gallery, scene round trips,
+  failed-warp restore). Core play now starts at boot's title scene load too;
+  watch title heap. C callers still query through the shim until phase 4/7.
 
 Inventory preservation follow-up (2026-10-08): human requests all inventory via
 source Player paths, retaining the digital aiming crosshair. Source first-person

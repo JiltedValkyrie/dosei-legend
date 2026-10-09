@@ -39,8 +39,20 @@ SECTIONS
         KEEP(*(.keep_ph))
         _oot_keep_ph_end = .;
     }
-    .bss : { *(.bss .bss.*) *(COMMON) }
+    .bss : {
+        *(EXCLUDE_FILE(*oot_core_draw.o *oot_core_bg.o) .bss EXCLUDE_FILE(*oot_core_draw.o *oot_core_bg.o) .bss.*)
+        *(COMMON)
+    }
     _oot_core_end = .;
     ASSERT(_oot_core_end <= OOT_CORE_LOAD_ADDR + OOT_CORE_MAX_BYTES, "oot-core blob exceeds its cart carve")
+    /* Large zero-initialised state in Low Work RAM (ram_low.h
+     * RAM_LOW_OOTCORE_BSS): never in OOTCORE.BIN; oot_core_boot clears it. */
+    .lowbss OOT_CORE_LOW_BSS_ADDR (NOLOAD) : {
+        _oot_core_low_bss_start = .;
+        *oot_core_draw.o(.bss .bss.*)
+        *oot_core_bg.o(.bss .bss.*)
+        _oot_core_low_bss_end = .;
+    }
+    ASSERT(_oot_core_low_bss_end <= OOT_CORE_LOW_BSS_ADDR + OOT_CORE_LOW_BSS_BYTES, "oot-core low BSS exceeds its Low RAM carve")
     /DISCARD/ : { *(.comment) *(.dtors) *(.fini_array) *(.eh_frame) }
 }

@@ -69,4 +69,9 @@ bool recomp_target_marker(int32_t *x, int32_t *y, bool *locked, unsigned *kind);
 bool recomp_sword_out(void);
 /* Bold glyphs for a just-printed emphasised (coloured) text run (main.c). */
 void recomp_text_embolden(int x, int y, const char *text, unsigned length);
+#ifdef PLAYER_SOURCE
+/* Debug overlay: last frame's host step split (us): gameplay_step, core
+ * frame, camera, whole step loop, step count. */
+void recomp_step_perf(unsigned int out[5]);
+#endif
 #endif

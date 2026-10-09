@@ -336,6 +336,35 @@ $//'`.
     Final .bss end is 0x06083D70 (656 B spare); this small margin must not be
     treated as room for new static actor tables. Matched Clean disassembly
     shows 12 B save-summary and 72 B save-write frames after these changes.
+47. **CORE_COLLISION flips need a full rebuild; CRLF breaks WSL scripts.**
+    `CORE_COLLISION` (default = `OOT_CORE`) swaps the C collision library for
+    `src/bg_core_shim.c` + `src/bg_core_link.c` and widens `BG_DYNA_MAX` to the
+    core's 50 bgIds, so it is part of `oot_core_mode.stamp` (`1c1`, `1c0`, `0`).
+    On Windows, Python `Path.write_text()` and `git stash -u`/`pop` (with
+    `core.autocrlf=true`) rewrite files as CRLF: `.sh` scripts then fail in WSL
+    with `$'\r': command not found`. Write with `write_bytes`/`newline='\n'`
+    and check `grep -c $'\r'` before running WSL scripts.
+48. **Swap game sources before line `SRCS =`.** jo_engine_makefile expands
+    its target's objects from SRCS when it is included, so a later
+    `SRCS := $(filter-out ...)` still leaves `No rule to make target
+    src/recomp_collision.o`. `COLLISION_SRCS` is chosen before SRCS for that
+    reason. The div32 helpers have one definition: kokiri_collision.c with
+    the C library, src/bg_core_link.c with CORE_COLLISION.
+49. **PLAYER_SOURCE needs the frame bank first.** build.sh regenerates
+    `build/player-migration/bank_full` (ALL.PFB + ids.json) when its tools
+    change; oot_core_import.py reads ids.json for the anim headers and the
+    makefile copies ALL.PFB to `PLAYANIM.PFB`. The stamp now includes
+    `p$(PLAYER_SOURCE)`. `./build.sh --clean --quick OOT_CORE=1
+    build/oot-core/oot-core.elf` (or `oot-scene-packs`) link-checks the core
+    and packs without mastering a disc; the game ELF target does not relink
+    the core.
+50. **Disc directory holds 1536 entries.** The 63 scene packs pushed it to
+    1540. Core-collision / real-Player builds park files they no longer read
+    (all `.COL`, LINKANIM.BIN, ADULTANM.BIN) in `build/disc-retired`;
+    build.sh restores them first so the Field pairing check, host probes and
+    rollback builds still find them. build.sh's first "boundary" line reads
+    the previous map; trust the last one. Real-Player Clean: .bss ends
+    0x06078380, 48,256 B spare (C Link physics no longer linked in).
 
 ## Playtest package
 
@@ -795,3 +824,29 @@ checks pass; this is not target/runtime acceptance. Size growth is not yet attri
     `build_action_audio.py` water-fills each area bank, fading the longest tails
     (now including forest `tree_open` and boss `gohma_dead`). Check the
     `trimmed ...` lines and report them when adding resident sounds.
+99. **WSL has no `sh-elf-objdump` on PATH.** The audit needs a SH objdump:
+    `/home/valkyrie/sh-elf-build/build-binutils/binutils/objdump -d
+    build/oot-core/oot-core.elf > X; python3 tools/audit_oot_core_wide.py X`.
+    An empty disassembly "passes" with 0 sites: check the line count. Write
+    the commands to a script file; `wsl bash -c "..."` from Git Bash mangles
+    `$VAR`/`~`. `valgrind` (callgrind) is installed for host collision
+    profiling (instruction counts, closer to SH-2 cost than x86 cycles).
+100. **`run_bg_port_probe.sh` can hide a link failure.** A host link error in
+    the probe build prints `collect2: error` but the script still exits 0.
+    Grep its output for `error` after API changes; host stubs for new core
+    calls go in `oot-core/tests/bgcheck_host_stubs.cpp`.
+101. **Cart carve sizes moved (2026-10-09).** Core blob 0xA0000 at
+    0x02760000, scene collision/pack carve 0x30000 at 0x02730000
+    (`src/ram_cart.h`, makefile OOT_CORE_LOAD_ADDR/MAX_BYTES,
+    OOT_SCENECOL_MAX_BYTES; tool copies in oot_core_regions.c,
+    partition_core_regions.py, player_migration_symbols.py,
+    bridge_actor_pack.cpp default). `build_actor_packs.py` fails a scene whose
+    OOC + objects + pack outgrow 0x30000.
+102. **Slave SH-2 rules (async core, 2026-10-09).** Caches are write-through
+    but not coherent: purge on the slave before reading master data, purge
+    on the master after the join, poll shared flags cache-through
+    (`addr | 0x20000000`). The slave has its own FRT: never call
+    `frame_timer_*` there (it extends the master's counter). SGL's slave
+    stack is ~3.5 KB at 0x06001E00; long jobs switch to
+    `RAM_LOW_SLAVE_STACK`. No jo_malloc, CD, jo_printf or sound from the
+    slave.

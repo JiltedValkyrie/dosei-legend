@@ -52,6 +52,16 @@ typedef enum
 ** frame: the posed table is kept and the call returns immediately. */
 void                link_anim_pose(unsigned int clip, unsigned int frame,
                                    unsigned int fraction);
+#ifdef PLAYER_SOURCE
+/* The real Player's jointTable (root xyz, 21 limb rotations xyz, face). */
+void                link_anim_pose_joints(const int16_t *joints);
+/* Slave-SH-2 skin (2026-10-09): record joints, hand them to the frame's
+ * slave job, wait before any master read of Link's bones or points. */
+void                link_anim_request_joints(const int16_t *joints);
+const int16_t      *link_anim_take_joints(void);
+void                link_anim_skin_on_slave(const int16_t *joints);
+void                link_anim_sync(void);
+#endif
 /* Upper-body overlay (Player_UpdateUpperBody): the given clip/frame owns the
 ** UPPER..TORSO limbs of the next pose while the played clip keeps the legs.
 ** This is how OoT carries an object -- there is no carry-walk animation. */

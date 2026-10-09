@@ -197,7 +197,7 @@ static OotCoreEntry api={.play_init=init,.play_destroy=destroy,.pack_release=rel
     .set_camera=camera,.set_room=set_room,.set_sword=sword,.update=update,.player_push=push,.tool=tool,
     .water_boxes=water_boxes};
 #define ENTRY (&api)
-''' + function(HOST, 'void oot_core_frame(') + r'''
+''' + function(HOST, 'static bool scene_enter(') + function(HOST, 'void oot_core_frame(') + r'''
 int main(void) {
     gameplay_input_t in={0};
     oot_core_frame(&in); assert(!updates && !loads && unloads==1); /* skipped 20 Hz step */

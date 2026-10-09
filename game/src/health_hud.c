@@ -206,6 +206,23 @@ static void magic_meter(volatile unsigned short *cells, volatile unsigned short 
             hud_pixel(cells, magic, left + 8 + x, top + 3 + y, meter_fill[y]);
 }
 
+/* One heart into a cell bank (any memory). */
+static void heart_draw(unsigned short *cells, unsigned health, unsigned heart, unsigned extent,
+                       const unsigned char *sample_at)
+{
+    unsigned fill = health_hud_fill(health, heart), x, y;
+    int left = 14 + (heart % 10) * 10 - extent / 2;
+    int top = 10 + (heart / 10) * 10 - extent / 2;
+    for (y = 0; y < extent; ++y) for (x = 0; x < extent; ++x) {
+        unsigned sx = sample_at[x], sy = sample_at[y];
+        unsigned colour = (HEART_ATLAS[fill * 64 + sy * 4 + sx / 4] >> ((3 - sx % 4) * 4)) & 15;
+        unsigned px = left + x, py = top + y;
+        unsigned offset = ((py / 8) * 15 + px / 8) * 16 + (py % 8) * 2 + px % 8 / 4;
+        unsigned shift = (3 - px % 4) * 4;
+        if (colour) cells[offset] = (cells[offset] & ~(15u << shift)) | colour << shift;
+    }
+}
+
 void health_hud_draw(bool visible)
 {
     unsigned health = save_state.health, capacity = save_state.health_capacity / 16;
@@ -230,31 +247,42 @@ void health_hud_draw(bool visible)
     }
     /* Compose off-screen. Clearing active cells caused visible blank hearts
      * whenever a slow actor frame overlapped VDP2 scanning the HUD. Two 1,920 B
-     * banks fit reserved B0 slack; the immutable atlas stays at 0x50800. */
-    front ^= 1u;
-    cells = front ? HEART_BACK_CELLS : HEART_CELLS;
-    magic = front ? MAGIC_BACK_CELLS : MAGIC_CELLS;
-    for (i = 0; i < 60 * 16; ++i) cells[i] = 0;
-    for (i = 0; i < 30 * 16; ++i) magic[i] = 0;
-    /* Only the pulsing heart changes size. Avoid variable division for every
-     * pixel of all twenty hearts on the SH-2. */
-    for (i = 0; i < size; ++i) sample[i] = i * 16 / size;
-    for (heart = 0; heart < capacity; ++heart) {
-        unsigned fill = health_hud_fill(health, heart);
-        unsigned extent = health && heart == (health - 1) / 16 ? size : 11;
-        const unsigned char *sample_at=extent==11 ? sample11 : sample;
-        int left = 14 + (heart % 10) * 10 - extent / 2;
-        int top = 10 + (heart / 10) * 10 - extent / 2;
-        for (y = 0; y < extent; ++y) for (x = 0; x < extent; ++x) {
-            unsigned sx = sample_at[x], sy = sample_at[y];
-            unsigned colour = (HEART_ATLAS[fill * 64 + sy * 4 + sx / 4] >> ((3 - sx % 4) * 4)) & 15;
-            unsigned px = left + x, py = top + y;
-            unsigned offset = ((py / 8) * 15 + px / 8) * 16 + (py % 8) * 2 + px % 8 / 4;
-            unsigned shift = (3 - px % 4) * 4;
-            if (colour) cells[offset] = (cells[offset] & ~(15u << shift)) | colour << shift;
+     * banks fit reserved B0 slack; the immutable atlas stays at 0x50800.
+     *
+     * 2026-10-09 speed: the pulse changes the key nearly every frame, and the
+     * old path rebuilt all twenty hearts with read-modify-writes straight into
+     * VDP2 VRAM (~11 ms, overlay row 14 r1). Now the still hearts and the
+     * magic meter are composed once in work RAM (when health, capacity or
+     * magic change); each pulse copies that base, draws the one pulsing heart
+     * on top and writes the bank to VRAM in a single pass. */
+    {
+        static unsigned short base_cells[60 * 16], base_magic[30 * 16];
+        static unsigned short work_cells[60 * 16], work_magic[30 * 16];
+        static int base_key = -1;
+        int still_key = (int)(health | capacity << 9 | magic_key << 19);
+        unsigned pulse_heart = health ? (health - 1) / 16 : ~0u;
+        (void)x; (void)y;
+        if (base_key != still_key) {
+            base_key = still_key;
+            for (i = 0; i < 60 * 16; ++i) base_cells[i] = 0;
+            for (i = 0; i < 30 * 16; ++i) base_magic[i] = 0;
+            for (heart = 0; heart < capacity; ++heart)
+                if (heart != pulse_heart) heart_draw(base_cells, health, heart, 11, sample11);
+            magic_meter(base_cells, base_magic, capacity);
         }
+        for (i = 0; i < 60 * 16; ++i) work_cells[i] = base_cells[i];
+        /* Only the pulsing heart changes size. Avoid variable division for
+         * every pixel on the SH-2. */
+        for (i = 0; i < size; ++i) sample[i] = i * 16 / size;
+        if (pulse_heart < capacity)
+            heart_draw(work_cells, health, pulse_heart, size, size == 11 ? sample11 : sample);
+        front ^= 1u;
+        cells = front ? HEART_BACK_CELLS : HEART_CELLS;
+        magic = front ? MAGIC_BACK_CELLS : MAGIC_CELLS;
+        for (i = 0; i < 60 * 16; ++i) cells[i] = work_cells[i];
+        for (i = 0; i < 30 * 16; ++i) magic[i] = base_magic[i];
+        (void)work_magic;
     }
-    magic_meter(cells, magic, capacity);
     for (i = 0; i < 60; ++i)
         HEART_MAP[(2 + i / 15) * 64 + 2 + i % 15] =
             0x4000u | ((front ? 0x11000u : 0x10000u) / 32 + i);

@@ -20,6 +20,34 @@ typedef struct {
 
 /* Boot: load + init the blob and run the gate bench. False if not loaded. */
 bool oot_core_boot(void);
+#ifdef PLAYER_SOURCE
+/* The real decomp Player, read after every core update (recomp_link and
+** recomp_link_yaw follow it). Valid once a scene's Player exists. */
+extern OotCorePlayerView oot_core_player;
+/* Second-CPU core update (2026-10-09). The host steps queue core updates;
+ * main.c kicks them onto the slave SH-2 before drawing the scene and Link,
+ * and joins before the HUD. Between kick and join the master must not enter
+ * the core (counted: oot_core_async_stats). */
+void oot_core_async_kick(void);
+void oot_core_async_join(void);
+bool oot_core_async_busy(void);
+void oot_core_async_stats(unsigned int out[5]); /* updates, overlap us, join wait us, core / bg violations */
+unsigned int oot_core_slave_job_us(void);        /* last slave core job, its own FRT */
+extern bool oot_core_player_valid;
+/* Door Room_RequestNewRoom since the last core update, -1 none. */
+int oot_core_player_room_request(void);
+/* A C-side enemy's hit (1/16 hearts) on the real Player. */
+void oot_core_player_damage(int damage);
+/* Saturn Y jump extension; true when the Player jumped. */
+bool oot_core_player_jump(void);
+/* After the host places Link at a spawn: take the Player's own position
+** (a void-out/respawn spawns him at the respawn point, not the entrance). */
+void oot_core_player_resync(void);
+/* Debug overlay: the real Player's anchor draw pass, us. */
+unsigned int oot_core_player_draw_us(void);
+#else
+static inline unsigned int oot_core_player_draw_us(void) { return 0; }
+#endif
 /* Failed code-pack admission blocks gameplay until explicit scene restart. */
 bool oot_core_scene_failed(void);
 #include "gameplay.h"
@@ -60,6 +88,10 @@ void oot_core_scene_restart(void); /* after a successful full scene reload */
 /* Release old scene resources before loading the next scene's native assets.
  * Destructors run while their OOC/OOB/code pack is still resident. */
 void oot_core_scene_unload(void);
+#ifdef CORE_COLLISION
+/* Load the scene's core PlayState now (its collision is the only world). */
+bool oot_core_scene_enter(unsigned int scene, unsigned int spawn);
+#endif
 /* Link's C-button tools on the decomp actors (bridge_items.cpp). Slot is the
 ** inventory slot; false = refused (no ammo/magic, one already out, no play). */
 bool oot_core_tool_use(unsigned int slot, const int32_t origin[3], uint16_t yaw, int16_t pitch);

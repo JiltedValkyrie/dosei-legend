@@ -45,7 +45,12 @@ typedef camera_position_t bg_vec_t;
 
 #define BG_SCENE        50      /* BGCHECK_SCENE: static scene geometry */
 #define BG_NONE         0xFF
+#ifdef CORE_COLLISION
+/* game/src/bg_core_shim.c: ids are core DynaPoly bgIds (BG_ACTOR_MAX 50). */
+#define BG_DYNA_MAX     50      /* dyna ids 0..49 (< BG_SCENE) */
+#else
 #define BG_DYNA_MAX     16      /* dyna slots, ids 0..15 (< BG_SCENE) */
+#endif
 #define BG_Y_MIN        (-32000) /* BGCHECK_Y_MIN */
 
 /* CollisionPoly ignore flags, flags_vIA >> 13 (COLPOLY_IGNORE_*). */

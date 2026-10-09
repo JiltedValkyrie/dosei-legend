@@ -1,5 +1,5 @@
 /*
- * Real-Player frame bank adapter (Player migration, isolated: NOT in the live
+ * Real-Player frame bank adapter (Player migration phase 4: live with PLAYER_SOURCE=1
  * OOT_CORE_SRCS list until Player cutover).
  *
  * Bank files (tools/build_player_frame_bank.py, format in player_frame_pack.py):
@@ -14,9 +14,17 @@
  * PlayerFrameBank_Fail: never a silent pose.
  */
 #include <stdint.h>
+#ifdef PFB_CORE
+/* The decomp's libc stdint.h has no fixed-width types. */
+typedef unsigned char uint8_t;
+typedef signed short int16_t;
+typedef unsigned short uint16_t;
+typedef unsigned int uint32_t;
+typedef signed int int32_t;
+#endif
 
 #define PFB_CHANNELS 67
-#define PFB_MAX_IDS 512
+#define PFB_MAX_IDS 640  /* bank_full: 521 clips */
 #define PFB_SEGMENT 0x0B000000u
 #define PFB_HEADER 12
 #define PFB_BASES PFB_HEADER
@@ -181,6 +189,12 @@ extern "C" void PlayerFrameBank_Unregister(const uint8_t* bank, uint32_t bytes) 
             sSlots[id] = 0;
         }
     }
+}
+
+/* Frames in clip `id`, 0 when it is not registered (no failure). */
+extern "C" uint32_t PlayerFrameBank_Count(uint32_t id) {
+    const uint8_t* block = id < PFB_MAX_IDS && !sSwapping ? sSlots[id] : 0;
+    return block ? be16(block) : 0;
 }
 
 extern "C" int PlayerFrameBank_Load(uint32_t id, uint32_t frame, int16_t* out) {

@@ -172,6 +172,27 @@ void player_camera_constrain(const oot_follow_t *follow,
     }
 }
 
+/* Deferred arm collision (2026-10-09 speed): during a catch-up batch only
+ * the last eye is drawn, and the follow camera rebuilds the eye from its own
+ * state every step without reading it back. recomp.c defers the floor/line
+ * constraint and applies it once to the final eye. */
+static bool constrain_deferred, constrain_pending;
+static const oot_follow_t *pending_follow;
+static camera_position_t pending_player;
+static int32_t pending_at_y;
+
+void player_camera_defer_constrain(bool on)
+{
+    constrain_deferred = on;
+}
+
+void player_camera_flush_constrain(camera_position_t *eye, int32_t *pitch)
+{
+    if (!constrain_pending) return;
+    constrain_pending = false;
+    player_camera_constrain(pending_follow, &pending_player, pending_at_y, eye, pitch);
+}
+
 void player_camera_update(player_camera_t *camera, oot_follow_t *follow,
     unsigned mode, const camera_position_t *player, uint16_t facing, bool moving,
     camera_position_t *eye, uint16_t *yaw, int32_t *pitch)
@@ -180,6 +201,7 @@ void player_camera_update(player_camera_t *camera, oot_follow_t *follow,
      * pull these back against the very ground being compared. Link's own
      * collision is unaffected. Traversal and first-person retain their views. */
     if (experiment && mode == PLAYER_CAMERA_NORMAL) {
+        constrain_pending = false;
         experiment_eye(player,eye,yaw,pitch);
         return;
     }
@@ -220,7 +242,15 @@ void player_camera_update(player_camera_t *camera, oot_follow_t *follow,
     if (camera->at_y == target) camera->returning = false;
     anchor.y += camera->at_y-target;
     oot_follow_update_profile(follow, &anchor, facing, moving, eye, yaw, pitch, &profile);
-    player_camera_constrain(follow,player,camera->at_y,eye,pitch);
+    if (constrain_deferred) {
+        constrain_pending = true;
+        pending_follow = follow;
+        pending_player = *player;
+        pending_at_y = camera->at_y;
+    } else {
+        constrain_pending = false;
+        player_camera_constrain(follow,player,camera->at_y,eye,pitch);
+    }
     camera->mode = mode;
     camera->previous_y = player->y;
 }

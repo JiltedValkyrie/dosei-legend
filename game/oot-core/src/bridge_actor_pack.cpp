@@ -17,7 +17,7 @@ extern "C" char oot_core_text_start[], oot_core_text_end[];
 static const OotActorPackHeader* sPack;
 extern const OotCoreHost* gOotCoreHost;
 #ifndef OOT_CORE_LOAD_ADDR
-#define OOT_CORE_LOAD_ADDR 0x02770000u
+#define OOT_CORE_LOAD_ADDR 0x02760000u
 #endif
 #ifndef OOT_SCENECOL_ADDR
 #define OOT_SCENECOL_ADDR 0x02730000u

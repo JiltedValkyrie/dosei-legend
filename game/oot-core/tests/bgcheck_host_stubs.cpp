@@ -11,6 +11,8 @@ void Actor_SetObjectDependency(PlayState*, Actor*) {}
 #ifndef BG_REAL_SKIN_MATRIX /* real z_bg_item linked by run_bg_port_probe.sh */
 void DynaPolyActor_UnsetAllInteractFlags(DynaPolyActor*) {}
 #endif
+void* ZeldaArena_Malloc(u32) { return 0; }
+void ZeldaArena_GetSizes(u32* a, u32* b, u32* c) { *a = *b = *c = 0; }
 #ifndef BG_REAL_SKIN_MATRIX /* bg_dyna_probe links the real z_skin_matrix */
 void SkinMatrix_SetTranslateRotateYXZScale(MtxF*, f32, f32, f32, s16, s16, s16, f32, f32, f32) {}
 void SkinMatrix_Vec3fMtxFMultXYZ(MtxF*, Vec3f*, Vec3f*) {}
