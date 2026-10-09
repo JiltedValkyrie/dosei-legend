@@ -166,9 +166,12 @@ void kokiri_hit_filter(unsigned level);
 unsigned kokiri_hit_gouraud(unsigned level);
 /* Dithered ground contact marker: no textures or character meshes. */
 void kokiri_actor_shadow(int x, int y, int z, unsigned radius);
-/* Slave-SH-2 frame job (2026-10-09): Link's skin, then the scene prepare. */
+/* Slave-SH-2 frame job (2026-10-09): the scene prepare (Link's skin runs
+ * at frame start, link_anim_frame_start). */
 void kokiri_frame_slave_kick(bool scene);
 unsigned int kokiri_frame_slave_us(void);   /* last skin+prepare job, slave FRT */
+unsigned int kokiri_sgl_drain_us(void);     /* master wait for SGL's slave queue */
+void kokiri_shadow_resolve(void);           /* deferred shadow floors, after the join */
 void kokiri_actor_shadow_floor(int x, int y, int z, unsigned radius, int floor);
 void kokiri_navi_draw_colour(int x, int y, int z, unsigned int colour, bool sparkles);
 /* Adult hero gear tiles into the actor bank after a bank reset; false =

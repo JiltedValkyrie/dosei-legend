@@ -404,14 +404,20 @@ static void __attribute__((optimize("Os"))) viewer_draw(void)
     slRotX((ANGLE)(0u-recomp_pitch));
     slRotY((ANGLE)(0u-recomp_yaw));
     jo_3d_translate_matrix(-recomp_camera.x, recomp_camera.y, -recomp_camera.z);
-    /* 2026-10-09: the slave SH-2 skins Link and prepares the scene (depth,
-     * culling, fog) while the master submits the actors below. */
+    /* 2026-10-09 scheduling. SGL hands a PDATA to the slave only when the
+     * slave command queue is empty (sglC08.o); otherwise the master
+     * transforms it itself. So the slave runs our jobs while the master does
+     * work SGL barely needs the slave for:
+     *   frame start (recomp_update): Link's skin, during the game steps;
+     *   here: the queued decomp core update (the actors below draw from a
+     *   snapshot of its views), then the scene prepare, while the master
+     *   submits the small actor meshes and sprites;
+     *   kokiri_scene_draw waits for the prepare and an empty queue, so the
+     *   slave transforms the forest while the master transforms Link.
+     * Joined before text/HUD. Depth sorting, not submission order, decides
+     * occlusion. */
+    oot_core_async_kick();
     kokiri_frame_slave_kick(!kokiri_scene_backdrop_active() && !cutscene_hides_scene());
-    /* 2026-10-09 async core: everything that reads the decomp core (grass,
-     * drops, NPC/prop/tool/effect views) is submitted first; then the
-     * slave SH-2 runs the queued core update while the master submits the
-     * scene, Link and Navi from host copies. Joined before text/HUD.
-     * Depth sorting, not submission order, decides occlusion. */
 #if !defined(DOSEI_PERF_PROBE) || DOSEI_PERF_PROBE != 3
     /* Link has priority over optional actors in SGL's finite work area.
      * Depth sorting still controls occlusion, independent of submission order. */
@@ -446,7 +452,6 @@ static void __attribute__((optimize("Os"))) viewer_draw(void)
         perf_sub[PS_DAC] += frame_timer_ticks_to_us(ps_t0 - da0);
     }
 #endif
-    oot_core_async_kick();
     frame_timer_begin(FRAME_PHASE_SCENE);
 #if !defined(DOSEI_PERF_PROBE) || DOSEI_PERF_PROBE != 3
     /* A prerendered interior IS its backdrop: it has no geometry, and the
@@ -562,6 +567,7 @@ static void __attribute__((optimize("Os"))) viewer_draw(void)
         kokiri_cutscene_effects_draw();
     if(!cutscene_hides_scene())emerald_story_draw();
     oot_core_async_join();
+    kokiri_shadow_resolve();
     rejected_total += kokiri_scene_rejected();
     PS_RESET();
     cutscene_fade();
@@ -1305,8 +1311,8 @@ static void __attribute__((optimize("Os"))) viewer_hud(void)
                 {
                     unsigned int a[5];
                     oot_core_async_stats(a);
-                    jo_printf(0, 15, "as k%u ov%u jw%u cv%u bv%u     ",
-                              a[0], a[1] / 100, a[2] / 100, a[3], a[4]);
+                    jo_printf(0, 15, "as k%u ov%u jw%u cv%u bv%u dr%u    ",
+                              a[0], a[1] / 100, a[2] / 100, a[3], a[4], kokiri_sgl_drain_us() / 100);
                 }
             }
         }

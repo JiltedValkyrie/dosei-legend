@@ -302,13 +302,32 @@ static bool     inside_triangle(const scene_door_t *door, int32_t x, int32_t z)
 
 int             scene_flow_door_at(int32_t x, int32_t y, int32_t z)
 {
-    unsigned int i;
+    /* 2026-10-09 speed: the door table holds every scene's exits (1356) and
+    ** this runs every game step; walk only the current scene's entries.
+    ** Same tests in the same order. */
+    static uint16_t     scene_list[128];
+    static unsigned int scene_list_count;
+    static unsigned int scene_list_for = ~0u;
+    static bool         scene_list_overflow;
+    unsigned int i, k;
 
     if (!loaded)
         return (-1);
-    for (i = 0; i < SCENE_DOOR_COUNT; ++i) {
-        const scene_door_t *door = &scene_doors[i];
+    if (scene_list_for != current_scene) {
+        scene_list_for = current_scene;
+        scene_list_count = 0;
+        scene_list_overflow = false;
+        for (i = 0; i < SCENE_DOOR_COUNT; ++i) {
+            if (scene_doors[i].scene != current_scene) continue;
+            if (scene_list_count == 128) { scene_list_overflow = true; break; }
+            scene_list[scene_list_count++] = (uint16_t)i;
+        }
+    }
+    for (k = 0; scene_list_overflow ? k < SCENE_DOOR_COUNT : k < scene_list_count; ++k) {
+        const scene_door_t *door;
         int32_t             drop;
+        i = scene_list_overflow ? k : scene_list[k];
+        door = &scene_doors[i];
 
         if (door->scene != current_scene || oot_core_scene_layer()>=32 ||
             !(door->layers&(1u<<oot_core_scene_layer())))

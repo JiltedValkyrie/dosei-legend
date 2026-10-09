@@ -51,6 +51,39 @@ magic arrows, En_Item00 and En_Kusa stay resident. Other large residents for
 later review: z_message 47 KB, oot_core_draw 26 KB, z_eff_blure 14 KB (Player
 sword trails need it), lookathil 7.8 KB.
 
+### SGL-aware slave scheduling (Claude, 2026-10-09, autonomous; not run)
+
+Eighth reading (`fr667`, `sc156`) showed the scene draw stuck at ~15.6 ms
+whether the prepare ran on the master or the slave. Cause, from SGL 3.02j
+code (`LIBSGL.A`, objdump): `slPutPolygon` (sglC08.o) hands the whole PDATA
+to the slave only when the slave command queue is empty (read pointer at
+0x260FFC44 == write pointer at GBR+72); otherwise the MASTER runs
+CalcVertices itself and queues only the registration. `slSlaveFunc`
+(sglA15.o) appends to the same queue and signals the slave at once.
+`slSynch` queues its end-of-frame op and waits on the vblank counter. So any
+job of ours on the slave when the forest is submitted made the master
+transform all 2047 forest vertices.
+
+New schedule:
+- Frame start (recomp_update, before the steps): `link_anim_frame_start`
+  poses Link's limb matrices on the master (the steps read them; no waits)
+  and queues the vertex skin on the slave, which is otherwise idle during
+  the game steps. Only kokiri_link_draw and pose writers wait
+  (`link_anim_sync`).
+- Draw start: `oot_core_async_kick` snapshots every core view the actor
+  draws read (NPC sprites, draw items, tools, effects, grass/drop actor
+  views) and queues the core update; `kokiri_frame_slave_kick` queues the
+  scene prepare. The master submits the actors from the snapshot.
+- `kokiri_scene_draw` waits for the prepare and an empty SGL slave queue
+  (`sgl_slave_drain`, bounded 8 ms, overlay row 15 `dr`), so the slave
+  transforms the forest while the master transforms Link.
+- C collision queries while the slave runs: shadow floor misses are deferred
+  and resolved after the join (`kokiri_shadow_resolve`).
+Also: per-scene index lists instead of whole-table scans every step for
+portals (438, dungeon_doors.c and kokiri_scene_update) and scene exits
+(1356, scene_flow_door_at); world_props_step finds spawned props with one
+pool scan (was 32 x 96 slots per step).
+
 ### Link skin + scene prepare on the slave SH-2 (Claude, 2026-10-09)
 
 Second human reading: 15 FPS (`fr667`), slave core job only 7-9 %. Second

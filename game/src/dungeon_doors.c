@@ -20,6 +20,33 @@ void dungeon_doors_reset(void) {
 }
 unsigned dungeon_door_height(unsigned i) {return i<KOKIRI_PORTAL_COUNT ? lift[i] : 0;}
 bool dungeon_door_open(unsigned i) {return dungeon_door_height(i)>=100;}
+/* 2026-10-09 speed: the portal table holds every scene's tunnels and doors
+ * (438). The step and constrain loops ran all of them per game step; keep
+ * the current scene's door indices (kind >= 8) and loop those. Same tests,
+ * same order: other scenes' doors were never relevant, and their lift/hold
+ * stay 0 (reset on every scene change). */
+#define SCENE_DOORS_MAX 128
+static uint16_t door_list[SCENE_DOORS_MAX];
+static unsigned door_list_count;
+static int door_list_for = -1;
+static bool door_list_overflow;
+static void door_list_refresh(void) {
+    unsigned i, scene = scene_flow_scene();
+    if (door_list_for == (int)scene) return;
+    door_list_for = (int)scene;
+    door_list_count = 0;
+    door_list_overflow = false;
+    for (i = 0; i < KOKIRI_PORTAL_COUNT; ++i) {
+        const kokiri_portal *p = &kokiri_portals[i];
+        if (p->scene != scene || p->kind < 8) continue;
+        if (door_list_count == SCENE_DOORS_MAX) { door_list_overflow = true; break; }
+        door_list[door_list_count++] = (uint16_t)i;
+    }
+}
+#define FOR_SCENE_DOORS(i, k) \
+    for (door_list_refresh(), k = 0; \
+         door_list_overflow ? k < KOKIRI_PORTAL_COUNT : k < door_list_count; ++k) \
+        if ((i = door_list_overflow ? k : door_list[k]), 1)
 static bool relevant(const kokiri_portal *p) {
     return p->scene==scene_flow_scene() && p->kind>=8 &&
         (!p->layers || (oot_core_scene_layer()<32 && (p->layers&(1u<<oot_core_scene_layer())))) &&
@@ -69,9 +96,10 @@ unsigned dungeon_doors_step(const gameplay_input_t *in) {
     if(current_scene!=(int)scene_flow_scene()) {
         dungeon_doors_reset();current_scene=scene_flow_scene();
     }
+    unsigned k;
     prompt=false;
     current_room=in->room;previous_x=in->x;previous_z=in->z;
-    for(i=0;i<KOKIRI_PORTAL_COUNT;++i) {
+    FOR_SCENE_DOORS(i, k) {
         const kokiri_portal *p=&kokiri_portals[i];int side,depth,dy;
         if(!relevant(p)) {lift[i]=hold[i]=0;continue;}
         local(p,in->x,in->z,&side,&depth);dy=in->y-p->y;
@@ -94,8 +122,8 @@ unsigned dungeon_doors_step(const gameplay_input_t *in) {
     return consumed;
 }
 void dungeon_doors_constrain(int32_t *x,int32_t *z,int32_t y) {
-    unsigned i;
-    for(i=0;i<KOKIRI_PORTAL_COUNT;++i) {
+    unsigned i, k;
+    FOR_SCENE_DOORS(i, k) {
         const kokiri_portal *p=&kokiri_portals[i];int side,depth,old_side,old_depth;
         if(!relevant(p) || dungeon_door_open(i) || y<p->y-20 || y>p->y+125) continue;
         local(p,*x,*z,&side,&depth);local(p,previous_x,previous_z,&old_side,&old_depth);
@@ -109,8 +137,8 @@ void dungeon_doors_constrain(int32_t *x,int32_t *z,int32_t y) {
     }
 }
 bool dungeon_doors_exit_allowed(int32_t x,int32_t y,int32_t z) {
-    unsigned i;
-    for(i=0;i<KOKIRI_PORTAL_COUNT;++i) {
+    unsigned i, k;
+    FOR_SCENE_DOORS(i, k) {
         const kokiri_portal *p=&kokiri_portals[i];int side,depth;
         if(!relevant(p) || p->kind<24 || y<p->y-20 || y>p->y+120) continue;
         local(p,x,z,&side,&depth);

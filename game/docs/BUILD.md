@@ -850,3 +850,13 @@ checks pass; this is not target/runtime acceptance. Size growth is not yet attri
     stack is ~3.5 KB at 0x06001E00; long jobs switch to
     `RAM_LOW_SLAVE_STACK`. No jo_malloc, CD, jo_printf or sound from the
     slave.
+103. **SGL slave queue rule (2026-10-09).** `slPutPolygon` gives a PDATA to
+    the slave only when SGL's slave command queue is empty; otherwise the
+    master transforms it (sglC08.o). A long `slSlaveFunc` job queued before a
+    big submit moves that submit's whole transform onto the master. Queue
+    slave jobs where the master does not submit polygons (game steps, actor
+    sprites), and drain before big meshes (`kokiri_sgl.c sgl_slave_drain`).
+104. **Check the log, not only the exit code.** One WSL `./build.sh` run
+    printed a compile `error:` and still returned 0 (2026-10-09, cause not
+    pinned down). After every build grep the log for `error:` and require
+    the final `built:` line.

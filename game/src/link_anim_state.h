@@ -55,11 +55,10 @@ void                link_anim_pose(unsigned int clip, unsigned int frame,
 #ifdef PLAYER_SOURCE
 /* The real Player's jointTable (root xyz, 21 limb rotations xyz, face). */
 void                link_anim_pose_joints(const int16_t *joints);
-/* Slave-SH-2 skin (2026-10-09): record joints, hand them to the frame's
- * slave job, wait before any master read of Link's bones or points. */
-void                link_anim_request_joints(const int16_t *joints);
-const int16_t      *link_anim_take_joints(void);
-void                link_anim_skin_on_slave(const int16_t *joints);
+/* Slave-SH-2 skin (2026-10-09): frame start poses the matrices on the
+ * master and skins the points on the slave during the steps; sync waits for
+ * the points (Link's draw, clip poses, reset). */
+void                link_anim_frame_start(const int16_t *joints);
 void                link_anim_sync(void);
 #endif
 /* Upper-body overlay (Player_UpdateUpperBody): the given clip/frame owns the

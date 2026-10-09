@@ -20,19 +20,19 @@ typedef struct {
 
 /* Boot: load + init the blob and run the gate bench. False if not loaded. */
 bool oot_core_boot(void);
-#ifdef PLAYER_SOURCE
-/* The real decomp Player, read after every core update (recomp_link and
-** recomp_link_yaw follow it). Valid once a scene's Player exists. */
-extern OotCorePlayerView oot_core_player;
-/* Second-CPU core update (2026-10-09). The host steps queue core updates;
- * main.c kicks them onto the slave SH-2 before drawing the scene and Link,
- * and joins before the HUD. Between kick and join the master must not enter
- * the core (counted: oot_core_async_stats). */
+/* Second-CPU core update (2026-10-09, PLAYER_SOURCE; stubs otherwise). The
+ * host steps queue core updates; main.c kicks them onto the slave SH-2 at
+ * the start of the draw and joins before the HUD. Between kick and join the
+ * master must not enter the core (counted: oot_core_async_stats). */
 void oot_core_async_kick(void);
 void oot_core_async_join(void);
 bool oot_core_async_busy(void);
 void oot_core_async_stats(unsigned int out[5]); /* updates, overlap us, join wait us, core / bg violations */
 unsigned int oot_core_slave_job_us(void);        /* last slave core job, its own FRT */
+#ifdef PLAYER_SOURCE
+/* The real decomp Player, read after every core update (recomp_link and
+** recomp_link_yaw follow it). Valid once a scene's Player exists. */
+extern OotCorePlayerView oot_core_player;
 extern bool oot_core_player_valid;
 /* Door Room_RequestNewRoom since the last core update, -1 none. */
 int oot_core_player_room_request(void);
@@ -125,6 +125,9 @@ static inline bool oot_core_owns_kokiri_props(void) { return oot_core_is_playing
 ** C keeps them (fast) until the 32-bit Fx conversion lands. */
 static inline bool oot_core_owns_kokiri_npcs(void) { return false; }
 #else
+static inline void oot_core_async_kick(void) {}
+static inline void oot_core_async_join(void) {}
+static inline bool oot_core_async_busy(void) { return false; }
 static inline bool oot_core_is_playing(void) { return false; }
 static inline bool oot_core_scene_failed(void) { return false; }
 #define oot_core_frame(in) ((void)0)

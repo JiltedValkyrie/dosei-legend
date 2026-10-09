@@ -124,6 +124,16 @@ static inline const OotCoreEntry *entry_checked(void)
  * the slave runs and replayed by the master at the join. */
 #define SFX_QUEUE 32
 static unsigned short sfx_queue[SFX_QUEUE];
+/* Draw-phase snapshot (2026-10-09 scheduling): the slave updates the core
+ * from the start of the draw, so the master draws the core's actors from
+ * copies taken just before the kick (oot_core_async_kick). */
+#define SNAP_NPC_MAX 32
+#define SNAP_VIEW_MAX 24
+static OotCoreNpcView snap_npc[SNAP_NPC_MAX];
+static OotCoreDrawItem snap_items[OOT_CORE_DRAW_ITEMS_MAX];
+static OotCoreToolView snap_tools[OOT_CORE_TOOL_VIEWS_MAX];
+static OotCoreActorView snap_view[2][SNAP_VIEW_MAX];   /* ACTORCAT_PROP, ACTORCAT_MISC */
+static int snap_npc_n, snap_items_n, snap_tools_n, snap_view_n[2], snap_effect_n;
 static unsigned int sfx_queued;
 static unsigned int deferred_fatal[4];
 #else
@@ -910,8 +920,13 @@ bool oot_core_hit_tint(int16_t rgb[3])
 static void tools_draw(void)
 {
     const OotCoreToolView *v;
-    int n = playing ? ENTRY->tool_view(&v) : 0, i;
+    int n, i;
     int32_t a[3], b[3];
+#ifdef OOT_CORE_ASYNC
+    if (ASYNC_BUSY()) { v = snap_tools; n = playing ? snap_tools_n : 0; }
+    else
+#endif
+    n = playing ? ENTRY->tool_view(&v) : 0;
     npc_sprite_shadow_off = 1;
     for (i = 0; i < n; ++i) {
         unsigned int band = pitch_band(v[i].pitch);
@@ -1157,7 +1172,12 @@ static void effects_draw(void)
     OotCoreEffectView rows[OOT_CORE_EFFECT_VIEWS_MAX];
 #endif
     unsigned omitted=0;
-    int count=playing?ENTRY->effect_view(rows,OOT_CORE_EFFECT_VIEWS_MAX,&omitted):0;
+    int count;
+#ifdef OOT_CORE_ASYNC
+    if (ASYNC_BUSY()) count = playing ? snap_effect_n : 0;   /* rows written at the snapshot */
+    else
+#endif
+    count=playing?ENTRY->effect_view(rows,OOT_CORE_EFFECT_VIEWS_MAX,&omitted):0;
     for(int i=0;i<count;++i){
         const OotCoreEffectView *v=&rows[i];
         unsigned radius=4,colour=C_RGB(24,22,18),dither=1;
@@ -1181,7 +1201,12 @@ void oot_core_meshes_draw(void)
     tools_draw();
     effects_draw();
     const OotCoreDrawItem *items;
-    int n = playing ? ENTRY->draw_items(&items) : 0, i;
+    int n, i;
+#ifdef OOT_CORE_ASYNC
+    if (ASYNC_BUSY()) { items = snap_items; n = playing ? snap_items_n : 0; }
+    else
+#endif
+    n = playing ? ENTRY->draw_items(&items) : 0;
     unsigned int m;
     for (i = 0; i < n; ++i) {
         const OotCoreDrawItem *it = &items[i];
@@ -1353,7 +1378,11 @@ void oot_core_frame(const gameplay_input_t *in)
     if (step_phase >= 3) {
         step_phase -= 3;
 #ifdef OOT_CORE_ASYNC
-        /* Runs on the slave at the draw window (oot_core_async_kick). */
+        /* Runs on the slave at the start of the draw (oot_core_async_kick). */
+        {
+            int32_t hand[3];
+            if (gameplay_link_point(18, hand)) ENTRY->tool(OOT_CORE_TOOL_HAND, (int *)hand);
+        }
         if (core_due < 2) ++core_due;
         return;
 #endif
@@ -1390,7 +1419,13 @@ unsigned int oot_core_talk(void)
 {
     return playing ? ENTRY->talk_state() | (ENTRY->message_view()->active ? 1u : 0u) : 0u;
 }
-int oot_core_npcs(const OotCoreNpcView **out) { return playing ? ENTRY->npc_view(out) : 0; }
+int oot_core_npcs(const OotCoreNpcView **out)
+{
+#ifdef OOT_CORE_ASYNC
+    if (ASYNC_BUSY()) { *out = snap_npc; return playing ? snap_npc_n : 0; }
+#endif
+    return playing ? ENTRY->npc_view(out) : 0;
+}
 int oot_core_prop(short id, int x, int z) { return playing ? ENTRY->prop_query(id, x, z) : -1; }
 const char *oot_core_debug_text(void) { return playing ? ENTRY->debug_text() : ""; }
 const char *oot_core_debug_text2(void) { return playing ? ENTRY->debug_text2() : ""; }
@@ -1494,6 +1529,15 @@ unsigned int oot_core_update_us(void) { return update_us; }
 int oot_core_actors(int category) { return playing ? ENTRY->actor_count(category) : 0; }
 int oot_core_view(int category, OotCoreActorView *out, int max)
 {
+#ifdef OOT_CORE_ASYNC
+    if (ASYNC_BUSY()) {
+        int k = category == 6 ? 0 : category == 8 ? 1 : -1, n, i;
+        if (k < 0 || !playing) return 0;
+        n = snap_view_n[k] < max ? snap_view_n[k] : max;
+        for (i = 0; i < n; ++i) out[i] = snap_view[k][i];
+        return n;
+    }
+#endif
     return playing ? ENTRY->actor_view(category, out, max) : 0;
 }
 #endif
@@ -1546,11 +1590,38 @@ static void __attribute__((noinline)) slave_job(void *arg)
 
 bool oot_core_async_busy(void) { return ASYNC_BUSY(); }
 
+/* Copies of everything the master draws from the core while the slave runs
+ * (tools, effects, draw items, NPC sprites, grass and drops). */
+static void snapshot_views(void)
+{
+#ifdef __sh__
+    OotCoreEffectView *rows = RAM_LOW(RAM_LOW_EFFECT_VIEW_OFFSET);
+#else
+    static OotCoreEffectView rows[OOT_CORE_EFFECT_VIEWS_MAX];
+#endif
+    const OotCoreNpcView *nv;
+    const OotCoreDrawItem *items;
+    const OotCoreToolView *tv;
+    unsigned int omitted = 0;
+    int i, n;
+    n = ENTRY_RAW->npc_view(&nv);
+    snap_npc_n = n < SNAP_NPC_MAX ? n : SNAP_NPC_MAX;
+    for (i = 0; i < snap_npc_n; ++i) snap_npc[i] = nv[i];
+    n = ENTRY_RAW->draw_items(&items);
+    snap_items_n = n < OOT_CORE_DRAW_ITEMS_MAX ? n : OOT_CORE_DRAW_ITEMS_MAX;
+    for (i = 0; i < snap_items_n; ++i) snap_items[i] = items[i];
+    n = ENTRY_RAW->tool_view(&tv);
+    snap_tools_n = n < OOT_CORE_TOOL_VIEWS_MAX ? n : OOT_CORE_TOOL_VIEWS_MAX;
+    for (i = 0; i < snap_tools_n; ++i) snap_tools[i] = tv[i];
+    snap_view_n[0] = ENTRY_RAW->actor_view(6, snap_view[0], SNAP_VIEW_MAX);
+    snap_view_n[1] = ENTRY_RAW->actor_view(8, snap_view[1], SNAP_VIEW_MAX);
+    snap_effect_n = ENTRY_RAW->effect_view(rows, OOT_CORE_EFFECT_VIEWS_MAX, &omitted);
+}
+
 void oot_core_async_kick(void)
 {
-    int32_t hand[3];
     if (async_busy || !playing || !core_due || gameplay_is_paused()) return;
-    if (gameplay_link_point(18, hand)) ENTRY_RAW->tool(OOT_CORE_TOOL_HAND, (int *)hand);
+    snapshot_views();
     async_updates = core_due;
     core_due = 0;
     BOX->updates = async_updates;

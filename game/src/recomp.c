@@ -2027,7 +2027,15 @@ void recomp_update(void)
          * camera, doors, pause/HUD, story and C-side systems. */
         bool attack_edge = input.attack_pending;
         uint16_t walk = buttons & (CAMERA_UP | CAMERA_DOWN | CAMERA_LEFT | CAMERA_RIGHT);
-        unsigned int step_start = frame_timer_ticks();
+        unsigned int step_start;
+        /* Pose Link from the newest Player joints (joined last frame): the
+         * master builds the limb matrices the steps read, the slave SH-2
+         * skins his vertices while the steps run (link_anim_frame_start). */
+        frame_timer_begin(FRAME_PHASE_SKINNING);
+        if (oot_core_player_valid)
+            link_anim_frame_start(oot_core_player.joints);
+        frame_timer_end(FRAME_PHASE_SKINNING);
+        step_start = frame_timer_ticks();
         perf_sub[PS_R0] += frame_timer_ticks_to_us(step_start - r0_start);
         perf_gs = perf_co = perf_cam = perf_steps = 0;
         player_camera_defer_constrain(true);
@@ -2279,12 +2287,6 @@ void recomp_update(void)
         perf_step = frame_timer_ticks_to_us(frame_timer_ticks() - step_start);
         perf_out[0] = perf_gs; perf_out[1] = perf_co; perf_out[2] = perf_cam;
         perf_out[3] = perf_step; perf_out[4] = perf_steps;
-        frame_timer_begin(FRAME_PHASE_SKINNING);
-        /* Skinned on the slave SH-2 at the start of the draw (main.c
-         * kokiri_frame_slave_kick); any earlier reader skins here. */
-        if (oot_core_player_valid)
-            link_anim_request_joints(oot_core_player.joints);
-        frame_timer_end(FRAME_PHASE_SKINNING);
         r0_start = frame_timer_ticks();   /* now: start of PS_R1 */
 #else
     } else if (recomp_link_active) {

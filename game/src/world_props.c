@@ -93,17 +93,20 @@ void world_props_step(const gameplay_input_t *in)
 {
     unsigned int i;
     actor_t *a = 0;
+    uint32_t spawned = 0;
+    typedef char world_prop_mask_fits[KOKIRI_WORLD_PROP_COUNT <= 32 ? 1 : -1];
     last_in = *in;
     current_room=in->room;
     world_signs_step(in);
+    /* 2026-10-09 speed: one pool scan for the spawned prop indices, not a
+     * full actor-pool scan per prop in the room (32 x 96 slots per step). */
+    while ((a = actor_sys_find(WORLD_PROP_ID,a)))
+        if ((uint32_t)a->data[0] < KOKIRI_WORLD_PROP_COUNT) spawned |= 1u << a->data[0];
+    a = 0;
     for (i=0; i<KOKIRI_WORLD_PROP_COUNT; ++i) {
         const kokiri_world_prop_t *p = &kokiri_world_props[i];
-        bool found = false;
-        if (!world_props_present(i) || p->room != in->room) continue;
-        while ((a = actor_sys_find(WORLD_PROP_ID,a)))
-            if (a->data[0] == (int32_t)i) { found=true; break; }
-        a = 0;
-        if (found) continue;
+        if (p->room != in->room || !world_props_present(i)) continue;
+        if (spawned & (1u << i)) continue;
         if (p->id == 0x15) {
             /* Authored hearts do not use the random/drop health conversion. */
             if (spawn_drop(p->x,p->y,p->z,p->param&255,1,(p->param>>8)&63,true))

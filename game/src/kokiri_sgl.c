@@ -1409,8 +1409,28 @@ bool kokiri_scene_update(void)
     if (!recomp_link_active || recomp_title_is_visible() || backdrop_active || forest_scene == STORY_BANK_PANORAMA) { room_gameplay = false; return true; }
     if (!room_gameplay) { target = forest_room; room_gameplay = true; }
     dungeon_doors_constrain(&recomp_link.x,&recomp_link.z,recomp_link.y-RECOMP_LINK_EYE_HEIGHT);
-    for (i=0;i<KOKIRI_PORTAL_COUNT;++i) {
-        const kokiri_portal *p = &kokiri_portals[i];
+    {
+    /* 2026-10-09 speed: only this scene's portals (the table holds all 438
+    ** of every scene, read from the loaded scene blob each frame). */
+    static uint16_t scene_portals[128];
+    static unsigned scene_portal_count;
+    static int scene_portals_for = -1;
+    static bool scene_portals_overflow;
+    unsigned k;
+    if (scene_portals_for != (int)forest_scene) {
+        scene_portals_for = (int)forest_scene;
+        scene_portal_count = 0;
+        scene_portals_overflow = false;
+        for (i = 0; i < KOKIRI_PORTAL_COUNT; ++i) {
+            if (kokiri_portals[i].scene != forest_scene) continue;
+            if (scene_portal_count == 128) { scene_portals_overflow = true; break; }
+            scene_portals[scene_portal_count++] = (uint16_t)i;
+        }
+    }
+    for (k=0; scene_portals_overflow ? k<KOKIRI_PORTAL_COUNT : k<scene_portal_count; ++k) {
+        const kokiri_portal *p;
+        i = scene_portals_overflow ? k : scene_portals[k];
+        p = &kokiri_portals[i];
         int32_t sine,cosine;
         int dx = recomp_link.x-p->x, dz = recomp_link.z-p->z;
         int dy = recomp_link.y-RECOMP_LINK_EYE_HEIGHT-p->y;
@@ -1431,6 +1451,7 @@ bool kokiri_scene_update(void)
             room_portal_side(p->kind, side, dy, depth);
         if (portal_side >= 0)
             target = portal_side == 0 ? p->front : p->back;
+    }
     }
     requested_room = target;
     if (target != forest_room) {
@@ -2076,8 +2097,9 @@ static unsigned int scene_prepare(void)
 }
 
 static unsigned int prep_kicked, prep_done;
+static unsigned int sgl_drain_us;
+unsigned int kokiri_sgl_drain_us(void) { return sgl_drain_us; }
 static unsigned char job_prep;
-static const int16_t *job_joints;
 #define PREP_DONE (*(volatile unsigned int *)((uintptr_t)&prep_done | 0x20000000u))
 /* One slave job per frame: Link's skin first (the master may need his bones
 ** soon: link_anim_sync waits for just that part), then the scene prepare. */
@@ -2089,8 +2111,7 @@ static void frame_slave_job(void *arg)
     unsigned int cks = *(volatile uint8_t *)0xFFFFFE16 & 3u, ticks;
     uint16_t t0 = *frc;
     (void)arg;
-    slCashPurge();                 /* camera, bank, joints from the master */
-    if (job_joints) link_anim_skin_on_slave(job_joints);
+    slCashPurge();                 /* camera, bank and LOD state from the master */
     if (job_prep) (void)scene_prepare();
     ticks = (uint16_t)(*frc - t0);
     *(volatile unsigned int *)((uintptr_t)&frame_job_us | 0x20000000u) =
@@ -2106,10 +2127,8 @@ unsigned int kokiri_frame_slave_us(void)
 /* main.c, first thing in the draw (before the core-reading actors). */
 void kokiri_frame_slave_kick(bool scene)
 {
-    const int16_t *joints = link_anim_take_joints();
     bool prep = scene && !prep_kicked && forest_scene != STORY_BANK_PANORAMA;
-    if (!joints && !prep) return;
-    job_joints = joints;
+    if (!prep) return;
     job_prep = prep;
     if (prep) {
         PREP_DONE = 0;
@@ -2119,10 +2138,31 @@ void kokiri_frame_slave_kick(bool scene)
     slSlaveFunc(frame_slave_job, 0);
 }
 
+/* SGL's slPutPolygon gives a whole PDATA to the slave only when the slave
+** command queue is empty (read pointer at 0x260FFC44 == write pointer at
+** GBR+72, SGL 3.02j sglC08.o); otherwise the MASTER transforms it. Our slave
+** jobs and the small actor submissions queue work there, and the master then
+** transformed all 2047 forest vertices itself (~15 ms, overlay sc). Wait for
+** the queue to drain (bounded) so the forest goes to the slave. */
+static void sgl_slave_drain(void)
+{
+    unsigned int t0 = frame_timer_ticks();
+    uint32_t gbr;
+    volatile uint32_t *read_ptr = (volatile uint32_t *)0x260FFC44u;
+    __asm__ volatile("stc gbr,%0" : "=r"(gbr));
+    while (*read_ptr != *(volatile uint32_t *)(gbr + 72u))
+        if (frame_timer_ticks_to_us(frame_timer_ticks() - t0) > 8000u) break;
+    sgl_drain_us = frame_timer_ticks_to_us(frame_timer_ticks() - t0);
+}
+
 static void prep_wait(void)
 {
+    unsigned int t0;
     if (!prep_kicked) return;
-    while (!PREP_DONE) ;
+    t0 = frame_timer_ticks();
+    while (!PREP_DONE)   /* a lost slave job must show, not freeze */
+        if (frame_timer_ticks_to_us(frame_timer_ticks() - t0) > 250000u)
+            jo_core_error("slave scene prepare did not finish");
     slCashPurge();                 /* see the slave's tables */
     prep_on_slave = 0;
     prep_kicked = 0;
@@ -2152,6 +2192,7 @@ void                kokiri_scene_draw(void)
         prep_wait();
         visible = prepared_visible;
     } else visible = scene_prepare();
+    sgl_slave_drain();
     kokiri_rejected = 0;
     kokiri_accepted_mask = 0;
     submitted = 0;
@@ -2166,6 +2207,31 @@ void                kokiri_scene_draw(void)
  * so all instances share immutable geometry and use independent matrices.
  * Ground lookup uses the existing spatial index, not a whole-scene scan. */
 static void shadow_submit(int x, int y, int z, unsigned radius, int floor);
+/* Shadow floor cache (16-unit cells) and the misses deferred while the slave
+** SH-2 updates the core. */
+#define SHADOW_DEFER_MAX 8
+static int cache_x[16], cache_y[16], cache_z[16], cache_floor[16];
+static unsigned shadow_cache_next;
+static int shadow_defer[SHADOW_DEFER_MAX][3];
+static unsigned shadow_deferred;
+
+void kokiri_shadow_resolve(void)
+{
+    unsigned i, j;
+    for (i = 0; i < shadow_deferred; ++i) {
+        int qx = shadow_defer[i][0], qy = shadow_defer[i][1], qz = shadow_defer[i][2];
+        bg_vec_t origin = {(qx << 4) + 8, (qy << 4) + 16, (qz << 4) + 8};
+        unsigned k;
+        for (j = 0; j < 16; ++j)
+            if (cache_x[j] == qx && cache_y[j] == qy && cache_z[j] == qz) break;
+        if (j < 16) continue;
+        k = shadow_cache_next++ & 15;
+        cache_x[k] = qx; cache_y[k] = qy; cache_z[k] = qz;
+        cache_floor[k] = bg_floor(&origin, 0, 0);
+    }
+    shadow_deferred = 0;
+}
+
 void __attribute__((optimize("Os"))) kokiri_actor_shadow(int x, int y, int z, unsigned radius)
 {
     static POINT points[12]={{0,0,-65536},{32768,0,-56756},{56756,0,-32768},{65536,0,0},{56756,0,32768},{32768,0,56756},{0,0,65536},{-32768,0,56756},{-56756,0,32768},{-65536,0,0},{-56756,0,-32768},{-32768,0,-56756}};
@@ -2184,8 +2250,7 @@ void __attribute__((optimize("Os"))) kokiri_actor_shadow(int x, int y, int z, un
         ** speed): walking NPCs, Link and bobbing fairies moved every frame,
         ** so an exact-position key always missed and every shadow cost a
         ** core floor query. The shadow may sit up to a cell's slope off. */
-        static int cache_x[16], cache_y[16], cache_z[16], cache_floor[16];
-        static unsigned cache_next, cache_scene = ~0u;
+        static unsigned cache_scene = ~0u;
         int qx = x >> 4, qy = y >> 4, qz = z >> 4;
         unsigned k;
         if (cache_scene != scene_flow_scene()) {
@@ -2195,10 +2260,19 @@ void __attribute__((optimize("Os"))) kokiri_actor_shadow(int x, int y, int z, un
         for (k = 0; k < 16; ++k)
             if (cache_x[k] == qx && cache_y[k] == qy && cache_z[k] == qz) break;
         if (k < 16) floor = cache_floor[k];
-        else {
+        else if (oot_core_async_busy()) {
+            /* The slave is updating the core: no collision query now. The
+            ** cell is looked up after the join (kokiri_shadow_resolve) and
+            ** the shadow appears from the next frame. */
+            if (shadow_deferred < SHADOW_DEFER_MAX) {
+                shadow_defer[shadow_deferred][0] = qx; shadow_defer[shadow_deferred][1] = qy;
+                shadow_defer[shadow_deferred][2] = qz; ++shadow_deferred;
+            }
+            return;
+        } else {
             origin=(bg_vec_t){(qx << 4) + 8,(qy << 4) + 16,(qz << 4) + 8};
             floor=bg_floor(&origin,0,0);
-            k = cache_next++ & 15;
+            k = shadow_cache_next++ & 15;
             cache_x[k] = qx; cache_y[k] = qy; cache_z[k] = qz; cache_floor[k] = floor;
         }
     }

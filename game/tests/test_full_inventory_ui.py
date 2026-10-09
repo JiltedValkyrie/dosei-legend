@@ -39,6 +39,7 @@ class Hearts(unittest.TestCase):
         # must leave every currently displayed pixel intact until map swap.
         draw=(backend.function(ROOT/'src/health_hud.c','static void hud_pixel(')+
               backend.function(ROOT/'src/health_hud.c','static void magic_meter(')+
+              backend.function(ROOT/'src/health_hud.c','static void heart_draw(')+
               backend.function(ROOT/'src/health_hud.c','void health_hud_draw('))
         self.run_c(r'''
 #include <assert.h>

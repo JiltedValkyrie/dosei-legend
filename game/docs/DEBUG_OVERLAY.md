@@ -22,7 +22,7 @@ All times are **0.1 ms** units (e.g. `mv250` = 25.0 ms). One 30 FPS frame is
 | 12 | `ks dg da ui ru` | Frame (main.c): `ks` `kokiri_scene_update` (room portals), `dg` grass/rupee/boulder draw, `da` nut/baba/NPC/story/item/fairy draw, `ui` fade, dialogue, text, menus, HUD, reticle, minimap, `ru` whole `recomp_update` (contains `st` and `sk`). |
 | 13 | `nb np wc wp fy` | Inside `da`: `nb` nut + Deku Babas, `np` `npc_draw` (contains `wc` + `wp`), `wc` `oot_core_meshes_draw` (core sprites, tools, effects, meshes), `wp` C world props (pots, rocks, bushes, stones), `fy` Kokiri fairies. |
 | 14 | `r0 r1 pd dw` | `recomp_update` outside the step loop: `r0` before it (input, modes), `r1` after skinning (owl camera, sky gradient, layers); inside `pr`: `pd` webs/puzzles sync; inside `dp`: `dw` world_props_displace + push move. |
-| 15 | `as k ov jw cv bv` | Async core (slave SH-2): `k` updates in the last job, `ov` master time between kick and join (0.1 ms), `jw` master wait at the join, `cv` master core entries while busy (must be 0), `bv` C collision queries refused while busy. |
+| 15 | `as k ov jw cv bv dr` | Async core (slave SH-2): `k` updates in the last job, `ov` master time between kick and join (0.1 ms), `jw` master wait at the join, `cv` master core entries while busy (must be 0), `bv` C collision queries refused while busy (shadow misses are deferred, not refused), `dr` master wait for SGL's slave queue to drain before the forest submit (0.1 ms). |
 | 27 | `heap w c f sp` | Work-RAM zone live/peak bytes, cart zones peak KB, failed allocations, sprite peak. |
 
 Speed changes 2026-10-09 (second Debug build): catch-up capped at 3 steps (2 slowed Link at 10 FPS)
@@ -88,3 +88,8 @@ only; SGL's own slave polygon work not counted).
 Seventh reading: `fr667` (15 FPS), `M 83% S 7%`, `sc152` (scene prepare,
 master), `r121`. Eighth build: Link skin + scene prepare moved to the slave
 (`sk`, most of `sc` leave the master; `S` now counts those jobs too).
+
+Ninth build (autonomous, not run): SGL-aware schedule (PLAYER_MIGRATION.md
+"SGL-aware slave scheduling"). Expect `sc` near 1 ms with `dr` small; `sk`
+is now the master pose only; `S` counts core + prepare jobs (Link's skin
+runs during the steps and is not in `S`).

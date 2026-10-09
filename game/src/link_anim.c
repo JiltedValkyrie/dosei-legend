@@ -39,6 +39,7 @@
 #include "link_age.h"
 #include "ram_low.h"
 #include "adult_link.h"
+#include "frame_timer.h"
 #ifndef LINK_BASE_VERTICES
 #define LINK_BASE_VERTICES LINK_SKIN_VERTICES   /* model without first-person arm */
 #endif
@@ -470,8 +471,7 @@ static void skin_raw(const uint8_t *owners, const link_vec3_t *locals, unsigned 
 /* Gear meshes (kokiri_sgl.c) from the master: wait for the slave's skin. */
 void link_anim_skin(const uint8_t *owners, const link_vec3_t *locals, unsigned int count, POINT *out)
 {
-    link_anim_sync();
-    skin_raw(owners, locals, count, out);
+    skin_raw(owners, locals, count, out);   /* reads matrices only */
 }
 
 static void     skin_vertices(void)
@@ -547,69 +547,63 @@ void            link_anim_pose(unsigned int clip, unsigned int frame,
 }
 
 /* The real Player's jointTable (root xyz, 21 limb rotations, face), as its
-** own Draw would walk it. Re-skins only when the pose changed. */
-static void pose_joints_raw(const int16_t *joints)
+** own Draw would walk it.
+**
+** 2026-10-09 (second SH-2): at the start of each frame the master builds the
+** limb matrices (cheap; the steps read them through link_anim_focus/limb/
+** blade/stick) and the slave skins the vertices while the master runs the
+** game steps. Only consumers of the skinned points (kokiri_link_draw) and
+** writers (clip poses, reset, age) call link_anim_sync, which waits. */
+static unsigned int skin_kicked, skin_done;
+#define SKIN_DONE (*(volatile unsigned int *)((uintptr_t)&skin_done | 0x20000000u))
+
+static void skin_slave_job(void *arg)
+{
+    (void)arg;
+    slCashPurge();                 /* matrices and model from the master */
+    skin_vertices();
+    SKIN_DONE = 1;
+}
+
+void link_anim_sync(void)
+{
+    unsigned int t0;
+    if (!skin_kicked) return;
+    t0 = frame_timer_ticks();
+    while (!SKIN_DONE)   /* a lost slave job must show, not freeze */
+        if (frame_timer_ticks_to_us(frame_timer_ticks() - t0) > 250000u)
+            jo_core_error("slave Link skin did not finish");
+    slCashPurge();                 /* see the slave's points */
+    skin_kicked = 0;
+}
+
+void link_anim_frame_start(const int16_t *joints)
 {
     static int16_t last[3 + LINK_LIMB_COUNT * 3];
+    link_anim_sync();
+    if (posed_frame == -2 && !memcmp(last, joints, sizeof last)) return;
+    memcpy(last, joints, sizeof last);
+    posed_frame = -2;
+    pose_skeleton(joints, joints + 3);
+    SKIN_DONE = 0;
+    skin_kicked = 1;
+    slSlaveFunc(skin_slave_job, 0);
+}
+
+/* Synchronous pose + skin (no slave). */
+void link_anim_pose_joints(const int16_t *joints)
+{
+    static int16_t last[3 + LINK_LIMB_COUNT * 3];
+    link_anim_sync();
     if (posed_frame == -2 && !memcmp(last, joints, sizeof last)) return;
     memcpy(last, joints, sizeof last);
     posed_frame = -2;
     pose_skeleton(joints, joints + 3);
     skin_vertices();
 }
-
-/* 2026-10-09: Link's skin runs on the slave SH-2 at the start of the draw
-** (kokiri_frame_slave_kick). recomp.c only records the joints; every master
-** reader of his bones/points calls link_anim_sync first: it waits for the
-** slave's skin, or skins here when no job took it. */
-static const int16_t *pending_joints;
-static unsigned int skin_kicked, skin_done;
-#define SKIN_DONE (*(volatile unsigned int *)((uintptr_t)&skin_done | 0x20000000u))
-
-void link_anim_request_joints(const int16_t *joints)
-{
-    link_anim_sync();
-    pending_joints = joints;
-}
-
-const int16_t *link_anim_take_joints(void)
-{
-    const int16_t *joints = pending_joints;
-    pending_joints = 0;
-    if (joints) {
-        SKIN_DONE = 0;
-        skin_kicked = 1;
-    }
-    return joints;
-}
-
-/* Slave side only. */
-void link_anim_skin_on_slave(const int16_t *joints)
-{
-    pose_joints_raw(joints);
-    SKIN_DONE = 1;
-}
-
-void link_anim_sync(void)
-{
-    if (skin_kicked) {
-        while (!SKIN_DONE) ;
-        slCashPurge();             /* see the slave's matrices and points */
-        skin_kicked = 0;
-    } else if (pending_joints) {
-        const int16_t *joints = pending_joints;
-        pending_joints = 0;
-        pose_joints_raw(joints);
-    }
-}
-
-void link_anim_pose_joints(const int16_t *joints)
-{
-    link_anim_sync();
-    pose_joints_raw(joints);
-}
 #else
 void link_anim_sync(void) {}
+void link_anim_frame_start(const int16_t *joints) { (void)joints; }
 void            link_anim_pose(unsigned int clip, unsigned int frame,
                                unsigned int fraction)
 {
@@ -716,7 +710,6 @@ void            link_anim_reset(void)
  * (1100, -700, 0). Link-local Q16, like link_anim_blade. Navi's anchor. */
 void link_anim_focus(int32_t out[3])
 {
-    link_anim_sync();
     const limb_matrix_t *head = &limb_matrices[10];
     unsigned int axis;
     for (axis = 0; axis < 3; ++axis) {
@@ -732,7 +725,6 @@ void link_anim_focus(int32_t out[3])
 
 void link_anim_limb(unsigned int limb, int32_t out[3])
 {
-    link_anim_sync();
     const limb_matrix_t *m = &limb_matrices[limb < 21 ? limb : 0];
     unsigned int axis;
     for (axis = 0; axis < 3; ++axis)
@@ -743,7 +735,6 @@ void link_anim_limb(unsigned int limb, int32_t out[3])
  * z_player_lib.c Kokiri sword: base (0,400,0), tip (3000,400,0). */
 void link_anim_blade(int32_t out[2][3])
 {
-    link_anim_sync();
     const limb_matrix_t *hand = &limb_matrices[15];
     unsigned int end, axis;
     for (end = 0; end < 2; ++end) {
@@ -766,7 +757,6 @@ void link_anim_blade(int32_t out[2][3])
  * Keep separate from the sword: the stick uses a one-hand slash. */
 void link_anim_stick(int32_t out[2][3])
 {
-    link_anim_sync();
     const limb_matrix_t *hand = &limb_matrices[15];
     static const int32_t offsets[2][3] = {
         { 0, 400, 0 }, { 5000, 400, 0 }
