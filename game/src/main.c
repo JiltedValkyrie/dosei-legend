@@ -613,7 +613,10 @@ static void __attribute__((optimize("Os"))) cutscene_fade(void)
     int flash = cutscene_lightning();
     if (!cutscene_is_playing() && player_items_flash()) flash = (int)player_items_flash() * 255 / 6;
     bool black = cutscene_fade_colour() == CUTSCENE_FADE_BLACK;
-    int key = (int)alpha | (flash << 8) | (black << 16) | (hidden << 17);
+    int16_t tint[3];
+    bool tinted = oot_core_hit_tint(tint);
+    int key = (int)alpha | (flash << 8) | (black << 16) | (hidden << 17) |
+              (tinted ? ((tint[0] & 0xFF) << 18 ^ (tint[1] & 0xFF) << 10 ^ (tint[2] & 0xFF) << 24) : 0);
     Sint16 level = (Sint16)(flash + (black ? 0 : (int)alpha));
     if (level > 255) level = 255;
     if (key == last_key) return;
@@ -634,6 +637,13 @@ static void __attribute__((optimize("Os"))) cutscene_fade(void)
         slColorCalc(0);
     }
     if (!level) {
+        if (tinted) {
+            /* Arrow*_Draw hit fill: offset A on the 3D scene, HUD untouched. */
+            slColOffsetA(tint[0], tint[1], tint[2]);
+            slColOffsetBUse(0);
+            slColOffsetOn(NBG1ON | RBG0ON | SPRON | BACKON);
+            return;
+        }
         slColOffsetOff(NBG1ON | RBG0ON | SPRON | BACKON);
         return;
     }

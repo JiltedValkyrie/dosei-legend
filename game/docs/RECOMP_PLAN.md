@@ -128,7 +128,9 @@ Tool SFX added: 16 resident source sounds, held loops, flagged actor audio;
 Deku Tree area tails trimmed for room (human choice). Door/zone water-fall
 lock still lacks a repro.
 Magic meter (source Magic_DrawMeter on the VDP2 heart cells) implemented and
-host-tested; Arrow_Fire/Ice/Light import waits for Astra's current core work.
+host-tested. Arrow_Fire/Ice/Light imported (source gameplay/SFX, host ITMMAG
+sprites, hit tint), source magic meter states, charge SFX; forest/boss
+tails trimmed for sound RAM. Room bakes now parallel. Human check open.
 
 Enemy groundwork (Astra, 2026-10-08): [ENEMY_ROLLOUT_PLAN.md](ENEMY_ROLLOUT_PLAN.md)
 and [source design review](ENEMY_DESIGN_REVIEW.md). All five review choices are

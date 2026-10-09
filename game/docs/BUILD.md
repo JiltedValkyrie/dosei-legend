@@ -784,3 +784,14 @@ checks pass; this is not target/runtime acceptance. Size growth is not yet attri
     and pixels together; quick-only builds against old gear staging are invalid.
     Optional artwork can be absent/short or fail VRAM admission without hiding
     valid gear geometry. Geometry and skin validation remain mandatory.
+97. **Room bakes run in parallel.** `build_all_scenes.py` extracts scenes and
+    bakes rooms in a process pool (`--jobs`, default `DOSEI_BAKE_JOBS` or CPU
+    count capped at 24; set `DOSEI_BAKE_JOBS=1` to debug serially). Output is
+    byte-identical to the serial bake (Deku Tree + Kokiri: 1m53s -> 15s at 16
+    jobs). Any edit to a converter in `converter_fingerprint()` (including this
+    script and `shared/tools/build_kokiri_scene.py`) still re-bakes all 388
+    rooms; progress lines arrive out of order, the report keeps source order.
+98. **Sound RAM is full (52 B spare).** New resident SFX shrink the area slot;
+    `build_action_audio.py` water-fills each area bank, fading the longest tails
+    (now including forest `tree_open` and boss `gohma_dead`). Check the
+    `trimmed ...` lines and report them when adding resident sounds.

@@ -43,6 +43,8 @@ static int last_pitch,last_eye; int fired_pitch(void){return last_pitch;} int fi
 void set_look_pitch(int p){link_follow.look_pitch=p;}
 bool gameplay_blocks_world(void){return gameplay.paused || gameplay.talking;}
 static void snap_camera_to_link(void){}
+static unsigned ready_sfx; static void action_audio_decomp_sfx(unsigned id){ready_sfx=id;} unsigned last_ready_sfx(void){return ready_sfx;}
+static bool health_hud_magic_idle(void){return true;} static bool health_hud_magic_available(unsigned a){return save_state.source_magic>=a;}
 static void oot_follow_look_exit(void *p){(void)p;link_follow.look_pitch=link_follow.look_yaw=0;}
 static void oot_follow_look(void *p,int x,int y){(void)p;(void)x;(void)y;}
 static int recomp_screen_distance(void){return 160;}

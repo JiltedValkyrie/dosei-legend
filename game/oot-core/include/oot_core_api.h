@@ -169,6 +169,7 @@ typedef struct OotCoreSave {
 #define OOT_CORE_TOOL_HOOK_OUT      2u
 #define OOT_CORE_TOOL_BOOMERANG_OUT 4u
 #define OOT_CORE_TOOL_PULLING       8u
+#define OOT_CORE_TOOL_MAGIC_RESET  16u /* Magic_Reset since the last state read */
 #define OOT_CORE_TOOL_VIEWS_MAX 8
 typedef struct OotCoreToolView {
     short id, params;            /* ACTOR_EN_ARROW/BOM/BOM_CHU/BOOM, ARMS_HOOK */

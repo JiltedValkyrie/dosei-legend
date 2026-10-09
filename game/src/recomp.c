@@ -4,6 +4,7 @@
 #include "sgl_registers.h"
 #include "recomp.h"
 #include "oot_core_host.h"
+#include "health_hud.h"
 #include "environment_sky.h"
 #include "pause_windows.h"
 #include "music.h"
@@ -984,6 +985,7 @@ static void __attribute__((optimize("Os"))) respawn_after_game_over(void)
      * newly loaded room at zero health. */
     if (save_state.health < GAME_OVER_CONTINUE_HEALTH)
         save_state.health = GAME_OVER_CONTINUE_HEALTH;
+    health_hud_magic_start(); /* KaleidoScope continue: magicCapacity 0, refill */
     if (spawn >= scene_entries[scene].spawns)
         spawn = 0;
     game_mode_set(GAME_MODE_LOADING);
@@ -1093,7 +1095,7 @@ static void __attribute__((optimize("Os"))) level_select_enter(void)
         }
         if(i==KOKIRI_PORTAL_COUNT){level_select.failed=true;return;}
     }
-    level_select_prepare();save_state.entrance=spawn;active_slot=SAVE_FILE_SLOTS;
+    level_select_prepare();health_hud_magic_start();save_state.entrance=spawn;active_slot=SAVE_FILE_SLOTS;
     /* z_select: starting a map explicitly initializes its sky clock. */
     oot_core_session_reset(save_state.day_time);
     minimap_session_reset();game_mode_set(GAME_MODE_LOADING);
@@ -1155,6 +1157,7 @@ static void __attribute__((optimize("Os"))) file_select_tick(void)
         /* FileSelect_LoadGame resets skyboxTime, not the loaded dayTime. */
         oot_core_session_reset(0);
         minimap_session_reset();
+        health_hud_magic_start();
         game_mode_set(GAME_MODE_LOADING);
         active_slot = file_select.slot;
         save_reported = false;
@@ -2016,6 +2019,15 @@ void recomp_update(void)
                 /* Tap enters aim; release does nothing. Further slot taps fire
                  * without dropping the view. The ordinary cancel exits it. */
                 if (item_aim && !view_first_person) item_aim = 0;
+                if (item_aim && !gameplay_blocks_world()) {
+                    /* Arrow*_Charge: NA_SE_PL_ARROW_CHARGE_* held while the
+                     * magic arrow is nocked (it would nock with this magic). */
+                    unsigned int slot = save_c_item_inventory_slot(save_state.c_items[item_aim - 1]);
+                    if ((slot == 4 || slot == 10 || slot == 16) && health_hud_magic_idle() &&
+                        health_hud_magic_available(slot == 16 ? 8 : 4))
+                        action_audio_decomp_sfx(slot == 4 ? 0x087D - 0x800 : slot == 10 ? 0x087E - 0x800
+                                                                                         : 0x087F - 0x800);
+                }
                 fp_camera_done = false;
                 if (item_aim && c_use == item_aim && !cancel_pending &&
                     !action.pause && !gameplay_blocks_world()) {

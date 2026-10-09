@@ -188,6 +188,8 @@ static void oot_core_scene_unload(void) {
     play_scene=~0u; meshes_room=-1;
 }
 static bool gameplay_link_point(unsigned l,int32_t *o) { return false; }
+static void health_hud_magic_reset(void) {}
+static void health_hud_magic_update(void) {}
 static struct { unsigned tool_bits; int tool_pull[6]; } core_draw;
 #define CORE_DRAW (&core_draw)
 static OotCoreEntry api={.play_init=init,.play_destroy=destroy,.pack_release=release,.set_objects=objects,.set_flags=flags,

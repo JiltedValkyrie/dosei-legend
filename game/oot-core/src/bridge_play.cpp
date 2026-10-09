@@ -192,7 +192,11 @@ s32 Health_ChangeBy(PlayState* play, s16 amount) { /* HOST */
     return true;
 }
 
-void Magic_Reset(PlayState* play) { /* STUB: no magic meter yet */
+/* Arrow*_Destroy: the host's magic meter (health_hud.c) owns magicState
+ * until real Player; it reads this through OOT_CORE_TOOL_MAGIC_RESET. */
+u8 gOotCoreMagicReset;
+void Magic_Reset(PlayState* play) {
+    gOotCoreMagicReset = 1;
 }
 
 /* ---- z_draw.c ---- */

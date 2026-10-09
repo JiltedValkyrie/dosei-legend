@@ -52,7 +52,7 @@ static unsigned short vram[0x1800],names[2048],saved[960];
 #define MAGIC_CELLS (vram+0x1000)
 #define MAGIC_BACK_CELLS (vram+0x1400)
 #define HUD_CELLS 90
-static unsigned char meter_end[128], meter_mid[16], meter_fill[7];
+static unsigned char meter_end[128], meter_mid[16], meter_fill[7], magic_capacity;
 static bool ready=true;
 static int last_key=-2;
 static unsigned front,tick;
@@ -84,7 +84,7 @@ int main(void) {
     for(i=0;i<7;++i) meter_fill[i]=14;
     memset(vram+0x1000,0,0x800*2);
     save_state.health=save_state.health_capacity=320;
-    save_state.source_magic_level=2; save_state.source_magic=40; tick=6;
+    save_state.source_magic_level=2; save_state.source_magic=40; magic_capacity=0x60; tick=6;
     health_hud_draw(true);
     {
         volatile unsigned short *m=front?MAGIC_BACK_CELLS:MAGIC_CELLS;
@@ -101,5 +101,52 @@ int main(void) {
 }
 ''')
 
+
+class MagicMeter(unittest.TestCase):
+    run_c=backend.GraphicsBackend.run_c
+    def test_source_grow_fill_consume_flash_and_reset(self):
+        # z_parameter.c Magic_Update: capacity +8, fill +4 (gauge sound),
+        # consume 2 per frame with a white/grey border until Magic_Reset.
+        src=(ROOT/'src/health_hud.c').read_text()
+        state=src[src.index('enum { MAGIC_IDLE'):src.index(';', src.index('static short border_rgb'))+1]
+        fn=lambda name: backend.function(ROOT/'src/health_hud.c',name)
+        self.run_c(r'''
+#include <assert.h>
+#include <stdbool.h>
+#include <string.h>
+static unsigned short cram[1024];
+#define JO_VDP2_CRAM cram
+#define METER_BORDER_CRAM 13
+static bool ready=true;
+static struct {unsigned char source_magic_level,source_magic;} save_state;
+static unsigned sfx,sfx_calls;
+static void action_audio_decomp_sfx(unsigned id){sfx=id;++sfx_calls;}
+'''+state+fn('static void border_upload(')+fn('static void border_white(')+
+            fn('void health_hud_magic_start(')+fn('bool health_hud_magic_idle(')+
+            fn('bool health_hud_magic_available(')+fn('bool health_hud_magic_consume(')+
+            fn('void health_hud_magic_reset(')+fn('void health_hud_magic_update(')+r'''
+int main(void) {
+    int i, frames=0;
+    save_state.source_magic_level=2; save_state.source_magic=90;
+    health_hud_magic_start();
+    assert(magic_capacity==0 && save_state.source_magic==0 && !health_hud_magic_idle());
+    while(magic_state==MAGIC_STEP_CAPACITY){health_hud_magic_update();++frames;}
+    assert(magic_capacity==0x60 && frames==13);          /* 12 steps of 8, then switch */
+    while(!health_hud_magic_idle()){health_hud_magic_update();}
+    assert(save_state.source_magic==90 && sfx==0x481F-0x800 && sfx_calls==23);
+    assert(health_hud_magic_consume(8) && !health_hud_magic_consume(4));
+    health_hud_magic_update();                           /* CONSUME_SETUP */
+    for(i=0;i<4;++i) health_hud_magic_update();          /* 2 per frame */
+    assert(save_state.source_magic==82 && magic_state==MAGIC_METER_FLASH_1);
+    for(i=0;i<8;++i) health_hud_magic_update();
+    assert(cram[832+13]!=0 && !health_hud_magic_idle()); /* still flashing */
+    health_hud_magic_reset(); health_hud_magic_update();
+    assert(health_hud_magic_idle() && cram[832+13]==0xFFFF);
+    assert(!health_hud_magic_available(83) && health_hud_magic_available(82));
+    save_state.source_magic_level=0; save_state.source_magic=5; health_hud_magic_start();
+    assert(health_hud_magic_idle() && save_state.source_magic==5 && !health_hud_magic_available(1));
+    return 0;
+}
+''')
 
 if __name__=='__main__': unittest.main()

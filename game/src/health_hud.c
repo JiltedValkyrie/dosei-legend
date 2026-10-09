@@ -3,6 +3,7 @@
 #include "health_hud_state.h"
 #include "save_state.h"
 #include "recomp.h"
+#include "action_audio.h"
 
 /* B0: independent of map, button and pause cells. Source images also live in
  * VDP2 RAM so neither the sprite table nor scarce work RAM holds the atlas. */
@@ -20,6 +21,16 @@ static bool ready;
 /* build_health_hud.py: gMagicMeterEndTex, one gMagicMeterMidTex column and
  * the seven gMagicMeterFillTex rows, as CLUT indices (12-15). */
 static unsigned char meter_end[128], meter_mid[16], meter_fill[7];
+#define METER_BORDER_CRAM 13 /* CLUT entry of the meter's border colour */
+
+/* z_parameter.c Magic_Update / Magic_RequestChange / Magic_Reset. Host-owned
+ * gSaveContext.magicState, magicCapacity, magicTarget and magicFillTarget
+ * until real Player; magic itself stays in save_state.source_magic. One call
+ * per source frame (20 Hz). Lens and spell states are not used yet. */
+enum { MAGIC_IDLE, MAGIC_STEP_CAPACITY, MAGIC_FILL, MAGIC_CONSUME_SETUP, MAGIC_CONSUME,
+       MAGIC_METER_FLASH_1, MAGIC_RESET };
+static unsigned char magic_state, magic_prev_state, magic_capacity, magic_fill_target, magic_target;
+static short border_rgb[3] = { 255, 255, 255 }, border_ratio = 2, border_step = 1;
 static int last_key = -2;
 static unsigned front;
 
@@ -53,6 +64,114 @@ bool __attribute__((optimize("Os"))) health_hud_init(void)
     return ready;
 }
 
+static void border_upload(void)
+{
+    ((volatile unsigned short *)JO_VDP2_CRAM)[832 + METER_BORDER_CRAM] =
+        0x8000u | (unsigned)(border_rgb[0] >> 3) | (unsigned)(border_rgb[1] >> 3) << 5 |
+        (unsigned)(border_rgb[2] >> 3) << 10;
+}
+
+static void border_white(void)
+{
+    border_rgb[0] = border_rgb[1] = border_rgb[2] = 255;
+}
+
+/* FileSelect_LoadGame, z_select and KaleidoScope continue: magicCapacity and
+ * magic restart at 0, then STEP_CAPACITY (+8) and FILL (+4) rebuild them. */
+void health_hud_magic_start(void)
+{
+    magic_capacity = 0;
+    magic_fill_target = save_state.source_magic;
+    save_state.source_magic = 0;
+    magic_prev_state = MAGIC_IDLE;
+    magic_state = save_state.source_magic_level ? MAGIC_STEP_CAPACITY : MAGIC_IDLE;
+    if (!save_state.source_magic_level) save_state.source_magic = magic_fill_target;
+    border_white();
+}
+
+bool health_hud_magic_idle(void) { return magic_state == MAGIC_IDLE; }
+
+bool health_hud_magic_available(unsigned amount)
+{
+    return save_state.source_magic_level && save_state.source_magic >= amount;
+}
+
+/* MAGIC_CONSUME_NOW (the bow's func_8083442C): callers check idle/available. */
+bool health_hud_magic_consume(unsigned amount)
+{
+    if (!health_hud_magic_idle() || !health_hud_magic_available(amount)) return false;
+    magic_target = (unsigned char)(save_state.source_magic - amount);
+    magic_state = MAGIC_CONSUME_SETUP;
+    return true;
+}
+
+void health_hud_magic_reset(void)
+{
+    if (magic_state != MAGIC_STEP_CAPACITY && magic_state != MAGIC_FILL)
+        magic_state = MAGIC_RESET;
+}
+
+void health_hud_magic_update(void)
+{
+    static const short colours[2][3] = { { 255, 255, 255 }, { 150, 150, 150 } };
+    static const unsigned char indices[4] = { 0, 1, 1, 0 }, ratios[4] = { 2, 1, 2, 1 }; /* YREG(40-43) */
+    unsigned target = (save_state.source_magic_level > 2 ? 2 : save_state.source_magic_level) * 0x30, c;
+    int magic;
+    switch (magic_state) {
+    case MAGIC_STEP_CAPACITY:
+        if (magic_capacity != target) {
+            magic_capacity = magic_capacity < target ? (magic_capacity + 8 > target ? target : magic_capacity + 8)
+                                                     : (magic_capacity <= target + 8 ? target : magic_capacity - 8);
+        } else magic_state = MAGIC_FILL;
+        break;
+    case MAGIC_FILL:
+        magic = save_state.source_magic + 4;
+        action_audio_decomp_sfx(0x481F - 0x800); /* NA_SE_SY_GAUGE_UP - SFX_FLAG */
+        if (magic >= magic_fill_target) {
+            magic = magic_fill_target;
+            magic_state = magic_prev_state;
+            magic_prev_state = MAGIC_IDLE;
+        }
+        save_state.source_magic = (unsigned char)magic;
+        break;
+    case MAGIC_CONSUME_SETUP:
+        border_ratio = 2;
+        magic_state = MAGIC_CONSUME;
+        break;
+    case MAGIC_CONSUME:
+        magic = save_state.source_magic - 2;
+        if (magic <= 0 || magic == magic_target) {
+            if (magic < 0) magic = 0;
+            magic_state = MAGIC_METER_FLASH_1;
+            border_white();
+        }
+        save_state.source_magic = (unsigned char)magic;
+        /* fall through: the border flashes while magic is consumed */
+    case MAGIC_METER_FLASH_1: {
+        const short *to = colours[indices[border_step]];
+        for (c = 0; c < 3; ++c) {
+            short change = (short)((border_rgb[c] > to[c] ? border_rgb[c] - to[c] : to[c] - border_rgb[c]) /
+                                   border_ratio);
+            border_rgb[c] = (short)(border_rgb[c] >= to[c] ? border_rgb[c] - change : border_rgb[c] + change);
+        }
+        if (--border_ratio == 0) {
+            for (c = 0; c < 3; ++c) border_rgb[c] = to[c];
+            border_ratio = ratios[border_step];
+            border_step = (short)((border_step + 1) & 3);
+        }
+        break;
+    }
+    case MAGIC_RESET:
+        border_white();
+        magic_state = MAGIC_IDLE;
+        break;
+    default:
+        if (save_state.source_magic_level && magic_capacity != target) magic_capacity = (unsigned char)target;
+        break;
+    }
+    if (ready) border_upload();
+}
+
 /* Region pixel: rows 0-3 in the heart bank, rows 4-5 in the magic bank. */
 static void hud_pixel(volatile unsigned short *cells, volatile unsigned short *magic,
                       unsigned px, unsigned py, unsigned colour)
@@ -69,10 +188,9 @@ static void hud_pixel(volatile unsigned short *cells, volatile unsigned short *m
 static void magic_meter(volatile unsigned short *cells, volatile unsigned short *magic,
                         unsigned hearts)
 {
-    unsigned level = save_state.source_magic_level, capacity, amount, x, y;
+    unsigned capacity = magic_capacity, amount, x, y;
     unsigned top = hearts > 10 ? 42 - 16 : 34 - 16, left = 18 - 16;
-    if (!level) return;
-    capacity = (level > 2 ? 2 : level) * 0x30;
+    if (!save_state.source_magic_level) return;
     amount = save_state.source_magic < capacity ? save_state.source_magic : capacity;
     for (y = 0; y < 16; ++y) {
         for (x = 0; x < 8; ++x) {
@@ -96,13 +214,13 @@ void health_hud_draw(bool visible)
     unsigned char sample[16];
     int key;
     volatile unsigned short *cells, *magic;
-    unsigned magic_key = (save_state.source_magic_level & 3) << 7 |
-                         (save_state.source_magic & 127);
+    unsigned magic_key = (save_state.source_magic_level ? 1u << 11 : 0) |
+                         (magic_capacity / 8u) << 7 | (save_state.source_magic & 127);
     if (!ready) return;
     if (capacity > 20) capacity = 20;
     if (health > capacity * 16) health = capacity * 16;
     size = 11 + (pulse > 5 ? pulse - 5 : 5 - pulse);
-    key = visible ? (int)(health | capacity << 9 | size << 14 | magic_key << 19) : -1;
+    key = visible ? (int)(health | capacity << 9 | size << 14 | magic_key << 19) : -1; /* 31 bits */
     if (last_key == key) return;
     last_key = key;
     if (!visible) {

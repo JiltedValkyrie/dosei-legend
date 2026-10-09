@@ -59,7 +59,8 @@ class ItemSprites(unittest.TestCase):
                 self.assertEqual((entry['w'], entry['h'], entry['poses']), (w, h, poses))
                 # Cap from the baker's table (hero gear is 2x linear).
                 self.assertLessEqual(h, 48 if name == 'ITMEXP' else
-                                     self.items.AIM_SIZE if name == 'ITMAIM' else self.items.SHEETS[name][3])
+                                     self.items.AIM_SIZE if name == 'ITMAIM' else
+                                     self.items.MAGIC_SIZE if name == 'ITMMAG' else self.items.SHEETS[name][3])
                 if name in self.items.ANCHORS:
                     self.assertIn('hand' if name not in ('ITMIRB', 'ITMHOB') else 'leg', entry['anchor'])
                 if name == 'ITMEXP':
@@ -69,6 +70,13 @@ class ItemSprites(unittest.TestCase):
                     for p in range(poses):
                         self.assertTrue(any(cel(s, p, 0)))
                         self.assertTrue(all(cel(s, p, d) == cel(s, p, 0) for d in range(5)))
+                elif name == 'ITMMAG':
+                    # Fire/ice/light x (glow + three hit bursts), billboard.
+                    self.assertEqual((poses, ticks), (12, 12))
+                    for p in range(poses):
+                        self.assertTrue(any(cel(s, p, 0)))
+                        self.assertTrue(all(cel(s, p, d) == cel(s, p, 0) for d in range(5)))
+                    self.assertNotEqual(cel(s, 0, 0), cel(s, 4, 0))   # element colours differ
                 elif entry['pitch_bands']:
                     self.assertEqual((poses, ticks), (5, 5))
                     self.assertEqual(struct.unpack_from('>5H', s, 0x34), (0, 1, 2, 3, 4))

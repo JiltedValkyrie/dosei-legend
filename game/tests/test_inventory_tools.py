@@ -117,12 +117,21 @@ static int tool(unsigned command, int *io) {
 }
 static struct { int (*tool)(unsigned,int*); } entry = {tool};
 #define ENTRY (&entry)
+/* health_hud.c magic state: consume here completes at once (the meter's
+ * 2-per-frame drain is health_hud_magic_update's job). */
+static bool magic_busy; static unsigned errors;
+static void action_audio_decomp_sfx(unsigned id) { if (id == 0x4806) ++errors; }
+static bool health_hud_magic_idle(void) { return !magic_busy; }
+static bool health_hud_magic_available(unsigned a) {
+    return save_state.source_magic_level && save_state.source_magic >= a;
+}
+static bool health_hud_magic_consume(unsigned a) { save_state.source_magic -= a; magic_busy = true; return true; }
 ''' + graphics.function(ROOT/'src/oot_core_host.c','bool oot_core_tool_use(') + r'''
 static const int32_t origin[3] = {123,456,-789};
 static void reset(void) {
     memset(&save_state,0,sizeof save_state);
     memset(save_state.source_items,0xff,sizeof save_state.source_items);
-    playing=true;accepted=1;calls=0;storage.tool_bits=0;
+    playing=true;accepted=1;calls=0;storage.tool_bits=0;magic_busy=false;errors=0;
     save_state.link_age=0;save_state.source_magic_level=1;
     save_state.source_magic=24;save_state.source_items[3]=3;
     save_state.source_ammo[3]=10;
@@ -150,6 +159,12 @@ int main(void) {
         reset();save_state.source_items[slots[i]]=items[i];save_state.source_items[3]=0xff;
         assert(!use(slots[i]));assert(calls==0 && save_state.source_magic==24);
     }
+    /* func_8083442C: a busy meter refuses the next magic arrow (error). */
+    reset();save_state.source_items[4]=4;magic_busy=true;
+    assert(!use(4));assert(calls==0 && errors==1 && save_state.source_magic==24);
+    /* Short magic: error sound, normal arrow. */
+    reset();save_state.source_items[4]=4;save_state.source_magic=3;
+    assert(use(4));assert(last[0]==3 && errors==1 && save_state.source_magic==3);
     reset();save_state.source_items[4]=4;save_state.source_magic_level=0;
     assert(use(4));assert(last[0]==3 && save_state.source_magic==24);
     reset();save_state.source_ammo[3]=0;

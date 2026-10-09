@@ -77,7 +77,7 @@ SHEETS = {
     'ITMHOB': ('object_link_boy', ['gLinkAdultRightHoverBootDL'], 0.01, 48, {}),
 }
 
-NAMES = list(SHEETS) + ['ITMEXP', 'ITMAIM']
+NAMES = list(SHEETS) + ['ITMEXP', 'ITMAIM', 'ITMMAG']
 AIM_SIZE = 64
 # Player_OverrideLimbDrawGameplayFirstPerson / func_80834D2C. Keep each
 # vertex's original limb owner while baking the stretched/flex hand lists.
@@ -438,6 +438,49 @@ def bake_explosion(out, preview_dir, keep, name='ITMEXP'):
                 ticks=len(images), note='EffectSsBomb2 layered; poses = texture frames in order')
 
 
+# Arrow_Fire/Ice/Light (Arrow*_Draw): s1Tex intensity through the overlay
+# combiner, prim + (env - prim) blend; colours are the source gDPSet*Color.
+# Billboard poses: element * 4 + (0 flight glow, 1-3 hit burst growing over
+# Arrow*_Hit's 32-frame timer). Radii in world units; texel 2 units.
+MAGIC_ELEMENTS = (('Fire', (255, 200, 0), (255, 0, 0)),
+                  ('Ice', (170, 255, 255), (0, 0, 255)),
+                  ('Light', (255, 255, 170), (255, 255, 0)))
+MAGIC_RADII = (9.0, 14.0, 22.0, 30.0)
+MAGIC_SIZE, MAGIC_TEXEL = 32, 2.0
+
+
+def bake_magic(out, preview_dir, oot, name='ITMMAG'):
+    images = []
+    for element, prim, env in MAGIC_ELEMENTS:
+        tex = Image.open(Path(oot) / ('extracted/ntsc-1.2/assets/overlays/ovl_Arrow_%s/s1Tex.i8.png'
+                                      % element)).convert('L')
+        tw, th = tex.size
+        for frame, radius in enumerate(MAGIC_RADII):
+            img = Image.new('RGBA', (MAGIC_SIZE, MAGIC_SIZE))
+            for py in range(MAGIC_SIZE):
+                for px in range(MAGIC_SIZE):
+                    wx = (px + 0.5 - MAGIC_SIZE / 2) * MAGIC_TEXEL
+                    wy = (py + 0.5 - MAGIC_SIZE / 2) * MAGIC_TEXEL
+                    d = math.hypot(wx, wy) / radius
+                    if d >= 1.0 or (frame and d < 0.55 - 0.1 * frame):
+                        continue   # bursts open into a ring as they grow
+                    i = tex.getpixel((px * tw // MAGIC_SIZE, py * th // MAGIC_SIZE)) / 255
+                    i = max(i, 0.35) * (1.0 - d * d * 0.6)
+                    if i < 0.2:
+                        continue
+                    img.putpixel((px, py), tuple(round(e + (p - e) * i) for p, e in zip(prim, env)) + (255,))
+            images.append(img)
+    dest = out / (name + '.SPR')
+    data = pack_sprite([[img] * spr.DIRS for img in images], MAGIC_SIZE, MAGIC_SIZE, 0.0, MAGIC_TEXEL,
+                       0, dest, preview_dir / (name + '_sprites.png'))
+    return dict(symbol='s1Tex', object='ovl_Arrow_Fire/Ice/Light',
+                symbols=['ovl_Arrow_%s/s1Tex' % e for e, _, _ in MAGIC_ELEMENTS],
+                w=MAGIC_SIZE, h=MAGIC_SIZE, poses=len(images), dirs=spr.DIRS,
+                texel_q8=round(MAGIC_TEXEL * 256), centre_y_q4=0, pitch_bands=False,
+                bytes=len(data), billboard=True, ticks=len(images),
+                note='pose = element*4 + (0 glow, 1-3 hit burst); fire/ice/light')
+
+
 def pack_sprite(images, width, height, centre_y, texel, focus_y, dest, preview_path):
     """build_npc_sprites.write_sprite's palette/container for prebuilt cels."""
     flat = [c for row in images for c in row]
@@ -492,6 +535,7 @@ def build(oot, rom_dir, out, only=None, preview_dir=None, manifest=None):
     for name in only or NAMES:
         result[name] = (bake_aim(out, preview_dir, keep, oot, rom_dir) if name == 'ITMAIM'
                         else bake_explosion(out, preview_dir, keep) if name == 'ITMEXP'
+                        else bake_magic(out, preview_dir, oot) if name == 'ITMMAG'
                         else bake_sheet(name, oot, rom_dir, out, preview_dir, keep))
     result['_convention'] = ('pitch_bands: pose p = elevation (-90,-45,0,45,90)[p] deg of item +Z '
                              'toward +Y; ticks=5 identity. dirs: 5 yaw views, runtime mirrors 3.')

@@ -97,6 +97,11 @@ SOURCES = [
     'src/overlays/actors/ovl_En_Bom_Chu/z_en_bom_chu.c',
     'src/overlays/actors/ovl_En_Boom/z_en_boom.c',
     'src/overlays/actors/ovl_Arms_Hook/z_arms_hook.c',
+    # EnArrow's elemental children (fire/ice/light): source gameplay and SFX;
+    # their mesh/textures stay offline, the host draws baked ITMMAG glows.
+    'src/overlays/actors/ovl_Arrow_Fire/z_arrow_fire.c',
+    'src/overlays/actors/ovl_Arrow_Ice/z_arrow_ice.c',
+    'src/overlays/actors/ovl_Arrow_Light/z_arrow_light.c',
 ]
 COL_HEADER = re.compile(r'^CollisionHeader (\w+)_Col = \{$', re.M)
 COL_ARRAY = re.compile(r'^\w+ (\w+)\[\] = \{\n#include "[^"]+"\n\};\n', re.M)
@@ -1144,6 +1149,22 @@ def fix_mtxf(text, stats):
         return f'{m.group(1)}mf[{col}][{row}]'
     return MTXF_ACCESS.sub(sub, text)
 
+
+# Arrow_Fire/Ice/Light: Draw only renders (scrolling mesh + hit screen tint),
+# so it and its overlay gfx (textures exist only as PNG here) are compiled
+# out; the profile has no draw. Gameplay, timers and SFX stay source.
+for _kind, _file, _line in (('Fire', 'fire', 682), ('Ice', 'ice', 676), ('Light', 'light', 664)):
+    _model = '#include "assets/overlays/ovl_Arrow_%s/sModelDL.inc.c"\n};' % _kind
+    _close = '    CLOSE_DISPS(play->state.gfxCtx, "../z_arrow_%s.c", %d);\n}' % (_file, _line)
+    # The definition only; the forward declaration must stay visible.
+    _draw = 'void Arrow%s_Draw(Actor* thisx, PlayState* %s) {' % (_kind, 'play2' if _kind == 'Fire' else 'play')
+    MACRO_REWRITES['src/overlays/actors/ovl_Arrow_%s/z_arrow_%s.c' % (_kind, _file)] = [
+        ('#define s1Tex_WIDTH 32', '#if 0 /* oot-core: draw-free, host sprite */\n#define s1Tex_WIDTH 32'),
+        (_model, _model + '\n#endif'),
+        ('    /**/ Arrow%s_Draw,' % _kind, '    /**/ NULL, /* oot-core: host draws ITMMAG */'),
+        (_draw, '#if 0 /* oot-core */\n' + _draw),
+        (_close, _close + '\n#endif /* oot-core */'),
+    ]
 
 # Saturn pose pass (Player migration, 2026-10-06): the Saturn renderer draws
 # Link, but SkelAnime_DrawFlexLod + override/post-limb draw still run so limb

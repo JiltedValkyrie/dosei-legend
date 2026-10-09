@@ -99,10 +99,23 @@ ITEM_SOUNDS = (
     ('it_bomb_bound', 'NA_SE_EV_BOMB_BOUND', .10, False),
     ('it_chu_move', 'NA_SE_IT_BOMBCHU_MOVE', .20, True),
     ('pl_throw', 'NA_SE_PL_THROW', .25, False),
+    # Magic arrows (EnArrow_Shoot, Arrow*_Fly hit). The held charge sounds
+    # (NA_SE_PL_ARROW_CHARGE_*) stay silent: the shot leaves the same step.
+    ('it_magic_shot', 'NA_SE_IT_MAGIC_ARROW_SHOT', .30, False),
+    ('it_fire_hit', 'NA_SE_IT_EXPLOSION_FRAME', .30, False),
+    ('it_ice_hit', 'NA_SE_IT_EXPLOSION_ICE', .30, False),
+    ('it_light_hit', 'NA_SE_IT_EXPLOSION_LIGHT', .30, False),
+    # Arrow*_Charge while a magic arrow is nocked (aim view).
+    ('it_charge_fire', 'NA_SE_PL_ARROW_CHARGE_FIRE', .12, True),
+    ('it_charge_ice', 'NA_SE_PL_ARROW_CHARGE_ICE', .12, True),
+    ('it_charge_light', 'NA_SE_PL_ARROW_CHARGE_LIGHT', .12, True),
+    # Magic_RequestChange refusal; Magic_Update FILL. GAUGE_UP is one blip of
+    # its rising loop: SCSP repeats it at a constant pitch (no rise).
+    ('sy_error', 'NA_SE_SY_ERROR', .20, False),
+    ('sy_gauge_up', 'NA_SE_SY_GAUGE_UP', .07, True),
 )
 # Variants that reuse a resident item sound (same source family).
 ITEM_ALIASES = (
-    ('NA_SE_IT_MAGIC_ARROW_SHOT', 'it_arrow_shot'),
     ('NA_SE_IT_ARROW_STICK_CRE', 'it_arrow_stick'),
 )
 AREA_SOUNDS = ('cut', 'wall_hit', 'reflect', 'nut_break',
@@ -332,7 +345,9 @@ def channel_layers(seq, chan, once=False):
     body = channel_body(seq, chan, once=once)
     chan_instr = re.search(r'\binstr\s+(\w+)', body)
     layers = re.findall(r'ldlayer\s+\d+,\s*(LAYER_\w+)', body)
-    if not layers or re.search(r'\b(stseq|ldptr|jump|rjump|call|dyncall)\b', body):
+    # once: channel-level IO/vibrato/call helpers (CHAN_0048) and the
+    # self-modifying transposition loop are not rendered; layers are.
+    if not layers or (not once and re.search(r'\b(stseq|ldptr|jump|rjump|call|dyncall)\b', body)):
         raise Unsupported(chan)
     out = []
     for label in layers:

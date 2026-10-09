@@ -63,7 +63,9 @@ void oot_core_scene_unload(void);
 /* Link's C-button tools on the decomp actors (bridge_items.cpp). Slot is the
 ** inventory slot; false = refused (no ammo/magic, one already out, no play). */
 bool oot_core_tool_use(unsigned int slot, const int32_t origin[3], uint16_t yaw, int16_t pitch);
-bool oot_core_tool_holding(void);   /* bomb/Bombchu over Link's head */
+bool oot_core_tool_holding(void);
+/* Arrow*_Hit screen tint as a VDP2 colour offset; false when none. */
+bool oot_core_hit_tint(int16_t rgb[3]);   /* bomb/Bombchu over Link's head */
 bool oot_core_tool_throw(void);
 bool oot_core_tool_pull(int32_t step_q8[3]); /* hookshot flight this step */
 void oot_core_tool_register(void);  /* C contact AT mirrors of live tools */

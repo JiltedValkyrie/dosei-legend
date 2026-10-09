@@ -29,6 +29,9 @@
 #include "overlays/actors/ovl_En_Bom_Chu/z_en_bom_chu.h"
 #include "overlays/actors/ovl_En_Boom/z_en_boom.h"
 #include "overlays/actors/ovl_Arms_Hook/z_arms_hook.h"
+#include "overlays/actors/ovl_Arrow_Fire/z_arrow_fire.h"
+#include "overlays/actors/ovl_Arrow_Ice/z_arrow_ice.h"
+#include "overlays/actors/ovl_Arrow_Light/z_arrow_light.h"
 
 extern PlayState* gOotCorePlay;
 void ArmsHook_Wait(ArmsHook* this, PlayState* play);
@@ -377,7 +380,12 @@ int OotCore_ToolCommand(unsigned int command, int* io) {
         case OOT_CORE_TOOL_THROW:
             return tool_throw();
         case OOT_CORE_TOOL_STATE: {
+            extern u8 gOotCoreMagicReset;
             int bits = 0;
+            if (gOotCoreMagicReset) {
+                bits |= OOT_CORE_TOOL_MAGIC_RESET;
+                gOotCoreMagicReset = 0;
+            }
             if (sHeld != NULL)
                 bits |= OOT_CORE_TOOL_HOLDING;
             if (sHook != NULL)
@@ -473,7 +481,9 @@ int OotCore_ToolView(const OotCoreToolView** out) {
         for (a = play->actorCtx.actorLists[sToolCats[i]].head; a != NULL && n < OOT_CORE_TOOL_VIEWS_MAX; a = a->next) {
             OotCoreToolView* v = &sViews[n];
             if (a->update == NULL || (a->id != ACTOR_EN_ARROW && a->id != ACTOR_EN_BOM && a->id != ACTOR_EN_BOM_CHU &&
-                                      a->id != ACTOR_EN_BOOM && a->id != ACTOR_ARMS_HOOK))
+                                      a->id != ACTOR_EN_BOOM && a->id != ACTOR_ARMS_HOOK &&
+                                      a->id != ACTOR_ARROW_FIRE && a->id != ACTOR_ARROW_ICE &&
+                                      a->id != ACTOR_ARROW_LIGHT))
                 continue;
             v->id = a->id;
             v->attack_id = tool_identity(a, false);
@@ -529,6 +539,15 @@ int OotCore_ToolView(const OotCoreToolView** out) {
                 v->pitch = (s16)-a->shape.rot.x;
             } else if (a->id == ACTOR_EN_BOM_CHU) {
                 v->timer = (u16)((EnBomChu*)a)->timer;
+            } else if (a->id == ACTOR_ARROW_FIRE || a->id == ACTOR_ARROW_ICE || a->id == ACTOR_ARROW_LIGHT) {
+                /* Presentation only (no AT): params = element, timer = the
+                 * Arrow*_Hit countdown (0 in charge/flight), flash = alpha. */
+                v->params = a->id == ACTOR_ARROW_FIRE ? 0 : a->id == ACTOR_ARROW_ICE ? 1 : 2;
+                v->timer = a->id == ACTOR_ARROW_FIRE ? ((ArrowFire*)a)->timer
+                         : a->id == ACTOR_ARROW_ICE ? ((ArrowIce*)a)->timer : ((ArrowLight*)a)->timer;
+                v->flash = a->id == ACTOR_ARROW_FIRE ? ((ArrowFire*)a)->alpha
+                         : a->id == ACTOR_ARROW_ICE ? ((ArrowIce*)a)->alpha : ((ArrowLight*)a)->alpha;
+                v->held = 0;
             }
             n++;
         }

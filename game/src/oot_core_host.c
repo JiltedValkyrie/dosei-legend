@@ -4,6 +4,7 @@
 #pragma GCC optimize("Os")
 #include <jo/jo.h>
 #include "action_audio.h"
+#include "health_hud.h"
 #include "recomp.h"
 #include "frame_timer.h"
 #include "gameplay.h"
@@ -42,8 +43,10 @@ core_sprite_rows[] = {
 #define ACTOR_EN_BOOM    0x0032
 #define ACTOR_ARMS_HOOK  0x0066
 #define ACTOR_EN_BOM_CHU 0x00DA
+#define ACTOR_ARROW_FIRE 0x010A /* Arrow_Fire/Ice/Light: EnArrow's elemental child */
+#define ACTOR_ARROW_LIGHT 0x010C
 enum { TOOL_ARW, TOOL_BOM, TOOL_CHU, TOOL_BOO, TOOL_HKT, TOOL_HKC, TOOL_BGS, TOOL_MIR,
-       TOOL_IRB, TOOL_HOB, TOOL_EXP, TOOL_AIM, TOOL_COUNT };
+       TOOL_IRB, TOOL_HOB, TOOL_EXP, TOOL_AIM, TOOL_MAG, TOOL_COUNT };
 /* Existing owner records share the already reserved draw-state carve. This
  * moves no collision payload and adds no heap/carve reservation. */
 typedef struct {
@@ -580,14 +583,16 @@ static void tools_free(void)
 static void tools_load(void)
 {
     static const char names[TOOL_COUNT][11] = { "ITMARW.SPR", "ITMBOM.SPR", "ITMCHU.SPR", "ITMBOO.SPR",
-        "ITMHKT.SPR", "ITMHKC.SPR", "ITMBGS.SPR", "ITMMIR.SPR", "ITMIRB.SPR", "ITMHOB.SPR", "ITMEXP.SPR", "ITMAIM.SPR" };
+        "ITMHKT.SPR", "ITMHKC.SPR", "ITMBGS.SPR", "ITMMIR.SPR", "ITMIRB.SPR", "ITMHOB.SPR", "ITMEXP.SPR", "ITMAIM.SPR", "ITMMAG.SPR" };
     bool adult = !save_state.link_age;
     unsigned int i;
     bool bomb = save_inventory_item(2) != 0xff, chu = save_inventory_item(8) != 0xff;
     bool hook = adult && save_inventory_item(9) != 0xff;
     bool need[TOOL_COUNT] = {
         adult && save_inventory_item(3) != 0xff, bomb, chu, !adult && save_inventory_item(12) != 0xff,
-        hook, hook, false, false, false, false, bomb || chu, true }; /* aim atlas supports later pickups without a live CD read */
+        hook, hook, false, false, false, false, bomb || chu, true, /* aim atlas supports later pickups without a live CD read */
+        adult && (save_inventory_item(4) != 0xff || save_inventory_item(10) != 0xff ||
+                  save_inventory_item(16) != 0xff) };
     for (i = 0; i < TOOL_COUNT; ++i) {
         unsigned char **sheet = &CORE_DRAW->tool_sheet[i];
         if (!need[i] || *sheet || CORE_DRAW->tool_tried[i] || GFS_NameToId((Sint8 *)names[i]) < 0) continue;
@@ -625,11 +630,35 @@ static void __attribute__((noinline)) tool_put(unsigned int t, unsigned int fram
         npc_sprite_draw(CORE_DRAW->tool_sheet[t], &CORE_DRAW->tool_inst[t], frame, x, y, z, yaw);
 }
 
+/* Arrow*_Draw's full-screen XLU fill on hit (unk_15C/unk_164 from the Hit
+ * timer: +0.25 per frame while timer >= 9, then -0.125). VDP2 colour offset
+ * approximates prim blended at alpha 150*k over a mid-grey scene. */
+static int16_t hit_tint[3];
+bool oot_core_hit_tint(int16_t rgb[3])
+{
+    rgb[0] = hit_tint[0]; rgb[1] = hit_tint[1]; rgb[2] = hit_tint[2];
+    return hit_tint[0] || hit_tint[1] || hit_tint[2];
+}
+
+static void tint_from_hit(unsigned int element, unsigned int t)
+{
+    static const unsigned char prim[3][3] = { { 40, 0, 0 }, { 0, 10, 50 }, { 30, 40, 0 } };
+    int k = t >= 9 ? (int)(32 - t) * 64 : 256 - (int)(9 - t) * 32, alpha, c;
+    if (k > 256) k = 256;
+    if (k <= 0 || element > 2) return;
+    alpha = 150 * k / 255;                     /* Q8 */
+    for (c = 0; c < 3; ++c) {
+        int offset = (prim[element][c] * k / 256 - 128) * alpha / 256;
+        if (offset < hit_tint[c]) hit_tint[c] = (int16_t)offset;
+    }
+}
+
 static void tools_draw(void)
 {
     const OotCoreToolView *v;
     int n = playing ? ENTRY->tool_view(&v) : 0, i;
     int32_t a[3], b[3];
+    hit_tint[0] = hit_tint[1] = hit_tint[2] = 0;
     npc_sprite_shadow_off = 1;
     for (i = 0; i < n; ++i) {
         unsigned int band = pitch_band(v[i].pitch);
@@ -652,6 +681,15 @@ static void tools_draw(void)
                    npc_sprite_shadow_off = 1; }
             break;
         case ACTOR_EN_BOM_CHU: tool_put(TOOL_CHU, 0, v[i].x, v[i].y, v[i].z, v[i].yaw); break;
+        case ACTOR_ARROW_FIRE: case ACTOR_ARROW_FIRE + 1: case ACTOR_ARROW_LIGHT: {
+            /* ITMMAG pose element*4: glow in flight; Arrow*_Hit's 32-step
+             * timer grows the burst; alpha is 0 below 8 and when faded. */
+            unsigned int t = v[i].timer, frame = !t ? 0 : t >= 24 ? 1 : t >= 16 ? 2 : 3;
+            if (t) tint_from_hit(v[i].params, t);
+            if (v[i].flash < 35 || (t && t < 8)) break;
+            tool_put(TOOL_MAG, v[i].params * 4u + frame, v[i].x, v[i].y, v[i].z, 0);
+            break;
+        }
         case ACTOR_EN_BOOM: tool_put(TOOL_BOO, 2, v[i].x, v[i].y, v[i].z, (uint16_t)(recomp_world_clock() * 0x2000u)); break;
         case ACTOR_ARMS_HOOK: {
             int k, steps;
@@ -711,7 +749,14 @@ bool oot_core_tool_use(unsigned int slot, const int32_t origin[3], uint16_t yaw,
         ammo = 3;
         cost = slot == 16 ? 8 : 4;
         if (save_inventory_item(3) == 0xff) return false;
-        if (!save_state.source_magic_level || save_state.source_magic < cost) {
+        /* func_8083442C: no magic arrow while magicState is busy (the last
+         * one's Arrow*_Destroy resets it); a failed request shoots normal. */
+        if (!health_hud_magic_idle()) {
+            action_audio_decomp_sfx(0x4806); /* NA_SE_SY_ERROR */
+            return false;
+        }
+        if (!health_hud_magic_available(cost)) {
+            if (save_state.source_magic_level) action_audio_decomp_sfx(0x4806);
             item = 3; /* ITEM_BOW -> ARROW_NORMAL, retaining the equipped arrow. */
             cost = 0;
         }
@@ -721,7 +766,7 @@ bool oot_core_tool_use(unsigned int slot, const int32_t origin[3], uint16_t yaw,
     io[4] = yaw; io[5] = pitch;
     if (!ENTRY->tool(OOT_CORE_TOOL_USE, io)) return false;
     if (ammo == 2 || ammo == 3 || ammo == 8) --save_state.source_ammo[ammo];
-    save_state.source_magic = (uint8_t)(save_state.source_magic - cost);
+    if (cost) health_hud_magic_consume(cost); /* MAGIC_CONSUME_NOW: drains 2/frame */
     if (ammo == 2 || ammo == 8) CORE_DRAW->tool_bits |= OOT_CORE_TOOL_HOLDING;
     return true;
 }
@@ -1003,6 +1048,8 @@ void oot_core_frame(const gameplay_input_t *in)
         ENTRY->update();
         core_dyna_sync();
         CORE_DRAW->tool_bits = (unsigned int)ENTRY->tool(OOT_CORE_TOOL_STATE, CORE_DRAW->tool_pull);
+        if (CORE_DRAW->tool_bits & OOT_CORE_TOOL_MAGIC_RESET) health_hud_magic_reset();
+        health_hud_magic_update(); /* Magic_Update, once per source frame */
         update_us = frame_timer_ticks_to_us(frame_timer_ticks() - t0);
         if (meshes_room != room) {
             meshes_room = room;
