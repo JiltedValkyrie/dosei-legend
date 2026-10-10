@@ -102,7 +102,7 @@ static void core_draw_init(void)
 
 
 #define ENTRY_RAW ((const OotCoreEntry *)OOT_CORE_LOAD_ADDR)
-#ifdef PLAYER_SOURCE
+#if defined(PLAYER_SOURCE) && !defined(DOSEI_NO_SLAVE_JOBS)
 #define OOT_CORE_ASYNC 1
 #endif
 #ifdef OOT_CORE_ASYNC

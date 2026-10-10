@@ -203,7 +203,13 @@ MY_OBJS = $(patsubst %.c,$(OBJDIR)/%.o,$(notdir $(SRCS)))
 # docs/OOT_CORE_PIPELINE_PLAN.md and docs/BUILD.md.
 OOT_CORE ?= 0
 PLAYER_SOURCE ?= $(OOT_CORE)
-OOT_CORE_MODE = $(OOT_CORE)$(if $(filter 1,$(OOT_CORE)),c$(CORE_COLLISION)p$(PLAYER_SOURCE))
+# SLAVE_JOBS=0 (rollback, 2026-10-09): no second-SH-2 jobs of ours (core
+# update, Link skin, scene prepare run on the master as before).
+SLAVE_JOBS ?= 1
+OOT_CORE_MODE = $(OOT_CORE)$(if $(filter 1,$(OOT_CORE)),c$(CORE_COLLISION)p$(PLAYER_SOURCE))s$(SLAVE_JOBS)
+ifeq ($(SLAVE_JOBS),0)
+_CCFLAGS += -DDOSEI_NO_SLAVE_JOBS
+endif
 # OOT_CORE changes ram_cart.h carves and many #ifdefs: a flip must recompile
 # every game object (2026-10-05: a stale non-core ram_cart.o in an OOT_CORE=1
 # image refused the OOTCORE carve, "oc load failed f 0"). CORE_COLLISION too.

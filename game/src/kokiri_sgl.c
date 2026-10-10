@@ -2175,6 +2175,10 @@ unsigned int kokiri_frame_slave_us(void)
 /* main.c, first thing in the draw (before the core-reading actors). */
 void kokiri_frame_slave_kick(bool scene)
 {
+#ifdef DOSEI_NO_SLAVE_JOBS
+    (void)scene;
+    return;   /* SLAVE_JOBS=0: the master prepares in kokiri_scene_draw */
+#endif
     bool prep = scene && !prep_kicked && forest_scene != STORY_BANK_PANORAMA;
     if (!prep) return;
     job_prep = prep;

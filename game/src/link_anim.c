@@ -580,6 +580,10 @@ void link_anim_sync(void)
 void link_anim_frame_start(const int16_t *joints)
 {
     static int16_t last[3 + LINK_LIMB_COUNT * 3];
+#ifdef DOSEI_NO_SLAVE_JOBS
+    link_anim_pose_joints(joints);   /* SLAVE_JOBS=0: all on the master */
+    return;
+#endif
     link_anim_sync();
     if (posed_frame == -2 && !memcmp(last, joints, sizeof last)) return;
     memcpy(last, joints, sizeof last);

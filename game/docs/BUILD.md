@@ -860,3 +860,7 @@ checks pass; this is not target/runtime acceptance. Size growth is not yet attri
     printed a compile `error:` and still returned 0 (2026-10-09, cause not
     pinned down). After every build grep the log for `error:` and require
     the final `built:` line.
+105. **`SLAVE_JOBS=0` rollback (2026-10-09).** `./build.sh OOT_CORE=1
+    SLAVE_JOBS=0` builds without our second-SH-2 jobs (core update, Link
+    skin, scene prepare back on the master). The mode stamp forces a full
+    recompile when it flips. Use it to A/B any slave-scheduling problem.
