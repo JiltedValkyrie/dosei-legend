@@ -1787,7 +1787,7 @@ static bool forest_lod_changed(void)
 
 /* Scene prepare (vertex depth, cull/partition, sort keys, tile fog): pure
 ** maths on the resident bank, no SGL. 2026-10-09: it can run on the slave
-** SH-2 (kokiri_scene_prepare_kick) while the master draws the core-reading
+** SH-2 (kokiri_frame_slave_kick) while the master draws the core-reading
 ** actors; kokiri_scene_draw then only waits and submits. On the slave the
 ** frame timers are skipped: they extend the master's FRT. */
 static unsigned char prep_on_slave;
@@ -2149,8 +2149,8 @@ static unsigned int sgl_drain_us;
 unsigned int kokiri_sgl_drain_us(void) { return sgl_drain_us; }
 static unsigned char job_prep;
 #define PREP_DONE (*(volatile unsigned int *)((uintptr_t)&prep_done | 0x20000000u))
-/* One slave job per frame: Link's skin first (the master may need his bones
-** soon: link_anim_sync waits for just that part), then the scene prepare. */
+/* The frame's scene prepare on the slave (queued after the core update;
+** Link's skin runs earlier, during the game steps: link_anim_frame_start). */
 static unsigned int frame_job_us;
 static void frame_slave_job(void *arg)
 {

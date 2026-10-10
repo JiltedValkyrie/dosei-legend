@@ -139,9 +139,15 @@ finds, then phase 6 parity and phase 7 C Link deletion. See
 PLAYER_MIGRATION.md "Real Player live in Clean".
 Performance work: read the Debug overlay rows as documented in
 [DEBUG_OVERLAY.md](DEBUG_OVERLAY.md) (human report: ~6 FPS Kokiri, CPU bound).
-Goal (human 2026-10-09): 20 FPS minimum, no 64-bit maths. Latest (Claude):
-decomp core update runs on the slave SH-2 during the scene/Link draw
-(PLAYER_MIGRATION.md "Core update on the slave SH-2"); Navi is En_Elf. Second Debug build
+Goal (human 2026-10-09): 20 FPS minimum, no 64-bit maths. Last human
+reading 15 FPS (`fr667`). Since then (Claude, autonomous, commits 05e8077,
+c00ee6c + docs; built and audited, NOT run): SGL-aware second-SH-2 schedule
+(skin during the steps; core update + scene prepare at draw start; forest
+submitted to an idle slave), per-scene table scans, exact side-frustum cull.
+First thing next session: run the Debug image in Kokiri and read rows 0-15 +
+`M/S` (DEBUG_OVERLAY.md "Ninth/Tenth build"): expect `sc` ~1 ms, `cv0 bv0`,
+small `dr`. If 20 FPS holds, rebuild/confirm Clean; if not, the next lever is
+the 20 Hz host step (C timers to 20 Hz) per PLAYER_MIGRATION.md. Second Debug build
 (2026-10-09) adds catch-up cap 2, camera constraint once per frame, z_bgcheck
 integer fast paths (host-identical) and sub-timer rows 10-12; awaiting human
 Kokiri overlay screenshots before the next cut.
