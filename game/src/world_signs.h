@@ -2,10 +2,11 @@
 #define DOSEI_WORLD_SIGNS_H
 #include "gameplay.h"
 #include "collide.h"
-#define SIGN_PIECE_ID 0x703
+#include "../oot-core/include/oot_sign_visual.h"
 void world_signs_reset(void);
 void world_signs_step(const gameplay_input_t *in);
-unsigned int world_signs_parts(unsigned int index);
+/* OOT_SIGN_INTACT, remaining fade ticks, or zero when hidden. */
+unsigned int world_signs_visual(unsigned int index);
 unsigned int world_signs_text(const gameplay_input_t *in);
 /* Read-only: true when a sign is within reach and in the facing cone. */
 bool world_signs_near(void);

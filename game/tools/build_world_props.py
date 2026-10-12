@@ -109,9 +109,11 @@ def main():
     (args.out.parent/'generated').mkdir(parents=True,exist_ok=True)
     static_mesh(args.oot,args.rom_dir,'gameplay_field_keep','gFieldKakeraDL',args.out/'ROCK.BIN',.1)
     static_mesh(args.oot,args.rom_dir,'object_tsubo','object_tsubo_DL_0017C0',args.out/'POT.BIN',.15)
-    # EnKanban sDisplayLists order corresponds to bits 0..10.
-    for i,offset in enumerate((0xCB0,0xDB8,0xE78,0xF38,0xFF8,0x10B8,0x11C0,0x12C8,0x13D0,0x1488,0x1540)):
-        static_mesh(args.oot,args.rom_dir,'object_kanban','object_kanban_DL_%06X'%offset,args.out/('SIGN%d.BIN'%i),.01,setup='object_kanban_DL_000C30')
+    # Human 2026-10-12: hits fade one intact sign; no fracture assets/physics.
+    for i in range(11):
+        (args.out / ('SIGN%d.BIN' % i)).unlink(missing_ok=True)
+    from build_sign_intact import build as sign_intact
+    sign_intact(args.oot,args.rom_dir,args.out/'SIGNALL.BIN')
     static_mesh(args.oot,args.rom_dir,'gameplay_field_keep','gFieldBushDL',args.out/'BUSH.BIN',.4,cutout=True)
     static_mesh(args.oot,args.rom_dir,'object_gs','gGossipStoneDL',args.out/'GOSSIP.BIN',.1,setup='gGossipStoneMaterialDL',extra=('gGossipStoneSquishedDL',))
     static_mesh(args.oot,args.rom_dir,'object_ydan_objects','gDTDungeonDoor1DL',args.out/'DTDOOR.BIN',1.0)

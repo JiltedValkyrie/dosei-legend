@@ -47,6 +47,10 @@ elif [ "${1:-}" = "--clean" ]; then
     shift
     variant=game-clean
     mode_args=(CLEAN_TEST=1)
+elif [ "${1:-}" = "--perf-kokiri" ]; then
+    shift
+    variant=game-perf-kokiri
+    mode_args=(BOOT_KOKIRI_TEST=1)
 fi
 # Human accepted room texture halving for Clean. Preserve explicit overrides;
 # standalone tools and other variants retain their mode-0 default.

@@ -7,6 +7,9 @@
 #include "item_drop.h"
 #include "save_state.h"
 #include "player_lift.h"
+#ifdef PLAYER_SOURCE
+#include "oot_core_host.h"
+#endif
 #ifdef __GNUC__
 #pragma GCC optimize ("Os")
 #endif
@@ -161,6 +164,10 @@ bool world_props_carrying(void) { return actor_resolve(carried) != 0; }
  * Mirrors world_props_interact() conditions without consuming A or changing state. */
 bool world_props_near_liftable(void)
 {
+#ifdef PLAYER_SOURCE
+    /* Source admission: actor offer ranges plus Player's facing test. */
+    return oot_core_player_do_action() == OOT_CORE_DO_GRAB;
+#else
     actor_t *a = 0;
     if (actor_resolve(carried)) return false;
     while ((a = actor_sys_find(WORLD_PROP_ID, a))) {
@@ -174,10 +181,16 @@ bool world_props_near_liftable(void)
         return true;
     }
     return false;
+#endif
 }
 
 bool world_props_interact(const gameplay_input_t *in)
 {
+#ifdef PLAYER_SOURCE
+    /* Reserve the C prompt only. Real Player must accept the offer before
+     * the host moves/hides the prop or considers it carried. */
+    return world_props_carrying() || (in->interact && world_props_near_liftable());
+#else
     actor_t *a=actor_resolve(carried);
     if (a) {
         carry_action = in->interact || in->attack;
@@ -195,7 +208,44 @@ bool world_props_interact(const gameplay_input_t *in)
         carried=actor_handle(a);a->room=ACTOR_ROOM_NONE; gameplay.events |= GP_EVENT_PICKUP; return true;
     }
     return false;
+#endif
 }
+#ifdef PLAYER_SOURCE
+/* One candidate, the best-faced in its source xz range: Player keeps the
+ * largest getItemDirection. Height and facing here are loose (+/-40, +/-60
+ * deg); the core applies the exact EnIshi/ObjTsubo offer and Player's
+ * +/-45 deg admission, and its A label drives the HUD prompt. */
+void world_props_core_offer(int io[7])
+{
+    actor_t *a = 0;
+    int best = 0x2AAA;
+    io[0] = 0;
+    if (world_props_carrying()) return;
+    while ((a = actor_sys_find(WORLD_PROP_ID, a))) {
+        const kokiri_world_prop_t *p = &kokiri_world_props[a->data[0]];
+        int turn, radius = p->id == 0x111 ? 30 : (p->param & 1) ? 80 : 50;
+        if ((p->id != 0x111 && p->id != 0x14E) || a->scene != save_state.scene_id ||
+            a->room != last_in.room || a->data[1] || !near(&last_in, a, radius)) continue;
+        turn = (int16_t)(gameplay_facing(a->x-last_in.x, a->z-last_in.z)-last_in.yaw);
+        if (turn < 0) turn = -turn;
+        if (turn > best) continue;
+        best = turn;
+        io[0] = (int)actor_handle(a); io[1] = p->id;
+        io[2] = a->x; io[3] = a->y; io[4] = a->z; io[5] = a->yaw; io[6] = p->param;
+    }
+}
+void world_props_core_read(int state, const int io[7])
+{
+    actor_t *a;
+    if (!state) { carried = ACTOR_HANDLE_NONE; return; }
+    if (!(a = actor_resolve((actor_handle_t)io[0]))) { oot_core_carry_cancel(); return; }
+    carried = actor_handle(a);
+    if (state == 1) return; /* putting item away / pickup animation */
+    a->room = ACTOR_ROOM_NONE;
+    world_props_lift_sync(LIFT_ATTACH | (state == 3 ? LIFT_RELEASE : 0),
+                         io[5], io[6], (uint16_t)io[4], &io[1]);
+}
+#endif
 bool world_props_lift_action(void)
 {
     bool result=carry_action;carry_action=false;return result;
@@ -216,6 +266,9 @@ void world_props_lift_sync(unsigned int events,int speed_q8,int vy_q8,
 }
 void world_props_drop_carried(void)
 {
+#ifdef PLAYER_SOURCE
+    oot_core_carry_cancel();
+#endif
     world_props_lift_sync(LIFT_RELEASE,0,0,0,0);
     carry_action=false;
 }

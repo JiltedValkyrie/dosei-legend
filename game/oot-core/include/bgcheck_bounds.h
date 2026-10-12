@@ -68,7 +68,7 @@ static inline s32 OotCore_BgFloorClass(CollisionPoly* poly, Vec3s* vertices, f32
     s32 px = x.v >> 16, pz = z.v >> 16; /* floor */
     s32 ax = a->x - px, az = a->z - pz, bx = b->x - px, bz = b->z - pz;
     s32 cx = c->x - px, cz = c->z - pz;
-    s32 chk = (chkDist.v + 0xFFFF) >> 16;
+    s32 chk = (s32)(((u32)chkDist.v + 0xFFFFu) >> 16);
     s32 d0, d1, d2, e0, e1, e2, area, out;
 
     if ((u32)(ax + 16383) > 32766u || (u32)(az + 16383) > 32766u || (u32)(bx + 16383) > 32766u ||

@@ -11,9 +11,11 @@ sys.path.insert(0, str(ROOT / 'tools'))
 from build_sprite_keys import groups, pack, resolve
 
 
-def sheet():
-    data = bytearray(76)
-    struct.pack_into('>4s8H', data, 0, b'SPR1', 8, 1, 5, 1, 1, 0, 256, 1)
+def sheet(ticks=1, width=8, height=1):
+    base = 52 + ((ticks * 2 + 3) & ~3)
+    data = bytearray(base + width * height // 2 * 5)
+    struct.pack_into('>4s8H', data, 0, b'SPR1', width, height, 5, 1, ticks, 0, 256, 1)
+    data[base:] = bytes((i & 255 for i in range(len(data)-base)))
     return bytes(data)
 
 
@@ -36,6 +38,8 @@ class SpriteArchive(unittest.TestCase):
 
     def test_archive_checks_offsets_lengths_duplicates_and_nested_packets(self):
         data = pack(0x100, [(0x200, sheet()), (0x300, sheet())])
+        legacy = (struct.pack('>4sHHII6I', b'SPR2', 2, 2, 0x100, 192,
+                             0x200, 40, 76, 0x300, 116, 76) + sheet() * 2)
         source = '#include <stdint.h>\n#include <string.h>\n#include <assert.h>\n'
         source += '#include "' + (ROOT / 'oot-core/include/oot_sprite_archive.h').as_posix() + '"\n'
         source += '#define U16(s,o) ((unsigned)((s)[o]<<8 | (s)[(o)+1]))\n'
@@ -46,12 +50,15 @@ class SpriteArchive(unittest.TestCase):
                        'const unsigned char *npc_sprite_archive_largest('):
             source += graphics.function(ROOT / 'src/npc_sprite.c', marker) + '\n'
         source += 'static const unsigned char valid[]={' + ','.join(map(str, data)) + '};\n'
+        source += 'static const unsigned char legacy[]={' + ','.join(map(str, legacy)) + '};\n'
         source += r'''
 int main(void) {
     unsigned char s[sizeof valid]; memcpy(s,valid,sizeof s);
     assert(npc_sprite_archive_valid(s,sizeof s,0x100));
     assert(npc_sprite_archive_clip(s,0x06000200)==s+40);
-    assert(npc_sprite_archive_clip(s,0x06000300)==s+116);
+    assert(npc_sprite_archive_clip(s,0x06000300)==s+120);
+    assert(npc_sprite_archive_valid(legacy,sizeof legacy,0x100));
+    assert(npc_sprite_archive_clip(legacy,0x06000300)==legacy+116);
     assert(!npc_sprite_archive_clip(s,0x400));
     assert(npc_sprite_archive_largest(s)==s+40);
     assert(!npc_sprite_archive_valid(s,sizeof s,0x200));
@@ -61,11 +68,32 @@ int main(void) {
     s[24]=0xff; assert(!npc_sprite_archive_valid(s,sizeof s,0x100)); memcpy(s,valid,sizeof s);
     s[31]=0; s[30]=2; assert(!npc_sprite_archive_valid(s,sizeof s,0x100)); memcpy(s,valid,sizeof s);
     s[35]=40; assert(!npc_sprite_archive_valid(s,sizeof s,0x100)); memcpy(s,valid,sizeof s);
+    s[116]=1; assert(!npc_sprite_archive_valid(s,sizeof s,0x100)); memcpy(s,valid,sizeof s);
     s[40]='X'; assert(!npc_sprite_archive_valid(s,sizeof s,0x100));
     return 0;
 }
 '''
         self.run_c(source)
+
+    def test_pixel_alignment_preserves_every_sheet_byte_and_bounded_gaps(self):
+        clips = [(i, sheet(ticks=i+1, width=8*(i%4+1), height=i%7+1))
+                 for i in range(64)]
+        data = pack(0x100, clips)
+        end = 16 + 12 * len(clips)
+        for i, (animation, original) in enumerate(clips):
+            key, offset, size = struct.unpack_from('>III', data, 16+12*i)
+            base = 52 + (((i+1)*2+3) & ~3)
+            self.assertEqual(key, animation)
+            self.assertEqual(data[offset:offset+size], original)
+            self.assertEqual((offset+base) % 16, 0)
+            self.assertIn(offset-end, (0, 4, 8, 12))
+            self.assertEqual(data[end:offset], bytes(offset-end))
+            end = offset + size
+        self.assertEqual(end, len(data))
+        self.run_c('#include <assert.h>\n#include "' +
+                   (ROOT/'oot-core/include/oot_sprite_archive.h').as_posix() +
+                   '"\nstatic const unsigned char archive[]={' + ','.join(map(str,data)) +
+                   '};\nint main(void){assert(OotSprite_ArchiveValid(archive,sizeof archive,0x100));return 0;}')
 
     def test_shared_cels_stable_across_order_and_pinned_until_frame_end(self):
         self.run_c('#include <stdint.h>\n#include <assert.h>\n#include "' +

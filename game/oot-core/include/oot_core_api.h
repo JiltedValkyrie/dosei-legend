@@ -19,7 +19,7 @@
 #include "oot_core_bg.h"
 
 #define OOT_CORE_MAGIC 0x4F4F5443u /* 'OOTC' */
-#define OOT_CORE_VERSION 30u
+#define OOT_CORE_VERSION 34u
 #define OOT_CORE_TRANSITION_RELOAD 0x10000 /* debug scene has no source entrance */
 /* set_flags bits. NPC_SPRITES: generic NPCs are host sprites (NPC views carry
  * object/anim/frame; their Actor_Draw is skipped, no limb matrices). */
@@ -172,6 +172,12 @@ typedef struct OotCoreSave {
 #define OOT_CORE_TOOL_THROW  2 /* release the held bomb/Bombchu */
 #define OOT_CORE_TOOL_STATE  3 /* returns OOT_CORE_TOOL_* bits; PULLING sets io[0..2] Q8 velocity */
 #define OOT_CORE_TOOL_CANCEL 4 /* drop held explosive, retract hookshot */
+/* v33 host prop adapter. OFFER io: handle,id,x,y,z,yaw,params. READ io:
+ * handle,x,y,z,yaw,speedQ8,vyQ8; result 0 idle,1 pickup,2 attached,3 released.
+ * Master calls only before kick / after join. */
+#define OOT_CORE_TOOL_CARRY_OFFER 5
+#define OOT_CORE_TOOL_CARRY_READ  6
+#define OOT_CORE_TOOL_CARRY_CANCEL 7 /* host room/reset invalidated the prop */
 #define OOT_CORE_TOOL_HOLDING       1u
 #define OOT_CORE_TOOL_HOOK_OUT      2u
 #define OOT_CORE_TOOL_BOOMERANG_OUT 4u
@@ -229,7 +235,7 @@ typedef struct OotCorePlayerView {
     unsigned char water;         /* BGCHECKFLAG_WATER */
     unsigned char invincible;    /* invincibilityTimer: flicker while nonzero */
     unsigned char hidden;        /* actor.draw == NULL (start mode NOTHING, some cutscenes) */
-    unsigned char pad;
+    unsigned char held_visual;   /* v33: bit 0 stick visible, bit 1 burning */
     int blade_tip[3], blade_base[3]; /* meleeWeaponInfo[0] tip (posA) / base (posB) */
     unsigned int draw_us;        /* last anchor draw pass (debug overlay) */
     /* v29: Player naviActor (En_Elf FAIRY_NAVI). */
@@ -238,7 +244,17 @@ typedef struct OotCorePlayerView {
     unsigned char navi_colour;   /* 0 plain, 1 NPC, 2 enemy (focusActor category) */
     /* v30: actor.floorHeight (Link's shadow without a host floor query). */
     int floor_y;
+    /* v31: source first-person aim, also used by projectile release. */
+    short focus_pitch, focus_yaw;
+    unsigned char item_button;   /* source left/down/right = 1/2/3 */
+    unsigned char aim_mode;      /* Player unk_6AD: 1 look, 2 item */
+    /* v34: Player_UpdateInterface A label, OOT_CORE_DO_* (= DO_ACTION_*). */
+    unsigned char do_action;
 } OotCorePlayerView;
+#define OOT_CORE_DO_THROW 0x09
+#define OOT_CORE_DO_NONE  0x0A
+#define OOT_CORE_DO_DROP  0x0C
+#define OOT_CORE_DO_GRAB  0x11
 
 typedef struct OotCoreSpriteLibrary {
     unsigned short object;
@@ -258,8 +274,9 @@ typedef struct OotCoreEntry {
     unsigned int (*play_bytes)(void);
     /* Per scene. scene_id = decomp SceneId; scene = OotSceneBlob
      * (oot_scene_blob.h, pointers already absolute); room = current room.
-     * Player proxy spawns at (x, y, z) facing yaw. Returns 0 on failure. */
-    int (*play_init)(void* block, unsigned int bytes, int scene_id, const void* scene, int room,
+     * spawn is the scene entrance-list index, including special return exits.
+     * Player spawns at (x, y, z) facing yaw. Returns 0 on failure. */
+    int (*play_init)(void* block, unsigned int bytes, int scene_id, const void* scene, int room, int spawn,
                      short x, short y, short z, short yaw);
     /* After play_init: loaded object blobs, objects[i] for scene->objects[i]
      * (NULL = not loaded). Fills the objectCtx slots (Object_GetSlot). */
@@ -280,7 +297,7 @@ typedef struct OotCoreEntry {
      * units, x and z): the C game moves C Link by it. Clears it. */
     void (*player_push)(int* x, int* z);
     /* State word of the live actor `actor_id` nearest (x, z) within 24 units,
-     * -1 if none. En_Kanban: partFlags (11 sign pieces, C draws them). */
+     * -1 if none. En_Kanban: OOT_SIGN_INTACT, fade ticks, or zero (hidden). */
     int (*prop_query)(short actor_id, int x, int z);
     /* One debug-panel line: player proxy talk state, message mode, counts. */
     const char* (*debug_text)(void);

@@ -8,6 +8,14 @@ actor_mesh_t *actor_mesh_load(const char *file);
 void actor_mesh_free(actor_mesh_t *mesh);
 actor_mesh_t *actor_mesh_load_animated(const char *file);
 actor_mesh_t *actor_mesh_load_static(const char *file);
+/* Copy a static mesh and its current materials into caller-owned, 4-byte
+ * aligned storage. Refresh after source texture uploads; returns NULL if it
+ * will not fit. Borrowed result: never pass it to actor_mesh_free/upload. */
+actor_mesh_t *actor_mesh_cache_static(const actor_mesh_t *mesh, void *storage, unsigned bytes);
+/* Borrow geometry, copy materials with Saturn mesh transparency enabled.
+ * Same storage/alignment/lifetime rules as cache_static; immutable during draw. */
+actor_mesh_t *actor_mesh_cache_fade(const actor_mesh_t *mesh, void *storage, unsigned bytes);
+unsigned actor_mesh_origin_radius(const actor_mesh_t *mesh);
 void actor_mesh_draw_static(actor_mesh_t *mesh, int32_t x, int32_t y, int32_t z,
                             uint16_t yaw);
 void actor_mesh_draw_transform(actor_mesh_t *mesh, int32_t x,int32_t y,int32_t z,

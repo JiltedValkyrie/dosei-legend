@@ -19,7 +19,13 @@
 #include "../../src/world_props.h"
 #include "../../src/world_signs.h"
 #include "../../src/game_over.h"
+#include "../../src/perf_sub.h"
 #include <limits.h>
+
+/* Host gameplay tests do not own a Saturn FRT; retain profiler link coverage. */
+unsigned int perf_sub[PS_COUNT];
+unsigned int frame_timer_ticks(void) { return 0; }
+unsigned int frame_timer_ticks_to_us(unsigned int ticks) { return ticks; }
 
 uint16_t gameplay_facing(int32_t dx, int32_t dz)
 {
@@ -357,8 +363,9 @@ int gp_prop_data(unsigned h,unsigned i) { actor_t *a=actor_resolve(h);return a &
 void gp_lift_sync(unsigned events,int speed,int vy,int yaw,int x,int y,int z) { int32_t hand[3]={x,y,z};world_props_lift_sync(events,speed,vy,(uint16_t)yaw,hand); }
 int gp_sign_count(void) { return KOKIRI_SIGN_COUNT; }
 void gp_sign_at(unsigned i,int *x,int *y,int *z,int *yaw,int *room,int *text) { const kokiri_prop_t *s=&kokiri_signs[i];*x=s->x;*y=s->y;*z=s->z;*yaw=kokiri_sign_yaws[i];*room=s->room;*text=kokiri_sign_params[i]|0x300; }
-int gp_sign_parts(unsigned i) { return world_signs_parts(i); }
-int gp_piece_count(void) { actor_t *a=0;int n=0;while((a=actor_sys_find(SIGN_PIECE_ID,a)))++n;return n; }
+int gp_sign_parts(unsigned i) { return world_signs_visual(i); }
+/* Retired actor id: verify no fragment is spawned by sign hits. */
+int gp_piece_count(void) { actor_t *a=0;int n=0;while((a=actor_sys_find(0x703,a)))++n;return n; }
 int gp_chest_scene(unsigned i) { return kokiri_chests[i].scene; }
 int gp_world_carrying(void) { return world_props_carrying(); }
 int gp_chest_flag(unsigned i) { return save_get_treasure(kokiri_chests[i].scene,kokiri_chests[i].param&31); }

@@ -491,6 +491,7 @@ bool                gameplay_npcs_present(void);
 /* Placement `npc` exists in the current scene under its source spawn rule. */
 bool                gameplay_npc_present(unsigned int npc);
 int32_t             gameplay_npc_x(unsigned int npc);
+void gameplay_npc_pose(unsigned int npc, int32_t pos[3], uint16_t *yaw);
 int32_t             gameplay_npc_y(unsigned int npc);
 int32_t             gameplay_npc_z(unsigned int npc);
 uint16_t            gameplay_npc_yaw(unsigned int npc);

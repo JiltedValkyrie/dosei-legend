@@ -22,6 +22,9 @@
 #include "vdp1_draw_wait.h"
 #include <stdint.h>
 #include "frame_timer.h"
+#include "perf_sub.h"
+#include "forest_vertex_pack.h"
+#include "forest_envelope.h"
 
 #include "kokiri_scene.h"
 #include "kokiri_collision.h"
@@ -85,18 +88,26 @@ static unsigned short forest_scene;
 #define FOREST_FOG_END (forest_scene == SCENE_SPOT00 ? 4500 : forest_scene == STORY_BANK_NAVI ? 1310 : FOREST_FAR)
 #define FOREST_FOG_START (forest_scene == SCENE_SPOT00 ? 1800 : FOREST_FOG_END / 2)
 #define FOREST_MESH_START (forest_scene == SCENE_SPOT00 ? 4000 : FOREST_FAR * 7 / 8)
-/* Low RAM is not zeroed at boot: depths are written before each prep reads
- * them; mesh flags and fog sentinels are filled on every bank load. */
+/* Low RAM is not zeroed at boot: packing initializes its maps before use;
+ * mesh flags and fog sentinels are filled on every bank load. */
 #define forest_depth ((short *)RAM_LOW(RAM_LOW_FOREST_DEPTH_OFFSET))
 #define tile_depth ((short *)RAM_LOW(RAM_LOW_TILE_DEPTH_OFFSET))
 #define tile_fog ((unsigned char *)RAM_LOW(RAM_LOW_TILE_FOG_OFFSET))
 #define forest_mesh ((unsigned char *)RAM_LOW(RAM_LOW_FOREST_MESH_OFFSET))
 typedef char forest_depth_fits[KOKIRI_VERTEX_COUNT * sizeof(short) <= RAM_LOW_FOREST_DEPTH_BYTES ? 1 : -1];
-/* Lateral (camera-right) offset per vertex, after the depths in the same
- * carve (side-frustum cull, scene_prepare). */
+/* Persistent map/inverse used to restore gathered polygon indices. */
 #define forest_side (forest_depth + KOKIRI_VERTEX_COUNT)
 typedef char forest_side_fits[2 * KOKIRI_VERTEX_COUNT * sizeof(short) <= RAM_LOW_FOREST_DEPTH_BYTES ? 1 : -1];
 typedef char tile_depth_fits[KOKIRI_TILE_COUNT * sizeof(short) <= RAM_LOW_TILE_DEPTH_BYTES ? 1 : -1];
+/* Tiles first touched by the current exact pass, in the unused tail of the
+ * tile_depth carve. The fog pass visits and resets only these, instead of
+ * clearing and scanning every bank tile per prepare. Overflow or a bank load
+ * (tile_list_full) falls back to the full scan; never assumes zeroed RAM. */
+#define TILE_LIST_MAX ((RAM_LOW_TILE_DEPTH_BYTES - KOKIRI_TILE_COUNT * sizeof(short)) / sizeof(short))
+#define tile_list ((unsigned short *)RAM_LOW(RAM_LOW_TILE_DEPTH_OFFSET + KOKIRI_TILE_COUNT * sizeof(short)))
+typedef char tile_list_fits[TILE_LIST_MAX >= 64 ? 1 : -1];
+static unsigned tile_list_n;
+static bool tile_list_full = true;
 typedef char tile_fog_fits[KOKIRI_TILE_COUNT <= RAM_LOW_TILE_FOG_BYTES ? 1 : -1];
 typedef char forest_mesh_fits[KOKIRI_POLYGON_COUNT <= RAM_LOW_FOREST_MESH_BYTES ? 1 : -1];
 static unsigned char *forest_palette;
@@ -157,6 +168,73 @@ static short warp_span_tile = -1;
 static unsigned short warp_span_verts[4];
 #endif
 static bool forest_prepared;
+/* Debug fallback: all source geometry remains available when packing is off. */
+volatile unsigned forest_pack_enabled = 2; /* 0 full, 1 in-place, 2 draw gather */
+static unsigned prepared_points, prepared_pack;
+/* Debug A/B: zero restores exact-camera preparation. Never reuse a list
+ * across a mode change, bank reload, LOD change, FOV/roll change or envelope.
+ * Nonzero selects the candidate envelope (moving-prepare A/B, 2026-10-12):
+ * 1 = 64 units/256 binang centred on the camera (original), 2 = same size led
+ * along the camera's last-frame motion, 3 = led, 128 units, 4 = led, 128 units
+ * and 512 binang, 5 = variant 3 with the draw points forced into the Low RAM
+ * spill (prep depth/side scratch then stays in high RAM). Every variant is
+ * conservative: refit still requires the actual camera inside the envelope. */
+volatile unsigned forest_envelope_enabled = 3;   /* Mednafen run A/B 2026-10-12 */
+#define FOREST_ENVELOPE_VARIANTS 5
+static fe_camera forest_envelope;
+static unsigned forest_candidates;
+static int forest_candidate_far;
+static bool forest_candidate_valid, prepared_envelope_mode, forest_candidate_reused;
+/* Camera at the previous prepare call: last-frame motion for the lead. */
+static int lead_x, lead_y, lead_z;
+static uint16_t lead_yaw;
+static bool lead_valid;
+/* Debug row 23: candidate builds since the master last read them, and why
+ * the previous envelope was left (bit 0 position, 1 angle, 2 other). */
+static unsigned forest_env_builds, forest_env_exits[3], forest_env_build_us;
+unsigned kokiri_scene_envelope_variant(void) { return forest_envelope_enabled; }
+void kokiri_scene_envelope_cycle(void)
+{
+    unsigned v = forest_envelope_enabled;
+    forest_envelope_enabled = v >= FOREST_ENVELOPE_VARIANTS ? 1 : v + 1;
+}
+unsigned kokiri_scene_candidate_reused(void) { return forest_candidate_reused; }
+unsigned kokiri_scene_candidate_count(void) { return forest_candidate_valid ? forest_candidates : 0; }
+/* Small views use high WRAM; every larger legal bank fits the Low RAM spill.
+ * Both store only referenced draw points, without a 512-point performance cliff. */
+#define FOREST_DRAW_POINTS 512
+/* Prep and draw have disjoint lifetimes. Use fast RAM for indexed cull reads
+ * without taking another byte from the SGL work area. The previous frame is
+ * joined before preparing, as required by polygon-index restoration too.
+ * Keep inverse maps in Low RAM: they must survive until the next prepare. */
+static union {
+    POINT points[FOREST_DRAW_POINTS];
+    struct {
+        short depth[KOKIRI_VERTEX_COUNT];
+        unsigned char side[KOKIRI_VERTEX_COUNT];
+    } prep;
+} forest_work;
+#define forest_draw_points (forest_work.points)
+#define prep_depth (forest_work.prep.depth)
+#define prep_side (forest_work.prep.side)
+typedef char forest_prep_fits[sizeof(forest_work.prep) <=
+                             sizeof(forest_work.points) ? 1 : -1];
+typedef char forest_draw_spill_fits[sizeof(POINT) * KOKIRI_VERTEX_COUNT <=
+                                  RAM_LOW_FOREST_DRAW_BYTES ? 1 : -1];
+#ifdef __sh__
+#define forest_draw_spill ((POINT *)RAM_LOW(RAM_LOW_FOREST_DRAW_OFFSET))
+#else
+static POINT forest_draw_spill[KOKIRI_VERTEX_COUNT];
+#endif
+static POINT *forest_draw_selected;
+static PDATA forest_draw_data;
+static unsigned forest_gathered_faces;
+unsigned kokiri_scene_gather_mode(void)
+{
+    if (prepared_pack != 2) return prepared_pack ? 1 : 0;
+    if (!forest_gathered_faces) return prepared_points ? 4 : 5;
+    return forest_draw_selected == forest_draw_points ? 2 : 3;
+}
 /* True when this frame reused the prepared list instead of rebuilding it. The
 ** depth/partition/fog timers are then STALE -- they hold the last rebuild's
 ** figures -- and must not be read as this frame's work. */
@@ -632,6 +710,55 @@ bool __attribute__((optimize("Os"))) kokiri_opening_cache_load(void)
     return true;
 }
 
+/* Jo's cart heap hands out cache-through addresses (0x224xxxxx). The forest
+** bank is read every frame by scene prepare and SGL, so every access went to
+** the slow A-bus uncached (Mednafen 2026-10-12: prepare ~40 ms; Kronos does
+** not charge for it). Use the cached alias. Coherence: only CPUs write the
+** bank (write-through); the slave purges at each prepare job and SGL purges
+** it every frame (sbMakeDMATable); the master purges after the slave's
+** prepare and after a bank load. Idempotent; work-RAM pointers are unchanged. */
+#ifdef __sh__
+#define BANK_CACHED(p) ((__typeof__(p))((uintptr_t)(p) & ~(uintptr_t)0x20000000u))
+#else
+#define BANK_CACHED(p) (p)
+#endif
+/* 2026-10-12 step 3: the per-frame tables live in Low RAM (ram_low.h);
+** only the load-time tile records and the CLUTs stay in the cart heap. */
+#define FOREST_POINTS_BYTES   ((sizeof(POINT) * KOKIRI_VERTEX_COUNT + 15u) & ~15u)
+#define FOREST_POLYGONS_BYTES ((sizeof(POLYGON) * KOKIRI_POLYGON_COUNT + 15u) & ~15u)
+typedef char forest_bank_fits[FOREST_POINTS_BYTES + FOREST_POLYGONS_BYTES +
+    sizeof(ATTR) * KOKIRI_POLYGON_COUNT <= RAM_LOW_FOREST_BANK_BYTES ? 1 : -1];
+static bool bank_allocate(void)
+{
+#ifdef __sh__
+    if (!kokiri_pdata.pntbl) {
+        unsigned char *bank = (unsigned char *)RAM_LOW(RAM_LOW_FOREST_BANK_OFFSET);
+        kokiri_tiles = jo_malloc(sizeof(kokiri_tile) * KOKIRI_TILE_COUNT);
+        kokiri_cluts = jo_malloc(32 * KOKIRI_TILE_COUNT);
+        if (!kokiri_tiles || !kokiri_cluts) {
+            if (kokiri_tiles) jo_free(kokiri_tiles);
+            if (kokiri_cluts) jo_free(kokiri_cluts);
+            kokiri_tiles = 0; kokiri_cluts = 0;
+            return false;
+        }
+        kokiri_tiles = BANK_CACHED(kokiri_tiles);
+        kokiri_cluts = BANK_CACHED(kokiri_cluts);
+        kokiri_pdata.pntbl = (POINT *)bank;
+        kokiri_pdata.pltbl = (POLYGON *)(bank + FOREST_POINTS_BYTES);
+        kokiri_pdata.attbl = (ATTR *)(bank + FOREST_POINTS_BYTES + FOREST_POLYGONS_BYTES);
+    }
+    return true;
+#else
+    if (!kokiri_bank_allocate()) return false;
+    kokiri_pdata.pntbl = BANK_CACHED(kokiri_pdata.pntbl);
+    kokiri_pdata.pltbl = BANK_CACHED(kokiri_pdata.pltbl);
+    kokiri_pdata.attbl = BANK_CACHED(kokiri_pdata.attbl);
+    kokiri_tiles = BANK_CACHED(kokiri_tiles);
+    kokiri_cluts = BANK_CACHED(kokiri_cluts);
+    return true;
+#endif
+}
+
 static bool room_read(jo_file *file, void *target, unsigned int bytes,
                       const unsigned char **cached)
 {
@@ -704,7 +831,7 @@ bool __attribute__((optimize("Os"))) kokiri_scene_load_backdrop(unsigned int sce
     jo_img      image;
     int         bytes = 0;
 
-    if (!asset_scene_name(name, scene, (int)room, "RGB") || !kokiri_bank_allocate()) return false;
+    if (!asset_scene_name(name, scene, (int)room, "RGB") || !bank_allocate()) return false;
     asset_loading(name);
     /* Whole image in one CD read, then one VDP2 upload. */
     image.data = (jo_color *)ram_cart_load_scratch(name, &bytes);
@@ -950,6 +1077,7 @@ static void __attribute__((optimize("O2"))) field_rebuild(void)
     forest_polygon_count = kokiri_pdata.nbPolygon = p;
     forest_object_count = o;
     forest_prepared = false;
+    forest_gathered_faces = 0; /* bank rebuilt, old indices no longer exist */
 }
 
 /* Release leaving pieces' tiles, then acquire entering ones, then rebuild.
@@ -1080,6 +1208,7 @@ static bool __attribute__((optimize("Os"))) field_stream_load(unsigned int scene
     if (sprite_next > kokiri_sprite_peak) kokiri_sprite_peak = sprite_next;
     forest_tile_count = field_head->slots;
     for (i = 0; i < forest_tile_count; ++i) tile_fog[i] = 255;
+    tile_list_full = true;
     forest_lods = (mesh_lod_t *)ram_cart_fixed(RAM_CART_MESH_LOD_OFFSET, RAM_CART_MESH_LOD_BYTES);
     forest_lod_count = 0;
     field_active = true;
@@ -1143,14 +1272,14 @@ static bool __attribute__((optimize("Os"))) room_load_bank(unsigned int scene, u
     unsigned int header[8], expected, i;
     if (field_active) field_stream_free();
     if (scene == SCENE_SPOT00 && room == 0) {
-        if (!kokiri_bank_allocate()) return false;
+        if (!bank_allocate()) return false;
         return field_stream_load(scene, room);
     }
     char mesh_name[12], pixel_name[12];
     jo_file file;
     bool ok;
     if (!asset_scene_name(mesh_name, scene, (int)room, "MSH") ||
-        !asset_scene_name(pixel_name, scene, (int)room, "TEX") || !kokiri_bank_allocate()) return false;
+        !asset_scene_name(pixel_name, scene, (int)room, "TEX") || !bank_allocate()) return false;
     const unsigned char *cached;
     int mesh_bytes = 0;
     /* Whole .MSH in one CD read; no permanent copy in the heap. */
@@ -1212,6 +1341,7 @@ static bool __attribute__((optimize("Os"))) room_load_bank(unsigned int scene, u
              (forest_lods[i].lod0_object == MESH_LOD_NONE ||
               forest_lods[i].lod0_object < header[5]);
     if (!ok) return false;
+    slCashPurge();   /* a CD read may have bypassed the cached bank alias */
     forest_lod_count = header[6];
     relocate_resident(scene == KOKIRI_FIELD_SCENE ? CUTSCENE_TEXTURE_BASE : GAME_TEXTURE_BASE);
     /* Every bank replaces the same forest slots; Link/fairies stay resident. */
@@ -1231,7 +1361,9 @@ static bool __attribute__((optimize("Os"))) room_load_bank(unsigned int scene, u
     for (i=0;i<forest_polygon_count;++i)
         forest_mesh[i] = forest_face_flags(i);
     for (i=0;i<forest_tile_count;++i) tile_fog[i] = 255;
+    tile_list_full = true;
     forest_prepared = false;
+    forest_gathered_faces = 0;
     forest_room = (int)room;
     requested_room = (int)room;
     forest_scene = (unsigned short)scene;
@@ -1341,6 +1473,7 @@ bool __attribute__((optimize("Os"))) kokiri_link_set_age(bool adult)
 bool __attribute__((optimize("Os"))) kokiri_scene_load(void)
 {
     forest_prepared = false;
+    forest_gathered_faces = 0;
     forest_fog_init();
 #ifndef KOKIRI_STREAM_ROOMS
     if (!mesh_load(KOKIRI_PIXEL_FILE, KOKIRI_PIXEL_BYTES, kokiri_tiles,
@@ -1392,6 +1525,7 @@ bool __attribute__((optimize("Os"))) kokiri_scene_load(void)
         for (i = 0; i < KOKIRI_POLYGON_COUNT; ++i)
             forest_mesh[i] = forest_face_flags(i);
         for (i = 0; i < KOKIRI_TILE_COUNT; ++i) tile_fog[i] = 255;
+        tile_list_full = true;
     }
     return (true);
 #endif
@@ -1790,7 +1924,10 @@ static bool forest_lod_changed(void)
 ** SH-2 (kokiri_frame_slave_kick) while the master draws the core-reading
 ** actors; kokiri_scene_draw then only waits and submits. On the slave the
 ** frame timers are skipped: they extend the master's FRT. */
-static unsigned char prep_on_slave;
+static unsigned int prep_progress;
+#define PREP_PROGRESS (*(volatile unsigned int *)((uintptr_t)&prep_progress | 0x20000000u))
+/* A heartbeat distinguishes slow, advancing work from a lost/stuck job. */
+#define PREP_PROGRESS_STEP() do { if (on_slave) ++PREP_PROGRESS; } while (0)
 /* 2026-10-09 speed: side-frustum cull. Polygons wholly beyond one side plane
 ** of the view (plus a 32-unit margin) are not submitted; SGL would clip them
 ** away after paying their per-polygon cost. Exact and conservative: the side
@@ -1801,33 +1938,108 @@ static unsigned char prep_on_slave;
 ** Off when the camera rolls. 32-bit: |side|,|depth| < 32768, |dy| < 65536,
 ** dist <= 1024. */
 static int side_cull_dist, side_sin_q8, side_cos_q8;
-static int side_out(const unsigned short *corner)
+static short side_mask(int depth, int dy, int side)
 {
-    int i, right = 1, left = 1;
-    for (i = 0; i < 4; ++i) {
-        unsigned int v = corner[i];
-        int depth = forest_depth[v];
-        int dy = -(kokiri_pdata.pntbl[v][1] >> 16) - recomp_camera.y;
-        int zb, sd, lim;
-        if (dy < 0) dy = -dy;
-        zb = depth >= 0 ? depth : ((depth * side_cos_q8) >> 8) + 1;
-        zb += ((dy * side_sin_q8 + 255) >> 8) + 2;
-        lim = zb * 160 + 32 * side_cull_dist;
-        sd = forest_side[v] * side_cull_dist;
-        if (sd <= lim) right = 0;
-        if (-sd <= lim) left = 0;
-        if (!right && !left) return 0;
-    }
-    return 1;
+    int zb, sd, lim;
+    if (dy < 0) dy = -dy;
+    zb = depth >= 0 ? depth : ((depth * side_cos_q8) >> 8) + 1;
+    zb += ((dy * side_sin_q8 + 255) >> 8) + 2;
+    lim = zb * 160 + 32 * side_cull_dist;
+    sd = side * side_cull_dist;
+    return (short)((sd > lim ? 1 : 0) | (-sd > lim ? 2 : 0));
 }
-#define PREP_TIMER_BEGIN(p) do { if (!prep_on_slave) frame_timer_begin(p); } while (0)
-#define PREP_TIMER_END(p) do { if (!prep_on_slave) frame_timer_end(p); } while (0)
-static unsigned int scene_prepare(void)
+static int side_out(const unsigned short *corner, const unsigned char *sides)
 {
-    unsigned int i, j, visible = forest_polygon_count;
+    /* Shared vertices pay pitch/side arithmetic once in the depth pass. */
+    return sides[corner[0]] & sides[corner[1]] &
+           sides[corner[2]] & sides[corner[3]];
+}
+/* Phase times for the Debug overlay (row 18): the calling CPU's own FRT,
+** published cache-through and summed by the master (prep_wait / below). */
+static unsigned int prep_phase_us[3], prep_fog_tiles, prep_pack_us;
+#define PREP_PHASE(v) (*(volatile unsigned int *)((uintptr_t)&(v) | 0x20000000u))
+#define PREP_TIMER_BEGIN(p) do { if (!on_slave) frame_timer_begin(p); phase_t0 = frame_timer_frc(); } while (0)
+#define PREP_TIMER_END(p) do { if (!on_slave) frame_timer_end(p);     PREP_PHASE(prep_phase_us[(p) - FRAME_PHASE_DEPTH]) +=         frame_timer_ticks_to_us((uint16_t)(frame_timer_frc() - phase_t0)); } while (0)
+/* Candidate envelope for the selected variant. A led centre moves ahead of
+ * the camera along its last-frame motion (3/4 of the position radius) and
+ * turns ahead with its yaw (4 frames, at most 3/4 of the angle), so steady
+ * running crosses the whole set instead of half of it. The current camera
+ * must be inside; otherwise the envelope is centred on it. */
+static fe_camera __attribute__((noinline, optimize("Os"))) forest_envelope_begin(int32_t sine, int32_t cosine, int motion_x,
+                                       int motion_y, int motion_z, int motion_yaw)
+{
+    unsigned variant = forest_envelope_enabled;
+    int32_t position = variant >= 3 ? 128 : FE_POSITION;
+    int32_t angle = variant == 4 ? 512 : FE_ANGLE;
+    int32_t x = recomp_camera.x, y = recomp_camera.y, z = recomp_camera.z;
+    int32_t ps, pc, s = sine, c = cosine;
+    uint16_t yaw = recomp_yaw;
+    int l1 = fe_abs(motion_x) + fe_abs(motion_y) + fe_abs(motion_z);
+    fe_camera result;
+    kokiri_camera_sincos((uint16_t)recomp_pitch, &ps, &pc);
+    if (variant >= 2) {
+        int reach = position * 3 / 4, turn = motion_yaw * 4, cap = angle * 3 / 4;
+        if (l1 > 0 && l1 <= 1024) {   /* larger steps are cuts or warps */
+            x += motion_x * reach / l1;
+            y += motion_y * reach / l1;
+            z += motion_z * reach / l1;
+        }
+        if (turn > cap) turn = cap;
+        if (turn < -cap) turn = -cap;
+        if (turn) {
+            yaw = (uint16_t)(yaw + turn);
+            kokiri_camera_sincos(yaw, &s, &c);
+        }
+    }
+    result = fe_begin_sized(x, y, z, yaw, (uint16_t)recomp_pitch, recomp_screen_distance(),
+        cutscene_camera_roll(), s, c, ps, pc, position, angle);
+    if (!fe_contains(&result, recomp_camera.x, recomp_camera.y, recomp_camera.z, recomp_yaw,
+                     (uint16_t)recomp_pitch, recomp_screen_distance(), cutscene_camera_roll()))
+        result = fe_begin_sized(recomp_camera.x, recomp_camera.y, recomp_camera.z, recomp_yaw,
+            (uint16_t)recomp_pitch, recomp_screen_distance(), cutscene_camera_roll(),
+            sine, cosine, ps, pc, position, angle);
+    return result;
+}
+/* Debug row 23: why the last envelope no longer holds the camera:
+ * 0 position, 1 yaw/pitch, 2 other (FOV, roll, LOD, FAR, invalid). */
+static unsigned __attribute__((noinline, optimize("Os"))) forest_envelope_exit(void)
+{
+    const fe_camera *e = &forest_envelope;
+    if (!e->valid || e->distance != recomp_screen_distance() || e->roll != cutscene_camera_roll())
+        return 2;
+    if (fe_abs(recomp_camera.x - e->x) + fe_abs(recomp_camera.y - e->y) +
+        fe_abs(recomp_camera.z - e->z) > e->position) return 0;
+    if (fe_abs(fe_angle_delta(recomp_yaw, e->yaw)) > e->angle ||
+        fe_abs(fe_angle_delta((uint16_t)recomp_pitch, e->pitch)) > e->angle) return 1;
+    return 2;
+}
+static unsigned int scene_prepare(bool on_slave)
+{
+    unsigned int i, j, visible = forest_polygon_count, fog_tiles = 0;
+    uint16_t phase_t0, build_t0 = 0;
+    int motion_x, motion_y, motion_z, motion_yaw;
     int32_t sine, cosine;
     int32_t fog_offset=0;
-    if (forest_prepared && prepared_x == recomp_camera.x &&
+    bool candidate_mode = false, candidate_build = false, candidate_refit = false;
+    short *depth = prep_depth, *far_depth = prep_depth;
+    unsigned char *sides = prep_side;
+    POINT *points = kokiri_pdata.pntbl;
+    unsigned point_count = forest_vertex_count;
+#if defined(KOKIRI_STREAM_ROOMS) && !defined(DOSEI_WARP_PROBE) && !defined(DOSEI_ACTOR_ORDER_PROBE)
+    candidate_mode = forest_envelope_enabled && forest_scene == SCENE_SPOT04 && forest_pack_enabled == 2;
+#endif
+    {
+        int motion_ok = lead_valid;
+        motion_x = motion_ok ? recomp_camera.x - lead_x : 0;
+        motion_y = motion_ok ? recomp_camera.y - lead_y : 0;
+        motion_z = motion_ok ? recomp_camera.z - lead_z : 0;
+        motion_yaw = motion_ok ? fe_angle_delta(recomp_yaw, lead_yaw) : 0;
+        lead_x = recomp_camera.x; lead_y = recomp_camera.y; lead_z = recomp_camera.z;
+        lead_yaw = recomp_yaw; lead_valid = true;
+    }
+    if (candidate_mode != prepared_envelope_mode) forest_prepared = false;
+    forest_candidate_reused = false;
+    if (forest_prepared && prepared_pack == forest_pack_enabled && prepared_x == recomp_camera.x &&
         (forest_scene != SCENE_SPOT00 ||
          (prepared_link_x==recomp_link.x && prepared_link_z==recomp_link.z)) &&
         prepared_y == recomp_camera.y && prepared_z == recomp_camera.z &&
@@ -1838,11 +2050,58 @@ static unsigned int scene_prepare(void)
 #endif
         ) {
         forest_reused = true;
+        forest_candidate_reused = candidate_mode && forest_candidate_valid;
+        PREP_PHASE(prep_phase_us[0]) = PREP_PHASE(prep_phase_us[1]) =
+            PREP_PHASE(prep_phase_us[2]) = PREP_PHASE(prep_fog_tiles) = 0;
+        PREP_PHASE(prep_pack_us) = 0;
+        PREP_PHASE(forest_env_builds) = PREP_PHASE(forest_env_build_us) = 0;
+        PREP_PHASE(forest_env_exits[0]) = PREP_PHASE(forest_env_exits[1]) =
+            PREP_PHASE(forest_env_exits[2]) = 0;
         return prepared_visible;
     }
     forest_reused = false;
+    PREP_PHASE(prep_phase_us[0]) = PREP_PHASE(prep_phase_us[1]) =
+        PREP_PHASE(prep_phase_us[2]) = PREP_PHASE(prep_fog_tiles) = PREP_PHASE(prep_pack_us) = 0;
+    PREP_PHASE(forest_env_builds) = PREP_PHASE(forest_env_build_us) = 0;
+    PREP_PHASE(forest_env_exits[0]) = PREP_PHASE(forest_env_exits[1]) =
+        PREP_PHASE(forest_env_exits[2]) = 0;
+    prepared_envelope_mode = candidate_mode;
+#ifdef KOKIRI_STREAM_ROOMS
+    candidate_refit = candidate_mode && forest_prepared && forest_candidate_valid &&
+        forest_candidate_far == FOREST_FAR &&
+        fe_contains(&forest_envelope, recomp_camera.x, recomp_camera.y, recomp_camera.z,
+                    recomp_yaw, (uint16_t)recomp_pitch, recomp_screen_distance(), cutscene_camera_roll()) &&
+        !forest_lod_changed();
+#endif
+    forest_candidate_reused = candidate_refit;
+    candidate_build = candidate_mode && !candidate_refit;
+    if (candidate_build && forest_prepared && forest_candidate_valid)
+        ++PREP_PHASE(forest_env_exits[forest_envelope_exit()]);
+    if (!candidate_refit) forest_candidate_valid = false;
+prepare_again:
+    visible = candidate_refit ? forest_candidates : forest_polygon_count;
+    points = candidate_refit ? forest_draw_selected : kokiri_pdata.pntbl;
+    point_count = candidate_refit ? prepared_points : forest_vertex_count;
+    /* High gathered points occupy forest_work; the forward map is dead.
+     * 512 shorts + 512 side bytes fit its existing 4094-byte Low-RAM span.
+     * A larger view uses the spill bank, leaving all high scratch free. */
+    depth = candidate_refit && points == forest_draw_points ? forest_depth : prep_depth;
+    sides = candidate_refit && points == forest_draw_points ?
+        (unsigned char *)(forest_depth + FOREST_DRAW_POINTS) : prep_side;
+    far_depth = candidate_build ? forest_depth : depth;
     PREP_TIMER_BEGIN(FRAME_PHASE_DEPTH);
+    if (!candidate_refit && forest_gathered_faces) {
+        forest_restore_vertices(kokiri_pdata.pltbl, forest_gathered_faces,
+                                (unsigned short *)forest_side);
+        forest_gathered_faces = 0;
+    }
     kokiri_camera_sincos(recomp_yaw, &sine, &cosine);
+    if (candidate_build) {
+        build_t0 = frame_timer_frc();
+        forest_envelope = forest_envelope_begin(sine, cosine, motion_x, motion_y,
+                                                motion_z, motion_yaw);
+        if (!forest_envelope.valid) { candidate_build = false; far_depth = depth; }
+    }
     /* Field fade starts ahead of Link, not the raised/rotating camera.
      * Q8 trig keeps this bounded 32-bit; visibility retains eye depths. */
     if (forest_scene==SCENE_SPOT00)
@@ -1854,7 +2113,10 @@ static unsigned int scene_prepare(void)
                  b->maximum[0] < recomp_camera.x ? recomp_camera.x-b->maximum[0] : 0;
         int dz = b->minimum[2] > recomp_camera.z ? b->minimum[2]-recomp_camera.z :
                  b->maximum[2] < recomp_camera.z ? recomp_camera.z-b->maximum[2] : 0;
-        object_visible[i] = (int64_t)dx*dx+(int64_t)dz*dz <= FOREST_FAR*FOREST_FAR;
+        object_visible[i] = candidate_build ?
+            fe_object_candidate(&forest_envelope, b->minimum[0], b->minimum[2],
+                                b->maximum[0], b->maximum[2], FOREST_FAR) :
+            (int64_t)dx*dx+(int64_t)dz*dz <= FOREST_FAR*FOREST_FAR;
     }
     forest_lod_changed();
     for (i = 0; i < forest_lod_count; ++i) {
@@ -1875,44 +2137,64 @@ static unsigned int scene_prepare(void)
         side_cull_dist = (!cutscene_camera_roll() && pitch > -8192 && pitch < 8192 &&
                           pc > 0 && dist > 0 && dist <= 1024) ? dist : 0;
     }
-    for (i = 0; i < forest_vertex_count; ++i) {
-        int x = (kokiri_pdata.pntbl[i][0] >> 16) - recomp_camera.x;
-        int z = (kokiri_pdata.pntbl[i][2] >> 16) - recomp_camera.z;
-        forest_depth[i] = (short)(((int64_t)x * sine + (int64_t)z * cosine) >> 16);
-        forest_side[i] = (short)(((int64_t)x * cosine - (int64_t)z * sine) >> 16);
+    for (i = 0; i < point_count; ++i) {
+        if (!(i & 63u)) PREP_PROGRESS_STEP();
+        int x = points[i][0] >> 16, y = -(points[i][1] >> 16), z = points[i][2] >> 16;
+        if (candidate_build) {
+            fe_vertex bound = fe_bound_vertex(&forest_envelope, x, y, z);
+            depth[i] = (short)bound.near_depth; far_depth[i] = (short)bound.far_depth;
+            sides[i] = (unsigned char)bound.side;
+        } else {
+            x -= recomp_camera.x; z -= recomp_camera.z;
+            depth[i] = (short)(((int64_t)x * sine + (int64_t)z * cosine) >> 16);
+            sides[i] = side_cull_dist ? side_mask(depth[i], y - recomp_camera.y,
+                (short)(((int64_t)x * cosine - (int64_t)z * sine) >> 16)) : 0;
+        }
     }
     PREP_TIMER_END(FRAME_PHASE_DEPTH);
     PREP_TIMER_BEGIN(FRAME_PHASE_PARTITION);
-    for (i = 0; i < forest_tile_count; ++i) tile_depth[i] = 32767;
-    mesh_near_depth = 32767;
+    /* The conservative pass only gathers candidates. Exact refit below
+     * owns fog/mesh diagnostics, so avoid clearing the Low-RAM table twice. */
+    if (!candidate_build) {
+        /* Otherwise the previous fog pass left every entry at 32767. */
+        if (tile_list_full)
+            for (i = 0; i < forest_tile_count; ++i) tile_depth[i] = 32767;
+        tile_list_n = 0;
+        mesh_near_depth = 32767;
 #ifdef DOSEI_WARP_PROBE
-    warp_near_depth = 32767; warp_near_tile = -1;
-    warp_span_score = 0; warp_span_tile = -1;
+        warp_near_depth = 32767; warp_near_tile = -1;
+        warp_span_score = 0; warp_span_tile = -1;
 #endif
-    mesh_near_far = 32767;
-    mesh_near_tile = -1;
-    mesh_near_polygon = -1;
+        mesh_near_far = 32767;
+        mesh_near_tile = -1;
+        mesh_near_polygon = -1;
+    }
     /* Two-ended partition. Skip rejected tails without copying them; swap
      * only a rejected front with an accepted tail. Unlike front compaction,
      * one newly rejected polygon cannot shift the entire accepted suffix.
      * An unchanged view needs ZERO polygon/attribute copies. */
     for (i = 0; i < visible;) {
+        if (!(i & 63u)) PREP_PROGRESS_STEP();
         int nearest, farthest;
         /* One pass over the four corners, unrolled.
          *
          * The SH7604 does have a 4 KB unified cache, but the working set here
          * does not fit it: the POLYGON table alone is ~40 KB and is walked
-         * linearly every frame, and forest_depth[] is indexed by vertex id, so
+         * linearly every frame, and prep_depth[] is indexed by vertex id, so
          * the second lookup scatters. What this removes is the inner loop's
          * own overhead and the repeated indirection through
          * pltbl[i].Vertices[j], on a loop that runs per polygon per frame. */
         {
             const unsigned short *corner = kokiri_pdata.pltbl[i].Vertices;
-            int d0 = forest_depth[corner[0]], d1 = forest_depth[corner[1]];
-            int d2 = forest_depth[corner[2]], d3 = forest_depth[corner[3]];
+            int d0 = depth[corner[0]], d1 = depth[corner[1]];
+            int d2 = depth[corner[2]], d3 = depth[corner[3]];
             nearest = d0 < d1 ? d0 : d1;
             if (d2 < nearest) nearest = d2;
             if (d3 < nearest) nearest = d3;
+            if (candidate_build) {
+                d0 = far_depth[corner[0]]; d1 = far_depth[corner[1]];
+                d2 = far_depth[corner[2]]; d3 = far_depth[corner[3]];
+            }
             farthest = d0 > d1 ? d0 : d1;
             if (d2 > farthest) farthest = d2;
             if (d3 > farthest) farthest = d3;
@@ -1926,27 +2208,32 @@ static unsigned int scene_prepare(void)
         ** FARTHEST vertex keeps any polygon with a vertex still in front,
         ** including one straddling the camera plane. */
         if (farthest < 0 || nearest > ((forest_mesh[i] & FOREST_FACE_LANDMARK) ? FIELD_LANDMARK_FAR : FOREST_FAR)
-            || (side_cull_dist && side_out(kokiri_pdata.pltbl[i].Vertices))
+            || (side_cull_dist && side_out(kokiri_pdata.pltbl[i].Vertices, sides))
 #ifdef KOKIRI_STREAM_ROOMS
             || (!(forest_mesh[i] & FOREST_FACE_LANDMARK) && !object_visible[kokiri_objects[i]])
 #endif
         ) {
             do {
                 --visible;
+                if (!(visible & 63u)) PREP_PROGRESS_STEP();
                 if (i == visible) break;
                 {
                     const unsigned short *corner = kokiri_pdata.pltbl[visible].Vertices;
-                    int d0 = forest_depth[corner[0]], d1 = forest_depth[corner[1]];
-                    int d2 = forest_depth[corner[2]], d3 = forest_depth[corner[3]];
+                    int d0 = depth[corner[0]], d1 = depth[corner[1]];
+                    int d2 = depth[corner[2]], d3 = depth[corner[3]];
                     nearest = d0 < d1 ? d0 : d1;
                     if (d2 < nearest) nearest = d2;
                     if (d3 < nearest) nearest = d3;
+                    if (candidate_build) {
+                        d0 = far_depth[corner[0]]; d1 = far_depth[corner[1]];
+                        d2 = far_depth[corner[2]]; d3 = far_depth[corner[3]];
+                    }
                     farthest = d0 > d1 ? d0 : d1;
                     if (d2 > farthest) farthest = d2;
                     if (d3 > farthest) farthest = d3;
                 }
             } while (farthest < 0 || nearest > ((forest_mesh[visible] & FOREST_FACE_LANDMARK) ? FIELD_LANDMARK_FAR : FOREST_FAR)
-                     || (side_cull_dist && side_out(kokiri_pdata.pltbl[visible].Vertices))
+                     || (side_cull_dist && side_out(kokiri_pdata.pltbl[visible].Vertices, sides))
 #ifdef KOKIRI_STREAM_ROOMS
                      || (!(forest_mesh[visible] & FOREST_FACE_LANDMARK) && !object_visible[kokiri_objects[visible]])
 #endif
@@ -1968,17 +2255,22 @@ static unsigned int scene_prepare(void)
 #endif
             }
         }
+        /* Expanded candidates are gathered first. The second, exact pass
+         * updates fog/sort only for faces visible at the actual camera. */
+        if (candidate_build) { ++i; continue; }
         {
             ATTR *attr = &kokiri_pdata.attbl[i];
+            /* One Low-RAM read: char stores below would force reloads. */
+            const unsigned char mesh = forest_mesh[i];
             unsigned int tile = attr->texno - forest_sprite_base;
-            if (forest_scene == STORY_BANK_NAVI && (forest_mesh[i] & 4)) {
+            if (forest_scene == STORY_BANK_NAVI && (mesh & 4)) {
                 const unsigned short *v = kokiri_pdata.pltbl[i].Vertices;
                 int low_x = 32767, high_x = -32768;
                 int low_z = 32767, high_z = -32768;
                 int dx, dz;
                 for (j = 0; j < 4; ++j) {
-                    int x = kokiri_pdata.pntbl[v[j]][0] >> 16;
-                    int z = kokiri_pdata.pntbl[v[j]][2] >> 16;
+                    int x = points[v[j]][0] >> 16;
+                    int z = points[v[j]][2] >> 16;
                     if (x < low_x) low_x = x;
                     if (x > high_x) high_x = x;
                     if (z < low_z) low_z = z;
@@ -2008,33 +2300,45 @@ static unsigned int scene_prepare(void)
             ** them. A marked plane at or above the eye keeps SORT_CEN: a deck
             ** seen from below must still be able to occlude him. Baked Y is
             ** negated, so world height is -y. */
-            if (forest_mesh[i] & FOREST_FACE_LANDMARK) {
-                /* CEN sums four Q16 depths and overflows beyond 8192.
-                 * MIN uses one bounded depth and retains world occlusion. */
-                attr->sort = (attr->sort & ~3u) | SORT_MIN;
-            } else if (forest_mesh[i] & 2) {
-                int plane = -(kokiri_pdata.pntbl[
-                                  kokiri_pdata.pltbl[i].Vertices[0]][1] >> 16);
-                attr->sort = (attr->sort & ~3u) |
-                             (plane < recomp_camera.y - 8 ? SORT_MAX : SORT_CEN);
-            } else
-                attr->sort = (attr->sort & ~3u) | SORT_CEN;
+            {
+                /* Unchanged rows are not rewritten: ATTR lives in Low RAM
+                 * and every store goes to the bus (write-through cache). */
+                unsigned key = SORT_CEN, sort;
+                if (mesh & FOREST_FACE_LANDMARK) {
+                    /* CEN sums four Q16 depths and overflows beyond 8192.
+                     * MIN uses one bounded depth and retains world occlusion. */
+                    key = SORT_MIN;
+                } else if (mesh & 2) {
+                    int plane = -(points[
+                                      kokiri_pdata.pltbl[i].Vertices[0]][1] >> 16);
+                    key = plane < recomp_camera.y - 8 ? SORT_MAX : SORT_CEN;
+                }
+                sort = (attr->sort & ~3u) | key;
+                if (attr->sort != sort) attr->sort = sort;
+            }
 #ifdef DOSEI_ACTOR_ORDER_PROBE
             /* Only the parked command-order experiment consumes this tag. */
             attr->gstb = (unsigned short)(i + 1);
 #endif
             if (tile < forest_tile_count && (attr->dir & 7) != 4) {
-                int fog_depth = (forest_mesh[i] & FOREST_FACE_LANDMARK) ? 0 : nearest+fog_offset;
-                if (fog_depth < tile_depth[tile]) tile_depth[tile] = fog_depth;
+                int fog_depth = (mesh & FOREST_FACE_LANDMARK) ? 0 : nearest+fog_offset;
+                int old_depth = tile_depth[tile];
+                if (fog_depth < old_depth) {
+                    if (old_depth == 32767 && !tile_list_full) {
+                        if (tile_list_n < TILE_LIST_MAX) tile_list[tile_list_n++] = (unsigned short)tile;
+                        else tile_list_full = true;
+                    }
+                    tile_depth[tile] = fog_depth;
+                }
             }
 #ifdef DOSEI_WARP_PROBE
             {
                 const unsigned short *v = kokiri_pdata.pltbl[i].Vertices;
                 int extent = 0, axis, corner, range = 32767;
                 for (axis = 0; axis < 3; ++axis) {
-                    int low = kokiri_pdata.pntbl[v[0]][axis] >> 16, high = low;
+                    int low = points[v[0]][axis] >> 16, high = low;
                     for (corner = 1; corner < 4; ++corner) {
-                        int value = kokiri_pdata.pntbl[v[corner]][axis] >> 16;
+                        int value = points[v[corner]][axis] >> 16;
                         if (value < low) low = value;
                         if (value > high) high = value;
                     }
@@ -2045,9 +2349,9 @@ static unsigned int scene_prepare(void)
                 ** side whose forward distance happened to be tiny, which is
                 ** not what the near view shows. */
                 for (corner = 0; corner < 4; ++corner) {
-                    int dx = (kokiri_pdata.pntbl[v[corner]][0] >> 16) - recomp_camera.x;
-                    int dy = -(kokiri_pdata.pntbl[v[corner]][1] >> 16) - recomp_camera.y;
-                    int dz = (kokiri_pdata.pntbl[v[corner]][2] >> 16) - recomp_camera.z;
+                    int dx = (points[v[corner]][0] >> 16) - recomp_camera.x;
+                    int dy = -(points[v[corner]][1] >> 16) - recomp_camera.y;
+                    int dz = (points[v[corner]][2] >> 16) - recomp_camera.z;
                     int ax = dx < 0 ? -dx : dx, ay = dy < 0 ? -dy : dy;
                     int az = dz < 0 ? -dz : dz, hi, mid, lo, estimate;
                     hi = ax > ay ? ax : ay; if (az > hi) hi = az;
@@ -2077,10 +2381,13 @@ static unsigned int scene_prepare(void)
                 }
             }
 #endif
-            attr->atrb &= ~MESHon;
-            if ((forest_mesh[i] & 1) ||
-                (!(forest_mesh[i] & FOREST_FACE_LANDMARK) && nearest+fog_offset > FOREST_MESH_START))
-                attr->atrb |= MESHon;
+            {
+                unsigned short atrb = attr->atrb & ~MESHon;
+                if ((mesh & 1) ||
+                    (!(mesh & FOREST_FACE_LANDMARK) && nearest+fog_offset > FOREST_MESH_START))
+                    atrb |= MESHon;
+                if (attr->atrb != atrb) attr->atrb = atrb;
+            }
             /* Record the closest DISTANCE-stippled polygon, with enough to
              * identify it: vertex ids pin the exact surface where a shared
              * tile cannot, and near/far together say whether it is a small
@@ -2088,7 +2395,7 @@ static unsigned int scene_prepare(void)
              * judgement is applied here -- authored stipple is excluded
              * because it is legitimate at any depth, and everything else is
              * left for the capture to explain. */
-            if ((attr->atrb & MESHon) && !(forest_mesh[i] & 1) &&
+            if ((attr->atrb & MESHon) && !(mesh & 1) &&
                 nearest < mesh_near_depth) {
                 const unsigned short *v = kokiri_pdata.pltbl[i].Vertices;
                 mesh_near_depth = nearest;
@@ -2097,44 +2404,104 @@ static unsigned int scene_prepare(void)
                 mesh_near_polygon = (short)i;
                 mesh_near_verts[0] = v[0]; mesh_near_verts[1] = v[1];
                 mesh_near_verts[2] = v[2]; mesh_near_verts[3] = v[3];
-                mesh_near_authored = (forest_mesh[i] & 1) != 0;
+                if (candidate_refit) for (j = 0; j < 4; ++j)
+                    mesh_near_verts[j] = ((unsigned short *)forest_side)[v[j]];
+                mesh_near_authored = (mesh & 1) != 0;
             }
             ++i;
         }
     }
     PREP_TIMER_END(FRAME_PHASE_PARTITION);
+    if (candidate_build) {
+        /* Keep every candidate mapped, including the temporarily hidden
+         * suffix. It can enter the view without a bank-wide rebuild. */
+        phase_t0 = frame_timer_frc();
+        prepared_points = forest_gather_vertices_dual(kokiri_pdata.pntbl, forest_vertex_count,
+            kokiri_pdata.pltbl, visible, forest_draw_points,
+            forest_envelope_enabled == 5 ? 0 : FOREST_DRAW_POINTS,
+            forest_draw_spill, KOKIRI_VERTEX_COUNT, &forest_draw_selected,
+            (unsigned short *)forest_depth, (unsigned short *)forest_side);
+        PREP_PHASE(prep_pack_us) += frame_timer_ticks_to_us((uint16_t)(frame_timer_frc() - phase_t0));
+        ++PREP_PHASE(forest_env_builds);
+        PREP_PHASE(forest_env_build_us) +=
+            frame_timer_ticks_to_us((uint16_t)(frame_timer_frc() - build_t0));
+        candidate_build = false;
+        if (prepared_points || !visible) {
+            forest_candidates = forest_gathered_faces = visible;
+            forest_candidate_far = FOREST_FAR;
+            forest_candidate_valid = candidate_refit = true;
+        }
+        /* Capacity failure never mutates indices; retry the exact path. */
+        goto prepare_again;
+    }
     PREP_TIMER_BEGIN(FRAME_PHASE_FOG);
     /* Shared tiles use the nearest referencing surface to avoid fogging a
      * nearby floor simply because the same tile occurs on a distant wall. */
-    for (i = 0; i < forest_tile_count; ++i) {
-        int amount;
+    {
+    unsigned visit, visits = tile_list_full ? forest_tile_count : tile_list_n;
+    for (visit = 0; visit < visits; ++visit) {
+        if (!(visit & 31u)) PREP_PROGRESS_STEP();
+        int amount, depth_now;
         const unsigned char *red, *green;
-        volatile unsigned short *palette =
-            (volatile unsigned short *)(forest_palette + i * 32);
+        volatile unsigned short *palette;
+        unsigned short entry[16];
+        i = tile_list_full ? visit : tile_list[visit];
+        palette = (volatile unsigned short *)(forest_palette + i * 32);
         /* Invisible tiles retain their last palette. Recompute on re-entry,
          * not twice (full fog then visible fog) whenever they cross a plane. */
-        if (tile_depth[i] == 32767) continue;
+        depth_now = tile_depth[i];
+        if (depth_now == 32767) continue;
+        tile_depth[i] = 32767;   /* ready for the next exact pass */
         /* Most tiles are either unused/far or fully clear. Avoid signed
          * division for those, preserving the exact original fog steps. */
-        if (tile_depth[i] <= FOREST_FOG_START) amount = 0;
-        else if (tile_depth[i] >= FOREST_FOG_END) amount = 16;
-        else amount = (tile_depth[i] - FOREST_FOG_START) * 16 /
+        if (depth_now <= FOREST_FOG_START) amount = 0;
+        else if (depth_now >= FOREST_FOG_END) amount = 16;
+        else amount = (depth_now - FOREST_FOG_START) * 16 /
                       (FOREST_FOG_END - FOREST_FOG_START);
         if (tile_fog[i] == amount) continue;
         tile_fog[i] = (unsigned char)amount;
+        ++fog_tiles;
         red = fog_channel[0][amount];
         green = fog_channel[1][amount];
         for (j = 0; j < 16; ++j) {
             unsigned short source = kokiri_cluts[i][j];
             int r = source & 31, g = (source >> 5) & 31, b = (source >> 10) & 31;
-            if (!source) { palette[j] = 0; continue; }
+            if (!source) { entry[j] = 0; continue; }
             r = red[r];
             g = green[g];
             b = (b*(16-amount) + ((forest_ground_colour >> 10) & 31)*amount) >> 4;
-            palette[j] = (unsigned short)(0x8000 | r | (g << 5) | (b << 10));
+            entry[j] = (unsigned short)(0x8000 | r | (g << 5) | (b << 10));
         }
+        /* VDP1 VRAM is contended while VDP1 draws: half the bus accesses. */
+#if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
+        for (j = 0; j < 16; j += 2)
+            *(volatile uint32_t *)&palette[j] = ((uint32_t)entry[j] << 16) | entry[j + 1];
+#else
+        for (j = 0; j < 16; ++j) palette[j] = entry[j];
+#endif
+    }
+    tile_list_n = 0;
+    tile_list_full = false;
     }
     PREP_TIMER_END(FRAME_PHASE_FOG);
+    PREP_PHASE(prep_fog_tiles) = fog_tiles;
+    /* Depth/side scratch is dead until the next prepare. Packing preserves
+     * hidden-face indices as well as visible geometry. SGL need transform
+     * only the referenced prefix, not every vertex in the room bank. */
+    phase_t0 = frame_timer_frc();
+    prepared_pack = forest_pack_enabled;
+    if (!candidate_refit && prepared_pack == 2) {
+        prepared_points = forest_gather_vertices_dual(kokiri_pdata.pntbl, forest_vertex_count,
+            kokiri_pdata.pltbl, visible, forest_draw_points, FOREST_DRAW_POINTS,
+            forest_draw_spill, KOKIRI_VERTEX_COUNT, &forest_draw_selected,
+            (unsigned short *)forest_depth, (unsigned short *)forest_side);
+        if (prepared_points) forest_gathered_faces = visible;
+        else if (visible) prepared_points = forest_vertex_count;
+    } else if (!candidate_refit) prepared_points = prepared_pack ? forest_pack_vertices(kokiri_pdata.pntbl,
+        forest_vertex_count, kokiri_pdata.pltbl, forest_polygon_count, visible,
+        (unsigned short *)forest_depth, (unsigned short *)forest_side) : forest_vertex_count;
+    if (!candidate_refit)
+        PREP_PHASE(prep_pack_us) += frame_timer_ticks_to_us((uint16_t)(frame_timer_frc() - phase_t0));
     forest_prepared = true;
     prepared_x = recomp_camera.x; prepared_y = recomp_camera.y;
     prepared_link_x=recomp_link.x;prepared_link_z=recomp_link.z;
@@ -2144,27 +2511,72 @@ static unsigned int scene_prepare(void)
     return visible;
 }
 
+/* Master: add the last prepare's phase split to the frame's sub-timers. */
+static void prep_phase_take(void)
+{
+    PS_ACC(PS_PDEPTH, PREP_PHASE(prep_phase_us[0]));
+    PS_ACC(PS_PPART, PREP_PHASE(prep_phase_us[1]));
+    PS_ACC(PS_PFOG, PREP_PHASE(prep_phase_us[2]));
+    PS_ACC(PS_FOGN, PREP_PHASE(prep_fog_tiles));
+    PS_ACC(PS_VPACK, PREP_PHASE(prep_pack_us));
+    PS_ACC(PS_VUSED, prepared_points);
+    PS_ACC(PS_VTOTAL, forest_vertex_count);
+    /* Counts x100: the refresh mean reads as percent of frames. */
+    PS_ACC(PS_EBUILD, PREP_PHASE(forest_env_builds) * 100u);
+    PS_ACC(PS_EBTIME, PREP_PHASE(forest_env_build_us));
+    PS_ACC(PS_EXPOS, PREP_PHASE(forest_env_exits[0]) * 100u);
+    PS_ACC(PS_EXANG, PREP_PHASE(forest_env_exits[1]) * 100u);
+    PS_ACC(PS_EXOTH, PREP_PHASE(forest_env_exits[2]) * 100u);
+}
+
 static unsigned int prep_kicked, prep_done;
+static bool prep_master_ready;
+bool kokiri_parallel_prepare = true;
+static void scene_bank_purge(void *arg)
+{
+    (void)arg;
+    slCashPurge();
+}
+/* Same immutable camera/LOD/bank inputs as the slave job. The core updates
+ * its separate PlayState, while the master prepares scene geometry. */
+void kokiri_frame_master_prepare(bool scene)
+{
+    unsigned t0;
+    prep_master_ready = false;
+    if (!scene || forest_scene == STORY_BANK_PANORAMA) return;
+    t0 = frame_timer_ticks();
+    (void)scene_prepare(false);
+#ifndef DOSEI_NO_SLAVE_JOBS
+    /* If SGL later accepts the forest on its slave, it must see the master's
+     * repacked points/indices. FIFO puts this after any running core job and
+     * before a later forest transform; a busy queue makes SGL use the master. */
+    if (!forest_reused) slSlaveFunc(scene_bank_purge, 0);
+#endif
+    prep_master_ready = true;
+    PS_ACC(PS_MPREP, frame_timer_ticks_to_us(frame_timer_ticks() - t0));
+}
 static unsigned int sgl_drain_us;
 unsigned int kokiri_sgl_drain_us(void) { return sgl_drain_us; }
-static unsigned char job_prep;
 #define PREP_DONE (*(volatile unsigned int *)((uintptr_t)&prep_done | 0x20000000u))
 /* The frame's scene prepare on the slave (queued after the core update;
 ** Link's skin runs earlier, during the game steps: link_anim_frame_start). */
 static unsigned int frame_job_us;
 static void frame_slave_job(void *arg)
 {
-    /* Slave FRT, read only (see oot_core_host.c slave_job_body). */
-    volatile uint16_t *frc = (volatile uint16_t *)0xFFFFFE12;
-    unsigned int cks = *(volatile uint8_t *)0xFFFFFE16 & 3u, ticks;
-    uint16_t t0 = *frc;
+    /* Slave FRT (see oot_core_host.c slave_job_body). */
+    unsigned int cks, ticks;
+    uint16_t t0;
     (void)arg;
+    frame_timer_slave_prescale();
+    cks = *(volatile uint8_t *)0xFFFFFE16 & 3u;
+    t0 = frame_timer_frc();
     slCashPurge();                 /* camera, bank and LOD state from the master */
-    if (job_prep) (void)scene_prepare();
-    ticks = (uint16_t)(*frc - t0);
+    PREP_PROGRESS = 1;
+    (void)scene_prepare(true);
+    ticks = (uint16_t)(frame_timer_frc() - t0);
     *(volatile unsigned int *)((uintptr_t)&frame_job_us | 0x20000000u) =
         cks == 0 ? ticks * 279u / 1000u : cks == 1 ? ticks * 1117u / 1000u : ticks * 4470u / 1000u;
-    if (job_prep) PREP_DONE = 1;
+    PREP_DONE = 1;
 }
 
 unsigned int kokiri_frame_slave_us(void)
@@ -2181,12 +2593,9 @@ void kokiri_frame_slave_kick(bool scene)
 #endif
     bool prep = scene && !prep_kicked && forest_scene != STORY_BANK_PANORAMA;
     if (!prep) return;
-    job_prep = prep;
-    if (prep) {
-        PREP_DONE = 0;
-        *(volatile unsigned char *)((uintptr_t)&prep_on_slave | 0x20000000u) = 1;
-        prep_kicked = 1;
-    }
+    PREP_DONE = 0;
+    PREP_PROGRESS = 0;
+    prep_kicked = 1;
     slSlaveFunc(frame_slave_job, 0);
 }
 
@@ -2196,28 +2605,44 @@ void kokiri_frame_slave_kick(bool scene)
 ** jobs and the small actor submissions queue work there, and the master then
 ** transformed all 2047 forest vertices itself (~15 ms, overlay sc). Wait for
 ** the queue to drain (bounded) so the forest goes to the slave. */
+bool kokiri_prep_first = true;
 static void sgl_slave_drain(void)
 {
     unsigned int t0 = frame_timer_ticks();
+    /* Prep-first: the core job usually still holds the slave queue; waiting
+     * the full bound would only add to the master's time. */
+    if ((kokiri_parallel_prepare || kokiri_prep_first) && oot_core_async_busy()) { sgl_drain_us = 0; return; }
     uint32_t gbr;
     volatile uint32_t *read_ptr = (volatile uint32_t *)0x260FFC44u;
     __asm__ volatile("stc gbr,%0" : "=r"(gbr));
     while (*read_ptr != *(volatile uint32_t *)(gbr + 72u))
         if (frame_timer_ticks_to_us(frame_timer_ticks() - t0) > 8000u) break;
     sgl_drain_us = frame_timer_ticks_to_us(frame_timer_ticks() - t0);
+    PS_ACC(PS_WDRAIN, sgl_drain_us);
 }
 
 static void prep_wait(void)
 {
-    unsigned int t0;
+    unsigned int t0, start, progress;
     if (!prep_kicked) return;
-    t0 = frame_timer_ticks();
-    while (!PREP_DONE)   /* a lost slave job must show, not freeze */
-        if (frame_timer_ticks_to_us(frame_timer_ticks() - t0) > 250000u)
-            jo_core_error("slave scene prepare did not finish");
+    t0 = start = frame_timer_ticks();
+    progress = PREP_PROGRESS;
+    while (!PREP_DONE) {
+        unsigned int now = frame_timer_ticks(), next = PREP_PROGRESS;
+        if (next != progress) { progress = next; t0 = now; }
+        /* Queued behind the core: allow startup work time. Once running,
+         * require progress every 250 ms, rather than completion in 250 ms.
+         * Never rerun on the master while a slave still owns the bank. */
+        if (frame_timer_ticks_to_us(now - t0) > (progress ? 250000u : 2000000u)) {
+            jo_core_error("slave scene prepare stalled (%u)", progress);
+            t0 = frame_timer_ticks(); /* Start resumes this same pending job */
+        }
+    }
     slCashPurge();                 /* see the slave's tables */
-    prep_on_slave = 0;
     prep_kicked = 0;
+    PS_ACC(PS_WPREP, frame_timer_ticks_to_us(frame_timer_ticks() - start));
+    PS_ACC(PS_SPREP, kokiri_frame_slave_us());
+    prep_phase_take();
 }
 
 void                kokiri_scene_draw(void)
@@ -2240,17 +2665,33 @@ void                kokiri_scene_draw(void)
     }
     /* Geometry/fog depend on the camera. Unaccepted actor-order experiments
      * are excluded from normal builds. */
-    if (prep_kicked) {
+    if (prep_master_ready) {
+        prep_master_ready = false;
+        visible = prepared_visible;
+        prep_phase_take();
+    } else if (prep_kicked) {
         prep_wait();
         visible = prepared_visible;
-    } else visible = scene_prepare();
+    } else {
+        visible = scene_prepare(false);
+        prep_phase_take();
+    }
     sgl_slave_drain();
     kokiri_rejected = 0;
     kokiri_accepted_mask = 0;
     submitted = 0;
-    kokiri_pdata.nbPolygon = visible;
+    forest_draw_data = kokiri_pdata;
+    forest_draw_data.nbPolygon = visible;
+    forest_draw_data.nbPoint = prepared_points;
+    if (forest_gathered_faces) forest_draw_data.pntbl = forest_draw_selected;
     frame_timer_end(FRAME_PHASE_PREP);
-    submit(&kokiri_pdata, 1u);
+    {
+        /* Row 18 `sb`: forest submission on the master, which includes the
+         * master's own transform when SGL keeps it off the busy slave. */
+        unsigned int t0 = frame_timer_ticks();
+        if (visible) submit(&forest_draw_data, 1u);
+        PS_ACC(PS_SUBMIT, frame_timer_ticks_to_us(frame_timer_ticks() - t0));
+    }
     kokiri_pdata.nbPolygon = forest_polygon_count;
     field_haze_draw();
 }
@@ -2269,7 +2710,7 @@ static unsigned shadow_deferred;
 
 void kokiri_shadow_resolve(void)
 {
-    unsigned i, j;
+    unsigned i, j, t0 = frame_timer_ticks();
     for (i = 0; i < shadow_deferred; ++i) {
         int qx = shadow_defer[i][0], qy = shadow_defer[i][1], qz = shadow_defer[i][2];
         bg_vec_t origin = {(qx << 4) + 8, (qy << 4) + 16, (qz << 4) + 8};
@@ -2281,6 +2722,7 @@ void kokiri_shadow_resolve(void)
         cache_x[k] = qx; cache_y[k] = qy; cache_z[k] = qz;
         cache_floor[k] = bg_floor(&origin, 0, 0);
     }
+    PS_ACC(PS_SRESOLVE, frame_timer_ticks_to_us(frame_timer_ticks() - t0));
     shadow_deferred = 0;
 }
 
@@ -2364,7 +2806,7 @@ static void __attribute__((optimize("Os"))) shadow_submit(int x, int y, int z, u
 
 void                kokiri_link_draw(int x, int y, int z, int yaw)
 {
-    link_anim_sync();   /* the slave may still be skinning him */
+    link_anim_draw_sync(); /* join skin job; refresh after same-frame aim exit */
 #ifdef PLAYER_SOURCE
     /* Drawn while the slave runs the core update: use the Player's own
      * floor height instead of a collision query. */
@@ -2397,7 +2839,11 @@ void                kokiri_link_draw(int x, int y, int z, int yaw)
             jo_3d_translate_matrix(-LINK_ANIM_SHIFT_X, LINK_ANIM_SHIFT_Y,
                                     -LINK_ANIM_SHIFT_Z);
         }
-        unsigned visible_gear = player_items_stick() ? gameplay.equipped & ~GP_SWORD : gameplay.equipped;
+        bool held_stick = player_items_stick();
+#ifdef PLAYER_SOURCE
+        held_stick = oot_core_player_valid && (oot_core_player.held_visual & 1u);
+#endif
+        unsigned visible_gear = held_stick ? gameplay.equipped & ~GP_SWORD : gameplay.equipped;
         bool ocarina = (oot_core_ocarina_state() & 1u) != 0;
         if (ocarina) visible_gear |= 0x10000u;
         /* Adult gear owns Biggoron's blade and Mirror Shield geometry,
@@ -2779,6 +3225,16 @@ void                kokiri_nut_draw(void)
 {
     int32_t x, y, z;
     unsigned i;
+#ifdef PLAYER_SOURCE
+    /* Draw the authoritative Player's stick, including its source burn and
+     * break state. Never revive the retired C item/ammo state for rendering. */
+    if (oot_core_player_valid && !oot_core_player.hidden && (oot_core_player.held_visual & 1u)) {
+        const int *base = oot_core_player.blade_base, *tip = oot_core_player.blade_tip;
+        item_rod(base, tip, 1);
+        if (oot_core_player.held_visual & 2u)
+            kokiri_flame_draw(tip[0], tip[1], tip[2], recomp_world_clock());
+    }
+#else
     if (player_items_stick()) {
         int32_t base[3], tip[3];
         if (gameplay_blade_points(base, tip)) {
@@ -2786,6 +3242,7 @@ void                kokiri_nut_draw(void)
             if(player_items_burning())kokiri_flame_draw(tip[0],tip[1],tip[2],recomp_world_clock());
         }
     }
+#endif
     /* En_Arrow ARROW_SEED draws gEffSparklesDL (28-unit quad) at scale
      * 0.01*50: a 14-unit white billboard spun by gameplayFrames*4000. The 8
      * texel sparkle sprite at 1.75 units per texel is that size. A thrown
@@ -3214,7 +3671,11 @@ unsigned int __attribute__((optimize("Os"))) kokiri_bank_tile_upload(const void 
 {
 #ifdef KOKIRI_STREAM_ROOMS
     unsigned int   bytes = width * height / 2;   /* 4bpp */
-    unsigned int   padded = ((texture_base + vram_used + bytes + 31u) & ~31u)
+    /* Eligible cels use the existing CLUT padding to align their destination.
+     * For 16-byte sizes and eight-byte VRAM starts, the final allocation end
+     * is unchanged; small legacy cels retain their old layout. */
+    unsigned int   leading = (bytes & 15u) ? 0u : (0u-texture_base-vram_used)&15u;
+    unsigned int   padded = ((texture_base + vram_used + leading + bytes + 31u) & ~31u)
                             - texture_base - vram_used;
     unsigned int   clut_bytes = 32;              /* 16 entries of 15-bit RGB */
     unsigned char *vram = (unsigned char *)JO_VDP1_VRAM + texture_base
@@ -3229,9 +3690,10 @@ unsigned int __attribute__((optimize("Os"))) kokiri_bank_tile_upload(const void 
     {
         const unsigned char *source = (const unsigned char *)pixels;
 
+        for (i = 0; i < leading; ++i) vram[i] = 0;
         for (i = 0; i < bytes; ++i)
-            vram[i] = source[i];
-        for (; i < padded; ++i) vram[i] = 0;
+            vram[leading+i] = source[i];
+        for (i = leading+bytes; i < padded; ++i) vram[i] = 0;
     }
     /* As in mesh_load(), align the CLUT's absolute VRAM address to 32 bytes.
      * Eight-byte texture alignment alone corrupts palette fetches on hardware. */
@@ -3246,11 +3708,11 @@ unsigned int __attribute__((optimize("Os"))) kokiri_bank_tile_upload(const void 
     texture = &__jo_sprite_def[slot];
     texture->width = (unsigned short)width;
     texture->height = (unsigned short)height;
-    texture->adr = (unsigned short)VRAM_UNITS((unsigned int)vram
+    texture->adr = (unsigned short)VRAM_UNITS((unsigned int)(vram+leading)
                                               - JO_VDP1_VRAM);
     texture->size = JO_MULT_BY_32(width & 0x1f8) | height;
     __jo_sprite_pic[slot].color_mode = COL_16;
-    __jo_sprite_pic[slot].data = vram;
+    __jo_sprite_pic[slot].data = vram+leading;
     if (colno)
         *colno = VRAM_UNITS((unsigned int)(vram + padded) - JO_VDP1_VRAM);
     vram_used += padded + clut_bytes;

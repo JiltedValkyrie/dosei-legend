@@ -1,5 +1,32 @@
 # Plan: bulk decomp pipeline ("oot-core" on Saturn)
 
+Current work order (2026-10-12):
+[RECOMP_PLAN R0-R7](RECOMP_PLAN.md#full-core-ownership-and-c-retirement) plans
+completion of handwritten C gameplay retirement and full core ownership.
+Source Player/core collision are already live. Keep Saturn rendering, controls,
+UI/audio/storage, both SH-2 jobs and all preserved features; transfer remaining
+gameplay owners in bounded, verified waves. No code/build/runtime change is
+claimed by this planning update.
+
+R0 is the active Claude repair task: rock carry, held/burning stick and coarse
+aim/repeated shots. Candidate-10 Clean `b54638cd` is the accepted performance
+baseline (run 10-15 FPS, prepare 12-15 ms, aim 16-20 FPS); moving 20 FPS remains
+open. API33 candidate-11 temporary Debug repairs have 318 host passes, one skip,
+target/math/budget/1,424-file ISO checks and 80 B high-RAM spare. Human parity
+acceptance remains pending. Ordinary images/staging are preserved. **Human
+tests; no automated emulator testing.** Earlier private-desktop permissions,
+deferred-repair instructions and candidate margins below are historical.
+Evidence: [performance handoff](PERFORMANCE_HANDOFF_2026-10-12.md) and
+[performance review](PERFORMANCE_REVIEW_2026-10-12.md).
+
+After R0, close core save/item authority and live demand-animation integration,
+then retire accepted C Player/proxy paths and move remaining camera/story/actor
+owners into core. Full retail progression, actors, bosses and ending remain
+required. The detailed current ownership table and deletion gates live in
+RECOMP_PLAN; this file retains pipeline implementation evidence.
+
+## Historical integration reviews
+
 Astra shim review (2026-10-06; source inspection, tests not rerun):
 The isolated shim/proxy implementation and integer bounding-center importer fix
 are present. Reported 177-row host comparison is not live integration acceptance.
@@ -133,6 +160,69 @@ Removal and vertically locked restoration superseded.
 
 ## NEXT SESSION: mandatory Link migration (human, 2026-10-06)
 
+Current continuation (2026-10-12): follow RECOMP_PLAN R0-R7. Claude closes the
+active API33 repair parity; human tests the matching artifact. Inventory all
+remaining cross-boundary state writers and preserved Player behavior before
+R1/R2. Do not restart the already-live source Player/collision cutover. Demand
+cache/start gates, save authority, camera/story hooks and host actor retirement
+remain unfinished. Keep changes separate from active repairs by file ownership.
+No automated emulator runs; no broad C-file deletion before acceptance.
+
+### Historical review checkpoints (superseded work order)
+
+Latest (Claude, 2026-10-12): Mednafen prep timeout cause found: FRC read as a
+16-bit word; Mednafen returns FRC >> 8, so the timer jumped 293 ms per wrap and
+the watchdog fired falsely. Byte FRCH->FRCL reads now (timer + both slave
+jobs), audit fails on FRT word loads, Clean rebuilt, 107 focused tests pass.
+Human now reports no crash, but estimates Mednafen about 5 FPS versus Kronos
+20, even with Link off-screen. Old Mednafen timing numbers invalid. See
+[fix record](PERFORMANCE_REVIEW_2026-10-12.md#root-cause-and-fix--frt-word-read-claude-2026-10-12).
+
+Current next session (2026-10-12): measure host emulation speed versus game
+work/waits in Mednafen, then check unobstructed first-person aim and exits to
+Ranch, Zora's Domain and Saria's bridge. API32/format-3 follow-up is Clean-built:
+original exit lists and spawn identity now reach Player; the aim overlay and
+nocked first-person arrow are hidden; slave prep uses explicit timer ownership
+and a progress watchdog. Expanded checks: 118 pass, one legacy wrapper skips.
+Host/core math audits and all 1,434 ISO/staging comparisons pass; .bss margin
+28,080 B at that checkpoint. That retest failed; Claude's subsequent FRT fix
+has 27,792 B margin and human now reports no crash. Codex follow-up independently
+passes 6 timer/job tests and 11 audit self-tests, with no runtime edits.
+Subsequent slave /128 timing and prep-first/Low RAM geometry changes are built;
+human measures title 20 FPS, Kokiri idle 8/moving about 6.6, and music works.
+Astra review passed 14 timer/scene tests; Claude subsequently completed the
+world-props timing coverage and averaged rows. Human's next shot identifies
+signs at 29.7 ms. Sprite shadows remain small; deferred resolve below 0.1 ms. Do not infer
+shadow thrashing or rule out core contention gains from jw0 alone.
+See [the review](PERFORMANCE_REVIEW_2026-10-12.md).
+Preserve slave jobs and initial repairs below. Route/aim acceptance unspecified.
+
+Latest authorized batch (Astra): Debug only, no Clean build until ready for
+human 20 FPS test. Sign cull/merged intact geometry, high-WRAM actor pool,
+validated handle hints and NPC pose snapshot implemented. Sign queries now
+use a pre-slave partFlags snapshot. 66 focused host tests pass; target/disc
+results and runtime gates in PERFORMANCE_REVIEW_2026-10-12.md. Keep all
+gameplay/contacts and both CPUs; human tests combined candidate, not each tweak.
+
+Human retest confirms idle gains up to 13 FPS, not sustained 20. Ignore frozen
+dialogue rows; human explicitly says do not fix their refresh. Current follow-up:
+DMA cel copies, reservation/rotation of cached cels, exact visible-vertex
+packing and M mode (master prepare overlaps slave core); P/C remain available.
+Debug only; 81 focused tests pass, both math audits clean, .bss 0x060813A0
+(11,360 B spare), 1,434 payloads verified. Debug 5f3eec29; Clean c3f29128
+unchanged. Runtime gain pending; detailed verification in the performance review.
+
+Initial review checkpoint (2026-10-12): usual Clean API31 repairs
+for C-slot mapping and first-person tap/aim/fire/cancel; compare movement and
+idle against the human's 10→20 FPS baseline. Slave jobs remain enabled; the
+speed gains are to be preserved. Review covers all three speed passes and
+the bundled Player cutover. 102 focused tests pass / one old probe wrapper skips;
+standalone collision probe retains its known differences. Matching host/core
+math audits and all 1,434 ISO/staging comparisons pass, .bss margin 28,176 B.
+[Detailed review](PERFORMANCE_REVIEW_2026-10-12.md). Runtime acceptance remains
+open beyond the human's initial "seem okay" report. This supersedes the older
+next-run/performance instructions below.
+
 2026-10-09 (Claude): real decomp Player is live in Clean (`PLAYER_SOURCE=1`,
 API v28, phases 1/3/4/5 first cut). Next: human test batch, fix what it
 finds, then phase 6 parity and phase 7 C Link deletion. See
@@ -144,10 +234,9 @@ reading 15 FPS (`fr667`). Since then (Claude, autonomous, commits 05e8077,
 c00ee6c + docs; built and audited, NOT run): SGL-aware second-SH-2 schedule
 (skin during the steps; core update + scene prepare at draw start; forest
 submitted to an idle slave), per-scene table scans, exact side-frustum cull.
-First thing next session: run the Debug image in Kokiri and read rows 0-15 +
-`M/S` (DEBUG_OVERLAY.md "Ninth/Tenth build"): expect `sc` ~1 ms, `cv0 bv0`,
-small `dr`. If 20 FPS holds, rebuild/confirm Clean; if not, the next lever is
-the 20 Hz host step (C timers to 20 Hz) per PLAYER_MIGRATION.md. Second Debug build
+That checkpoint's test sequence is superseded by the current Mednafen batch
+at the top; do not use its expected phase times as current acceptance gates.
+Second Debug build
 (2026-10-09) adds catch-up cap 2, camera constraint once per frame, z_bgcheck
 integer fast paths (host-identical) and sub-timer rows 10-12; awaiting human
 Kokiri overlay screenshots before the next cut.

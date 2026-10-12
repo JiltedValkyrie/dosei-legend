@@ -40,7 +40,7 @@ static unsigned int low[RAM_LOW_BYTES / sizeof(unsigned int)];
 #define CORE_SPRITE_SLOTS 16
 typedef int actor_mesh_t;
 static unsigned frees;
-static void jo_free(void *p) { assert(p); ++frees; }
+static void* host_sprite_memory(void *p,unsigned bytes) { assert(p && !bytes); ++frees; return 0; }
 ''' + storage + function(HOST, 'static void sprites_reset(') + r'''
 int main(void) {
     unsigned i;
@@ -136,6 +136,7 @@ static bool gameplay_is_paused(void) { return paused; }
 static unsigned play_scene=0xffff,step_phase,update_us;
 static int meshes_room=-1;
 static unsigned scene=14,room,updates,loads,spawns,unloads;
+static struct {unsigned entrance;} save_state;
 static int source_room=-1, init_room=-1;
 static struct { int x,y,z; } recomp_link;
 static int recomp_link_yaw,recomp_yaw;
@@ -166,11 +167,11 @@ static void load_meshes(void) { assert(spawns); ++loads; }
 static void sprites_reset(void) {}
 static bool sprites_refresh(void) { return false; }
 static void npc_draw_reupload(void) {}
-static int init(void *a,unsigned b,int c,const void *d,int r,short x,short y,short z,short yaw) {
+static int init(void *a,unsigned b,int c,const void *d,int r,int spawn,short x,short y,short z,short yaw) {
     init_room=r; spawns=0; return 1;
 }
 static void objects(const void *const *o,unsigned n) {}
-static void flags(unsigned f) { assert(f==OOT_CORE_FLAG_NPC_SPRITES); }
+static void flags(unsigned f) { assert(f==(OOT_CORE_FLAG_NPC_SPRITES | (interior?OOT_CORE_FLAG_FIXED_CAMERA:0u))); }
 static void camera(short y) {}
 static void set_room(int r) { source_room=r; }
 static void sword(int active,const int *base,const int *tip) {}
@@ -331,6 +332,7 @@ int main(void) {
     unsigned short objects[]={0x18b}; OotSceneBlob blob={objects,1};
     assert(sprites_preload(&blob) && reads==2 && live==2);
     assert(core_sprite[0] && core_sprite[1] && !core_sprite[2]);
+    assert(!((uintptr_t)core_sprite[0]&15u) && !((uintptr_t)core_sprite[1]&15u));
     count=1; views[0].object=0x18b; views[0].limbs=6;
     views[0].skeleton=0x06001234; views[0].anim=0x06000100;
     views[0].flags=OOT_CORE_VIEW_DRAWN;
@@ -375,6 +377,41 @@ int main(void) {
     sprites_reset(); heap_percent=50;
     assert(sprites_preload(&blob) && live==2);
     sprites_reset(); sprites_reset(); assert(!live);
+    return 0;
+}
+''')
+
+    def test_archive_memory_alignment_matching_free_and_failures(self):
+        self.run_c(r'''
+#include <stdint.h>
+#include <assert.h>
+#include <string.h>
+#define CORE_SPRITE_HEAP_PERCENT 85
+static unsigned char arena[256] __attribute__((aligned(16)));
+static unsigned skew, live, requested, percent=50, fail;
+static void* jo_malloc(unsigned n) {
+    assert(!live && n+skew<=sizeof arena); requested=n;
+    if(fail)return 0;
+    live=1; return arena+skew;
+}
+static void jo_free(void *p) { assert(live && p==arena+skew); live=0; }
+static unsigned jo_memory_usage_percent(void) { return percent; }
+''' + function(HOST, 'static void* host_sprite_memory(') + r'''
+int main(void) {
+    for(skew=0;skew<16;skew+=4)for(unsigned bytes=1;bytes<=129;bytes+=4) {
+        memset(arena,0xcc,sizeof arena);
+        unsigned char *p=host_sprite_memory(0,bytes);
+        assert(p && !((uintptr_t)p&15u));
+        assert(p>=arena+skew+sizeof(void*) && p+bytes<=arena+skew+requested);
+        memset(p,0x5a,bytes);
+        for(unsigned i=0;i<skew;++i)assert(arena[i]==0xcc);
+        for(unsigned i=skew+requested;i<sizeof arena;++i)assert(arena[i]==0xcc);
+        assert(!host_sprite_memory(p,0) && !live);
+    }
+    skew=4;percent=86;assert(!host_sprite_memory(0,65) && !live);
+    percent=50;fail=1;assert(!host_sprite_memory(0,65) && !live);
+    fail=0;assert(!host_sprite_memory(0,0) && !live);
+    assert(!host_sprite_memory(0,~0u) && !live);
     return 0;
 }
 ''')

@@ -288,6 +288,9 @@ void OotCore_ToolStep(PlayState* play) {
 
     if (player == NULL)
         return;
+#ifndef PLAYER_SOURCE
+    /* Proxy-era release/carry timers must not run a second time on the real
+     * Player. Its Update owns unk_A73, heldActor and returning hook state. */
     bool pendingArrow = false;
     for (a = play->actorCtx.actorLists[ACTORCAT_ITEMACTION].head; a; a = a->next)
         if (a->id == ACTOR_EN_ARROW && a->update && (a->init != NULL || ((EnArrow*)a)->timer == 0))
@@ -315,6 +318,7 @@ void OotCore_ToolStep(PlayState* play) {
     if ((player->stateFlags1 & PLAYER_STATE1_BOOMERANG_THROWN) &&
         find_live(ACTORCAT_MISC, ACTOR_EN_BOOM) == NULL)
         player->stateFlags1 &= ~PLAYER_STATE1_BOOMERANG_THROWN;
+#endif
     /* Actor_DrawAll's Actor_UpdateFlaggedAudio: held tool sounds (hookshot
      * chain on Player, boomerang flight, Bombchu motor) need it to play. */
     if (player->actor.sfx != 0) Actor_UpdateFlaggedAudio(&player->actor);
@@ -367,6 +371,12 @@ int OotCore_ToolCommand(unsigned int command, int* io) {
 
     if (play == NULL || (player = GET_PLAYER(play)) == NULL)
         return 0;
+#ifdef PLAYER_SOURCE
+    if (command >= OOT_CORE_TOOL_CARRY_OFFER && command <= OOT_CORE_TOOL_CARRY_CANCEL) {
+        extern int OotCore_CarryCommand(PlayState*, unsigned int, int*);
+        return OotCore_CarryCommand(play, command, io);
+    }
+#endif
     switch (command) {
         case OOT_CORE_TOOL_HAND:
             sHand.x = io[0];

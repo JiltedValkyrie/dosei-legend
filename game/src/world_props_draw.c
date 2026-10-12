@@ -40,7 +40,17 @@ static actor_mesh_t *hint,*hint_flower,*hint_ball;
 static actor_mesh_t *goma,*goma_egg;
 static actor_mesh_t *gohma;
 static actor_mesh_t *boss_heart,*blue_warp;
-static actor_mesh_t *rock, *pot, *chest, *bush, *gossip, *sign[11];
+static actor_mesh_t *rock, *pot, *chest, *bush, *gossip;
+static actor_mesh_t *sign_intact, *sign_hot, *sign_fade;
+static bool sign_hot_dirty;
+/* One original intact sign: 14 points/19 faces, including source materials.
+ * Reused by every sign instance; no per-frame cart table copies. */
+static uint32_t sign_hot_storage[256];
+/* Only a descriptor and 19 immutable mesh-mode attributes; geometry is shared. */
+static uint32_t sign_fade_storage[80];
+static unsigned sign_radius;
+/* Diagnostic: bit 0 disables culling. Sliced-sign rendering is retired. */
+volatile unsigned dosei_sign_slow = 0;
 static uint16_t chest_age[KOKIRI_CHEST_COUNT];
 static unsigned int last_tick;
 /* Diagnostic draw mask — readable/writable from the Kronos debugger.
@@ -53,8 +63,12 @@ static unsigned int last_tick;
 volatile int dosei_draw_mask = 0;
 void world_props_draw_free(void)
 {
+    sign_hot = sign_fade = 0; /* borrowed storage, not a Jo allocation */
+    sign_hot_dirty = false;
+    actor_mesh_free(sign_intact); sign_intact = 0;
+    sign_radius = 0;
     actor_mesh_free(tree_mouth);tree_mouth=0;tree_mouth_reset();
-    unsigned int i;for(i=0;i<11;++i) { actor_mesh_free(sign[i]);sign[i]=0; }
+    unsigned int i;
     actor_mesh_free(rock);actor_mesh_free(pot);actor_mesh_free(chest);
     actor_mesh_free(bush);actor_mesh_free(gossip);
     actor_mesh_free(door);door=0;actor_mesh_free(web);web=0;
@@ -95,9 +109,8 @@ bool world_props_draw_load(unsigned int scene)
     if(chests && !(chest=actor_mesh_load_animated("CHEST.BIN"))) return false;
     if(scene==SAVE_SCENE_KOKIRI_FOREST) {
         if(!(bush=actor_mesh_load_static("BUSH.BIN")) || !(gossip=actor_mesh_load_static("GOSSIP.BIN"))) return false;
-        for(i=0;i<11;++i) { char name[16];sprintf(name,"SIGN%u.BIN",i);
-            if(!(sign[i]=actor_mesh_load_static(name))) return false;
-        }
+        if(!(sign_intact = actor_mesh_load_static("SIGNALL.BIN"))) return false;
+        sign_radius = actor_mesh_origin_radius(sign_intact) + 1u;
     }
     if((scene==SAVE_SCENE_DEKU_TREE || scene==SAVE_SCENE_DEKU_TREE_BOSS) &&
        !(door=actor_mesh_load_static("DTDOOR.BIN"))) return false;
@@ -151,7 +164,20 @@ bool world_props_draw_upload(void)
     if(skull && (skulltula_room(kokiri_scene_room()) || (wall_models&1)) && !actor_mesh_upload(skull))return false;
     if(gold_skull && (wall_models&2) && !actor_mesh_upload(gold_skull))return false;
     if(skull_token && (wall_models&4) && !actor_mesh_upload(skull_token))return false;
-    unsigned int i;for(i=0;i<11;++i) if(sign[i] && !actor_mesh_upload(sign[i])) return false;
+    unsigned int i;
+    sign_hot = sign_fade = 0;
+    sign_hot_dirty = false;
+    if (sign_intact) {
+        if (!actor_mesh_upload(sign_intact)) return false;
+#ifndef DOSEI_NO_SLAVE_JOBS
+        sign_hot = actor_mesh_cache_static(sign_intact, sign_hot_storage, sizeof(sign_hot_storage));
+        sign_hot_dirty = sign_hot != 0;
+#endif
+        sign_fade = actor_mesh_cache_fade(sign_hot ? sign_hot : sign_intact,
+                                        sign_fade_storage, sizeof(sign_fade_storage));
+        if (!sign_fade) return false;
+        sign_hot_dirty = true;
+    }
     for(i=0;i<3;++i)if(torches[i] && (dungeon_torches_room_models(kokiri_scene_room())&(1u<<i)) && !actor_mesh_upload(torches[i]))return false;
     for(i=0;i<5;++i)if(walls[i] && (dungeon_walls_room_mask(kokiri_scene_room())&(1u<<i)) && !actor_mesh_upload(walls[i]))return false;
     for(i=0;i<14;++i)if(puzzles[i] && (dungeon_puzzles_models(kokiri_scene_room())&(1u<<i)) && !actor_mesh_upload(puzzles[i]))return false;
@@ -159,12 +185,24 @@ bool world_props_draw_upload(void)
            (!chest || actor_mesh_upload(chest)) && (!bush || actor_mesh_upload(bush)) &&
            (!gossip || actor_mesh_upload(gossip));
 }
-static void draw_sign(unsigned int mask,int x,int y,int z,uint16_t yaw,bool fallen)
+static void sign_cache_purge(void *arg)
 {
-    unsigned int i;
+    (void)arg;
+    slCashPurge();
+}
+static void draw_sign(unsigned int visual,int x,int y,int z,uint16_t yaw)
+{
+    if (!visual || !sign_intact || (!(dosei_sign_slow & 1u) &&
+        !npc_sprite_in_view(x,y,z,sign_radius))) return;
     jo_3d_push_matrix();jo_3d_translate_matrix(x,-y,z);slRotY(yaw);
-    if(fallen) slRotX(0x4000);
-    for(i=0;i<11;++i) if(mask&(1u<<i)) actor_mesh_draw_static(sign[i],0,0,-1,0);
+    if (sign_hot_dirty) {
+        /* Both material variants stay immutable until the next bank upload.
+         * FIFO orders the purge before any slave read of those new tables. */
+        slSlaveFunc(sign_cache_purge, 0);
+        sign_hot_dirty = false;
+    }
+    actor_mesh_draw_static(visual <= OOT_SIGN_MESH_TICKS ? sign_fade :
+                           sign_hot ? sign_hot : sign_intact,0,0,-1,0);
     jo_3d_pop_matrix();
 }
 void world_props_draw(unsigned int tick)
@@ -210,16 +248,17 @@ void world_props_draw(unsigned int tick)
         if(a->data[1]<GP_DROP_DELAY) y += a->data[1]*(GP_DROP_DELAY-a->data[1])/2;
         kokiri_drop_draw(a->params,a->x,y+14,a->z,tick);
     }
-    if(sign[0] && !(dosei_draw_mask & 2)) {
+    {
+    unsigned int sign_t0 = frame_timer_ticks();
+    if(sign_intact && !(dosei_draw_mask & 2)) {
         for(i=0;i<KOKIRI_SIGN_COUNT;++i) {
             const kokiri_prop_t *s=&kokiri_signs[i];
             int dx=s->x-recomp_link.x,dz=s->z-recomp_link.z;
             if(s->room==kokiri_scene_room() && dx>-1000 && dx<1000 && dz>-1000 && dz<1000)
-                draw_sign(world_signs_parts(i),s->x,s->y,s->z,kokiri_sign_yaws[i],false);
+                draw_sign(world_signs_visual(i),s->x,s->y,s->z,kokiri_sign_yaws[i]);
         }
-        a=0;while((a=actor_sys_find(SIGN_PIECE_ID,a)))
-            if(a->scene==save_state.scene_id && a->room==kokiri_scene_room())
-                draw_sign(a->params,a->x,a->y,a->z,a->yaw,a->data[3]!=0);
+    }
+    PS_ACC(PS_DSIGN, frame_timer_ticks_to_us(frame_timer_ticks() - sign_t0));
     }
     if(boss_heart){int32_t p[3];uint16_t yaw;
         if(gameplay.get_item==GP_GET_CONTAINER)
@@ -334,6 +373,7 @@ void world_props_draw(unsigned int tick)
         if(p->flag&64)actor_mesh_draw_static(handle_door,p->x+hinge*(cs/256)/256,p->y,
                                             p->z-hinge*(sn/256)/256,(uint16_t)(p->yaw+0x8000+open));
     }
+    unsigned int chest_t0 = frame_timer_ticks();
     for(i=0;chest && i<KOKIRI_CHEST_COUNT;++i) {
         const kokiri_chest_t *c=&kokiri_chests[i];
         unsigned int frame;int32_t focus[3];
@@ -349,4 +389,6 @@ void world_props_draw(unsigned int tick)
         actor_mesh_draw(chest,frame,0,0,0,c->yaw,0,0,focus);
         jo_3d_pop_matrix();
     }
+    PS_ACC(PS_DCHEST, frame_timer_ticks_to_us(frame_timer_ticks() - chest_t0));
+    PS_ADD(PS_DWR);   /* everything after PS_DWP; no early return above */
 }

@@ -1716,17 +1716,23 @@ class Gameplay(unittest.TestCase):
             self.step(x+round(40*math.sin(angle)),y,z+round(40*math.cos(angle)),yaw=yaw+32768,interact=1)
             self.assertEqual(text,self.lib.gp_rule_text_id(),i)
 
-    def test_cut_sign_spawns_pieces_and_stops_reading_until_scene_reset(self):
+    def test_cut_sign_fades_without_pieces_and_resets_after_leaving(self):
         v=[ctypes.c_int() for _ in range(6)]
         self.lib.gp_sign_at(0,*(ctypes.byref(x) for x in v))
         x,y,z,yaw,room,text=(a.value for a in v)
         self.lib.gp_room(room);self.gear()
         self.step(x,y,z-35,attack=1)
-        for _ in range(20): self.step(x,y,z-35)
-        self.assertNotEqual(0x7FF,self.lib.gp_sign_parts(0))
-        self.assertGreater(self.lib.gp_piece_count(),0)
+        seen_fade=False
+        for _ in range(20):
+            self.step(x,y,z-35)
+            seen_fade |= 0 < self.lib.gp_sign_parts(0) <= 12
+            self.assertEqual(0,self.lib.gp_piece_count())
+        self.assertTrue(seen_fade)
+        self.assertEqual(0,self.lib.gp_sign_parts(0))
+        self.step(x+501,y,z)
+        self.assertEqual(0xFFFF,self.lib.gp_sign_parts(0))
         self.lib.gp_reset_no_greeting()
-        self.assertEqual(0x7FF,self.lib.gp_sign_parts(0))
+        self.assertEqual(0xFFFF,self.lib.gp_sign_parts(0))
         self.assertEqual(0,self.lib.gp_piece_count())
 
     def test_gossip_stone_reacts_without_becoming_a_drop(self):

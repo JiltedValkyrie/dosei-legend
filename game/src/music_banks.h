@@ -26,5 +26,8 @@ extern music_bank_t music_bank_deku_tree;
 
 /* Bind MUSICTRG.BIN (cart carve) to every bank's triggers. */
 bool music_banks_bind(const uint8_t *blob, uint32_t bytes);
+/* MUSICTRG.BIN limit (tools/build_cart_tables.py MUSICTRG_LIMIT); loaded once
+** at boot into a cart heap block. */
+#define MUSICTRG_BYTES 0x18000u
 
 #endif

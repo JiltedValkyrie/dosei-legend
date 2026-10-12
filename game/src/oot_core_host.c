@@ -7,9 +7,11 @@
 #include "health_hud.h"
 #include "recomp.h"
 #include "frame_timer.h"
+#include "perf_sub.h"
 #include "gameplay.h"
 #include "game_mode.h"
 #include "kokiri_sgl.h"
+#include "kokiri_actors.h"
 #include "asset_names.h"
 #include "scene_flow.h"
 #include "ram_cart.h"
@@ -25,6 +27,7 @@
 #include "bg_core_shim.h"
 #endif
 #include "player_items.h"
+#include "world_props.h"
 #include "player_attack.h"
 #include <stdlib.h>
 #include <string.h>
@@ -113,12 +116,30 @@ static void core_draw_init(void)
 #define UNCACHED(v) (*(volatile __typeof__(v) *)((uintptr_t)&(v) | 0x20000000u))
 static unsigned char async_busy;
 static unsigned int async_violations;
-static inline const OotCoreEntry *entry_checked(void)
+#ifndef DOSEI_CLEAN_TEST
+static unsigned int async_violation_line;
+#endif
+static inline const OotCoreEntry *entry_checked(
+#ifndef DOSEI_CLEAN_TEST
+    unsigned int line
+#else
+    void
+#endif
+)
 {
-    if (async_busy) ++async_violations;   /* master entered the core mid-update */
+    if (UNCACHED(async_busy)) {
+        ++async_violations;   /* host entered the core mid-update */
+#ifndef DOSEI_CLEAN_TEST
+        async_violation_line = line;
+#endif
+    }
     return ENTRY_RAW;
 }
+#ifndef DOSEI_CLEAN_TEST
+#define ENTRY (entry_checked(__LINE__))
+#else
 #define ENTRY (entry_checked())
+#endif
 #define ASYNC_BUSY() (UNCACHED(async_busy) != 0)
 /* Core callbacks that touch hardware (sound) or fail fatally are queued while
  * the slave runs and replayed by the master at the join. */
@@ -129,10 +150,28 @@ static unsigned short sfx_queue[SFX_QUEUE];
  * copies taken just before the kick (oot_core_async_kick). */
 #define SNAP_NPC_MAX 32
 #define SNAP_VIEW_MAX 24
+#ifdef __sh__
+/* Low RAM: master writes before the kick and reads while drawing. */
+#define snap_npc ((OotCoreNpcView *)RAM_LOW(RAM_LOW_SNAP_NPC_OFFSET))
+typedef char snap_npc_fits[sizeof(OotCoreNpcView) * SNAP_NPC_MAX
+                           <= RAM_LOW_SNAP_NPC_BYTES ? 1 : -1];
+#else
 static OotCoreNpcView snap_npc[SNAP_NPC_MAX];
+#endif
+static int snap_sign_parts[KOKIRI_SIGN_COUNT];
 static OotCoreDrawItem snap_items[OOT_CORE_DRAW_ITEMS_MAX];
+#ifdef __sh__
+/* Low RAM, master-only like snap_npc: filled before the kick, read while drawing. */
+#define snap_view ((OotCoreActorView (*)[SNAP_VIEW_MAX])RAM_LOW(RAM_LOW_SNAP_VIEW_OFFSET))
+#define snap_tools ((OotCoreToolView *)RAM_LOW(RAM_LOW_SNAP_VIEW_OFFSET + \
+                    2 * SNAP_VIEW_MAX * sizeof(OotCoreActorView)))
+typedef char snap_view_fits[2 * SNAP_VIEW_MAX * sizeof(OotCoreActorView) +
+                            OOT_CORE_TOOL_VIEWS_MAX * sizeof(OotCoreToolView)
+                            <= RAM_LOW_SNAP_VIEW_BYTES ? 1 : -1];
+#else
 static OotCoreToolView snap_tools[OOT_CORE_TOOL_VIEWS_MAX];
 static OotCoreActorView snap_view[2][SNAP_VIEW_MAX];   /* ACTORCAT_PROP, ACTORCAT_MISC */
+#endif
 static int snap_npc_n, snap_items_n, snap_tools_n, snap_view_n[2], snap_effect_n;
 static unsigned int sfx_queued;
 static unsigned int deferred_fatal[4];
@@ -171,10 +210,26 @@ static void host_sfx(unsigned short sfx_id, int x, int y, int z)
     host_sfx_now(sfx_id);
 }
 
-/* Profiling clock: the master's FRT extension is not the slave's to touch. */
+/* Profiling clock. The master's FRT extension is not the slave's to touch;
+ * during an async update the core runs on the slave (the master never enters
+ * it then), which extends its own FRT here. Both run at /128, same units. */
+#ifdef OOT_CORE_ASYNC
+static uint16_t slave_previous;
+static unsigned int slave_extended;
+static unsigned int slave_ticks(void)
+{
+    uint16_t now = frame_timer_frc();
+    if (now < slave_previous) slave_extended += 0x10000u;
+    slave_previous = now;
+    return slave_extended + now;
+}
+#endif
 static unsigned int host_ticks(void)
 {
-    return ASYNC_BUSY() ? 0u : frame_timer_ticks();
+#ifdef OOT_CORE_ASYNC
+    if (ASYNC_BUSY()) return slave_ticks();
+#endif
+    return frame_timer_ticks();
 }
 
 /* Decomp ItemId (include/item.h) -> C save item. */
@@ -359,7 +414,7 @@ static int host_bottle_update(unsigned char item, unsigned char button)
         return 0;
     }
     if (button >= 1 && button <= 3) {
-        unsigned int slot = save_c_item_inventory_slot(save_state.c_items[button - 1]);
+        unsigned int slot = save_c_item_inventory_slot(save_state.c_items[button < 3 ? 2 - button : 2]);
         if (slot >= 18 && slot <= 21) {               /* SLOT_BOTTLE_1..4 */
             if (save_state.bottle_items[slot - 18] == 0x1A && item == 0x14)
                 item = 0x1F;                           /* milk full -> half */
@@ -406,10 +461,13 @@ static void* host_sprite_memory(void* memory, unsigned int bytes)
 #ifdef OOT_CORE_ASYNC
     if (ASYNC_BUSY()) { host_fatal(0xA5A110C0u, 0, 0); return 0; }  /* jo heap is master-only */
 #endif
-    if (memory) { jo_free(memory); return 0; }
-    memory=jo_malloc(bytes);
+    if (memory) { jo_free(((void**)memory)[-1]); return 0; }
+    if (!bytes || bytes>~0u-15u-sizeof(void*)) return 0;
+    void* raw=jo_malloc(bytes+15u+sizeof(void*));
+    memory=raw ? (void*)(((uintptr_t)raw+sizeof(void*)+15u)&~(uintptr_t)15u) : 0;
+    if (memory) ((void**)memory)[-1]=raw;
     if (memory && jo_memory_usage_percent()>CORE_SPRITE_HEAP_PERCENT) {
-        jo_free(memory); return 0;
+        jo_free(raw); return 0;
     }
     return memory;
 }
@@ -534,6 +592,9 @@ static uint16_t read_yaw;
 
 static void read_player(void)
 {
+    int carry[7];
+    int state = ENTRY->tool(OOT_CORE_TOOL_CARRY_READ, carry);
+    world_props_core_read(state, carry);
     oot_core_player_valid = ENTRY->player_view(&oot_core_player) != 0;
     if (!oot_core_player_valid) return;
     recomp_link.x = oot_core_player.x;
@@ -579,12 +640,27 @@ bool oot_core_player_jump(void)
 {
     return playing && ENTRY->player_jump && ENTRY->player_jump();
 }
+
+unsigned int oot_core_player_do_action(void)
+{
+    return oot_core_player_valid ? oot_core_player.do_action : OOT_CORE_DO_NONE;
+}
+
+void oot_core_carry_cancel(void)
+{
+    if (playing) ENTRY->tool(OOT_CORE_TOOL_CARRY_CANCEL, 0);
+}
 #endif
 
 static void sync_player(void)
 {
 #ifdef PLAYER_SOURCE
     push_host_moves();
+    {
+        int carry[7];
+        world_props_core_offer(carry);
+        ENTRY->tool(OOT_CORE_TOOL_CARRY_OFFER, carry);
+    }
     return;
 #endif
     ENTRY->set_player(recomp_link.x, recomp_link.y - RECOMP_LINK_EYE_HEIGHT, recomp_link.z,
@@ -712,7 +788,7 @@ static void sprites_reset(void)
 {
     unsigned int r;
     for (r = 0; r < CORE_SPRITE_ROWS; ++r) {
-        if (core_sprite[r]) jo_free(core_sprite[r]);
+        if (core_sprite[r]) host_sprite_memory(core_sprite[r],0);
         core_sprite[r] = 0;
         core_sprite_tried[r] = 0;
     }
@@ -867,7 +943,7 @@ static void tools_load(void)
     bool hook = adult && save_inventory_item(9) != 0xff;
     bool need[TOOL_COUNT] = {
         adult && save_inventory_item(3) != 0xff, bomb, chu, !adult && save_inventory_item(12) != 0xff,
-        hook, hook, false, false, false, false, bomb || chu, true, /* aim atlas supports later pickups without a live CD read */
+        hook, hook, false, false, false, false, bomb || chu, false, /* no first-person overlay */
         adult && (save_inventory_item(4) != 0xff || save_inventory_item(10) != 0xff ||
                   save_inventory_item(16) != 0xff) };
     for (i = 0; i < TOOL_COUNT; ++i) {
@@ -877,22 +953,6 @@ static void tools_load(void)
         *sheet = npc_sprite_load(names[i]);
         if (*sheet && jo_memory_usage_percent() > CORE_SPRITE_HEAP_PERCENT) { jo_free(*sheet); *sheet = 0; }
     }
-}
-
-/* z_player_lib first-person hand/tool lists, reduced offline to one shared
- * cel. This presentation follows the selected item; actors own shot behavior.
- * The screen centre and shot ray are unchanged. Missing assets/VRAM never
- * select another item's pixels or change whether its shot can fire. */
-void oot_core_tool_aim_draw(void)
-{
-    unsigned int slot = recomp_aim_inventory_slot(), cel;
-    if (!playing || !CORE_DRAW->tool_sheet[TOOL_AIM]) return;
-    if (slot == 6) cel = 0;
-    else if (slot == 3 || slot == 4 || slot == 10 || slot == 16) cel = 1;
-    else if (slot == 9) cel = 2;
-    else return;
-    npc_sprite_draw_screen(CORE_DRAW->tool_sheet[TOOL_AIM], &CORE_DRAW->tool_inst[TOOL_AIM],
-                           cel, 244, 187, 2*65536);
 }
 
 static unsigned int pitch_band(int pitch)
@@ -936,6 +996,9 @@ static void tools_draw(void)
              * every 16 units back along the last core step while in flight. */
             int k, dx = v[i].x - v[i].previous_x, dy = v[i].y - v[i].previous_y,
                 dz = v[i].z - v[i].previous_z, len = abs(dx) + abs(dy) + abs(dz);
+            /* The nocked world sprite fills the near camera. Hide only that
+             * presentation; the source actor still owns release and flight. */
+            if (v[i].held && recomp_first_person()) break;
             if (v[i].params == 9) { kokiri_seed_draw(v[i].x, v[i].y, v[i].z); break; } /* ARROW_SEED */
             tool_put(TOOL_ARW, band, v[i].x, v[i].y, v[i].z, v[i].yaw);
             if (!v[i].dmg || v[i].held || len < 16) break;
@@ -1134,6 +1197,11 @@ void oot_core_meshes_upload(void)
 #ifdef CORE_SPRITES
 static void sprites_draw(void)
 {
+    /* Core NPC view is bounded to 32. Resolve each sample once, then protect
+     * all resident hits before any miss may replace a cel needed later in
+     * this draw. Static scratch avoids the small master stack. */
+    static const unsigned char *requested[32];
+    static unsigned samples[32];
     const OotCoreNpcView *v;
     int n = oot_core_npcs(&v), k;
     unsigned int pinned = 0;
@@ -1141,7 +1209,9 @@ static void sprites_draw(void)
         const unsigned char *clip;
         npc_sprite_inst_t *slot;
         unsigned int sample;
+        unsigned locked = ~0u;
         int dx = v[k].x - recomp_camera.x, dz = v[k].z - recomp_camera.z;
+        requested[k] = 0;
         if (!v[k].anim || !(v[k].flags & OOT_CORE_VIEW_DRAWN) ||
             dx < -2000 || dx > 2000 || dz < -2000 || dz > 2000) continue;
         clip=sprites_clip(&v[k]);
@@ -1152,8 +1222,19 @@ static void sprites_draw(void)
         if (v[k].object == 0x06d && ((v[k].anim >> 20) & 15u) >= 3u)
             sample=npc_sprite_cel(clip,v[k].frame,v[k].x,v[k].z,
                                  gameplay_facing(recomp_camera.x-v[k].x,recomp_camera.z-v[k].z));
-        slot=npc_sprite_cache_claim(core_sprite_inst,CORE_SPRITE_SLOTS,&pinned,clip,
-                                   sample & 0xffffu);
+        requested[k] = clip; samples[k] = sample;
+        slot=npc_sprite_cache_claim(core_sprite_inst,CORE_SPRITE_SLOTS,&locked,clip,
+                                   sample & 0xffffu); /* lookup only, no eviction */
+        if (slot) pinned |= 1u << (unsigned)(slot - core_sprite_inst);
+    }
+    for (k = 0; k < n; ++k) {
+        const unsigned char *clip = requested[k];
+        npc_sprite_inst_t *slot;
+        unsigned sample = samples[k];
+        if (!clip) continue;
+        /* Restore last_depth for near-plane sprite projection. */
+        (void)npc_sprite_visible_scaled(clip,v[k].x,v[k].y,v[k].z,v[k].scale_x,v[k].scale_y);
+        slot=npc_sprite_cache_claim(core_sprite_inst,CORE_SPRITE_SLOTS,&pinned,clip,sample & 0xffffu);
         if (!slot) { ++sprite_stats.missing; continue; }
         npc_sprite_draw_styled(clip,slot,sample,v[k].x,v[k].y,v[k].z,
                                v[k].scale_x,v[k].scale_y,v[k].alpha,v[k].tint);
@@ -1280,7 +1361,7 @@ void oot_core_scene_unload(void)
 
 /* Scene blob, sprite libraries and PlayState for `scene`; Player proxy at the
  * feet position. False leaves no PlayState (CORE_COLLISION: no collision). */
-static bool scene_enter(unsigned int scene, int room, int x, int y, int z, unsigned int yaw)
+static bool scene_enter(unsigned int scene, unsigned int spawn, int room, int x, int y, int z, unsigned int yaw)
 {
     oot_core_scene_unload();
     play_scene = scene;
@@ -1300,7 +1381,7 @@ static bool scene_enter(unsigned int scene, int room, int x, int y, int z, unsig
     mirror_save(); /* age/time/flags before play_init picks the layer */
     playing = ENTRY->play_init(RAM_LOW(RAM_LOW_OOTPLAY_OFFSET), RAM_LOW_OOTPLAY_BYTES,
                                scene_flow_entry()->oot_scene, (const void *)OOT_SCENECOL_ADDR,
-                               room, (short)x, (short)y, (short)z, (short)yaw) != 0;
+                               room, spawn, (short)x, (short)y, (short)z, (short)yaw) != 0;
     if (playing) {
         ENTRY->set_objects(scene_objects, scene_object_count);
 #ifdef PLAYER_SOURCE
@@ -1333,7 +1414,7 @@ bool oot_core_scene_enter(unsigned int scene, unsigned int spawn)
     const scene_spawn_t *at = scene_flow_spawn(scene, spawn);
     int room = scene_flow_is_interior() ? 0 : (int)kokiri_bank_room();
     if (!loaded) return false;
-    if (!scene_enter(scene, room, at->x, at->y, at->z, at->yaw)) {
+    if (!scene_enter(scene, spawn, room, at->x, at->y, at->z, at->yaw)) {
         if (!scene_load_failed) jo_core_error("Scene %u has no core collision", scene);
         return false;
     }
@@ -1348,7 +1429,7 @@ void oot_core_frame(const gameplay_input_t *in)
     int room = scene_flow_is_interior() ? 0 : (int)kokiri_bank_room();
     if (!loaded || gameplay_is_paused()) return;
     if (scene != play_scene) {
-        scene_enter(scene, room, recomp_link.x, recomp_link.y - RECOMP_LINK_EYE_HEIGHT, recomp_link.z,
+        scene_enter(scene, save_state.entrance, room, recomp_link.x, recomp_link.y - RECOMP_LINK_EYE_HEIGHT, recomp_link.z,
                     recomp_link_yaw);
     }
     if (!playing) {
@@ -1426,7 +1507,22 @@ int oot_core_npcs(const OotCoreNpcView **out)
 #endif
     return playing ? ENTRY->npc_view(out) : 0;
 }
-int oot_core_prop(short id, int x, int z) { return playing ? ENTRY->prop_query(id, x, z) : -1; }
+int oot_core_prop(short id, int x, int z)
+{
+#ifdef OOT_CORE_ASYNC
+    if (ASYNC_BUSY()) {
+        unsigned i;
+        /* Signs are the only host prop-query consumer. Never walk a live
+         * actor list while the slave can spawn/kill actors in it. */
+        if (playing && id == 0x0141)
+            for (i = 0; i < KOKIRI_SIGN_COUNT; ++i)
+                if (kokiri_signs[i].x == x && kokiri_signs[i].z == z)
+                    return snap_sign_parts[i];
+        return -1;
+    }
+#endif
+    return playing ? ENTRY->prop_query(id, x, z) : -1;
+}
 const char *oot_core_debug_text(void) { return playing ? ENTRY->debug_text() : ""; }
 const char *oot_core_debug_text2(void) { return playing ? ENTRY->debug_text2() : ""; }
 const oot_core_sprite_stats_t *oot_core_sprite_stats(void) { return &sprite_stats; }
@@ -1554,16 +1650,16 @@ unsigned int oot_core_slave_job_us(void) { return async_slave_us; }
 /* Slave side: only the core, nothing of the host but the queued callbacks. */
 static void slave_job_body(void)
 {
-    /* The slave's own FRT, read only (SGL owns its setup; TCR CKS picks
-     * clock / 8, 32 or 128). Timed per update so a 16-bit wrap stays rare. */
-    volatile uint16_t *frc = (volatile uint16_t *)0xFFFFFE12;
-    unsigned int cks = *(volatile uint8_t *)0xFFFFFE16 & 3u;
-    unsigned int i, n = BOX->updates, ticks = 0;
+    /* The slave's own FRT. SGL leaves it at clock/8 (18 ms wrap); select
+     * /128 (293 ms) so long updates keep their count. Timed per update. */
+    unsigned int cks, i, n = BOX->updates, ticks = 0;
+    frame_timer_slave_prescale();
+    cks = *(volatile uint8_t *)0xFFFFFE16 & 3u;
     slCashPurge();                       /* the master wrote input/state */
     for (i = 0; i < n; ++i) {
-        uint16_t t0 = *frc;
+        uint16_t t0 = frame_timer_frc();
         ENTRY_RAW->update();
-        ticks += (uint16_t)(*frc - t0);
+        ticks += (uint16_t)(frame_timer_frc() - t0);
     }
     /* 28.64 MHz: 8 -> 0.279 us, 32 -> 1.117, 128 -> 4.47 (x1000 / 1000). */
     BOX->us = cks == 0 ? ticks * 279u / 1000u : cks == 1 ? ticks * 1117u / 1000u :
@@ -1604,6 +1700,14 @@ static void snapshot_views(void)
     const OotCoreToolView *tv;
     unsigned int omitted = 0;
     int i, n;
+    bool source_signs = save_state.scene_id == SAVE_SCENE_KOKIRI_FOREST &&
+                        oot_core_owns_kokiri_npcs();
+    /* C-owned signs never consume these views. Avoid twenty full source
+     * actor-list walks before launching the core; retain snapshots if that
+     * ownership changes later. Clear old views on every disabled pass. */
+    for (i = 0; i < KOKIRI_SIGN_COUNT; ++i)
+        snap_sign_parts[i] = source_signs ?
+            ENTRY_RAW->prop_query(0x0141, kokiri_signs[i].x, kokiri_signs[i].z) : -1;
     n = ENTRY_RAW->npc_view(&nv);
     snap_npc_n = n < SNAP_NPC_MAX ? n : SNAP_NPC_MAX;
     for (i = 0; i < snap_npc_n; ++i) snap_npc[i] = nv[i];
@@ -1620,7 +1724,7 @@ static void snapshot_views(void)
 
 void oot_core_async_kick(void)
 {
-    if (async_busy || !playing || !core_due || gameplay_is_paused()) return;
+    if (ASYNC_BUSY() || !playing || !core_due || gameplay_is_paused()) return;
     snapshot_views();
     async_updates = core_due;
     core_due = 0;
@@ -1636,7 +1740,7 @@ void oot_core_async_join(void)
 {
     unsigned int t0, i, n;
     volatile unsigned int *f;
-    if (!async_busy) return;
+    if (!ASYNC_BUSY()) return;
     t0 = frame_timer_ticks();
     async_overlap_us = frame_timer_ticks_to_us(t0 - async_kick_tick);
     while (!BOX->done)
@@ -1644,6 +1748,8 @@ void oot_core_async_join(void)
             jo_core_error("oot-core slave update did not finish");
     async_join_us = frame_timer_ticks_to_us(frame_timer_ticks() - t0);
     async_slave_us = BOX->us;
+    PS_ACC(PS_WJOIN, async_join_us);
+    PS_ACC(PS_SCORE, async_slave_us);
     slCashPurge();                       /* see the slave's writes */
     UNCACHED(async_busy) = 0;
     n = sfx_queued;
@@ -1672,6 +1778,16 @@ void oot_core_async_join(void)
     }
 }
 
+/* Read before stats clears the interval's violation count. No core entry. */
+unsigned int oot_core_async_violation_line(void)
+{
+#ifndef DOSEI_CLEAN_TEST
+    return async_violations ? async_violation_line : 0;
+#else
+    return 0;
+#endif
+}
+
 void oot_core_async_stats(unsigned int out[5])
 {
     uint32_t q = 0, r = 0;
@@ -1692,5 +1808,6 @@ unsigned int oot_core_slave_job_us(void) { return 0; }
 void oot_core_async_kick(void) {}
 void oot_core_async_join(void) {}
 bool oot_core_async_busy(void) { return false; }
+unsigned int oot_core_async_violation_line(void) { return 0; }
 void oot_core_async_stats(unsigned int out[5]) { out[0] = out[1] = out[2] = out[3] = out[4] = 0; }
 #endif

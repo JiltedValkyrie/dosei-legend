@@ -48,6 +48,7 @@ typedef struct { unsigned long* scene_flags; } Mirror;
 static Mirror* sHostSave;
 static PlayState* gOotCorePlay;
 static void* sScene;
+static void reset_input(void) {}
 static int table[2], stage;
 static struct { int* table; int tableSize; } sEffectSsInfo;
 static void func_80031C3C(ActorContext* actor, PlayState* play) {
@@ -94,6 +95,7 @@ static unsigned int play_scene=1;
 static unsigned short core_skybox_time;
 static unsigned char core_skybox_reset;
 static int stage,resource_resets;
+static void oot_core_async_join(void) {}
 static const void *const *scene_objects;
 static unsigned scene_object_count;
 static int meshes_room=2;
@@ -225,7 +227,7 @@ int main(void) {
 #include "oot_scene_blob.h"
 #include "oot_core_host.h"
 #define check(x) do { if (!(x)) { fprintf(stderr,"line %d: %s\n",__LINE__,#x); exit(1); } } while(0)
-typedef uint8_t u8; typedef uint32_t u32;
+typedef uint8_t u8; typedef uint32_t u32; typedef int16_t s16;
 struct Actor { unsigned int words[4]; };
 struct ActorEntry { short words[8]; };
 struct Vec3s { short x,y,z; };
@@ -337,6 +339,10 @@ int main() {
     malformed->transitions=(OotSceneLayer*)0x02730001;
     check(OotCore_SceneLoad(1,"S1.OOC",123,&objects,&count)==-1);
     malformed->num_transition_layers=0; malformed->transitions=NULL;
+    malformed->num_exit_layers=1;
+    malformed->exits=(OotSceneLayer*)0x02730001;
+    check(OotCore_SceneLoad(1,"S1.OOC",123,&objects,&count)==-1);
+    malformed->num_exit_layers=0; malformed->exits=NULL;
     malformed->num_rooms=1; malformed->num_layers=0xffffffff;
     check(OotCore_SceneLoad(1,"S1.OOC",123,&objects,&count)==-1);
     check(!objects && !gActorOverlayTable[2].profile);

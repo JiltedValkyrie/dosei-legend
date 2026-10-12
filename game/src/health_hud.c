@@ -4,9 +4,10 @@
 #include "save_state.h"
 #include "recomp.h"
 #include "action_audio.h"
+#include "ram_low.h"
 
-/* B0: independent of map, button and pause cells. Source images also live in
- * VDP2 RAM so neither the sprite table nor scarce work RAM holds the atlas. */
+/* B0: independent of map, button and pause cells. Keep its source atlas for
+ * the existing VRAM layout, but never read it back during CPU composition. */
 #define HEART_CELLS ((volatile unsigned short *)0x25E50000u)
 #define HEART_BACK_CELLS ((volatile unsigned short *)0x25E51000u)
 #define HEART_ATLAS ((volatile unsigned short *)0x25E50800u)
@@ -16,6 +17,15 @@
 #define MAGIC_CELLS ((volatile unsigned short *)0x25E50B00u)
 #define MAGIC_BACK_CELLS ((volatile unsigned short *)0x25E51780u)
 #define HEARTS_FILE_BYTES 823
+#define HEART_ATLAS_WORDS (5u * 64u)
+#ifdef __sh__
+#define HEART_SOURCE ((unsigned short *)RAM_LOW(RAM_LOW_HEART_ATLAS_OFFSET))
+typedef char heart_atlas_fits[HEART_ATLAS_WORDS * sizeof(unsigned short) <=
+                             RAM_LOW_HEART_ATLAS_BYTES ? 1 : -1];
+#else
+static unsigned short heart_source[HEART_ATLAS_WORDS];
+#define HEART_SOURCE heart_source
+#endif
 #define HUD_CELLS 90
 static bool ready;
 /* build_health_hud.py: gMagicMeterEndTex, one gMagicMeterMidTex column and
@@ -51,7 +61,11 @@ bool __attribute__((optimize("Os"))) health_hud_init(void)
             }
             for (i = 0; i < 16; ++i) {
                 if (!offset) ((volatile unsigned short *)JO_VDP2_CRAM)[832 + i] = buffer[i];
-                else HEART_ATLAS[(offset - 32) / 2 + i] = buffer[i];
+                else {
+                    unsigned at = (offset - 32) / 2 + i;
+                    HEART_ATLAS[at] = buffer[i];
+                    HEART_SOURCE[at] = buffer[i];
+                }
             }
         }
         if (ready && (jo_fs_read_next_bytes(&file, (char *)meter_end, 128) != 128 ||
@@ -215,7 +229,7 @@ static void heart_draw(unsigned short *cells, unsigned health, unsigned heart, u
     int top = 10 + (heart / 10) * 10 - extent / 2;
     for (y = 0; y < extent; ++y) for (x = 0; x < extent; ++x) {
         unsigned sx = sample_at[x], sy = sample_at[y];
-        unsigned colour = (HEART_ATLAS[fill * 64 + sy * 4 + sx / 4] >> ((3 - sx % 4) * 4)) & 15;
+        unsigned colour = (HEART_SOURCE[fill * 64 + sy * 4 + sx / 4] >> ((3 - sx % 4) * 4)) & 15;
         unsigned px = left + x, py = top + y;
         unsigned offset = ((py / 8) * 15 + px / 8) * 16 + (py % 8) * 2 + px % 8 / 4;
         unsigned shift = (3 - px % 4) * 4;
@@ -225,6 +239,9 @@ static void heart_draw(unsigned short *cells, unsigned health, unsigned heart, u
 
 void health_hud_draw(bool visible)
 {
+    static unsigned short base_cells[60 * 16], base_magic[30 * 16];
+    static unsigned short work_cells[60 * 16];
+    static int base_key = -1, bank_key[2] = {-1,-1}, bank_magic[2] = {-1,-1};
     unsigned health = save_state.health, capacity = save_state.health_capacity / 16;
     unsigned pulse = (recomp_clock() / 3) % 10, size, heart, x, y, i;
     static const unsigned char sample11[11]={0,1,2,4,5,7,8,10,11,13,14};
@@ -238,6 +255,12 @@ void health_hud_draw(bool visible)
     if (health > capacity * 16) health = capacity * 16;
     size = 11 + (pulse > 5 ? pulse - 5 : 5 - pulse);
     key = visible ? (int)(health | capacity << 9 | size << 14 | magic_key << 19) : -1; /* 31 bits */
+    if (last_key == -2) {
+        /* Scene reload/pause restoration can overwrite either VRAM bank.
+         * Invalidate before the hidden return too: showing it later must
+         * initialize both banks again, even when health has not changed. */
+        base_key = bank_key[0] = bank_key[1] = bank_magic[0] = bank_magic[1] = -1;
+    }
     if (last_key == key) return;
     last_key = key;
     if (!visible) {
@@ -247,21 +270,23 @@ void health_hud_draw(bool visible)
     }
     /* Compose off-screen. Clearing active cells caused visible blank hearts
      * whenever a slow actor frame overlapped VDP2 scanning the HUD. Two 1,920 B
-     * banks fit reserved B0 slack; the immutable atlas stays at 0x50800.
+     * banks fit reserved B0 slack; atlas reads use the immutable Low RAM copy.
      *
-     * 2026-10-09 speed: the pulse changes the key nearly every frame, and the
-     * old path rebuilt all twenty hearts with read-modify-writes straight into
-     * VDP2 VRAM (~11 ms, overlay row 14 r1). Now the still hearts and the
-     * magic meter are composed once in work RAM (when health, capacity or
-     * magic change); each pulse copies that base, draws the one pulsing heart
-     * on top and writes the bank to VRAM in a single pass. */
+     * Only the pulsing heart's maximum 16x16 footprint changes on a normal
+     * frame. Restore/upload those cells; every destination bank has its own
+     * content keys because the other bank may still hold an older health or
+     * magic state. A pulse must erase that bank's old LARGE footprint before
+     * painting a smaller heart. Full banks initialize only on state/reset. */
     {
-        static unsigned short base_cells[60 * 16], base_magic[30 * 16];
-        static unsigned short work_cells[60 * 16], work_magic[30 * 16];
-        static int base_key = -1;
         int still_key = (int)(health | capacity << 9 | magic_key << 19);
+        int meter_key = (int)(magic_key | (capacity > 10u ? 1u << 12 : 0));
         unsigned pulse_heart = health ? (health - 1) / 16 : ~0u;
-        (void)x; (void)y;
+        unsigned left=0,right=0,top=0,bottom=0;
+        if (pulse_heart < capacity) {
+            unsigned cx=14+(pulse_heart%10)*10, cy=10+(pulse_heart/10)*10;
+            left=(cx-8)/8; right=(cx+7)/8;
+            top=(cy-8)/8; bottom=(cy+7)/8;
+        }
         if (base_key != still_key) {
             base_key = still_key;
             for (i = 0; i < 60 * 16; ++i) base_cells[i] = 0;
@@ -269,8 +294,13 @@ void health_hud_draw(bool visible)
             for (heart = 0; heart < capacity; ++heart)
                 if (heart != pulse_heart) heart_draw(base_cells, health, heart, 11, sample11);
             magic_meter(base_cells, base_magic, capacity);
+            for (i = 0; i < 60 * 16; ++i) work_cells[i] = base_cells[i];
+        } else if (pulse_heart < capacity) {
+            for (y=top;y<=bottom;++y) for (x=left;x<=right;++x) {
+                unsigned at=(y*15+x)*16;
+                for (i=0;i<16;++i) work_cells[at+i]=base_cells[at+i];
+            }
         }
-        for (i = 0; i < 60 * 16; ++i) work_cells[i] = base_cells[i];
         /* Only the pulsing heart changes size. Avoid variable division for
          * every pixel on the SH-2. */
         for (i = 0; i < size; ++i) sample[i] = i * 16 / size;
@@ -279,9 +309,19 @@ void health_hud_draw(bool visible)
         front ^= 1u;
         cells = front ? HEART_BACK_CELLS : HEART_CELLS;
         magic = front ? MAGIC_BACK_CELLS : MAGIC_CELLS;
-        for (i = 0; i < 60 * 16; ++i) cells[i] = work_cells[i];
-        for (i = 0; i < 30 * 16; ++i) magic[i] = base_magic[i];
-        (void)work_magic;
+        if (bank_key[front] != still_key) {
+            for (i = 0; i < 60 * 16; ++i) cells[i] = work_cells[i];
+            bank_key[front] = still_key;
+        } else if (pulse_heart < capacity) {
+            for (y=top;y<=bottom;++y) for (x=left;x<=right;++x) {
+                unsigned at=(y*15+x)*16;
+                for (i=0;i<16;++i) cells[at+i]=work_cells[at+i];
+            }
+        }
+        if (bank_magic[front] != meter_key) {
+            for (i = 0; i < 30 * 16; ++i) magic[i] = base_magic[i];
+            bank_magic[front] = meter_key;
+        }
     }
     for (i = 0; i < 60; ++i)
         HEART_MAP[(2 + i / 15) * 64 + 2 + i % 15] =

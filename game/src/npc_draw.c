@@ -20,6 +20,7 @@
 #include "kokiri_camera.h"
 #include "cutscene.h"
 #include "oot_core_host.h"
+#include "perf_sub.h"
 
 #define NPC_MODEL_COUNT 16
 /* EnOssan OSSAN_TYPE_KOKIRI (build_npc_models SHOPKEEPER): drawn in the
@@ -355,6 +356,8 @@ void npc_draw(unsigned int tick)
     if (shelves) {
         shop_items_draw(steps);
     }
+    {
+    PS_T0();
     if (visible & (1u << NPC_SHOPKEEPER))
         npc_sprite_draw(spr[NPC_SHOPKEEPER], &spr_inst[KOKIRI_NPC_COUNT], tick / 3,
                         KOKIRI_SHOPKEEPER_X, KOKIRI_SHOPKEEPER_Y, KOKIRI_SHOPKEEPER_Z, 0);
@@ -362,10 +365,16 @@ void npc_draw(unsigned int tick)
         if (people & (1u << i)) {
             unsigned int model = model_for(i);
             int32_t focus[3] = {0, npc_sprite_focus_y(spr[model]), 0};
-            npc_sprite_draw(spr[model], &spr_inst[i], tick / 3, gameplay_npc_x(i),
-                            gameplay_npc_y(i), gameplay_npc_z(i), gameplay_npc_yaw(i));
+            int32_t pos[3];
+            uint16_t yaw;
+            gameplay_npc_pose(i, pos, &yaw);
+            unsigned int d0 = frame_timer_ticks();
+            npc_sprite_draw(spr[model], &spr_inst[i], tick / 3, pos[0], pos[1], pos[2], yaw);
+            PS_ACC(PS_NDRAW, frame_timer_ticks_to_us(frame_timer_ticks() - d0));
             gameplay_npc_focus(i, focus);
         }
+    PS_ADD(PS_DPPL);
+    }
 }
 
 /* Greeting uses the resident sprite; cue movement and dialogue stay live. */

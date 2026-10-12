@@ -105,6 +105,7 @@ int main(void) {
 #include <assert.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <string.h>
 ''' + '#include "' + API + '"\n' + r'''
 typedef int s32;
 typedef unsigned int u32;
@@ -157,8 +158,10 @@ static OotCoreNpcView sNpcView[NPC_VIEW_MAX];
 static PlayState *gOotCorePlay;
 static u32 gOotCoreFlags=OOT_CORE_FLAG_NPC_SPRITES;
 static SkelAnime generic={3,20,(void*)0x06001234,(void**)0x06005555};
-static const SkelAnime *GenericNpc_Skel(Actor *a) { return a->id>=3 ? &generic : 0; }
+static const SkelAnime *GenericNpc_Skel(Actor *a) { return a->id>=3 && a->id!=12 ? &generic : 0; }
+static int captured[36];
 static const int *OotCore_SkinMats(Actor *a,unsigned char *n,unsigned short *m) {
+    if(a->id==12) {*n=3;*m=7;return captured;}
     *n=0; *m=0; return 0;
 }
 ''' + graphics.function(ROOT / 'oot-core/src/oot_core_views.cpp', 'int OotCore_NpcView(') + r'''
@@ -241,6 +244,41 @@ int main(void) {
     assert(OotCore_NpcView(&rows)==1 && rows[0].anim==(0x06000460|0x200000));
     ny.actor.draw=(void*)3; /* source death-effect draw */
     assert(OotCore_NpcView(&rows)==1 && !(rows[0].flags & OOT_CORE_VIEW_DRAWN));
+    /* Rejected live props and killed actors leave every output byte alone. */
+    Actor rejected[2]={{0}};
+    rejected[0].update=(void*)1;rejected[0].next=&rejected[1];
+    rejected[1].id=3;
+    play.actorCtx.actorLists[0].head=rejected;
+    memset(sNpcView,0xA5,sizeof sNpcView);
+    assert(OotCore_NpcView(&rows)==0);
+    for(unsigned i=0;i<sizeof sNpcView;++i) assert(((unsigned char*)sNpcView)[i]==0xA5);
+    /* Accepted capture fallback clears all previous generic-sheet metadata. */
+    Actor fallback={0};fallback.id=12;fallback.update=(void*)1;
+    fallback.world.pos=(Vec){17,23,31};fallback.shape.rot.y=1234;
+    play.actorCtx.actorLists[0].head=&fallback;
+    assert(OotCore_NpcView(&rows)==1);
+    assert(rows[0].id==12 && rows[0].x==17 && rows[0].y==23 && rows[0].z==31 && rows[0].yaw==1234);
+    assert(rows[0].mats==captured && rows[0].mat_count==3 && rows[0].skin==7);
+    assert(!rows[0].object && !rows[0].limbs && !rows[0].anim && !rows[0].skeleton && !rows[0].tint);
+    assert(rows[0].scale_x==256 && rows[0].scale_y==256 && rows[0].alpha==255);
+    /* Capacity and actor order: interleaved rejected props cannot consume
+     * rows or change the exact accepted sprite values. */
+    Actor many[40]={{0}};
+    for(int i=0;i<40;++i) {
+        many[i].id=i%2 ? 3 : 0;many[i].update=many[i].draw=(void*)1;
+        many[i].world.pos=(Vec){i,i*2,-i};many[i].params=i;
+        many[i].next=i<39 ? &many[i+1] : NULL;
+    }
+    play.actorCtx.actorLists[0].head=many;
+    assert(OotCore_NpcView(&rows)==NPC_VIEW_MAX);
+    for(int i=0;i<NPC_VIEW_MAX;++i) {
+        const OotCoreNpcView *v=&rows[i];int key=2*i+1;
+        assert(v->id==3 && v->params==key && v->x==key && v->y==key*2 && v->z==-key);
+        assert(v->object==play.objectCtx.slots[0].id && v->limbs==20 && v->anim==0x06001234 && v->skeleton==0x06005555);
+        assert(v->scale_x==256 && v->scale_y==256 && !v->tint && !v->mats && !v->mat_count && !v->skin);
+        assert(v->frame==3 && v->alpha==255 && v->flags==OOT_CORE_VIEW_DRAWN);
+        assert(!v->yaw && !v->head_x && !v->head_y && !v->torso_x && !v->torso_y);
+    }
     return 0;
 }
 ''')

@@ -137,7 +137,12 @@ static int scene_valid(const OotSceneBlob* blob, u32 bytes) {
         !scene_range(blob->objects, blob->num_objects, 2, 2, bytes) ||
         !scene_range(blob->layers, blob->num_rooms * blob->num_layers, sizeof(OotSceneLayer), 4, bytes) ||
         !scene_range(blob->paths, blob->num_path_layers, sizeof(OotSceneLayer), 4, bytes) ||
-        !scene_range(blob->transitions, blob->num_transition_layers, sizeof(OotSceneLayer), 4, bytes)) return false;
+        !scene_range(blob->transitions, blob->num_transition_layers, sizeof(OotSceneLayer), 4, bytes) ||
+        !scene_range(blob->exits, blob->num_exit_layers, sizeof(OotSceneLayer), 4, bytes)) return false;
+    for (u32 i = 0; i < blob->num_exit_layers; ++i) {
+        const OotSceneLayer* row = &blob->exits[i];
+        if (!scene_range(row->actors, row->num_actors, sizeof(s16), 2, bytes)) return false;
+    }
     for (u32 i = 0; i < blob->num_transition_layers; ++i) {
         const OotSceneLayer* row = &blob->transitions[i];
         if (row->num_actors > 255 ||

@@ -48,6 +48,7 @@ class Hearts(unittest.TestCase):
 static unsigned short vram[0x1800],names[2048],saved[960];
 #define HEART_CELLS (vram+16)
 #define HEART_ATLAS (vram+0x400)
+#define HEART_SOURCE HEART_ATLAS
 #define HEART_BACK_CELLS (vram+0x800)
 #define HEART_MAP names
 #define MAGIC_CELLS (vram+0x1000)

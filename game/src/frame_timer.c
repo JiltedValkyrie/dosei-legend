@@ -5,7 +5,6 @@
 /* SH-2 on-chip FRT. TCR selects the prescaler; FRC is the counter. */
 #define FRT_TIER    (*(volatile uint8_t *)0xFFFFFE10)
 #define FRT_FTCSR   (*(volatile uint8_t *)0xFFFFFE11)
-#define FRT_FRC     (*(volatile uint16_t *)0xFFFFFE12)
 #define FRT_TCR     (*(volatile uint8_t *)0xFFFFFE16)
 
 /* CKS1:0 = 10 selects SH-2 clock / 128. At ~28.6 MHz that is 223.7 kHz,
@@ -27,7 +26,7 @@ static unsigned int frame_smoothed;
 ** is why this must be called at least once per frame. */
 static uint32_t     read_ticks(void)
 {
-    uint16_t now = FRT_FRC;
+    uint16_t now = frame_timer_frc();
 
     if (now < previous_count)
         extended += 0x10000u;
@@ -53,7 +52,7 @@ unsigned int    frame_timer_ticks_to_us(unsigned int ticks)
 void            frame_timer_init(void)
 {
     FRT_TCR = FRT_PRESCALER_128;
-    previous_count = FRT_FRC;
+    previous_count = frame_timer_frc();
     extended = 0;
 }
 

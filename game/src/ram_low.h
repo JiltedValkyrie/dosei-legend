@@ -27,7 +27,12 @@
 #define RAM_LOW_TILE_FOG_OFFSET     0x8000u
 #define RAM_LOW_TILE_FOG_BYTES      0x0800u
 #define RAM_LOW_FOREST_MESH_OFFSET  0x8800u
-#define RAM_LOW_FOREST_MESH_BYTES   0x1000u
+#define RAM_LOW_FOREST_MESH_BYTES   0x0800u   /* one byte per bank polygon */
+/* Master-only core view snapshots (oot_core_host.c): PROP/MISC actor views
+** and tool views, filled before each async kick and read during that draw;
+** their counts bound every read. Taken from the old mesh-flag tail. */
+#define RAM_LOW_SNAP_VIEW_OFFSET    0x9000u
+#define RAM_LOW_SNAP_VIEW_BYTES     0x0800u
 /* Streamed room metadata. Every used byte is filled by room_load_bank before
  * drawing; no boot-zero assumption. Separate from depth/material scratch. */
 #define RAM_LOW_ROOM_OBJECTS_OFFSET 0x9800u
@@ -62,9 +67,12 @@
 ** before the blob's constructors run. In the free span before SAVE. */
 #define RAM_LOW_OOTCORE_BSS_OFFSET  0x1D800u
 #define RAM_LOW_OOTCORE_BSS_BYTES   0xA000u
-/* MUSICTRG.BIN is ~90 KB (2026-10-02); the carve shrank to grow the CD directory. */
-#define RAM_LOW_MUSICTRG_OFFSET     0x59500u
-#define RAM_LOW_MUSICTRG_BYTES      0x18000u
+/* Forest bank hot tables (2026-10-12): POINT, POLYGON and ATTR rows read
+** every frame by scene prepare and SGL. Streaming them from the cart (A-bus)
+** cost ~150 cycles per vertex and ~450 per polygon on Mednafen. Formerly
+** MUSICTRG.BIN, which now lives in the cart heap (read a few rows per tick). */
+#define RAM_LOW_FOREST_BANK_OFFSET  0x59500u
+#define RAM_LOW_FOREST_BANK_BYTES   0x18000u
 /* Persistent save state uses the start of the retired directory carve.
  * Explicitly initialized before boot scene setup; never assumes zeroed RAM. */
 #define RAM_LOW_SAVE_OFFSET         0x27800u
@@ -79,7 +87,11 @@
 #define RAM_LOW_OOTDRAW_OFFSET       0x2A800u
 #define RAM_LOW_OOTDRAW_BYTES        0x1000u
 #define RAM_LOW_FS_DIRECTORY_OFFSET 0x49500u
-#define RAM_LOW_FS_DIRECTORY_BYTES  0x10000u
+#define RAM_LOW_FS_DIRECTORY_BYTES  0xA000u
+/* Directory/work tables occupy 0x9DB0, with unchanged capacities. Reclaim
+ * only their unused tail for a full-sized forest draw-point spill cache. */
+#define RAM_LOW_FOREST_DRAW_OFFSET  0x53500u
+#define RAM_LOW_FOREST_DRAW_BYTES   0x6000u
 #define RAM_LOW_GOMA_OFFSET         0x2B800u
 #define RAM_LOW_GOMA_BYTES          0x1000u
 #define RAM_LOW_QUADS_OFFSET        0x2C800u
@@ -116,7 +128,26 @@
 ** slave stack (0x06001E00 down) is ~3.5 KB, too shallow for Player_Update. */
 #define RAM_LOW_SLAVE_STACK_OFFSET  0xFB000u
 #define RAM_LOW_SLAVE_STACK_BYTES   0x4000u
-#define RAM_LOW_USED_BYTES          (RAM_LOW_SLAVE_STACK_OFFSET + RAM_LOW_SLAVE_STACK_BYTES)
+/* Five immutable 16x16 4bpp heart fills. Loaded before HUD becomes ready;
+ * pulse composition must not read the VDP2 bus for every sampled pixel. */
+#define RAM_LOW_HEART_ATLAS_OFFSET  0xFF000u
+#define RAM_LOW_HEART_ATLAS_BYTES   0x0280u
+/* Cold debug timing history: refresh averages and sums. Only the
+ * live counters remain in high RAM. Initialized before any frame callback. */
+#define RAM_LOW_PERF_HISTORY_OFFSET 0xFF280u
+#define RAM_LOW_PERF_HISTORY_BYTES  0x0300u
+/* Master-only NPC draw snapshot (oot_core_host.c): filled before each async
+** kick, read during that draw; snap_npc_n bounds every read. */
+#define RAM_LOW_SNAP_NPC_OFFSET     0xFF580u
+#define RAM_LOW_SNAP_NPC_BYTES      0x0700u
+#define RAM_LOW_USED_BYTES          (RAM_LOW_SNAP_NPC_OFFSET + RAM_LOW_SNAP_NPC_BYTES)
+
+typedef char ram_low_snap_npc_after_perf[RAM_LOW_PERF_HISTORY_OFFSET + RAM_LOW_PERF_HISTORY_BYTES
+                                         <= RAM_LOW_SNAP_NPC_OFFSET ? 1 : -1];
+typedef char ram_low_perf_after_hearts[RAM_LOW_HEART_ATLAS_OFFSET + RAM_LOW_HEART_ATLAS_BYTES
+                                       <= RAM_LOW_PERF_HISTORY_OFFSET ? 1 : -1];
+typedef char ram_low_heart_atlas_after_stack[RAM_LOW_SLAVE_STACK_OFFSET + RAM_LOW_SLAVE_STACK_BYTES
+                                            <= RAM_LOW_HEART_ATLAS_OFFSET ? 1 : -1];
 typedef char ram_low_slave_stack_after_heap[RAM_LOW_HEAP_OFFSET + RAM_LOW_HEAP_BYTES
                                             <= RAM_LOW_SLAVE_STACK_OFFSET ? 1 : -1];
 typedef char ram_low_heap_after_backup[RAM_LOW_BACKUP_WORK_OFFSET + RAM_LOW_BACKUP_WORK_BYTES
@@ -138,6 +169,8 @@ typedef char ram_low_ordered[RAM_LOW_EQUIP_POLY_OFFSET + RAM_LOW_EQUIP_POLY_BYTE
                              RAM_LOW_TILE_FOG_OFFSET + RAM_LOW_TILE_FOG_BYTES
                              <= RAM_LOW_FOREST_MESH_OFFSET &&
                              RAM_LOW_FOREST_MESH_OFFSET + RAM_LOW_FOREST_MESH_BYTES
+                             <= RAM_LOW_SNAP_VIEW_OFFSET &&
+                             RAM_LOW_SNAP_VIEW_OFFSET + RAM_LOW_SNAP_VIEW_BYTES
                              <= RAM_LOW_ROOM_OBJECTS_OFFSET &&
                              RAM_LOW_ROOM_OBJECTS_OFFSET + RAM_LOW_ROOM_OBJECTS_BYTES
                              <= RAM_LOW_ROOM_BOUNDS_OFFSET &&
@@ -176,8 +209,10 @@ typedef char ram_low_ordered[RAM_LOW_EQUIP_POLY_OFFSET + RAM_LOW_EQUIP_POLY_BYTE
                              RAM_LOW_CORE_OFFSET + RAM_LOW_CORE_BYTES
                              <= RAM_LOW_FS_DIRECTORY_OFFSET &&
                              RAM_LOW_FS_DIRECTORY_OFFSET + RAM_LOW_FS_DIRECTORY_BYTES
-                             <= RAM_LOW_MUSICTRG_OFFSET &&
-                             RAM_LOW_MUSICTRG_OFFSET + RAM_LOW_MUSICTRG_BYTES
+                             <= RAM_LOW_FOREST_DRAW_OFFSET &&
+                             RAM_LOW_FOREST_DRAW_OFFSET + RAM_LOW_FOREST_DRAW_BYTES
+                             <= RAM_LOW_FOREST_BANK_OFFSET &&
+                             RAM_LOW_FOREST_BANK_OFFSET + RAM_LOW_FOREST_BANK_BYTES
                              <= RAM_LOW_USED_BYTES ? 1 : -1];
 typedef char ram_low_gear_points_fit[RAM_LOW_LINK_SKIN_OFFSET + RAM_LOW_LINK_SKIN_BYTES <=
     RAM_LOW_LINK_GEAR_POINTS_OFFSET && RAM_LOW_LINK_GEAR_POINTS_OFFSET +

@@ -30,6 +30,9 @@ OBJDIR = build/obj-clean
 else ifeq ($(HIRES),1)
 override TARGET = build/game-hires.elf
 OBJDIR = build/obj-hires
+else ifeq ($(BOOT_KOKIRI_TEST),1)
+override TARGET = build/game-perf-kokiri.elf
+OBJDIR = build/obj-perf-kokiri
 else
 override TARGET = build/game.elf
 OBJDIR = build/obj
@@ -164,6 +167,9 @@ endif
 ifneq ($(filter 1 2 3 4 5,$(PERF_PROBE)),)
 _CCFLAGS += -DDOSEI_PERF_PROBE=$(PERF_PROBE)
 endif
+ifeq ($(BOOT_KOKIRI_TEST),1)
+_CCFLAGS += -DDOSEI_BOOT_KOKIRI_TEST
+endif
 
 # Never retain a fixed-view callback in a subsequent normal build.
 .PHONY: perf_mode_check
@@ -206,7 +212,11 @@ PLAYER_SOURCE ?= $(OOT_CORE)
 # SLAVE_JOBS=0 (rollback, 2026-10-09): no second-SH-2 jobs of ours (core
 # update, Link skin, scene prepare run on the master as before).
 SLAVE_JOBS ?= 1
-OOT_CORE_MODE = $(OOT_CORE)$(if $(filter 1,$(OOT_CORE)),c$(CORE_COLLISION)p$(PLAYER_SOURCE))s$(SLAVE_JOBS)
+CART_ACTOR_POOL ?= 0
+ifeq ($(CART_ACTOR_POOL),1)
+_CCFLAGS += -DDOSEI_CART_ACTOR_POOL
+endif
+OOT_CORE_MODE = $(OOT_CORE)$(if $(filter 1,$(OOT_CORE)),c$(CORE_COLLISION)p$(PLAYER_SOURCE))s$(SLAVE_JOBS)a$(CART_ACTOR_POOL)
 ifeq ($(SLAVE_JOBS),0)
 _CCFLAGS += -DDOSEI_NO_SLAVE_JOBS
 endif
@@ -295,6 +305,10 @@ $(OOT_CORE_OBJDIR)/bridge_message.o: build/oot-core/ocarina_restrictions.inc
 $(OOT_CORE_OBJDIR)/oot_core_api.o: build/oot-core/environment_clock.inc build/oot-core/environment_player_gate.inc oot-core/include/oot_scene_blob.h
 $(OOT_CORE_OBJDIR)/z_bgcheck.o: oot-core/include/bgcheck_bounds.h
 $(OOT_CORE_OBJDIR)/bridge_player.o: oot-core/include/bgcheck_bounds.h
+$(OOT_CORE_OBJDIR)/bridge_player_source.o: oot-core/include/player_tap_aim.h oot-core/include/player_host_carry.h
+$(OOT_CORE_OBJDIR)/oot_core_sprite.o: oot-core/include/oot_sprite_archive.h
+$(OOT_CORE_OBJDIR)/player_frame_decode.o: oot-core/tests/player_frame_decode.c
+$(OOT_CORE_OBJDIR)/oot_core_draw.o $(OOT_CORE_OBJDIR)/z_player_lib.o: oot-core/include/player_anchor_matrix.h
 $(OOT_FIELD_OBJS): oot-core/include/field_enemy_sprite.h
 $(OOT_CORE_OBJDIR)/field_enemy_sprite.o: build/oot-core/field_anchors.inc
 build/oot-core/field_exports.ld: $(OOT_FIELD_OBJS) $(OOT_PACK_ACTOR_OBJS) $(OOT_CORE_OBJS) tools/build_pack_exports.py
@@ -371,7 +385,7 @@ build/oot-core/obj_syms.ld: $(OOT_OBJECT_ELFS)
 build/oot-core/generic_sprites.h: build/oot-core/generic_sprites.json build/oot-core/obj_syms.ld tools/build_sprite_keys.py
 	"$(PYTHON)" tools/build_sprite_keys.py $< build/oot-core/obj_syms.ld $@ --sheets build/generated/generic-sprites --archives $(ASSETS_DIR) --scenes build/oot-core/scenecol
 $(OBJDIR)/oot_core_host.o: build/oot-core/generic_sprites.h
-$(OOT_CORE_OBJDIR)/oot-core/src/oot_core_draw.o: build/oot-core/generic_skins.h build/oot-core/generic_meshes.h
+$(OOT_CORE_OBJDIR)/oot_core_draw.o: build/oot-core/generic_skins.h build/oot-core/generic_meshes.h
 # ROM message text for z_message (oot-core/src/bridge_message.cpp).
 $(ASSETS_DIR)/NESMSG.BIN: $(OOT_CORE_DECOMP)/extracted/ntsc-1.2/baserom/nes_message_data_static
 	cp $< $@

@@ -57,9 +57,11 @@ void                link_anim_pose(unsigned int clip, unsigned int frame,
 void                link_anim_pose_joints(const int16_t *joints);
 /* Slave-SH-2 skin (2026-10-09): frame start poses the matrices on the
  * master and skins the points on the slave during the steps; sync waits for
- * the points (Link's draw, clip poses, reset). */
-void                link_anim_frame_start(const int16_t *joints);
+ * the points (Link's draw, clip poses, reset). Hidden first-person Link keeps
+ * fresh limb matrices/anchors but does not skin invisible vertices. */
+void                link_anim_frame_start(const int16_t *joints, bool visible);
 void                link_anim_sync(void);
+void                link_anim_draw_sync(void); /* also skins a hidden pose becoming visible this frame */
 #endif
 /* Upper-body overlay (Player_UpdateUpperBody): the given clip/frame owns the
 ** UPPER..TORSO limbs of the next pose while the played clip keeps the legs.

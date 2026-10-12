@@ -496,6 +496,77 @@ actor_mesh_t *actor_mesh_load_static(const char *file)
     return mesh;
 }
 
+unsigned actor_mesh_origin_radius(const actor_mesh_t *mesh)
+{
+    unsigned i, radius = 0;
+    if (!mesh) return 0;
+    for (i = 0; i < (unsigned)mesh->pdata.nbPoint; ++i) {
+        unsigned j, sum = 0;
+        for (j = 0; j < 3; ++j) {
+            int v = mesh->points[i][j] / 65536;
+            sum += (unsigned)(v < 0 ? -v : v) + 1u;
+        }
+        if (sum > radius) radius = sum;
+    }
+    return radius;
+}
+
+actor_mesh_t *actor_mesh_cache_static(const actor_mesh_t *mesh, void *storage, unsigned bytes)
+{
+    actor_mesh_t *cached;
+    unsigned i, vertices, faces, needed;
+    unsigned char *at;
+    if (!mesh || !mesh->loaded || mesh->animation || !storage || ((uintptr_t)storage & 3u))
+        return 0;
+    vertices = mesh->pdata.nbPoint; faces = mesh->pdata.nbPolygon;
+    if (!vertices || !faces || vertices > 65535u || faces > 65535u) return 0;
+    needed = sizeof(*cached) + vertices * sizeof(POINT) + faces * (sizeof(POLYGON) + sizeof(ATTR));
+    if (needed > bytes) return 0;
+    cached = (actor_mesh_t *)storage;
+    *cached = (actor_mesh_t){0};
+    at = (unsigned char *)(cached + 1);
+    cached->points = (POINT *)at; at += vertices * sizeof(POINT);
+    cached->polygons = (POLYGON *)at; at += faces * sizeof(POLYGON);
+    cached->attributes = (ATTR *)at;
+    for (i = 0; i < vertices; ++i) {
+        cached->points[i][0] = mesh->points[i][0];
+        cached->points[i][1] = mesh->points[i][1];
+        cached->points[i][2] = mesh->points[i][2];
+    }
+    for (i = 0; i < faces; ++i) {
+        cached->polygons[i] = mesh->polygons[i];
+        cached->attributes[i] = mesh->attributes[i];
+    }
+    cached->pdata.pntbl = cached->points; cached->pdata.nbPoint = vertices;
+    cached->pdata.pltbl = cached->polygons; cached->pdata.nbPolygon = faces;
+    cached->pdata.attbl = cached->attributes;
+    cached->loaded = true;
+    return cached;
+}
+
+actor_mesh_t *actor_mesh_cache_fade(const actor_mesh_t *mesh, void *storage, unsigned bytes)
+{
+    actor_mesh_t *cached;
+    unsigned i, faces;
+    if (!mesh || !mesh->loaded || mesh->animation || !storage || ((uintptr_t)storage & 3u))
+        return 0;
+    faces = mesh->pdata.nbPolygon;
+    if (!faces || faces > 65535u || sizeof(*cached) + faces * sizeof(ATTR) > bytes) return 0;
+    cached = (actor_mesh_t *)storage;
+    *cached = (actor_mesh_t){0};
+    cached->points = mesh->points;
+    cached->polygons = mesh->polygons;
+    cached->attributes = (ATTR *)(cached + 1);
+    for (i = 0; i < faces; ++i) {
+        cached->attributes[i] = mesh->attributes[i];
+        cached->attributes[i].atrb |= MESHon;
+    }
+    cached->pdata = mesh->pdata;
+    cached->pdata.attbl = cached->attributes;
+    cached->loaded = true;
+    return cached;
+}
+
 void actor_mesh_draw_static(actor_mesh_t *mesh, int32_t x, int32_t y, int32_t z,
                             uint16_t yaw)
 {

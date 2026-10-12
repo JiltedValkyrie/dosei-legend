@@ -61,8 +61,15 @@ int FrameAdvance_IsEnabled(PlayState* this) { /* STUB: no frame advance on Satur
 }
 
 /* ---- z_camera.c ---- */
-s32 Camera_RequestMode(Camera* camera, s16 mode) { /* STUB: C camera owns modes until z_camera */
+s32 Camera_RequestMode(Camera* camera, s16 mode) {
+#ifdef PLAYER_SOURCE
+    /* Player_ActionHandler_13 treats NORMAL as refusal. The Saturn view
+     * follows Player's first-person flag/focus; acknowledge its request. */
+    if (camera != NULL) camera->mode = mode;
+    return mode;
+#else
     return 0;
+#endif
 }
 
 /* ---- z_scene.c ---- */

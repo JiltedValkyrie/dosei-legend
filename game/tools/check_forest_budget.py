@@ -42,14 +42,14 @@ def actor_peak(cd, placements):
         param = int(values[4], 0)
         model = 2 + (param & 255) if kind == 'KOKIRI_NPC_CHILD' else (0 if 'MIDO' in kind else 1)
         models.append('NPC%02d' % model)
-    props = ['ROCK', 'POT', 'CHEST', 'BUSH', 'GOSSIP'] + ['SIGN%d' % i for i in range(11)]
+    props = ['ROCK', 'POT', 'CHEST', 'BUSH', 'GOSSIP', 'SIGNALL']
     costs = [mesh_cost(cd / (n + '.BIN')) for n in props]
     costs += [character_cost(cd, n) for n in models]
     return tuple(sum(c[k] for c in costs) for k in (0, 1))
 
 
-def check(root=ROOT):
-    cd = root / 'build/cd'
+def check(root=ROOT, cd=None):
+    cd = Path(cd) if cd is not None else root / 'build/cd'
     peak = actor_peak(cd, (root / 'build/generated/kokiri_actors.c').read_text())
     mouth = mesh_cost(cd/'TREEMTH.BIN')
     peak = tuple(peak[i]+mouth[i] for i in range(2))
@@ -191,4 +191,7 @@ def check(root=ROOT):
 
 
 if __name__ == '__main__':
-    check()
+    import argparse
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--cd', type=Path, help='candidate staging directory (default: build/cd)')
+    check(cd=parser.parse_args().cd)

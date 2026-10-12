@@ -4,6 +4,14 @@
 #include "save_state.h"
 
 static actor_t     *pool;
+/* Slots at/above this bound are empty. Keep holes below it so slot ordering,
+ * first-free allocation and callback spawns behave exactly like the full scan. */
+static unsigned int pool_end;
+/* Direct-mapped hint, never an identity authority. Collisions/stale entries
+ * fall back to the original scan and every hit validates the live identity. */
+static unsigned char resolve_slot[128];
+volatile unsigned actor_resolve_slow;
+volatile unsigned actor_update_slow;
 static bool         updating;
 /* Never reset by scene clear or pool re-init. Exhaustion refuses a spawn
  * rather than allowing an ancient contact to resolve to a new actor. */
@@ -31,6 +39,8 @@ bool            actor_sys_init(void *storage, unsigned int bytes)
         return (false);
     spawn_failures = 0;
     pool = (actor_t *)storage;
+    pool_end = 0;
+    for (i = 0; i < sizeof(resolve_slot); ++i) resolve_slot[i] = 0;
     for (i = 0; i < ACTOR_POOL_MAX; ++i)
         wipe(&pool[i]);
     updating = false;
@@ -43,6 +53,7 @@ static void     destroy(actor_t *a)
     if (a->profile && a->profile->destroy)
         a->profile->destroy(a);
     wipe(a);
+    while (pool_end && !pool[pool_end - 1].profile) --pool_end;
 }
 
 void            actor_sys_clear(void)
@@ -51,7 +62,7 @@ void            actor_sys_clear(void)
 
     if (!pool)
         return;
-    for (i = 0; i < ACTOR_POOL_MAX; ++i)
+    for (i = 0; i < pool_end; ++i)
         if (pool[i].profile)
             destroy(&pool[i]);
 }
@@ -66,7 +77,7 @@ actor_t        *actor_spawn(const actor_profile_t *profile, unsigned int scene,
     if (!pool || !profile || profile->category >= ACTORCAT_MAX ||
         next_identity == UINT32_MAX)
         return ((actor_t *)0);
-    for (i = 0; i < ACTOR_POOL_MAX; ++i)
+    for (i = 0; i < pool_end; ++i)
         if (!pool[i].profile)
             break;
     if (i == ACTOR_POOL_MAX) {
@@ -76,7 +87,10 @@ actor_t        *actor_spawn(const actor_profile_t *profile, unsigned int scene,
     a = &pool[i];
     wipe(a);
     a->identity = ++next_identity;
+    resolve_slot[a->identity & 127u] = (unsigned char)(i + 1);
     a->profile = profile;
+    /* Publish before init: it may spawn or kill this/another actor. */
+    if (i == pool_end) ++pool_end;
     a->x = x; a->y = y; a->z = z;
     a->yaw = yaw;
     a->params = params;
@@ -115,16 +129,22 @@ actor_t *actor_resolve(actor_handle_t handle)
 {
     unsigned int i;
     if (!pool || !handle) return (actor_t *)0;
-    for (i = 0; i < ACTOR_POOL_MAX; ++i)
-        if (pool[i].identity == handle && pool[i].profile && !pool[i].kill)
+    if (!actor_resolve_slow && (i = resolve_slot[handle & 127u]) != 0) {
+        actor_t *a = &pool[i - 1];
+        if (a->identity == handle && a->profile && !a->kill) return a;
+    }
+    for (i = 0; i < pool_end; ++i)
+        if (pool[i].identity == handle && pool[i].profile && !pool[i].kill) {
+            resolve_slot[handle & 127u] = (unsigned char)(i + 1);
             return &pool[i];
+        }
     return (actor_t *)0;
 }
 
 static void     reap(void)
 {
     unsigned int    i;
-    for (i = 0; i < ACTOR_POOL_MAX; ++i)
+    for (i = 0; i < pool_end; ++i)
         if (pool[i].profile && pool[i].kill)
             destroy(&pool[i]);
 }
@@ -148,14 +168,24 @@ unsigned actor_filter_level(const actor_t *a)
 void            actor_sys_update(void)
 {
     unsigned int    cat, i;
+    bool have_updates = false;
 
     if (!pool)
         return;
-    for(i=0;i<ACTOR_POOL_MAX;++i)
-        if(pool[i].profile && pool[i].filter_timer)--pool[i].filter_timer;
+    for (i = 0; i < pool_end; ++i) {
+        actor_t *a = &pool[i];
+        if (!a->profile) continue;
+        if (a->filter_timer) --a->filter_timer;
+        if (!a->kill && a->profile->update) have_updates = true;
+    }
     updating = true;
-    for (cat = 0; cat < ACTORCAT_MAX; ++cat)
-        for (i = 0; i < ACTOR_POOL_MAX; ++i) {
+    /* Most C actors mirror source actors or are stepped by their owning
+     * puzzle/gameplay system. With no callbacks, twelve category scans cannot
+     * do work. If any callback exists, retain the live ordered scan: a callback
+     * may spawn actors or change another actor's profile/category. */
+    if (have_updates || actor_update_slow)
+      for (cat = 0; cat < ACTORCAT_MAX; ++cat)
+        for (i = 0; i < pool_end; ++i) {
             actor_t *a = &pool[i];
             if (a->profile && !a->kill && a->profile->category == cat &&
                 a->profile->update)
@@ -171,7 +201,7 @@ void            actor_sys_draw(void)
 
     if (!pool)
         return;
-    for (i = 0; i < ACTOR_POOL_MAX; ++i)
+    for (i = 0; i < pool_end; ++i)
         if (pool[i].profile && !pool[i].kill && pool[i].profile->draw)
             pool[i].profile->draw(&pool[i]);
 }
@@ -182,7 +212,7 @@ void            actor_sys_room_unload(int room)
 
     if (!pool || room == ACTOR_ROOM_NONE)
         return;
-    for (i = 0; i < ACTOR_POOL_MAX; ++i)
+    for (i = 0; i < pool_end; ++i)
         if (pool[i].profile && pool[i].room == room &&
             !(pool[i].flags & ACTOR_FLAG_PERSISTENT))
             actor_kill(&pool[i]);
@@ -194,7 +224,7 @@ void            actor_sys_scene_unload(void)
 
     if (!pool)
         return;
-    for (i = 0; i < ACTOR_POOL_MAX; ++i)
+    for (i = 0; i < pool_end; ++i)
         if (pool[i].profile && !(pool[i].flags & ACTOR_FLAG_PERSISTENT))
             actor_kill(&pool[i]);
 }
@@ -205,7 +235,7 @@ unsigned int    actor_sys_live(void)
 
     if (!pool)
         return (0);
-    for (i = 0; i < ACTOR_POOL_MAX; ++i)
+    for (i = 0; i < pool_end; ++i)
         if (pool[i].profile && !pool[i].kill)
             ++n;
     return (n);
@@ -226,7 +256,7 @@ actor_t        *actor_sys_find(uint16_t id, const actor_t *after)
         return ((actor_t *)0);
     if (after)
         i = (unsigned int)(after - pool) + 1;
-    for (; i < ACTOR_POOL_MAX; ++i)
+    for (; i < pool_end; ++i)
         if (pool[i].profile && !pool[i].kill && pool[i].profile->id == id)
             return (&pool[i]);
     return ((actor_t *)0);
@@ -268,7 +298,7 @@ actor_t        *actor_sys_nearest_attention(int32_t x, int32_t y, int32_t z,
         range = 46340;             /* range^2 < 2^31 */
     limit = (uint32_t)(range * range);
     best_d2 = limit + 1;
-    for (i = 0; i < ACTOR_POOL_MAX; ++i) {
+    for (i = 0; i < pool_end; ++i) {
         actor_t *a = &pool[i];
         int32_t dx, dz;
         uint32_t d2;

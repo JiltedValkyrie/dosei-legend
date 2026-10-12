@@ -40,6 +40,7 @@
 #include "ram_low.h"
 #include "adult_link.h"
 #include "frame_timer.h"
+#include "perf_sub.h"
 #ifndef LINK_BASE_VERTICES
 #define LINK_BASE_VERTICES LINK_SKIN_VERTICES   /* model without first-person arm */
 #endif
@@ -194,6 +195,9 @@ bool __attribute__((optimize("Os"))) link_anim_prepare_age(bool adult)
 
 void link_anim_commit_age(void)
 {
+#ifdef PLAYER_SOURCE
+    link_anim_sync(); /* old job still reads the old model */
+#endif
     if(pending_frames)publish_frames(pending_frames);
     link_age_model=pending_model;
     pending_frames=0;pending_model=0;
@@ -554,14 +558,21 @@ void            link_anim_pose(unsigned int clip, unsigned int frame,
 ** blade/stick) and the slave skins the vertices while the master runs the
 ** game steps. Only consumers of the skinned points (kokiri_link_draw) and
 ** writers (clip poses, reset, age) call link_anim_sync, which waits. */
-static unsigned int skin_kicked, skin_done;
+static unsigned int skin_kicked, skin_done, skin_job_us;
+/* Both entry points write the same pose/vertex buffers: one cache key. */
+static int16_t last_source_joints[3 + LINK_LIMB_COUNT * 3];
 #define SKIN_DONE (*(volatile unsigned int *)((uintptr_t)&skin_done | 0x20000000u))
 
 static void skin_slave_job(void *arg)
 {
+    uint16_t t0;
     (void)arg;
+    frame_timer_slave_prescale();  /* /128: same units as the master */
+    t0 = frame_timer_frc();
     slCashPurge();                 /* matrices and model from the master */
     skin_vertices();
+    *(volatile unsigned int *)((uintptr_t)&skin_job_us | 0x20000000u) =
+        frame_timer_ticks_to_us((uint16_t)(frame_timer_frc() - t0));
     SKIN_DONE = 1;
 }
 
@@ -573,41 +584,56 @@ void link_anim_sync(void)
     while (!SKIN_DONE)   /* a lost slave job must show, not freeze */
         if (frame_timer_ticks_to_us(frame_timer_ticks() - t0) > 250000u)
             jo_core_error("slave Link skin did not finish");
+    PS_ACC(PS_WSKIN, frame_timer_ticks_to_us(frame_timer_ticks() - t0));
     slCashPurge();                 /* see the slave's points */
+    PS_ACC(PS_SSKIN, skin_job_us);
     skin_kicked = 0;
 }
 
-void link_anim_frame_start(const int16_t *joints)
+void link_anim_draw_sync(void)
 {
-    static int16_t last[3 + LINK_LIMB_COUNT * 3];
-#ifdef DOSEI_NO_SLAVE_JOBS
-    link_anim_pose_joints(joints);   /* SLAVE_JOBS=0: all on the master */
-    return;
-#endif
     link_anim_sync();
-    if (posed_frame == -2 && !memcmp(last, joints, sizeof last)) return;
-    memcpy(last, joints, sizeof last);
-    posed_frame = -2;
+    /* First person can end during the steps, after frame_start skipped skin. */
+    if (posed_frame == -3) {
+        skin_vertices();
+        posed_frame = -2;
+    }
+}
+
+void link_anim_frame_start(const int16_t *joints, bool visible)
+{
+    link_anim_sync();
+    if ((posed_frame == -2 || (!visible && posed_frame == -3)) &&
+        !memcmp(last_source_joints, joints, sizeof last_source_joints)) return;
+    memcpy(last_source_joints, joints, sizeof last_source_joints);
+    /* -3 caches only the bones. A visible return must skin even when the
+     * source joints are unchanged. Hidden anchors still use the new pose. */
+    posed_frame = visible ? -2 : -3;
     pose_skeleton(joints, joints + 3);
+    if (!visible) return;
+#ifdef DOSEI_NO_SLAVE_JOBS
+    skin_vertices();   /* SLAVE_JOBS=0: all on the master */
+#else
     SKIN_DONE = 0;
     skin_kicked = 1;
     slSlaveFunc(skin_slave_job, 0);
+#endif
 }
 
 /* Synchronous pose + skin (no slave). */
 void link_anim_pose_joints(const int16_t *joints)
 {
-    static int16_t last[3 + LINK_LIMB_COUNT * 3];
     link_anim_sync();
-    if (posed_frame == -2 && !memcmp(last, joints, sizeof last)) return;
-    memcpy(last, joints, sizeof last);
+    if (posed_frame == -2 && !memcmp(last_source_joints, joints, sizeof last_source_joints)) return;
+    memcpy(last_source_joints, joints, sizeof last_source_joints);
     posed_frame = -2;
     pose_skeleton(joints, joints + 3);
     skin_vertices();
 }
 #else
 void link_anim_sync(void) {}
-void link_anim_frame_start(const int16_t *joints) { (void)joints; }
+void link_anim_draw_sync(void) {}
+void link_anim_frame_start(const int16_t *joints, bool visible) { (void)joints; (void)visible; }
 void            link_anim_pose(unsigned int clip, unsigned int frame,
                                unsigned int fraction)
 {

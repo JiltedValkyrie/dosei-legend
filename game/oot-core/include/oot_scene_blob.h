@@ -8,7 +8,7 @@
 #define OOT_SCENE_BLOB_H
 
 #define OOT_SCENE_MAX_ROOMS 32
-#define OOT_SCENE_BLOB_FORMAT 0x4f4f4302u
+#define OOT_SCENE_BLOB_FORMAT 0x4f4f4303u
 
 /* One room's actor list in one scene layer (0 = main header, L = room
  * AltHeaders[L - 1]). present 0: no header for that layer (NULL entry), the
@@ -43,6 +43,8 @@ typedef struct OotSceneBlob {
     unsigned int format;
     const OotSceneLayer* transitions; /* original TransitionActorEntry[], per layer */
     unsigned int num_transition_layers;
+    const OotSceneLayer* exits; /* original s16 exit lists, per scene layer */
+    unsigned int num_exit_layers;
 } OotSceneBlob;
 
 #endif

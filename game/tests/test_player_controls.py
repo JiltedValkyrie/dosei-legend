@@ -8,12 +8,13 @@ import ctypes
 import math
 import os
 import pathlib
+import shutil
 import subprocess
 import tempfile
 import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-GCC = pathlib.Path('C:/msys64/mingw64/bin/gcc.exe')
+GCC = pathlib.Path(shutil.which('gcc') or 'C:/msys64/mingw64/bin/gcc.exe')
 
 # Normalized CAMERA_* bits from shared/lib/camera/kokiri_camera.h.
 L, Z, Y, X, R, B, C, A = 0x0008, 0x0010, 0x0020, 0x0040, 0x0080, 0x0100, 0x0200, 0x0400
@@ -36,7 +37,7 @@ class PlayerControls(unittest.TestCase):
         camera = ROOT.parent / 'shared/lib/camera'
         env = dict(os.environ)
         env['PATH'] = str(GCC.parent) + os.pathsep + env.get('PATH', '')
-        subprocess.run([str(GCC), '-shared', '-O2', '-o', str(output),
+        subprocess.run([str(GCC), '-shared', '-fPIC', '-O2', '-o', str(output),
                         '-I' + str(camera),
                         '-I' + str(ROOT.parent / 'shared/lib/collision'),
                         '-I' + str(ROOT / 'src'),

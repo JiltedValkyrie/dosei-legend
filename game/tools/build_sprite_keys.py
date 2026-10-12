@@ -1,8 +1,9 @@
 """Link sprite keys and pack all clips of each skeleton into one SPR2 file.
 
 SPR2 big endian: magic, u16 version=2, u16 clip count, u32 skeleton key,
-u32 file bytes; then {u32 animation key, offset, bytes} per clip. Aligned
-clip bodies retain the validated SPR1 layout. No runtime pose data.
+u32 file bytes; then {u32 animation key, offset, bytes} per clip. Zero-filled
+gaps align each clip's pixels to 16 bytes relative to the archive; clip bodies
+retain the validated SPR1 layout. No runtime pose data.
 """
 import argparse
 import json
@@ -63,6 +64,11 @@ def pack(skeleton, clips):
     for animation, sheet in clips:
         if not 0 <= animation <= 0xFFFFFF or not valid_sheet(sheet):
             raise ValueError('invalid sprite clip')
+        ticks = struct.unpack_from('>H', sheet, 12)[0]
+        pixels = 52 + ((ticks * 2 + 3) & ~3)
+        padding = (-(cursor + pixels)) & 15
+        payload.extend(bytes(padding))
+        cursor += padding
         entries.extend(struct.pack('>III', animation, cursor, len(sheet)))
         payload.extend(sheet)
         cursor += len(sheet)
@@ -95,7 +101,9 @@ def write_archives(rows, symbols, sheets, out):
         print('%s: %d clips, %d bytes' % (name, len(clips), len(data)))
         total += len(data)
         libraries.append({'object': oid, 'skeleton': skeleton, 'file': name,
-                          'clips': len(clips), 'bytes': len(data), 'heap_bytes': len(data)+1})
+                          # NUL byte plus aligned allocation's raw-pointer slot
+                          # and worst-case padding (SH-2 pointers are 4 bytes).
+                          'clips': len(clips), 'bytes': len(data), 'heap_bytes': len(data)+20})
     print('SPR2 libraries: %d bytes total; scene admission also checks the live heap' % total)
     return libraries
 

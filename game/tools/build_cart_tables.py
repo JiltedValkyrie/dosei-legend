@@ -37,7 +37,7 @@ BANKS = (
 
 )
 # Must match RAM_CART_MUSICTRG_BYTES / RAM_CART_TITLEPTH_BYTES (ram_cart.h).
-MUSICTRG_LIMIT = 0x18000  # RAM_LOW_MUSICTRG_BYTES; loaded before music starts
+MUSICTRG_LIMIT = 0x18000  # MUSICTRG_BYTES (music_banks.h, cart heap); loaded before music starts
 TITLEPTH_LIMIT = 0x1800
 
 

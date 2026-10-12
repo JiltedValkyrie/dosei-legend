@@ -20,6 +20,7 @@
 #include "play_state.h"
 #include "save.h"
 #include "camera.h"
+#include "controller.h"
 #include "audio.h"
 #include "sfx.h"
 #include "dma.h"
@@ -36,6 +37,8 @@
 #include "z_lib.h"
 #include "oot_core_host.h"
 #include "oot_core_api.h"
+#include "player_tap_aim.h"
+#include "player_host_carry.h"
 #include "overlays/actors/ovl_En_Elf/z_en_elf.h"
 
 extern const OotCoreHost* gOotCoreHost;
@@ -54,6 +57,45 @@ s32 gOotCorePlayerPushZ;
 /* Room the source Player asked for through a door (-1 none); player_view
  * reports it, the host loads the room bank and answers with set_room. */
 s32 gOotCoreRoomRequest = -1;
+
+static PlayerTapAim sTapAim;
+void OotCore_PlayerInputReset(void) {
+    sTapAim = {};
+    OotCore_CarryReset();
+}
+
+void OotCore_PlayerInput(PlayState* play, Input* input) {
+    Player* player = GET_PLAYER(play);
+    OotCore_CarryOffer(play);
+    static const u16 buttons[3] = { BTN_CLEFT, BTN_CDOWN, BTN_CRIGHT };
+    u16 requested = 0;
+    for (int i = 0; i < 3; ++i) {
+        u8 item = gSaveContext.save.info.equips.buttonItems[i + 1];
+        if ((input->press.button & buttons[i]) &&
+            (item == ITEM_BOW || item == ITEM_SLINGSHOT || item == ITEM_HOOKSHOT ||
+             item == ITEM_LONGSHOT || item == ITEM_BOW_FIRE || item == ITEM_BOW_ICE ||
+             item == ITEM_BOW_LIGHT || item == ITEM_ARROW_FIRE || item == ITEM_ARROW_ICE ||
+             item == ITEM_ARROW_LIGHT)) requested = buttons[i];
+    }
+    PlayerTapAim_Step(&sTapAim, &input->cur.button, &input->press.button, requested,
+        (player->stateFlags1 & PLAYER_STATE1_20) != 0,
+        (player->stateFlags1 & PLAYER_STATE1_9) != 0,
+        !Player_HoldsHookshot(player) || player->actor.child != NULL,
+        play->msgCtx.msgMode != MSGMODE_NONE || Player_InCsMode(play) ||
+        (player->stateFlags1 & PLAYER_STATE1_DEAD));
+    /* Digital Saturn directions arrive at +/-80. Source first-person aim
+     * applies a steep cosine response at that extreme: several updates per
+     * rendered frame become large jumps. Half input keeps fine analog control
+     * and reduces the source angular step, without decoupling shot and camera
+     * directions or changing movement / simulation cadence. */
+    if ((player->stateFlags1 & PLAYER_STATE1_20) &&
+        play->msgCtx.msgMode == MSGMODE_NONE) {
+        input->rel.stick_x /= 2;
+        input->rel.stick_y /= 2;
+        input->cur.stick_x = input->rel.stick_x;
+        input->cur.stick_y = input->rel.stick_y;
+    }
+}
 
 /* ---- z_camera.c: the Saturn camera (player_camera.c) owns the view ---- */
 s16 Camera_GetInputDirYaw(Camera* camera) { /* HOST: C camera facing */
@@ -443,6 +485,17 @@ int OotCore_PlayerView(OotCorePlayerView* out) {
     out->focus_y = (int)this->actor.focus.pos.y;
     out->focus_z = (int)this->actor.focus.pos.z;
     out->yaw = this->actor.shape.rot.y;
+    out->focus_pitch = this->actor.focus.rot.x;
+    out->focus_yaw = this->actor.focus.rot.y;
+    out->item_button = this->heldItemButton;
+    out->aim_mode = this->unk_6AD;
+    {
+        extern u8 gOotCoreDoAction; /* bridge_message.cpp */
+        static_assert(DO_ACTION_GRAB == OOT_CORE_DO_GRAB && DO_ACTION_THROW == OOT_CORE_DO_THROW &&
+                      DO_ACTION_DROP == OOT_CORE_DO_DROP && DO_ACTION_NONE == OOT_CORE_DO_NONE,
+                      "HUD do-action ids");
+        out->do_action = gOotCoreDoAction;
+    }
     out->room_request = (short)gOotCoreRoomRequest;
     gOotCoreRoomRequest = -1;
     out->state1 = this->stateFlags1;
@@ -453,6 +506,20 @@ int OotCore_PlayerView(OotCorePlayerView* out) {
         for (i = 0; i < OOT_CORE_PLAYER_JOINTS; i++) {
             out->joints[i] = joints[i];
         }
+        /* Player_OverrideLimbDrawGameplayCommon, root limb: child Link draws
+         * the shared animations' root at 0.64 (= 16/25 exactly), then lowers
+         * by unk_6C4. The raw jointTable root left child Link floating.
+         * The unk_6C2 pitch case (crawl/dive tilt) is not applied here. */
+        if (!LINK_IS_ADULT) {
+            u8 flags = this->skelAnime.movementFlags;
+            if (!(flags & ANIM_FLAG_DISABLE_CHILD_ROOT_ADJUSTMENT) || (flags & ANIM_FLAG_UPDATE_XZ)) {
+                out->joints[0] = (short)(out->joints[0] * 16 / 25);
+                out->joints[2] = (short)(out->joints[2] * 16 / 25);
+            }
+            if (!(flags & ANIM_FLAG_DISABLE_CHILD_ROOT_ADJUSTMENT) || (flags & ANIM_FLAG_UPDATE_Y))
+                out->joints[1] = (short)(out->joints[1] * 16 / 25);
+        }
+        out->joints[1] = (short)(out->joints[1] - (int)this->unk_6C4);
     }
     out->left_hand = this->leftHandType;
     out->right_hand = this->rightHandType;
@@ -469,9 +536,14 @@ int OotCore_PlayerView(OotCorePlayerView* out) {
     out->water = (this->actor.bgCheckFlags & BGCHECKFLAG_WATER) != 0;
     out->invincible = this->invincibilityTimer != 0;
     out->hidden = this->actor.draw == NULL;
-    out->pad = 0;
+    out->held_visual = 0;
     vec_out(&this->meleeWeaponInfo[0].posA, out->blade_tip);
     vec_out(&this->meleeWeaponInfo[0].posB, out->blade_base);
+    if (this->itemAction == PLAYER_IA_DEKU_STICK && this->unk_85C > FXL(0.0f)) {
+        out->held_visual = 1 | (this->unk_860 != 0 ? 2 : 0);
+        /* The idle stick updates its tip but not meleeWeaponInfo.posB. */
+        vec_out(&this->leftHandPos, out->blade_base);
+    }
     {
         out->floor_y = (int)this->actor.floorHeight;
         /* Navi = the source En_Elf; same visibility test as EnElf_Draw. */

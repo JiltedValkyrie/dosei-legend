@@ -22,6 +22,7 @@
 #include "dungeon_doors.h"
 #include "ram_cart.h"
 #include "pause_inventory_data.h"
+#include "perf_sub.h"
 
 static const uint8_t   *file;
 static const minimap_row_t *row;        /* this scene's map, or 0 */
@@ -437,15 +438,19 @@ static bool shown(void)
 uint32_t minimap_layer_flags(void)
 {
     static bool pause_visible;
+    PS_T0();
     if (gameplay_is_paused() && recomp_link_active) {
         pause_visible = true;
-        return pause_windows_update() ? NBG0ON : 0;
+        uint32_t flags = pause_windows_update() ? NBG0ON : 0;
+        PS_ADD(PS_HVIS);
+        return flags;
     }
     if (pause_visible) {
         pause_windows_reset();
         minimap_scene(row ? row->save_scene : ~0u);
         pause_visible = false;
     }
+    PS_ADD(PS_HVIS);
     bool visible = hud_ready && recomp_link_active && !recomp_title_is_visible() &&
         !recomp_file_select_is_visible() && !cutscene_is_playing() &&
         !gameplay_is_talking() && !gameplay_is_paused();
@@ -461,14 +466,19 @@ uint32_t minimap_layer_flags(void)
         recomp_lift_throw_ready());
 #ifdef DOSEI_HIRES
     /* Existing NBG2 HUD remains standard-only until doubled cells are baked. */
+    PS_ADD(PS_HQUERY);
     return 0;
 #endif
-    if (!hud_ready) return 0;
+    if (!hud_ready) { PS_ADD(PS_HQUERY); return 0; }
     if (ui_jump_key() == UI_KEY_A) action = 0;
+    PS_ADD(PS_HQUERY);
     health_hud_draw(visible);
+    PS_ADD(PS_HHEALTH);
     map_visibility(shown());
     hud_visibility(visible ? (int)(((gameplay.equipped & GP_SWORD) && ui_jump_key() != UI_KEY_X ? 16u : 0u) + action * 2u + navi) : -1);
-    return (shown() || visible) ? NBG2ON : 0;
+    uint32_t flags = (shown() || visible) ? NBG2ON : 0;
+    PS_ADD(PS_HVIS);
+    return flags;
 }
 
 void    minimap_priorities(void)

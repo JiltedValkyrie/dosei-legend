@@ -22,6 +22,7 @@
 #include "animation.h"
 #include "gfx.h"
 #include "libu64/pad.h"
+#include "controller.h"
 #include "object.h"
 #include "z_lib.h"
 #include "z_math.h"
@@ -103,6 +104,7 @@ int OotCore_MeshList(const OotCoreMeshKey** out);
 s32 OotCore_IsGenericDraw(s16 id);
 static u8 sGenericScene;
 static void save_copy_out(PlayState* play);
+static void reset_input(void);
 extern s16 gOotCoreCamYaw;
 static void oot_core_set_camera(short yaw) {
     gOotCoreCamYaw = yaw;
@@ -125,6 +127,11 @@ int OotCore_SceneLoad(unsigned int scene, const char* name, unsigned int core_cr
 extern EffectSsInfo sEffectSsInfo;
 
 static void oot_core_play_destroy(void) {
+    reset_input();
+#ifdef PLAYER_SOURCE
+    extern void OotCore_PlayerInputReset(void);
+    OotCore_PlayerInputReset();
+#endif
     PlayState* play = gOotCorePlay;
     if (!play) return;
     /* Source scene cleanup destroys every actor before its code/objects go.
@@ -331,7 +338,29 @@ static void seed_scene_save(int scene_id) {
     flags->collect = sHostSave->scene_flags[3];
 }
 
-static int oot_core_play_init(void* block, unsigned int bytes, int scene_id, const void* scene, int room,
+static unsigned int sExitCount;
+unsigned int OotCore_PlayerExitIndex(unsigned int index) {
+    /* Some cutscene headers share collision with longer gameplay exit lists. */
+    return index <= sExitCount ? index : 0;
+}
+
+static void load_scene_exits(PlayState* play) {
+    play->exitList = NULL;
+    sExitCount = 0;
+    if (!sScene || !sScene->num_exit_layers) return;
+    const OotSceneLayer* rows = sScene->exits;
+    s32 layer = gSaveContext.sceneLayer;
+    const OotSceneLayer* use = &rows[0];
+    if (layer > 0 && (u32)layer < sScene->num_exit_layers && rows[layer].present)
+        use = &rows[layer];
+    else if (layer == SCENE_LAYER_ADULT_NIGHT && SCENE_LAYER_ADULT_DAY < (s32)sScene->num_exit_layers &&
+             rows[SCENE_LAYER_ADULT_DAY].present)
+        use = &rows[SCENE_LAYER_ADULT_DAY];
+    play->exitList = (s16*)use->actors;
+    sExitCount = use->num_actors;
+}
+
+static int oot_core_play_init(void* block, unsigned int bytes, int scene_id, const void* scene, int room, int spawn,
                               short x, short y, short z, short yaw) {
     u8* mem = (u8*)(((uintptr_t)block + 15u) & ~(uintptr_t)15u);
     PlayState* play;
@@ -350,6 +379,7 @@ static int oot_core_play_init(void* block, unsigned int bytes, int scene_id, con
     OotCore_GfxInit(mem); /* scratch display lists (never executed) */
 
     play->sceneId = scene_id;
+    play->spawn = spawn; /* source special return exits depend on entrance spawn */
     play->state.gfxCtx = OotCore_GfxCtx();
     OotCore_GfxReset();
     /* Slot 0: gameplay_keep, resident (placeholder symbols in the blob).
@@ -382,6 +412,7 @@ static int oot_core_play_init(void* block, unsigned int bytes, int scene_id, con
     /* set_save ran first, so age/time/cutscene index are the C save's. */
     OotCore_TransitionTimeBegin();
     gSaveContext.sceneLayer = OotCore_DestinationLayer(scene_id);
+    load_scene_exits(play); /* Player reads exitList while checking floor collision */
     gTimeSpeed = 0;
     /* Sky time belongs to the session. A frozen room may hold it ahead of
      * dayTime; ordinary scene transitions must preserve that source state. */
@@ -485,11 +516,20 @@ static void oot_core_player_push(int* x, int* z) {
 }
 
 static Input sHostInput;
+/* Retain the last delivered press across idle/release ticks for interaction
+ * diagnosis. Written by the core owner; read only after the host joins it. */
+unsigned short gOotCoreInputTrace[6];
 static s8 sPendingStickY;
 static s8 sHeldStickY;   /* PLAYER_SOURCE: the stick as held, for the real Player */
 
+static void reset_input(void) {
+    sHostInput = {};
+    for (int i = 0; i < 6; ++i) gOotCoreInputTrace[i] = 0;
+    sPendingStickY = sHeldStickY = 0;
+}
+
 static void oot_core_set_input(unsigned short held, unsigned short press, signed char stick_x, signed char stick_y) {
-    sHostInput.prev = sHostInput.cur;
+    press |= (held & ~sHostInput.cur.button) & BTN_R;
     sHostInput.cur.button = held;
     sHostInput.cur.stick_x = stick_x;
     sHostInput.cur.stick_y = stick_y;
@@ -685,7 +725,8 @@ static void oot_core_set_save(const OotCoreSave* in) {
         ItemEquips* eq = &gSaveContext.save.info.equips;
         eq->buttonItems[0] = swords[in->equip_sword & 3];
         for (i = 0; i < 3; i++) {
-            u8 slot = in->c_slots[i];
+            /* Host/HUD: down, left, right. Source: left, down, right. */
+            u8 slot = in->c_slots[i < 2 ? 1 - i : i];
             eq->cButtonSlots[i] = slot;
             eq->buttonItems[i + 1] = slot < ARRAY_COUNT(inv->items) ? inv->items[slot] : ITEM_NONE;
         }
@@ -773,13 +814,7 @@ u32 OotCore_PhaseUs(u32 t0) {
     return Phase_Us(t0);
 }
 
-static void oot_core_update(void) {
-    PlayState* play = gOotCorePlay;
-    u32 t0;
-
-    if (play == NULL) {
-        return;
-    }
+static void consume_input(PlayState* play) {
     sHostInput.rel.stick_y = sPendingStickY;
     sHostInput.cur.stick_y = sPendingStickY;
 #ifdef PLAYER_SOURCE
@@ -790,7 +825,38 @@ static void oot_core_update(void) {
 #endif
     sPendingStickY = 0;
     play->state.input[0] = sHostInput;
+    /* A short press may already be released by a later host step. Give it
+     * one source frame held; derive releases against the last consumed pad,
+     * not against another 30 Hz host sample. */
+    play->state.input[0].cur.button |= sHostInput.press.button;
+#ifdef PLAYER_SOURCE
+    {
+        extern void OotCore_PlayerInput(PlayState*, Input*);
+        OotCore_PlayerInput(play, &play->state.input[0]);
+    }
+#endif
+    play->state.input[0].rel.button = sHostInput.prev.button & ~play->state.input[0].cur.button;
+    sHostInput.prev = play->state.input[0].cur;
+    if (play->state.input[0].press.button) {
+        Player* player = GET_PLAYER(play);
+        gOotCoreInputTrace[0] = play->state.input[0].press.button;
+        gOotCoreInputTrace[1] = play->state.input[0].cur.button;
+        gOotCoreInputTrace[2] = player ? (u8)player->heldItemId : 0xFF;
+        gOotCoreInputTrace[3] = player ? (u8)player->heldItemAction : 0xFF;
+        gOotCoreInputTrace[4] = player && player->talkActor ? (u16)player->talkActor->id : 0xFFFF;
+        gOotCoreInputTrace[5] = player ? player->actor.bgCheckFlags & BGCHECKFLAG_GROUND : 0;
+    }
     sHostInput.press.button = 0;
+}
+
+static void oot_core_update(void) {
+    PlayState* play = gOotCorePlay;
+    u32 t0;
+
+    if (play == NULL) {
+        return;
+    }
+    consume_input(play);
     OotCore_OcarinaStep(play);
     /* Play_Update order. */
     AnimTaskQueue_Reset(&play->animTaskQueue);
@@ -821,6 +887,12 @@ static void oot_core_update(void) {
     gOotCorePhaseUs[2] = Phase_Us(t0);
     t0 = Phase_Now();
     OotCore_DrawActors(play);
+#ifdef PLAYER_SOURCE
+    {
+        extern void OotCore_CarryAfter(PlayState*);
+        OotCore_CarryAfter(play);
+    }
+#endif
     {
         bool revealing = play->msgCtx.msgMode == MSGMODE_TEXT_DISPLAYING;
         Message_Draw(play);

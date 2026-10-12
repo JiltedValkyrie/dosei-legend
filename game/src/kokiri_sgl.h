@@ -42,6 +42,8 @@ unsigned int    kokiri_scene_vram_percent(void);
 /** @brief Submit the forest. Resets the per-frame submission counters, so it
  *  must be called before any actor draw in the same frame. */
 void            kokiri_scene_draw(void);
+/* Debug: 0 full, 1 in-place, 2 high gather, 3 low gather, 4 fallback, 5 empty. */
+unsigned        kokiri_scene_gather_mode(void);
 
 /** @brief Submit Link at a world position, facing @p yaw (binang). */
 void            kokiri_link_draw(int x, int y, int z, int yaw);
@@ -170,7 +172,18 @@ void kokiri_actor_shadow(int x, int y, int z, unsigned radius);
  * at frame start, link_anim_frame_start). */
 void kokiri_frame_slave_kick(bool scene);
 unsigned int kokiri_frame_slave_us(void);   /* last skin+prepare job, slave FRT */
-unsigned int kokiri_sgl_drain_us(void);     /* master wait for SGL's slave queue */
+unsigned int kokiri_sgl_drain_us(void);
+/* Slave job order (2026-10-12): scene prepare queued before the core update.
+** Mednafen A/B in Kokiri: whole frame 173.6 -> 154.8 ms moving, 133.2 ->
+** 125.9 idle, so it is the default. Debug L+R+Left flips it back for A/B. */
+extern bool kokiri_prep_first;     /* master wait for SGL's slave queue */
+extern bool kokiri_parallel_prepare;
+extern volatile unsigned forest_envelope_enabled; /* Debug: zero disables camera-region reuse. */
+unsigned kokiri_scene_candidate_reused(void);
+unsigned kokiri_scene_candidate_count(void);
+unsigned kokiri_scene_envelope_variant(void); /* 1..5, see kokiri_sgl.c */
+void kokiri_scene_envelope_cycle(void);       /* Debug L+R+Right */
+void kokiri_frame_master_prepare(bool scene);
 void kokiri_shadow_resolve(void);           /* deferred shadow floors, after the join */
 void kokiri_actor_shadow_floor(int x, int y, int z, unsigned radius, int floor);
 void kokiri_navi_draw_colour(int x, int y, int z, unsigned int colour, bool sparkles);

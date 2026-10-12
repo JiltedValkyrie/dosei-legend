@@ -80,4 +80,38 @@ unsigned int    frame_timer_ticks(void);
 unsigned int    frame_timer_ticks_to_us(unsigned int ticks);
 unsigned int    frame_timer_copr_changed(void);
 
+/*
+** Raw 16-bit FRC of the CALLING CPU (each SH-2 has its own FRT; slave-safe).
+**
+** The FRT is an 8-bit module: read FRCH (which latches FRCL into TEMP), then
+** FRCL. Never read 0xFFFFFE12 as a word. Mednafen returns only FRC >> 8 for a
+** word read, which made the extended count jump 293 ms at every wrap of that
+** byte and fired the slave prepare watchdog (2026-10-12). An interrupt that
+** reads FRCH between our two bytes re-latches TEMP, so re-read FRCH and retry
+** if the high byte moved.
+*/
+static inline uint16_t frame_timer_frc(void)
+{
+    volatile uint8_t *frch = (volatile uint8_t *)0xFFFFFE12;
+    volatile uint8_t *frcl = (volatile uint8_t *)0xFFFFFE13;
+    for (;;) {
+        uint8_t high = *frch, low = *frcl, again = *frch;
+        (void)*frcl;
+        if (high == again) return (uint16_t)((high << 8) | low);
+    }
+}
+
+/*
+** Slave FRT prescaler. SGL never sets the slave's TCR, so it counts at clock/8
+** and wraps every 18.3 ms; longer slave jobs lost whole wraps. Call at the
+** start of each slave job: selects /128 (293 ms wrap, same units as the
+** master). Keeps IEDG (bit 7): SGL wakes the slave by FRT input capture.
+*/
+static inline void frame_timer_slave_prescale(void)
+{
+    volatile uint8_t *tcr = (volatile uint8_t *)0xFFFFFE16;
+    uint8_t value = *tcr;
+    if ((value & 3u) != 2u) *tcr = (uint8_t)((value & ~3u) | 2u);
+}
+
 #endif

@@ -30,6 +30,125 @@
 #include "oot_core_api.h"
 #include "array_count.h"
 #include "z_math.h"
+#include "animation.h"
+#include "z_lib.h"
+#include "player_anchor_matrix.h"
+#include "bgcheck.h"
+
+/* Exported by sys_matrix.c, but absent from its public source header. */
+MtxF* Matrix_GetCurrent(void);
+
+#if !OOT_CORE_HWFLOAT
+/* Native SH-2 product, with a proven bound at the call site. No saturation
+ * branch or stored 64-bit temporary is needed for these products. */
+static inline FX_INL fx_raw PlayerAnchor_Mul(fx_raw a, fx_raw b)
+{
+    return (fx_raw)(((long long)a * b) >> 16);
+}
+
+static bool PlayerAnchor_Bounded(MtxF* matrix, Vec3f* translation)
+{
+    if (matrix->mf[0][3].v || matrix->mf[1][3].v || matrix->mf[2][3].v ||
+        matrix->mf[3][3].v != FX_ONE || translation->x.v < -FX_MAX ||
+        translation->y.v < -FX_MAX || translation->z.v < -FX_MAX)
+        return false;
+    for (int column = 0; column < 3; ++column)
+        for (int row = 0; row < 3; ++row)
+            if ((fx_uraw)matrix->mf[column][row].v + FX_ONE > 2u * FX_ONE)
+                return false;
+    return true;
+}
+#endif
+
+void OotCore_PlayerTranslateRotateZYX(Vec3f* translation, Vec3s* rotation)
+{
+#if !OOT_CORE_HWFLOAT
+    MtxF* matrix = Matrix_GetCurrent();
+    if (PlayerAnchor_Bounded(matrix, translation)) {
+        fx_raw sine = Math_SinS(rotation->z).v, cosine = Math_CosS(rotation->z).v;
+        for (int row = 0; row < 3; ++row) {
+            fx_raw a = matrix->mf[0][row].v, b = matrix->mf[1][row].v;
+            fx_raw offset = fx_add_raw(fx_add_raw(PlayerAnchor_Mul(a, translation->x.v),
+                PlayerAnchor_Mul(b, translation->y.v)),
+                PlayerAnchor_Mul(matrix->mf[2][row].v, translation->z.v));
+            matrix->mf[3][row].v = fx_add_raw(matrix->mf[3][row].v, offset);
+            matrix->mf[0][row].v = PlayerAnchor_Mul(a, cosine) + PlayerAnchor_Mul(b, sine);
+            matrix->mf[1][row].v = PlayerAnchor_Mul(b, cosine) - PlayerAnchor_Mul(a, sine);
+        }
+        /* Each source basis entry starts within +/-1. Z, Y, X pairs then
+         * stay within +/-2, +/-3, +/-5 respectively. Every rotation product
+         * and sum fits s32; preserve source rounding after EACH multiply.
+         * Translation keeps the source saturating additions in source order. */
+        if (rotation->y) {
+            sine = Math_SinS(rotation->y).v; cosine = Math_CosS(rotation->y).v;
+            for (int row = 0; row < 3; ++row) {
+                fx_raw a = matrix->mf[0][row].v, b = matrix->mf[2][row].v;
+                matrix->mf[0][row].v = PlayerAnchor_Mul(a, cosine) - PlayerAnchor_Mul(b, sine);
+                matrix->mf[2][row].v = PlayerAnchor_Mul(a, sine) + PlayerAnchor_Mul(b, cosine);
+            }
+        }
+        if (rotation->x) {
+            sine = Math_SinS(rotation->x).v; cosine = Math_CosS(rotation->x).v;
+            for (int row = 0; row < 3; ++row) {
+                fx_raw a = matrix->mf[1][row].v, b = matrix->mf[2][row].v;
+                matrix->mf[1][row].v = PlayerAnchor_Mul(a, cosine) + PlayerAnchor_Mul(b, sine);
+                matrix->mf[2][row].v = PlayerAnchor_Mul(b, cosine) - PlayerAnchor_Mul(a, sine);
+            }
+        }
+        return;
+    }
+#endif
+    Matrix_TranslateRotateZYX(translation, rotation);
+}
+
+void OotCore_PlayerMatrixOrigin(Vec3f* destination)
+{
+    MtxF* matrix = Matrix_GetCurrent();
+#if !OOT_CORE_HWFLOAT
+    /* Matrix_MultVec3f(zero) adds zero to each translation. Preserve even
+     * Fx's INT_MIN clamp, while avoiding nine multiplies and six additions. */
+    destination->x.v = fx_add_raw(matrix->mf[3][0].v, 0);
+    destination->y.v = fx_add_raw(matrix->mf[3][1].v, 0);
+    destination->z.v = fx_add_raw(matrix->mf[3][2].v, 0);
+#else
+    destination->x = matrix->mf[3][0];
+    destination->y = matrix->mf[3][1];
+    destination->z = matrix->mf[3][2];
+#endif
+}
+
+/* Player's N64 limb display lists are discarded. Keep the exact hierarchy,
+ * override/post callbacks and matrix stack, but never allocate/serialize the
+ * unused per-limb RSP matrices. Boss/NPC draw walkers remain unchanged. */
+static void PlayerAnchor_Limb(PlayState* play, int index, void** skeleton,
+    Vec3s* joints, OverrideLimbDrawOpa override, PostLimbDrawOpa post, void* arg, int lod)
+{
+    LodLimb* limb = (LodLimb*)SEGMENTED_TO_VIRTUAL(skeleton[index]);
+    Vec3f pos;
+    Vec3s rot = joints[index + 1];
+    if (index == 0) {
+        pos.x = joints[0].x; pos.y = joints[0].y; pos.z = joints[0].z;
+    } else {
+        pos.x = limb->jointPos.x; pos.y = limb->jointPos.y; pos.z = limb->jointPos.z;
+    }
+    Gfx* original = limb->dLists[lod];
+    Gfx* replaced = original;
+    Matrix_Push();
+    if (!override || !override(play, index + 1, &replaced, &pos, &rot, arg))
+        OotCore_PlayerTranslateRotateZYX(&pos, &rot);
+    if (post) post(play, index + 1, &original, &rot, arg);
+    if (limb->child != LIMB_DONE)
+        PlayerAnchor_Limb(play, limb->child, skeleton, joints, override, post, arg, lod);
+    Matrix_Pop();
+    if (index != 0 && limb->sibling != LIMB_DONE)
+        PlayerAnchor_Limb(play, limb->sibling, skeleton, joints, override, post, arg, lod);
+}
+
+void OotCore_PlayerAnchorPose(PlayState* play, void** skeleton, Vec3s* joints,
+    OverrideLimbDrawOpa override, PostLimbDrawOpa post, void* arg, int lod)
+{
+    if (skeleton) PlayerAnchor_Limb(play, 0, skeleton, joints, override, post, arg, lod);
+}
 
 extern u32 gOotCoreFlags; /* oot_core_api.cpp, OOT_CORE_FLAG_* */
 
@@ -448,6 +567,60 @@ int OotCore_SkinList(const unsigned short** out) {
 u32 OotCore_PhaseNow(void);        /* oot_core_api.cpp */
 u32 OotCore_PhaseUs(u32 t0);
 u32 gOotCorePlayerDrawUs;          /* debug overlay: Player anchor draw */
+
+/* ActorShadow_DrawFeet also updates a gameplay contact flag. Keep its exact
+ * rays, temporary feet Y changes and left/right tie-break without building
+ * floor matrices or drawing discarded N64 shadow display lists. */
+static void PlayerAnchor_Feet(Actor* actor, PlayState* play)
+{
+    if (actor->world.pos.y - actor->floorHeight < FXL(200.0f)) {
+        f32 floorHeight[2];
+        actor->shape.feetFloorFlag = 0;
+        for (int i = 0; i < 2; ++i) {
+            CollisionPoly poly;
+            Vec3f* foot = &actor->shape.feetPos[i];
+            foot->y += FXL(50.0f);
+            floorHeight[i] = BgCheck_AnyRaycastDown1(&play->colCtx, &poly, foot);
+            foot->y -= FXL(50.0f);
+            actor->shape.feetFloorFlag <<= 1;
+            f32 distance = foot->y - floorHeight[i];
+            if (distance >= -FXL(1.0f) && distance <= FXL(0.0f))
+                ++actor->shape.feetFloorFlag;
+        }
+        if (!(actor->bgCheckFlags & BGCHECKFLAG_GROUND)) {
+            actor->shape.feetFloorFlag = 0;
+        } else if (actor->shape.feetFloorFlag == 3) {
+            f32 footDistY = actor->shape.feetPos[FOOT_LEFT].y - actor->shape.feetPos[FOOT_RIGHT].y;
+            actor->shape.feetFloorFlag =
+                floorHeight[FOOT_LEFT] + footDistY < floorHeight[FOOT_RIGHT] - footDistY ? 2 : 1;
+        }
+    }
+}
+
+static void PlayerAnchor_Draw(PlayState* play, Actor* actor)
+{
+    /* The source Player assigns only Feet or NULL. Retain the full wrapper
+     * if a future actor behavior introduces another shadow callback. */
+    if (actor->shape.shadowDraw && actor->shape.shadowDraw != ActorShadow_DrawFeet) {
+        Actor_Draw(play, actor);
+        return;
+    }
+    /* Actor_Draw's transform and segment dependency, in original order.
+     * Its lights, color-filter commands and shadows are never consumed by
+     * Saturn's separate Link renderer. Limb callbacks still all execute. */
+    if (actor->flags & ACTOR_FLAG_IGNORE_QUAKE) {
+        Matrix_SetTranslateRotateYXZ(actor->world.pos.x + play->mainCamera.quakeOffset.x,
+            actor->world.pos.y + ((actor->shape.yOffset * actor->scale.y) + play->mainCamera.quakeOffset.y),
+            actor->world.pos.z + play->mainCamera.quakeOffset.z, &actor->shape.rot);
+    } else {
+        Matrix_SetTranslateRotateYXZ(actor->world.pos.x,
+            actor->world.pos.y + actor->shape.yOffset * actor->scale.y, actor->world.pos.z, &actor->shape.rot);
+    }
+    Matrix_Scale(actor->scale.x, actor->scale.y, actor->scale.z, MTXMODE_APPLY);
+    Actor_SetObjectDependency(play, actor);
+    actor->draw(actor, play);
+    if (actor->shape.shadowDraw) PlayerAnchor_Feet(actor, play);
+}
 #endif
 
 s32 OotCore_DrawActors(PlayState* play) {
@@ -471,14 +644,27 @@ s32 OotCore_DrawActors(PlayState* play) {
          * otherwise every 8th update (focus, hands, feet; 2.5 Hz is enough
          * for Navi/targeting, 2026-10-09 speed: the pass is ~7 ms). */
         static u8 sAnchorPhase;
+        static Vec3f sAnchorPos;
+        static bool sAnchorValid;
+        if (play->gameplayFrames == 0) sAnchorValid = false;
+        gOotCorePlayerDrawUs = 0;
         bool needed = player != NULL &&
-            (player->meleeWeaponState != 0 || player->heldActor != NULL ||
+            (!sAnchorValid || player->meleeWeaponState != 0 || player->heldActor != NULL ||
              player->itemAction == PLAYER_IA_DEKU_STICK ||
-             (player->stateFlags1 & (PLAYER_STATE1_SHIELDING | PLAYER_STATE1_9 | PLAYER_STATE1_CARRYING_ACTOR)) ||
+             (player->stateFlags1 & (PLAYER_STATE1_SHIELDING | PLAYER_STATE1_9 | PLAYER_STATE1_20 | PLAYER_STATE1_CARRYING_ACTOR)) ||
              player->rightHandType == PLAYER_MODELTYPE_RH_BOW_SLINGSHOT ||
              player->rightHandType == PLAYER_MODELTYPE_RH_HOOKSHOT ||
              player->leftHandType == PLAYER_MODELTYPE_LH_BOTTLE);
         if (!needed && (++sAnchorPhase & 7) != 0) {
+            if (player != NULL) {
+                /* Retain the cheap idle cadence without leaving Navi/talk
+                 * focus behind a moving Player. Pose detail refreshes at the
+                 * next full pass; active tools still get every source pose. */
+                player->actor.focus.pos.x += player->actor.world.pos.x - sAnchorPos.x;
+                player->actor.focus.pos.y += player->actor.world.pos.y - sAnchorPos.y;
+                player->actor.focus.pos.z += player->actor.world.pos.z - sAnchorPos.z;
+                sAnchorPos = player->actor.world.pos;
+            }
             player = NULL;
         }
         if (player != NULL && player->actor.draw != NULL && player->actor.init == NULL) {
@@ -487,7 +673,9 @@ s32 OotCore_DrawActors(PlayState* play) {
             Gfx* opaEnd = gfx->polyOpa.d;
             Gfx* xluEnd = gfx->polyXlu.d;
             u32 t0 = OotCore_PhaseNow();
-            Actor_Draw(play, &player->actor);
+            PlayerAnchor_Draw(play, &player->actor);
+            sAnchorPos = player->actor.world.pos;
+            sAnchorValid = true;
             gOotCorePlayerDrawUs = OotCore_PhaseUs(t0);
             gfx->polyOpa.p = opa;
             gfx->polyXlu.p = xlu;

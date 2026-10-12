@@ -31,8 +31,15 @@ static int OotSprite_ArchiveValid(const unsigned char* s, unsigned int bytes, un
     end=16+count*12;
     for (i=0;i<count;++i) {
         unsigned int at=16+i*12, off=OotSprite_U32(s,at+4), len=OotSprite_U32(s,at+8);
-        if (OotSprite_U32(s,at)>0xffffffu || off!=end || (off&3) || (len&3) ||
+        if (OotSprite_U32(s,at)>0xffffffu || off<end || off-end>12u || (off&3) || (len&3) ||
             off>bytes || len>bytes-off || !OotSprite_Valid(s+off,len)) return 0;
+        /* Legacy clips are contiguous. New archives add only the zero gap
+         * needed to align the unchanged SPR1 pixel payload for burst DMA. */
+        if (off!=end) {
+            unsigned int base=52+((OotSprite_U16(s+off,12)*2+3)&~3u);
+            if ((off+base)&15u) return 0;
+            for (j=end;j<off;++j) if (s[j]) return 0;
+        }
         for (j=0;j<i;++j) if (OotSprite_U32(s,16+j*12)==OotSprite_U32(s,at)) return 0;
         end=off+len;
     }

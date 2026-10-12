@@ -251,6 +251,8 @@ void player_input_step(bool in_gameplay, player_input_t *out)
     out->interact_held = false;
     out->diagnostics_toggled = false;
     out->camera_swap_toggled = false;
+    out->job_order_toggled = false;
+    out->envelope_toggled = false;
     out->camera_experiment_toggled = false;
     out->camera_orbit_turn = 0;
     out->map_toggled = false;
@@ -278,15 +280,16 @@ void player_input_step(bool in_gameplay, player_input_t *out)
     ** of them, so asking for diagnostics never also looks or raises the shield.
     ** A DIRECTION is required because L is the look button as of this layout:
     ** plain L+R is looking while guarding, an ordinary gameplay combination the
-    ** chord must not swallow. Up swaps the camera, Down toggles the panel.
+    ** chord must not swallow. Up swaps the camera, Down toggles the panel,
+    ** Left flips the second-SH-2 job order (performance A/B).
     ** Gated to diagnostic builds; the clean player disc has neither. */
 #ifndef DOSEI_CLEAN_TEST
     /* 3D pad analog mode: the stick also gives the direction (up = small y). */
-    uint16_t chord_dir = dpad & (CAMERA_UP | CAMERA_DOWN);
+    uint16_t chord_dir = dpad & (CAMERA_UP | CAMERA_DOWN | CAMERA_LEFT | CAMERA_RIGHT);
     if (analog) {
         if (axis_y < 64) chord_dir |= CAMERA_UP;
         else if (axis_y > 192) chord_dir |= CAMERA_DOWN;
-    }
+    }   /* Left/Right are D-pad only: guarding while strafing must not flip jobs. */
     if (!dialogue_open && (held & CAMERA_L) && (held & CAMERA_R) && chord_dir)
     {
         bool swap = (chord_dir & CAMERA_UP) != 0;
@@ -294,7 +297,9 @@ void player_input_step(bool in_gameplay, player_input_t *out)
         if (!diagnostics_chord_held)
         {
             if (swap) out->camera_swap_toggled = true;
-            else out->diagnostics_toggled = true;
+            else if (chord_dir & CAMERA_DOWN) out->diagnostics_toggled = true;
+            else if (chord_dir & CAMERA_LEFT) out->job_order_toggled = true;
+            else out->envelope_toggled = true;
         }
         diagnostics_chord_held = true;
         look_was_active = look;

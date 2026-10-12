@@ -6,6 +6,7 @@
 #include "gameplay.h"
 #include "recomp.h"
 #include "kokiri_camera.h"
+#include "perf_sub.h"
 #include "../oot-core/include/oot_sprite_archive.h"
 #ifdef DOSEI_OOT_CORE
 #include "oot_core_api.h"
@@ -56,7 +57,10 @@ npc_sprite_inst_t *npc_sprite_cache_claim(npc_sprite_inst_t *slots, unsigned int
                                          unsigned int *pinned, const unsigned char *sheet,
                                          unsigned int cel)
 {
-    unsigned int i, candidate=count;
+    /* Rotate misses through the available slots so previous animation cels
+     * survive beyond one frame, rather than repeatedly replacing slot zero. */
+    static unsigned replacement;
+    unsigned int i, candidate=count, start=replacement<count?replacement:0;
     if (count>32) return 0;
     for (i=0;i<count;++i) {
         if (slots[i].slot==NPC_SPRITE_SLOT_NONE) continue;
@@ -64,9 +68,11 @@ npc_sprite_inst_t *npc_sprite_cache_claim(npc_sprite_inst_t *slots, unsigned int
             *pinned |= 1u<<i;
             return &slots[i];
         }
-        if (!(*pinned & (1u<<i)) && candidate==count) candidate=i;
+        if (!(*pinned & (1u<<i)) &&
+            (candidate==count || (candidate<start && i>=start))) candidate=i;
     }
     if (candidate==count) return 0;
+    replacement=candidate+1<count?candidate+1:0;
     *pinned |= 1u<<candidate;
     return &slots[candidate];
 }
@@ -165,6 +171,9 @@ void npc_sprite_draw(const unsigned char *spr, npc_sprite_inst_t *inst, unsigned
     npc_sprite_draw_sample(spr,inst,npc_sprite_cel(spr,frame,x,z,yaw),x,y,z);
 }
 
+/* Debug fallback, master-owned. DMA is joined before publishing shown or
+ * submitting a sprite; never replace a channel while another transfer runs. */
+volatile unsigned npc_sprite_cpu_copy;
 static void npc_sprite_bind_sample(const unsigned char *spr, npc_sprite_inst_t *inst,
                                    unsigned int cel)
 {
@@ -183,9 +192,15 @@ static void npc_sprite_bind_sample(const unsigned char *spr, npc_sprite_inst_t *
     if (cel != inst->shown) {
         const uint32_t *from = (const uint32_t *)(spr + CELS(spr) + cel * bytes);
         uint32_t *to = (uint32_t *)__jo_sprite_pic[inst->slot].data;
-        unsigned int k;
-        for (k = 0; k < bytes / 4; ++k) to[k] = from[k];
+        unsigned int k, t0 = frame_timer_ticks();
+        if (!npc_sprite_cpu_copy) {
+            slDMAWait();
+            jo_dma_copy((void *)from, to, bytes);
+            slDMAWait();
+        } else for (k = 0; k < bytes / 4; ++k) to[k] = from[k];
         inst->shown = (uint16_t)cel;
+        PS_ACC(PS_CEL, frame_timer_ticks_to_us(frame_timer_ticks() - t0));
+        PS_ACC(PS_CELB, bytes);
     }
 }
 
@@ -231,7 +246,12 @@ void npc_sprite_draw_styled(const unsigned char *spr, npc_sprite_inst_t *inst,
     if (sy > 4096) sy = 4096;
     if (alpha < 255) attr.atrb |= MESHon;
     if (tint) { attr.atrb |= CL_Gouraud; attr.gstb = kokiri_hit_gouraud(tint); }
-    if (!npc_sprite_shadow_off) kokiri_actor_shadow(x,y,z,U16(spr,4)*U16(spr,0x10)/1024+4);
+    {
+        unsigned int t0 = frame_timer_ticks();
+        if (!npc_sprite_shadow_off) kokiri_actor_shadow(x,y,z,U16(spr,4)*U16(spr,0x10)/1024+4);
+        PS_ACC(PS_SSHADOW, frame_timer_ticks_to_us(frame_timer_ticks() - t0));
+        PS_ACC(PS_SCOUNT, 1u);
+    }
     npc_sprite_bind_sample(spr, inst, sample & 0xffffu);
     {
         /* SGL drops a sprite whose single anchor is nearer than the screen
@@ -261,5 +281,9 @@ void npc_sprite_draw_styled(const unsigned char *spr, npc_sprite_inst_t *inst,
     }
     attr.texno = inst->slot;
     attr.colno = inst->colno;
-    slPutSprite(pos, &attr, 0);
+    {
+        unsigned int t0 = frame_timer_ticks();
+        slPutSprite(pos, &attr, 0);
+        PS_ACC(PS_SPUT, frame_timer_ticks_to_us(frame_timer_ticks() - t0));
+    }
 }

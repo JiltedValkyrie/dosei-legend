@@ -43,11 +43,15 @@ enum {
 
 extern "C" void PlayerFrameBank_Decode(const uint8_t* block, uint32_t frame, int16_t* out,
                                        int16_t* scratch);
+extern "C" void PlayerFrameBank_DecodeCached(const uint8_t* block, uint32_t frame, int16_t* out,
+                                             int16_t* scratch);
+extern "C" void PlayerFrameBank_DecodeReset(void);
 /* Fatal hook: the game build routes this to its error screen. */
 extern "C" void PlayerFrameBank_Fail(int code, uint32_t id, uint32_t frame);
 
 static const uint8_t* sSlots[PFB_MAX_IDS];
 static int16_t sScratch[PFB_CHANNELS];
+static int16_t sCachedScratch[PFB_CHANNELS]; /* source-only, independent of host pose queries */
 static int sSwapping;   /* scene-pack change in progress: Load fails loud */
 
 static uint32_t be32(const uint8_t* p) {
@@ -157,6 +161,7 @@ extern "C" int PlayerFrameBank_Register(const uint8_t* bank, uint32_t bytes) {
     for (i = 0; i < count; i++) {
         sSlots[be16(bank + idTable + 2 * i)] = bank + be32(bank + 8 + 4 * i);
     }
+    PlayerFrameBank_DecodeReset();
     return (int)count;
 }
 
@@ -172,6 +177,7 @@ extern "C" int PlayerFrameBank_PublishBlock(uint32_t id, const uint8_t* block, u
         return PFB_ERR_DUPLICATE;
     }
     sSlots[id] = block;
+    PlayerFrameBank_DecodeReset();
     return PFB_OK;
 }
 
@@ -179,11 +185,13 @@ extern "C" int PlayerFrameBank_PublishBlock(uint32_t id, const uint8_t* block, u
 extern "C" void PlayerFrameBank_Retract(uint32_t id, const uint8_t* block) {
     if (id < PFB_MAX_IDS && sSlots[id] == block) {
         sSlots[id] = 0;
+        PlayerFrameBank_DecodeReset();
     }
 }
 
 /* Drop every slot that points into this bank (scene pack unload). */
 extern "C" void PlayerFrameBank_Unregister(const uint8_t* bank, uint32_t bytes) {
+    PlayerFrameBank_DecodeReset(); /* pointers may be reused by the next pack */
     for (uint32_t id = 0; id < PFB_MAX_IDS; id++) {
         if (sSlots[id] >= bank && sSlots[id] < bank + bytes) {
             sSlots[id] = 0;
@@ -197,7 +205,7 @@ extern "C" uint32_t PlayerFrameBank_Count(uint32_t id) {
     return block ? be16(block) : 0;
 }
 
-extern "C" int PlayerFrameBank_Load(uint32_t id, uint32_t frame, int16_t* out) {
+static int pfb_load(uint32_t id, uint32_t frame, int16_t* out, bool cached) {
     const uint8_t* block = id < PFB_MAX_IDS && !sSwapping ? sSlots[id] : 0;
 
     if (block == 0) {
@@ -208,8 +216,18 @@ extern "C" int PlayerFrameBank_Load(uint32_t id, uint32_t frame, int16_t* out) {
         PlayerFrameBank_Fail(PFB_ERR_FRAME, id, frame);
         return PFB_ERR_FRAME;
     }
-    PlayerFrameBank_Decode(block, frame, out, sScratch);
+    if (cached) PlayerFrameBank_DecodeCached(block, frame, out, sCachedScratch);
+    else PlayerFrameBank_Decode(block, frame, out, sScratch);
     return PFB_OK;
+}
+
+extern "C" int PlayerFrameBank_Load(uint32_t id, uint32_t frame, int16_t* out) {
+    return pfb_load(id, frame, out, false);
+}
+
+/* Source Player only. C cutscene/render callers keep the stateless Load path. */
+extern "C" int PlayerFrameBank_LoadCached(uint32_t id, uint32_t frame, int16_t* out) {
+    return pfb_load(id, frame, out, true);
 }
 
 /* Scene-pack change, approved rollback rules (human/Astra 2026-10-06). Runs
@@ -272,6 +290,6 @@ void AnimTaskQueue_AddLoadPlayerFrame(PlayState* play, LinkAnimationHeader* anim
         PlayerFrameBank_Fail(PFB_ERR_FORMAT, segment, (uint32_t)frame);
         return;
     }
-    PlayerFrameBank_Load(segment & 0xFFFFu, (uint32_t)frame, (int16_t*)frameTable);
+    PlayerFrameBank_LoadCached(segment & 0xFFFFu, (uint32_t)frame, (int16_t*)frameTable);
 }
 #endif

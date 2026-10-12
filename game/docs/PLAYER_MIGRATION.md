@@ -1,24 +1,56 @@
 # Real Player migration — working inventory, 2026-10-06
 
-## Cutover plan (human-approved 2026-10-08)
+## Current continuation (2026-10-12)
+
+Real Player and core collision are already live. Current implementation order is
+[RECOMP_PLAN R0-R7](RECOMP_PLAN.md#full-core-ownership-and-c-retirement): repair
+parity, core state/item ownership, production demand animation, C Player/proxy
+retirement, camera/story services, host actor/contact retirement and full-game
+coverage. This update plans that work; it does not implement or accept a cutover.
+
+Candidate-10 Clean `b54638cd` is the human-accepted performance baseline;
+sustained moving 20 FPS remains open. API33 rock/stick/aim repairs are in a
+temporary Debug candidate: 318 host checks pass, one skip, target/math/budget/ISO
+checks pass, 80 B high-RAM spare. Ordinary images are preserved. Human acceptance
+of carry cancel/throw/drop/room reset, burning stick and aim/repeated shots is
+pending. Claude owns the active repairs; human tests. No automated emulator
+testing. See [the current handoff](PERFORMANCE_HANDOFF_2026-10-12.md).
+
+The source Player cutover does not finish inventory/save authority: host ammo,
+magic, bottles, health and progression callbacks/mirrors still need field-by-field
+transfer. The live whole `PLAYANIM.PFB` bank also does not fulfill demand loading;
+the isolated cache is not wired into the production source list. API33's host
+prop identity preserves pickup while source prop replacement remains required.
 
 Goal: one authoritative source Player and one collision world; C Link retired;
-main work RAM freed; decomp enemies targetable and shieldable. Today's C Link
-build stays as rollback (`PLAYER_SOURCE=0`) until human acceptance.
+main work RAM freed; source enemies targetable and shieldable. C Link remains a
+rollback source path (`PLAYER_SOURCE=0`) until replacement acceptance; this is
+not a claim its current build or runtime has been reverified. Retain Saturn input,
+rendering/UI/audio/storage adapters and every added feature. Delete by ownership
+and caller audit, never by a `player_*.c` filename wildcard.
+
+## Cutover phase ledger (original plan approved 2026-10-08; status reconciled 2026-10-12)
 
 | Phase | Work | Owner | Gate |
 | --- | --- | --- | --- |
-| 0 | Remeasure retention/placement against the current core | Claude | done below |
-| 1 | Move scene-specific resident actors into per-scene OAP packs (Field pack path) | Astra | free >= deficit + 24 KB; pack fits worst scene carve; NPC/prop tests unchanged |
+| 0 | Remeasure retention/placement against the current core | Recorded checkpoint | Historical measurement below; remeasure each matching new artifact, no old margin credit |
+| 1 | Move scene-specific resident actors into per-scene OAP packs (Field pack path) | Implemented checkpoint | Initial packs target-built; full roster, worst-scene budgets and runtime coverage remain open |
 | 2 | One collision world: port 22 files / 110 C call sites to core bgcheck via `bg_core_shim.c`; C dyna props become core proxies; retire C collision storage (~130 KB heap) | Claude | **code + host + Clean target done 2026-10-09** (below); human runtime batch open |
-| 3 | Frame bank (strict) as `AnimTaskQueue_AddLoadPlayerFrame`, common set + cache handles, whole-cutscene preload/pin | Claude | decoder/cache tests, real cutscene manifests fit |
-| 4 | Link real Player behind `PLAYER_SOURCE=1`: regions loader, 9 duplicates deleted, 46 hooks as host adapters, link skeleton blobs | Claude | resolved link, region guards, wide audit 0, main .bss margin |
-| 5 | Host becomes I/O: input adapter (+ Y jump, B walk, custom jump), camera reads core focus/lock-on, Saturn renderer fed from jointTable/model types, one-way state snapshots, source Attention replaces `attention.c` | Claude + Astra review | per-row host tests |
-| 6 | Parity pass over the preservation table below; human Kronos batches: movement / combat+items / water+climb / talk+cutscenes / era switch | both | human acceptance per batch |
-| 7 | Delete C Link (`player_*.c`, `link_anim_state.c`, C Link paths in recomp/gameplay, C seeds, `attention.c`, magic mirror); then C enemies per enemy plan | Claude | measured main RAM freed |
+| 3 | Production demand animation: common set + owned cache handles, action gates, full-cutscene preload/pin | R2, implementation owner at handoff | Whole bank live; cache host prototype only; CD/start wiring and real working-set admission unfinished |
+| 4 | Link real Player behind `PLAYER_SOURCE=1`: loader, hooks and real link skeletons | Implemented checkpoint | Source Player target-linked/live; reachable hook stubs and parity still open |
+| 5 | Host becomes I/O: controls, renderer and snapshots; source Attention, inventory/progression and camera authority | R1/R3/R4 | Mixed ownership remains; close each writer/caller and preservation row |
+| 6 | Both-era movement / combat+items / water+climb / talk+cutscenes / save and transition parity | Human runtime; implementation owner per batch | Human acceptance per matching artifact; no automated emulator runs |
+| 7 | Remove accepted C Player/proxy branches and then host actor/contact owners | R3/R5/R7 | No obsolete callers/link inputs; actual memory reclaimed; required Saturn adapters retained |
 
-Rules carried: no FPU/soft 64-bit helpers, no CD reads during play, sprite-only
-NPCs, bosses exempt, Clean image name, Linux builds, RECOMP_PLAN updated per phase.
+Rules carried: 32-bit stored runtime values, native SH-2 products allowed,
+no software-wide/soft-float helpers, sprite-only non-boss characters, bosses
+exempt, Clean image name, Linux builds and RECOMP_PLAN updated per wave. Demand
+animation may service CD reads under the explicit readiness/audio contract below;
+never load per shot or advance an action before its data is ready.
+
+The dated sections below are historical measurements/reviews. Their older
+"before cutover", "C Player owns play", memory deficits and build holds are not
+the current state or work order; unresolved preservation requirements remain.
 
 ### Phase 0 remeasure (Claude, 2026-10-08)
 
@@ -262,11 +294,12 @@ The active first wave repairs source projectile motion/Draw-side collisions,
 source-to-C sweeps, magic-arrow admission, aim art and gear presentation. Host
 checks and the matching Clean target pass; human runtime acceptance remains open.
 Evidence: [INVENTORY_HANDOFF_2026-10-08.md](INVENTORY_HANDOFF_2026-10-08.md).
-These repairs retain temporary C Player ownership and do not complete migration.
+That inventory checkpoint retained temporary C Player ownership. The later live
+source Player cutover supersedes that ownership; inventory parity remains open.
 Every source inventory mutation needs one owner and a matching save commit;
 the current mirror must not overwrite new core bottle/ammo/magic changes.
 
-Current memory gate (2026-10-08): W0a and inventory repairs change the resident
+Historical memory gate (2026-10-08): W0a and inventory repairs changed the resident
 core and its shared services. The 2026-10-06 core/Player retention and partition figures below are
 historical measurements, not current available space. Before Player cutover,
 rerun combined retention and region placement against the current inventory ELF/BIN and
@@ -1262,7 +1295,13 @@ remains an explicit prerequisite to cutting over the corresponding subsystem.
 | Cutscene input lock, cues, skipping, equipment/pose restore and audio events | src/recomp.c, src/scene_flow.c, src/link_anim.c | source Player cue state + Saturn presentation | test_cutscenes.py, test_cutscene_skip.py, test_cutscene_parity.py; retain opening/story behavior |
 | Dynamic contact bg IDs, moving/rotating platforms, switches, prior transforms, enable/delete | src/oot_core_host.c, shared/lib/collision (repo root), core z_bgcheck | shared core collision, C callers query adapter | test_core_dyna.py, test_core_bgcheck.py; gallery Y-only/X-scale bridge lacks rider feedback |
 
-## Ownership/dependency cutover map
+## Historical ownership/dependency cutover map (2026-10-06)
+
+This isolated-stage checklist records the original dependencies, not current
+link blockers. Source Player and core collision are now live; the original
+duplicate/unresolved-symbol counts and final no-link hold are superseded.
+Current ownership and retirement gates are in RECOMP_PLAN R0-R7 and the phase
+ledger above. Demand-cache production integration remains required.
 
 1. `z_player_call` provides the single Player_Profile. Its KaleidoManager
    relocation/loading must become explicit resident Saturn dispatch; syntax

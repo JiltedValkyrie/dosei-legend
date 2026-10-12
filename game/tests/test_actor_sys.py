@@ -9,11 +9,12 @@ import ctypes
 import os
 import pathlib
 import subprocess
+import shutil
 import tempfile
 import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-GCC = pathlib.Path('C:/msys64/mingw64/bin/gcc.exe')
+GCC = pathlib.Path(shutil.which('gcc') or 'C:/msys64/mingw64/bin/gcc.exe')
 POOL = 96          # ACTOR_POOL_MAX; M3 worst case 57 + reserve
 
 NPC, ENEMY, SWITCH, KEEP, FAIL = range(5)
@@ -34,7 +35,7 @@ class ActorSys(unittest.TestCase):
         out = pathlib.Path(cls.tmp.name) / 'actor_sys.dll'
         env = dict(os.environ)
         env['PATH'] = str(GCC.parent) + os.pathsep + env.get('PATH', '')
-        subprocess.run([str(GCC), '-shared', '-O2', '-Wall', '-Wextra', '-o', str(out),
+        subprocess.run([str(GCC), '-shared', '-fPIC', '-O2', '-Wall', '-Wextra', '-o', str(out),
                         '-I' + str(ROOT / 'src'),
                         str(ROOT / 'tests/fixtures/actor_sys_host.c'),
                         str(ROOT / 'src/actor_sys.c'), str(ROOT / 'src/collide.c'),
@@ -101,6 +102,26 @@ class ActorSys(unittest.TestCase):
         self.assertEqual(self.spawn(NPC), slot)
         self.assertEqual(self.lib.as_resolve(old), -1)
         self.assertEqual(self.lib.as_resolve(0), -1)
+
+    def test_handle_hint_collision_keeps_both_live_identities_and_slow_fallback(self):
+        first = self.spawn(NPC)
+        first_id = self.lib.as_handle(first)
+        for _ in range(127):
+            slot = self.spawn(ENEMY)
+            self.lib.as_kill(slot)
+        second = self.spawn(ENEMY)
+        second_id = self.lib.as_handle(second)
+        self.assertEqual(first_id & 127, second_id & 127)
+        slow = ctypes.c_uint.in_dll(self.lib, 'actor_resolve_slow')
+        for mode in (0, 1):
+            slow.value = mode
+            for _ in range(3):
+                self.assertEqual(self.lib.as_resolve(first_id), first)
+                self.assertEqual(self.lib.as_resolve(second_id), second)
+        slow.value = 0
+        self.lib.as_kill(second)
+        self.assertEqual(self.lib.as_resolve(second_id), -1)
+        self.assertEqual(self.lib.as_resolve(first_id), first)
 
     def test_pool_still_fits_fixed_cart_carve(self):
         self.assertLessEqual(self.lib.actor_sys_bytes(), 8192)

@@ -5,6 +5,71 @@ Do not use MSYS2 or Git Bash for builds.
 
 ## Build commands
 
+Current baseline: candidate 10 passed its target boundary (Debug 496 B
+spare, Clean 5,968 B), audits, budget and ISO/staging comparisons. The old
+112 B overflow was resolved by candidate 8; it is not a current blocker.
+Human has tested candidate-10 Clean and reports improved performance.
+Gameplay repair is now active; preserve baseline images while validating
+its temporary Debug candidate. See [handoff](PERFORMANCE_HANDOFF_2026-10-12.md).
+
+Authorized Mednafen test variant (2026-10-12):
+`./build.sh --perf-kokiri --quick OOT_CORE=1` builds
+`build/game-perf-kokiri.cue` with private host objects. It enters child Kokiri
+room 0 via the ordinary unsaved Play Test path after boot initialization;
+current source uses Kokiri spawn 9 outside Mido's house for a clear short test
+route, only in this temporary variant. Ordinary entries stay unchanged;
+three hearts and starter slingshot match the gameplay test. It neither binds
+an adventure save slot nor changes the usual Debug/Clean images. The temporary
+build stages its own host/core/assets; restore the entire preserved Debug
+staging directory after verifying the test ISO so all usual payloads remain
+consistent. Restoring only 0.BIN is insufficient after core/asset changes. Emulator tests are
+now explicitly authorized by the human. Compare M/P/C on the same route;
+restore any temporary keyboard bindings when closing the test session.
+
+Earlier 2026-10-12 performance batch used Debug only; human subsequently
+authorized candidate-10 Clean once. Gameplay repairs now use a temporary
+Debug image first; preserve the accepted Clean until repair validation. Use `./build.sh --quick OOT_CORE=1` for this code-only batch;
+do not pass `--clean`. `CART_ACTOR_POOL=1` restores the old reserved cart pool
+for diagnosis; default high-WRAM pool is included in the mode stamp and RAM
+boundary check. Intact signs now use SIGNALL.BIN (14 points, 19 faces); the
+current candidate retires SIGN0.BIN through SIGN10.BIN and fragment simulation.
+Stage the new intact asset even on --quick builds; remove those exact retired files.
+Rendering follow-up also uses this Debug-only command. Cel DMA waits before
+and after each transfer, retaining CPU fallback. Master-prepared forest tables
+are followed by a queued slave cache purge before possible SGL slave transforms.
+Mode 1 in-place packing uses dead depth/side scratch and remaps all polygons.
+Mode 2 uses a 512-point high-WRAM cache plus a full-bank-capacity Low RAM spill, temporarily
+remaps only visible indices and restores them before the next prepare. Hidden
+faces/source points stay unchanged. Every legal bank fits; never truncate
+geometry. The Low RAM CD directory reservation is 0xA000 (tables still 0x9DB0),
+with its old unused 0x6000 tail at 0x253500 used for spill points. Both C and
+linker guards prevent overlap; fs_low_init clears only the directory reservation.
+File/directory capacities and addresses stay unchanged. Check the SGL boundary
+as well as .lowfs size on every build.
+Player anchor-only walker replaces discarded flex-limb matrix/display output;
+importer and core must rebuild together, including CRC-bound actor packs.
+Fx header changes must likewise rebuild the core and CRC-bound packs. Verify
+the target division loop as well as host arithmetic tests: current fx_div_u
+has one initial divide and no calls in the fractional loop. Latest Debug
+6117a58c: 151 tests pass, both math audits clean, all 1,434 ISO files match
+staging; .lowfs is 0x9DB0 and .bss ends 0x06082FC0 (4,160 B below SGL).
+That ordinary image stays preserved while temporary candidates are tested.
+Last successful --perf-kokiri 6f806172: 202 focused tests, zero math-audit failures,
+1,424 payloads matched, .bss ends 0x06083EB0 (only 336 B spare); core .lowbss
+0x9130 fits 0xA000. Changes also require fresh SP2 archives and their parser:
+sprite archive pixel starts and allocations are 16-byte aligned; legacy
+contiguous files still load. makefile explicitly tracks oot_sprite_archive.h
+and the included Player decoder C source. New matrix/IK angle importer changes
+must rebuild the core and every CRC-bound actor pack. Verify saved candidate
+staging independently with `python3 tools/check_forest_budget.py --cd PATH`;
+normal staging is restored to the preserved Debug after isolated builds.
+
+2026-10-12 exit follow-up: host/core API32 adds entrance spawn to `play_init`;
+OOC format `0x4f4f4303` appends original per-layer exit lists. Rebuild all OOCs
+and CRC-bound packs with the usual wrapper; API31 cores/format-2 blobs cannot
+be mixed into this image. Scene prep watchdog now measures lack of progress,
+not total duration; its progress value is diagnostic, not a frame-time metric.
+
 Field actor packs (2026-10-08): `SA.OAP` must relink against the exact
 `OOTCORE.BIN` CRC. Build all four actors plus six source effect objects; omitting
 the effect objects leaves undefined profiles. Keep pack ELF/map/JSON evidence
@@ -20,7 +85,8 @@ bytes (previously 39,936 + 8,192); total capacity is unchanged. The low zone is
 initialized by the existing allocator boot path. Effect views use the unused
 0x19200..0x197ff low-WRAM span, with a compile-time size check, rather than a
 1,408-byte local array on SGL's 1 KiB stack. Caps and command tables stay fixed.
-The latest isolated target check ends .bss at 0x06083400, 3,072 bytes below SGL.
+The earlier isolated target check ended .bss at 0x06083400; current boundary
+evidence is recorded with the Debug batch above.
 
 Run Linux host tests with `DOSEI_OOT` set before importing tooling. Broad legacy
 test discovery currently includes stale decimal room filenames, Windows compiler
@@ -365,6 +431,25 @@ $//'`.
     rollback builds still find them. build.sh's first "boundary" line reads
     the previous map; trust the last one. Real-Player Clean: .bss ends
     0x06078380, 48,256 B spare (C Link physics no longer linked in).
+51. **Host .text counts against the SGL boundary (2026-10-12).** Code, data
+    and .bss are contiguous from 0x06004000, so a code-only change can fail
+    the `.bss ends ... above the SGL work area` guard (candidate 9: +3,200 B,
+    mostly scene_prepare at -O2). The LTO map has no per-object sizes: rerun
+    the logged sh-elf-gcc line for one file with `-flto` replaced by
+    `-ffunction-sections` and `-o /tmp/x.o`, then `sh-elf-nm --size-sort -S`.
+    Cold helpers take `optimize("Os"), noinline`; master-only snapshots can
+    move to a bounded Low RAM carve. Do not cut gameplay capacities.
+52. **Mednafen private-desktop helper: launch from the PowerShell tool.**
+    `mednafen-test-control.ps1 -Action launch` started from a bash-spawned
+    `powershell.exe` creates a desktop the later PostPrivate calls cannot use
+    ("Private desktop operation failed"). Launch and close with the
+    PowerShell tool; press/capture driver scripts may run from bash.
+    Close every session (`-Action close`) to restore mednafen.cfg.
+53. **Clean rebuild with the SIGNALL staging (2026-10-12).** Like the
+    `--perf-kokiri` scripts, `build/clean10-build.sh` runs build_sign_intact,
+    retires SIGN0-10.BIN from staging, builds `--clean OOT_CORE=1`, audits,
+    verifies all ISO payloads, then restores ordinary Debug staging. It backs
+    up the previous Clean image to `build/mednafen-test/clean-c3f29128/`.
 
 ## Playtest package
 
@@ -864,3 +949,37 @@ checks pass; this is not target/runtime acceptance. Size growth is not yet attri
     SLAVE_JOBS=0` builds without our second-SH-2 jobs (core update, Link
     skin, scene prepare back on the master). The mode stamp forces a full
     recompile when it flips. Use it to A/B any slave-scheduling problem.
+106. **Player aim repair uses API31 (2026-10-12).** Rebuild host, core and
+    core-CRC-bound scene packs together. `player_tap_aim.h` is an explicit
+    bridge_player_source object dependency. Use the usual Clean image with
+    slave jobs enabled; the human reports 10→20 FPS from that work.
+107. **WSL sessions can hang up mastering.** This review saw EventFd startup
+    failures and a real `mkisofs` Hangup deleting the incomplete ISO. An
+    ignored-HUP wrapper (`trap '' HUP`) completed the normal build. Serialize
+    WSL verification if startup is unstable. Require the final built line,
+    successful boundary/math checks and ISO/staging comparison; an ELF alone
+    is not a rebuilt disc. Linux shared-library probes need `-fPIC` and must
+    discover gcc rather than silently skip on a Windows-only path.
+108. **The SH-2 FRT is 8-bit: never read FRC as a word (2026-10-12).** Read
+    FRCH (0xFFFFFE12, latches FRCL), then FRCL (0xFFFFFE13); use
+    `frame_timer_frc()` in `frame_timer.h` on either CPU. Mednafen returns only
+    FRC >> 8 for a word read (Kronos returns all 16 bits), which made the timer
+    jump 293 ms per wrap and fired the slave prepare watchdog falsely.
+    `audit_oot_core_wide.py` fails on FRT word/long loads. SGL never sets the
+    slave's TCR (clock/8, 18 ms wrap): slave jobs call
+    `frame_timer_slave_prescale()` (/128, keeps IEDG for SGL's wake-up). WSL host tests that
+    read the decomp need `DOSEI_OOT=/mnt/d/Workspace-Claude/game-decomps/n64/oot`.
+109. **Jo's cart heap is cache-through (2026-10-12).** `jo_malloc` zones at
+    0x22400000/0x22600000 return uncached addresses: every read goes over the
+    A-bus. Kronos hides the cost; Mednafen/hardware do not. Hot, CPU-written
+    data read every frame should use the cached alias (`& ~0x20000000`, see
+    `kokiri_sgl.c bank_allocate`) with explicit purges where the other CPU or
+    DMA writes it. Debug build and Clean share `build/cd`: verify each ISO right
+    after its own build (`0.BIN` differs otherwise).
+
+110. **Host headers: no new `static inline` bodies (2026-10-12).** Host C uses
+    `-fkeep-inline-functions`, so each includer keeps its own copy even with
+    LTO. With one small accessor inline in `oot_core_host.h` (13 includers)
+    the build failed the SGL boundary by 16 B; as a plain function in
+    `oot_core_host.c` the same batch had 240 B spare. Load image sections are
+    0x20-aligned: savings under 32 B may not move `.bss` end at all.

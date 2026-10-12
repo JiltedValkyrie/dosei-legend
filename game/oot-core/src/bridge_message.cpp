@@ -85,10 +85,12 @@ s32 View_ApplyOrthoToOverlay(View* view) { /* STUB */
     return 1;
 }
 
-/* ---- z_parameter.c: the C HUD owns the A/B labels until z_parameter ---- */
+/* ---- z_parameter.c: Saturn HUD draws the A/B labels; Player picks A ---- */
 void Interface_ChangeHudVisibilityMode(u16 hudVisibilityMode) { /* STUB */
 }
-void Interface_SetDoAction(PlayState* play, u16 action) { /* STUB */
+u8 gOotCoreDoAction = DO_ACTION_NONE;
+void Interface_SetDoAction(PlayState* play, u16 action) { /* HOST: player_view -> Saturn HUD */
+    gOotCoreDoAction = (u8)action;
 }
 void Interface_LoadActionLabelB(PlayState* play, u16 action) { /* STUB */
 }

@@ -16,10 +16,12 @@
 #include "message_data_fmt.h"
 #include "play_state.h"
 #include "player.h"
+#include "save.h"
 #include "effect.h"
 #include "overlays/actors/ovl_En_Ko/z_en_ko.h"
 #include "overlays/actors/ovl_En_Md/z_en_md.h"
 #include "overlays/actors/ovl_En_Kanban/z_en_kanban.h"
+#include "oot_sign_visual.h"
 #include "oot_core_api.h"
 #include "overlays/actors/ovl_En_In/z_en_in.h"
 #include "overlays/actors/ovl_En_Ma1/z_en_ma1.h"
@@ -288,14 +290,6 @@ int OotCore_NpcView(const OotCoreNpcView** out) {
         if (actor->update == NULL) {
             continue;
         }
-        /* Rows outlive actors and scenes. Native Kokiri views do not carry a
-         * generic sheet key; clear a previous Ranch occupant's metadata. */
-        v->object = 0;
-        v->limbs = 0;
-        v->anim = 0;
-        v->skeleton = 0;
-        v->scale_x = v->scale_y = 256;
-        v->tint = 0;
         if (actor->id == ACTOR_EN_KO) {
             EnKo* ko = (EnKo*)actor;
             info = &ko->interactInfo;
@@ -312,6 +306,7 @@ int OotCore_NpcView(const OotCoreNpcView** out) {
             const EnNy* ny = (const EnNy*)actor;
             const ActorProfile* profile = gActorOverlayTable[ACTOR_EN_NY].profile;
             unsigned variant = ny->unk_1E0 > 0.25f ? 2 : ny->unk_1D8 > ny->unk_1D4 ? 1 : 0;
+            v->tint = 0;
             v->mats = NULL;
             v->mat_count = 0;
             v->skin = 0;
@@ -338,6 +333,8 @@ int OotCore_NpcView(const OotCoreNpcView** out) {
             continue;
         } else if ((gOotCoreFlags & OOT_CORE_FLAG_NPC_SPRITES) && (skel = GenericNpc_Skel(actor)) != NULL) {
             /* Generic NPC as a host sprite: object + animation + frame. */
+            v->scale_x = v->scale_y = 256;
+            v->tint = 0;
             v->mats = NULL;
             v->mat_count = 0;
             v->skin = 0;
@@ -393,11 +390,19 @@ int OotCore_NpcView(const OotCoreNpcView** out) {
         } else {
             /* Generic skinned NPC: drawn only from captured matrices. */
             unsigned short model;
-            const int* mats = OotCore_SkinMats(actor, &v->mat_count, &model);
+            unsigned char mat_count;
+            const int* mats = OotCore_SkinMats(actor, &mat_count, &model);
 
             if (mats == NULL || model == 0) {
                 continue;
             }
+            v->object = 0;
+            v->limbs = 0;
+            v->anim = 0;
+            v->skeleton = 0;
+            v->scale_x = v->scale_y = 256;
+            v->tint = 0;
+            v->mat_count = mat_count;
             v->mats = mats;
             v->skin = model;
             v->id = actor->id;
@@ -413,6 +418,14 @@ int OotCore_NpcView(const OotCoreNpcView** out) {
             n++;
             continue;
         }
+        /* Reject ordinary props before touching the output row. Accepted
+         * native NPCs still clear metadata left by a previous scene's sheet. */
+        v->object = 0;
+        v->limbs = 0;
+        v->anim = 0;
+        v->skeleton = 0;
+        v->scale_x = v->scale_y = 256;
+        v->tint = 0;
         v->head_x = info->headRot.x;
         v->head_y = info->headRot.y;
         v->torso_x = info->torsoRot.x;
@@ -455,9 +468,11 @@ int OotCore_PropQuery(short actor_id, int x, int z) {
             }
             if (actor_id == ACTOR_EN_KANBAN) {
                 if (actor->params == ENKANBAN_PIECE) {
-                    continue; /* flying piece: not drawn yet (APPROXIMATE) */
+                    continue; /* detached signs are not spawned on Saturn */
                 }
-                return ((EnKanban*)actor)->partFlags;
+                EnKanban* sign = (EnKanban*)actor;
+                return sign->partFlags == OOT_SIGN_INTACT ? (int)OOT_SIGN_INTACT :
+                       sign->cutMarkTimer > 0 ? sign->cutMarkTimer : 0;
             }
             return 0;
         }
@@ -602,7 +617,42 @@ const char* OotCore_DebugText2(void) {
     return sText;
 }
 
-/* "oc t<talk> m<msgMode> x<textId> n<npcs> c<AT>/<AC>/<OC>" for the debug panel. */
+#ifdef PLAYER_SOURCE
+extern int Player_CanUpdateItems(Player* player);
+/* Read only, evaluated by Debug row 21 after the core is joined. Bits mirror
+ * the source item gates; no counters or work in the Player update path.
+ * 0 CanUpdateItems false; 1 non-Player category; 2 changing held item;
+ * 3 item-action mismatch without SHIELDING;
+ * 4 no health; 5 scripted CS; 6 Player CS action; 7 shooting gallery;
+ * 8 non-main camera; 9 transition; 10 stopped timer;
+ * 11 carrying actor or STATE1_29; 12 hookshot child missing;
+ * 13 C-left disabled/empty; 14 STATE1_0/dead; 15 swimming (STATE1_27).
+ * Zero means these guards allow C-left selection, not proof the current
+ * action actually called Player_UpdateUpperBody/Player_UpdateItems. */
+static u32 OotCore_ItemGateMask(PlayState* play, Player* player) {
+    u32 bits = 0;
+    u32 flags = player->stateFlags1;
+    if (!Player_CanUpdateItems(player)) bits |= 1u << 0;
+    if (player->actor.category != ACTORCAT_PLAYER) bits |= 1u << 1;
+    if (flags & PLAYER_STATE1_START_CHANGING_HELD_ITEM) bits |= 1u << 2;
+    if (player->heldItemAction != player->itemAction && !(flags & PLAYER_STATE1_SHIELDING)) bits |= 1u << 3;
+    if (!gSaveContext.save.info.playerData.health) bits |= 1u << 4;
+    if (play->csCtx.state != CS_STATE_IDLE) bits |= 1u << 5;
+    if (player->csAction != PLAYER_CSACTION_NONE) bits |= 1u << 6;
+    if (play->shootingGalleryStatus != 0) bits |= 1u << 7;
+    if (play->activeCamId != CAM_ID_MAIN) bits |= 1u << 8;
+    if (play->transitionTrigger == TRANS_TRIGGER_START) bits |= 1u << 9;
+    if (gSaveContext.timerState == TIMER_STATE_STOP) bits |= 1u << 10;
+    if (flags & (PLAYER_STATE1_CARRYING_ACTOR | PLAYER_STATE1_29)) bits |= 1u << 11;
+    if (Player_HoldsHookshot(player) && player->heldActor == NULL) bits |= 1u << 12;
+    if (C_BTN_ITEM(0) >= ITEM_NONE_FE) bits |= 1u << 13;
+    if (flags & (PLAYER_STATE1_0 | PLAYER_STATE1_DEAD)) bits |= 1u << 14;
+    if (flags & PLAYER_STATE1_27) bits |= 1u << 15;
+    return bits;
+}
+#endif
+
+/* Source Player: live item admission, queried only by the Debug overlay. */
 const char* OotCore_DebugText(void) {
     static char sText[40];
     static const char hex[] = "0123456789ABCDEF";
@@ -621,6 +671,22 @@ const char* OotCore_DebugText(void) {
     for (k = (digits) - 1; k >= 0; k--) {            \
         *p++ = hex[(v >> (k * 4)) & 0xF];            \
     }
+    /* Only p is retained. i/g/c/f are live, after the most recent update:
+     * held item / held action / current action; gate mask; C-left item/status;
+     * stateFlags1. Fits the existing 40-byte buffer, without ABI/BSS growth. */
+#ifdef PLAYER_SOURCE
+    extern unsigned short gOotCoreInputTrace[6];
+    *p++ = 'p'; PUT_HEX(gOotCoreInputTrace[0], 4);
+    *p++ = ' '; *p++ = 'i'; PUT_HEX((u8)player->heldItemId, 2);
+    *p++ = '/'; PUT_HEX((u8)player->heldItemAction, 2);
+    *p++ = '/'; PUT_HEX((u8)player->itemAction, 2);
+    *p++ = ' '; *p++ = 'g'; PUT_HEX(OotCore_ItemGateMask(play, player), 4);
+    *p++ = ' '; *p++ = 'c'; PUT_HEX(gSaveContext.save.info.equips.buttonItems[1], 2);
+    *p++ = '/'; PUT_HEX(gSaveContext.buttonStatus[1], 2);
+    *p++ = ' '; *p++ = 'f'; PUT_HEX(player->stateFlags1, 8);
+    *p = '\0';
+    return sText;
+#endif
     *p++ = 't';
     PUT_HEX(OotCore_TalkState(), 1);
     *p++ = ' ';

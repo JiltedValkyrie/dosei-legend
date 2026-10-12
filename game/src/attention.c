@@ -36,9 +36,16 @@ actor_t    *attention_find(const int32_t feet[3], const int32_t focus[3],
     unsigned int i;
     for (i = 0; i < ACTOR_POOL_MAX; ++i) {
         actor_t *a = actor_sys_slot(i);
-        uint32_t d, w;
+        uint32_t d, w, range, minimum;
         int32_t turn, at[3];
         if (a == locked || !attention_enabled(a) || !dist_sq(feet, a, &d))
+            continue;
+        /* Avoid SGL atan for actors that cannot beat the current candidate
+         * or enter their range. Locked weighting is 60--100% of d: d/2 is
+         * a conservative cheap lower bound, with no multiply or divide. */
+        range = actor_attention_range_sq(a);
+        minimum = locked ? d >> 1 : d;
+        if (minimum >= best_d || minimum >= range)
             continue;
         /* (yawTowardsPlayer - 0x8000) - shape.rot.y: the turn from Link's
         ** facing to the actor. */
@@ -59,7 +66,7 @@ actor_t    *attention_find(const int32_t feet[3], const int32_t focus[3],
             w = d;
         }
         /* Every filter before the winner changes. */
-        if (w >= best_d || w >= actor_attention_range_sq(a))
+        if (w >= best_d || w >= range)
             continue;
         attention_focus(a, at);
         if (!attention_on_screen(at) || attention_sight_blocked(focus, at))

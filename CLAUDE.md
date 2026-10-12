@@ -7,6 +7,25 @@ Always use caveman talk. No waste human tokens. Bad. You caveman talking? Good g
 
 # ACTIVE WORK: oot-core decomp pipeline (2026-10-02)
 
+2026-10-12 planning continuation: human requests completion plan for handwritten
+C gameplay retirement and full core ownership. Follow
+[RECOMP_PLAN R0-R7](game/docs/RECOMP_PLAN.md#full-core-ownership-and-c-retirement).
+Player/core collision are live; next is repair parity, then core state/items,
+demand animations and staged retirement of Player/camera/story/actor owners.
+Keep Saturn backend and all added features. No wildcard deletion of player files.
+This is a documentation/source-review update, not replacement acceptance.
+
+2026-10-12 checkpoint: gameplay repair handed to Claude; human tests. Human accepts improved
+candidate-10 Clean performance (b54638cd); moving 20 FPS still open. Now fix
+rock grab, invisible held stick and coarse low-FPS aim. API33 source prop
+adapter / held visual / reduced aim input implemented; temporary Debug built,
+318 checks pass + one skip, audits/budget/ISO pass. Candidate 12 (Claude):
+source EnIshi/ObjTsubo offer rules + source A label (API34 do_action);
+game-perf-kokiri 5dedadf9 built, 240 B spare; human test pending.
+Human says NO automated emulator testing. Private emulator closed/config restored.
+Read [PERFORMANCE_HANDOFF_2026-10-12.md](game/docs/PERFORMANCE_HANDOFF_2026-10-12.md).
+Preserve baseline images. Never bring test windows forward.
+
 Human animation directive (2026-10-06): load only Player clips needed for current
 play or requested actions/cutscenes. Common moves stay ready; prefetch/cache rare
 clips, gate action start until ready, release unreferenced clips. Do not skip
@@ -82,6 +101,12 @@ create alternate image names unless explicitly requested. Do not overwrite a
 mounted image; resolve that blocker while preserving the usual output path.
 Launcher order: Play Dosei Legend (Standard) = clean/default;
 Play Dosei Legend (320x480i) = hires; Debug Mode = normal.
+Current exception (human, 2026-10-12): Astra owns Mednafen performance testing
+and may use a temporary image booting directly into child Kokiri. Preserve
+ordinary Debug/Clean while testing; no Clean rebuild until Debug ready for
+20 FPS. Do not bring emulator or helper windows to the foreground: human is
+playing another game. Use background-scoped input only, isolate test controller
+bindings, and restore the user's configuration when closing the test session.
 Human owns ordinary runtime testing. Exception authorized 2026-10-05: Astra may
 launch and control the real, visible configured Kronos GUI for the isolated
 warp-control build. Human must see the same window; no copied/hidden emulator.

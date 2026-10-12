@@ -85,6 +85,8 @@ typedef struct
     bool                interact_held;
     bool                diagnostics_toggled;
     bool                camera_swap_toggled;
+    bool                job_order_toggled;   /* Debug A/B: L+R+Left */
+    bool                envelope_toggled;    /* Debug A/B: L+R+Right */
     bool                map_toggled;          /* L edge outside menus/view */
     bool                camera_experiment_toggled; /* L+R+B, also on Clean */
     int8_t              camera_orbit_turn; /* Z edge: +1 reverse orbit, -1 with B */

@@ -133,6 +133,8 @@ static unsigned bank[100],bank_bytes;
 static void field_stream_free(void) {assert(0);}
 static bool field_stream_load(unsigned a,unsigned b) {assert(0);return false;}
 static bool kokiri_bank_allocate(void) {return true;}
+static bool bank_allocate(void) {return kokiri_bank_allocate();}
+static void slCashPurge(void) {}
 static bool asset_scene_name(char *name,unsigned a,int b,const char*c) {strcpy(name,"ROOM.MSH");return true;}
 static void asset_loading(const char *name) {} static void asset_loading_done(void) {}
 static void *ram_cart_load_scratch(const char *name,int *bytes) {*bytes=bank_bytes;return bank;}

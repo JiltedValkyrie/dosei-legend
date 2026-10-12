@@ -212,32 +212,39 @@ static constexpr FX_INL fx_uraw fx_muli_u(fx_uraw ua, fx_uraw ub) {
 
 /*
  * n * 2^e / d for magnitudes (d > 0), truncated, saturating at FX_MAX + 1.
- * The numerator is pre-shifted as far as 32 bits allow; the remaining e bits
- * come from remainder steps, each a 32/32 divide. Exact (truncated) result.
+ * The numerator is pre-shifted as far as 32 bits allow. One 32/32 divide
+ * obtains its quotient; remaining bits use restoring remainder steps.
+ * On SH-2 a general divide is a software loop: repeating it for remainder
+ * chunks made large divisors especially costly (only one bit per chunk).
+ * Since r < d <= FX_MAX, doubling r stays in one unsigned word. Exact
+ * truncated result and the same saturation, with no wide intermediate.
  */
 static constexpr fx_uraw fx_div_u(fx_uraw n, int e, fx_uraw d) {
+    if (n == 0) {
+        return 0;                    /* also avoids shifting zero by 32 */
+    }
     if (d > (fx_uraw)FX_MAX) {
-        d = (fx_uraw)FX_MAX;        /* keeps clz(d) >= 1 for the steps below */
+        d = (fx_uraw)FX_MAX;
     }
     int s = fx_clz(n);
     if (s > e) {
         s = e;
     }
     fx_uraw num = n << s;
-    fx_uraw q = num / d, r = num % d;
+    fx_uraw q = num / d;
+    fx_uraw r = num - q * d;          /* q*d <= num: exact 32-bit product */
     int t = e - s;
     while (t > 0) {
-        int k = fx_clz(d);          /* r < d, so r << k fits */
-        if (k > t) {
-            k = t;
-        }
-        if (q > ((fx_uraw)FX_MAX >> k)) {
+        if (q > ((fx_uraw)FX_MAX >> 1)) {
             return (fx_uraw)FX_MAX + 1u;
         }
-        r <<= k;
-        q = (q << k) + r / d;
-        r = r % d;
-        t -= k;
+        r <<= 1;
+        q <<= 1;
+        if (r >= d) {
+            r -= d;
+            ++q;
+        }
+        --t;
     }
     return q;
 }

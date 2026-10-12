@@ -82,7 +82,7 @@ class GraphicsBackend(unittest.TestCase):
 #define JO_MULT_BY_32(x) ((x)*32)
 #define VRAM_UNITS(x) ((x)>>3)
 #define COL_16 3
-static unsigned char raw_vram[65536];
+static unsigned char raw_vram[65536] __attribute__((aligned(16)));
 #define JO_VDP1_VRAM ((uintptr_t)raw_vram)
 #define TEXTURE_CAPACITY 8192
 typedef struct { unsigned short width,height,adr,size; } jo_texture_definition;
@@ -118,6 +118,22 @@ int main(void) {
         vram_used=TEXTURE_CAPACITY-8;
         assert(kokiri_bank_tile_upload(pixels,clut,8,3,&col2)==KOKIRI_TILE_NONE);
         assert(vram_used==TEXTURE_CAPACITY-8 && sprite_next==0);
+    }
+    /* Burst-eligible cels get 16-byte addresses using existing CLUT padding;
+     * total VRAM cost, pixels, colours and outside bytes remain identical. */
+    for(start=0;start<32;start+=8)for(unsigned height=1;height<=9;++height) {
+        unsigned bytes=32*height/2;
+        unsigned old_end=((256+start+bytes+31u)&~31u)+32;
+        memset(raw_vram,0xcc,sizeof raw_vram);
+        texture_base=256;vram_used=start;sprite_next=0;
+        assert(kokiri_bank_tile_upload(pixels,clut,32,height,&col)==0);
+        unsigned char *dest=__jo_sprite_pic[0].data;
+        assert(!((uintptr_t)dest&15u));
+        assert(__jo_sprite_def[0].adr*8==(unsigned)(dest-raw_vram));
+        assert(!memcmp(dest,pixels,bytes));
+        assert(!memcmp(raw_vram+col*8,clut,32));
+        assert(texture_base+vram_used==old_end);
+        assert(raw_vram[256+start-1]==0xcc && raw_vram[old_end]==0xcc);
     }
     return 0;
 }

@@ -40,7 +40,7 @@ SECTIONS
         _oot_keep_ph_end = .;
     }
     .bss : {
-        *(EXCLUDE_FILE(*oot_core_draw.o *oot_core_bg.o) .bss EXCLUDE_FILE(*oot_core_draw.o *oot_core_bg.o) .bss.*)
+        *(EXCLUDE_FILE(*oot_core_draw.o *oot_core_bg.o *player_frame_decode.o) .bss EXCLUDE_FILE(*oot_core_draw.o *oot_core_bg.o *player_frame_decode.o) .bss.*)
         *(COMMON)
     }
     _oot_core_end = .;
@@ -51,6 +51,8 @@ SECTIONS
         _oot_core_low_bss_start = .;
         *oot_core_draw.o(.bss .bss.*)
         *oot_core_bg.o(.bss .bss.*)
+        /* Small source pose cache: hot, CPU-private state, not cart traffic. */
+        *player_frame_decode.o(.bss .bss.*)
         _oot_core_low_bss_end = .;
     }
     ASSERT(_oot_core_low_bss_end <= OOT_CORE_LOW_BSS_ADDR + OOT_CORE_LOW_BSS_BYTES, "oot-core low BSS exceeds its Low RAM carve")

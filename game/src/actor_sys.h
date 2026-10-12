@@ -4,9 +4,9 @@
 /* Fixed actor pool, shaped after OoT's ActorContext / ActorProfile
 ** (include/actor.h, include/actor_profile.h, src/code/z_actor.c).
 **
-** Platform free: the caller hands in the storage (the Saturn build uses the
-** fixed cart carve `ram_cart_fixed`, outside every jo_malloc zone; host tests
-** use a static buffer), so nothing here touches jo, SGL or the scarce .bss.
+** Platform free: caller supplies storage (Saturn uses high WRAM, with the
+** reserved cart carve available via CART_ACTOR_POOL=1; host tests use a
+** static buffer). Pool ownership remains on the master CPU.
 **
 ** Room ownership follows Actor_Spawn: an actor spawned by a room's actor list
 ** carries that room and dies when the room unloads; room ACTOR_ROOM_NONE
@@ -119,6 +119,9 @@ void            actor_kill(actor_t *actor);  /* deferred to end of update */
 void actor_hit_filter(actor_t *actor, bool blue, unsigned intensity, unsigned frames);
 unsigned actor_filter_level(const actor_t *actor); /* 0 none, 1..16 red, 17..32 blue */
 void            actor_sys_update(void);
+/* Diagnostic: retain empty category passes; normal updates skip them only
+ * when no live actor has an update callback. */
+extern volatile unsigned actor_update_slow;
 void            actor_sys_draw(void);
 void            actor_sys_room_unload(int room);
 void            actor_sys_scene_unload(void);

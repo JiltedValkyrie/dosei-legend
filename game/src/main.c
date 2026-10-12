@@ -121,6 +121,12 @@ static bool __attribute__((optimize("Os"))) table_file_load(const char *name, vo
 }
 
 typedef char actor_pool_fits[ACTOR_POOL_MAX * sizeof(actor_t) <= RAM_CART_ACTOR_POOL_BYTES ? 1 : -1];
+/* Master-owned legacy actor pool: hot scans/handles belong in high WRAM.
+ * Core has its own actor world; no slave or DMA writes this pool. Retain
+ * the reserved cart carve and DOSEI_CART_ACTOR_POOL build fallback. */
+#ifndef DOSEI_CART_ACTOR_POOL
+static actor_t fast_actor_pool[ACTOR_POOL_MAX];
+#endif
 static bool text_file_load(const char *name, unsigned int offset, unsigned int bytes,
                            bool (*bind)(const uint8_t *, uint32_t))
 {
@@ -135,8 +141,8 @@ static bool __attribute__((optimize("Os"))) dialogue_text_load(void)
                            RAM_CART_CUTTEXT_BYTES, cutscene_text_bind) &&
             text_file_load("MINIMAP.BIN", RAM_CART_MINIMAP_OFFSET,
                            RAM_CART_MINIMAP_BYTES, minimap_bind) &&
-            table_file_load("MUSICTRG.BIN", RAM_LOW(RAM_LOW_MUSICTRG_OFFSET),
-                           RAM_LOW_MUSICTRG_BYTES, music_banks_bind) &&
+            table_file_load("MUSICTRG.BIN", jo_malloc(MUSICTRG_BYTES),
+                           MUSICTRG_BYTES, music_banks_bind) &&
             table_file_load("GOHMAPOS.BIN", RAM_LOW(RAM_LOW_GOHMA_POSES_OFFSET),
                            RAM_LOW_GOHMA_POSES_BYTES, gohma_bind) &&
             text_file_load("TITLEPTH.BIN", RAM_CART_TITLEPTH_OFFSET,
@@ -195,13 +201,47 @@ int32_t             recomp_screen_distance(void)
 }
 
 /* Text diagnostics are cold glue, not geometry. Keep their code compact. */
+#pragma GCC push_options
+#pragma GCC optimize("Os")
 unsigned int perf_sub[PS_COUNT];
-unsigned int perf_sub_last[PS_COUNT];
+#ifdef __sh__
+#define perf_sub_sum (perf_sub_avg + PS_COUNT)
+#else
+unsigned int perf_sub_avg[PS_COUNT];
+static unsigned int perf_sub_sum[PS_COUNT];
+#endif
+static unsigned int perf_frames, perf_sum_frames;   /* frame callbacks */
+static void perf_sub_init(void)
+{
+    unsigned int i;
+    for (i = 0; i < PS_COUNT; ++i)
+        perf_sub[i] = perf_sub_avg[i] = perf_sub_sum[i] = 0;
+    perf_frames = perf_sum_frames = 0;
+}
+
 void perf_sub_latch(void)
 {
     unsigned int i;
-    for (i = 0; i < PS_COUNT; ++i) { perf_sub_last[i] = perf_sub[i]; perf_sub[i] = 0; }
+    ++perf_frames;
+    ++perf_sum_frames;
+    for (i = 0; i < PS_COUNT; ++i) {
+        perf_sub_sum[i] += perf_sub[i];
+        perf_sub[i] = 0;
+    }
 }
+
+/* Overlay refresh: per-frame averages over the window, then restart it.
+ * One frame is too noisy to compare runs (Astra review 2026-10-12). */
+static void perf_sub_average(void)
+{
+    unsigned int i;
+    for (i = 0; i < PS_COUNT; ++i) {
+        perf_sub_avg[i] = perf_sum_frames ? perf_sub_sum[i] / perf_sum_frames : 0;
+        perf_sub_sum[i] = 0;
+    }
+    perf_sum_frames = 0;
+}
+#pragma GCC pop_options
 
 static void __attribute__((optimize("Os"))) diagnostic_overlay(void)
 {
@@ -416,8 +456,16 @@ static void __attribute__((optimize("Os"))) viewer_draw(void)
      *   slave transforms the forest while the master transforms Link.
      * Joined before text/HUD. Depth sorting, not submission order, decides
      * occlusion. */
-    oot_core_async_kick();
-    kokiri_frame_slave_kick(!kokiri_scene_backdrop_active() && !cutscene_hides_scene());
+    if (kokiri_parallel_prepare) {
+        oot_core_async_kick();
+        kokiri_frame_master_prepare(!kokiri_scene_backdrop_active() && !cutscene_hides_scene());
+    } else if (kokiri_prep_first) {   /* Debug L+R+Left cycles M/P/C */
+        kokiri_frame_slave_kick(!kokiri_scene_backdrop_active() && !cutscene_hides_scene());
+        oot_core_async_kick();
+    } else {
+        oot_core_async_kick();
+        kokiri_frame_slave_kick(!kokiri_scene_backdrop_active() && !cutscene_hides_scene());
+    }
 #if !defined(DOSEI_PERF_PROBE) || DOSEI_PERF_PROBE != 3
     /* Link has priority over optional actors in SGL's finite work area.
      * Depth sorting still controls occlusion, independent of submission order. */
@@ -525,10 +573,6 @@ static void __attribute__((optimize("Os"))) viewer_draw(void)
                              cutscene_link_z(), cutscene_link_yaw());
             frame_timer_end(FRAME_PHASE_LINK);
         }
-    } else if (recomp_link_active && !recomp_title_is_visible() && recomp_slingshot_aiming()) {
-        /* Source first-person hand/tool pose baked into one bounded cel.
-         * The independent VDP2 crosshair keeps the same aiming position. */
-        if (!gameplay_blocks_world() && !gameplay.dead) oot_core_tool_aim_draw();
     } else if (recomp_link_active && !recomp_title_is_visible() && !recomp_first_person() &&
                !recomp_shop_browsing()
 #ifdef PLAYER_SOURCE
@@ -1187,6 +1231,7 @@ static void __attribute__((optimize("Os"))) inventory_menu(void)
 
 }
 
+static unsigned int pace_fps10, pace_vbl10;
 static void __attribute__((optimize("Os"))) viewer_hud(void)
 {
 #ifdef DOSEI_CLEAN_TEST
@@ -1224,6 +1269,17 @@ static void __attribute__((optimize("Os"))) viewer_hud(void)
      * costs several milliseconds; four readable updates per second suffice.
      * Input/chord handling above still runs every frame. */
     if (now - last_refresh < 15) return;
+    {
+        /* Row 16 pacing from the VBlank clock alone (60 Hz, FRT-free):
+         * displayed frames per second and VBlanks per frame since the last
+         * refresh. Compare with Mednafen's Shift+F1 virtual FPS. */
+        static unsigned int last_frames;
+        unsigned int frames = perf_frames - last_frames, vbl = now - last_refresh;
+        last_frames = perf_frames;
+        pace_fps10 = frames ? frames * 600u / vbl : 0;
+        pace_vbl10 = frames ? vbl * 10u / frames : 0;
+        perf_sub_average();
+    }
     last_refresh = now;
     /* M2a heap reading, always on in the standard build (bottom row 27):
     ** work-RAM zone 0 live/peak bytes, cart zones' summed peak KB, failed
@@ -1271,6 +1327,7 @@ static void __attribute__((optimize("Os"))) viewer_hud(void)
             jo_printf(0, 2, "cu%-4u %-15s pd%-3u      ", oot_core_update_us() / 100, phases,
                       oot_core_player_draw_us() / 100);
             jo_printf(0, 7, "top %-34s", t[i] ? t + i + 1 : "");
+            jo_printf(0, 21, "%-39s", oot_core_debug_text());
             {
                 uint32_t q = 0, r = 0;
 #ifdef CORE_COLLISION
@@ -1293,7 +1350,7 @@ static void __attribute__((optimize("Os"))) viewer_hud(void)
             }
 #endif
             {
-                const unsigned int *p = perf_sub_last;
+                const unsigned int *p = perf_sub_avg;   /* refresh-window mean */
                 jo_printf(0, 10, "nc%u wp%u en%u at%u bb%u tk%u it%u rc%u     ",
                           p[PS_NC] / 100, p[PS_WP] / 100, p[PS_EN] / 100, p[PS_AT] / 100,
                           p[PS_BB] / 100, p[PS_TK] / 100, p[PS_IT] / 100, p[PS_RC] / 100);
@@ -1303,16 +1360,69 @@ static void __attribute__((optimize("Os"))) viewer_hud(void)
                 jo_printf(0, 12, "ks%u dg%u da%u ui%u ru%u     ",
                           p[PS_KS] / 100, p[PS_DGR] / 100, p[PS_DAC] / 100, p[PS_DUI] / 100,
                           p[PS_RU] / 100);
-                jo_printf(0, 13, "nb%u np%u wc%u wp%u fy%u     ",
+                jo_printf(0, 13, "%40s", "");
+                jo_printf(0, 13, "nb%u np%u wc%u wp%u wr%u pl%u fy%u",
                           p[PS_DNB] / 100, p[PS_DNPC] / 100, p[PS_DWC] / 100, p[PS_DWP] / 100,
-                          p[PS_DFY] / 100);
+                          p[PS_DWR] / 100, p[PS_DPPL] / 100, p[PS_DFY] / 100);
                 jo_printf(0, 14, "r0%u r1%u pd%u dw%u     ",
                           p[PS_R0] / 100, p[PS_R1] / 100, p[PS_PRD] / 100, p[PS_DPW] / 100);
                 {
                     unsigned int a[5];
+                    unsigned int site = oot_core_async_violation_line();
                     oot_core_async_stats(a);
-                    jo_printf(0, 15, "as k%u ov%u jw%u cv%u bv%u dr%u    ",
-                              a[0], a[1] / 100, a[2] / 100, a[3], a[4], kokiri_sgl_drain_us() / 100);
+                    jo_printf(0, 15, "as k%u ov%u jw%u cv%u@%u bv%u dr%u    ",
+                              a[0], a[1] / 100, a[2] / 100, a[3], site, a[4], kokiri_sgl_drain_us() / 100);
+                }
+                {
+                    /* Rows 16-17: who waits for whom (last frame, 0.1 ms).
+                     * 16: pacing, then master waits on the slave: scene
+                     *     prepare, Link skin, core join, SGL queue drain.
+                     * 17: slave job times: prepare, core update, skin, and
+                     *     their share of the frame (SGL polygons excluded). */
+                    unsigned int frame = frame_timer_frame() + frame_timer_cost(FRAME_PHASE_SYNC);
+                    unsigned int busy = p[PS_SPREP] + p[PS_SCORE] + p[PS_SSKIN];
+                    jo_printf(0, 16, "%40s", "");
+                    jo_printf(0, 17, "%40s", "");
+                    jo_printf(0, 18, "%40s", "");
+                    jo_printf(0, 16, "fps%u.%u vb%u.%u W pr%u sk%u jn%u dr%u %c   ",
+                              pace_fps10 / 10, pace_fps10 % 10, pace_vbl10 / 10, pace_vbl10 % 10,
+                              p[PS_WPREP] / 100, p[PS_WSKIN] / 100, p[PS_WJOIN] / 100,
+                              p[PS_WDRAIN] / 100, kokiri_parallel_prepare ? 'M' : kokiri_prep_first ? 'P' : 'C');
+                    jo_printf(0, 17, "S pr%u cu%u sk%u %u%%      ",
+                              p[PS_SPREP] / 100, p[PS_SCORE] / 100, p[PS_SSKIN] / 100,
+                              frame ? (busy > frame ? 100u : busy * 100u / frame) : 0u);
+                    /* Row 18: prepare depth/partition/fog, fog tiles
+                     * rewritten, cel upload time and KB to VDP1 VRAM. */
+                    jo_printf(0, 18, "pd%u pp%u pf%u ft%u cel%u %uK sb%u   ",
+                              p[PS_PDEPTH] / 100, p[PS_PPART] / 100, p[PS_PFOG] / 100,
+                              p[PS_FOGN], p[PS_CEL] / 100, (p[PS_CELB] + 1023) / 1024,
+                              p[PS_SUBMIT] / 100);
+                    /* Row 19: sprite actors: shadow lookup+submit, slPutSprite,
+                     * sprites drawn, shadow floor queries after the join. */
+                    jo_printf(0, 19, "%40s", "");
+                    jo_printf(0, 19, "spr n%u sh%u put%u rs%u nd%u sg%u ch%u",
+                              p[PS_SCOUNT], p[PS_SSHADOW] / 100, p[PS_SPUT] / 100,
+                              p[PS_SRESOLVE] / 100, p[PS_NDRAW] / 100,
+                              p[PS_DSIGN] / 100, p[PS_DCHEST] / 100);
+                    jo_printf(0, 20, "geo v%u/%u pk%u mp%u g%u ec%u r%u  ",
+                              p[PS_VUSED], p[PS_VTOTAL], p[PS_VPACK] / 100, p[PS_MPREP] / 100,
+                              kokiri_scene_gather_mode(), kokiri_scene_candidate_count(),
+                              kokiri_scene_candidate_reused());
+                    jo_printf(0, 22, "hud q%u hp%u vis%u a%u b%u v%u    ",
+                              p[PS_HQUERY] / 100, p[PS_HHEALTH] / 100, p[PS_HVIS] / 100,
+#ifdef PLAYER_SOURCE
+                              (unsigned int)oot_core_player.aim_mode,
+                              (unsigned int)oot_core_player.item_button,
+#else
+                              0u, 0u,
+#endif
+                              (unsigned int)recomp_view_first_person());
+                    /* Row 23: candidate envelope variant (L+R+Right cycles),
+                     * build %, build pass time, exit reasons % (docs). */
+                    jo_printf(0, 23, "%40s", "");
+                    jo_printf(0, 23, "env v%u b%u bt%u xp%u xa%u xo%u",
+                              kokiri_scene_envelope_variant(), p[PS_EBUILD],
+                              p[PS_EBTIME] / 100, p[PS_EXPOS], p[PS_EXANG], p[PS_EXOTH]);
                 }
             }
         }
@@ -1505,6 +1615,7 @@ void __attribute__((optimize("Os"))) jo_main(void)
     jo_core_init(JO_COLOR_Black);
     dialogue_font_init();
     frame_timer_init();
+    perf_sub_init();
 #ifdef DOSEI_HIRES
     /* VDP2 samples the existing title/font at half rate vertically. */
     jo_vdp2_zoom_nbg0f(1.0f, 0.5f);
@@ -1533,10 +1644,14 @@ void __attribute__((optimize("Os"))) jo_main(void)
     oot_core_boot();
 #endif
 
-    /* Actor pool lives in the cart's fixed carve, never in work RAM. */
+    /* High-WRAM pool by default; preserve cart carve for diagnostic builds. */
     if (actor_sys_bytes() > RAM_CART_ACTOR_POOL_BYTES ||
-        !actor_sys_init(ram_cart_fixed(RAM_CART_ACTOR_POOL_OFFSET,
-                                       RAM_CART_ACTOR_POOL_BYTES),
+        !actor_sys_init(
+#ifdef DOSEI_CART_ACTOR_POOL
+                        ram_cart_fixed(RAM_CART_ACTOR_POOL_OFFSET, RAM_CART_ACTOR_POOL_BYTES),
+#else
+                        fast_actor_pool,
+#endif
                         RAM_CART_ACTOR_POOL_BYTES)) {
         jo_core_error("Actor pool does not fit its cart carve");
         return;

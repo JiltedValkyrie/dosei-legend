@@ -28,18 +28,22 @@ void oot_core_async_kick(void);
 void oot_core_async_join(void);
 bool oot_core_async_busy(void);
 void oot_core_async_stats(unsigned int out[5]); /* updates, overlap us, join wait us, core / bg violations */
+unsigned int oot_core_async_violation_line(void); /* Debug: last ENTRY line; read before stats */
 unsigned int oot_core_slave_job_us(void);        /* last slave core job, its own FRT */
 #ifdef PLAYER_SOURCE
 /* The real decomp Player, read after every core update (recomp_link and
 ** recomp_link_yaw follow it). Valid once a scene's Player exists. */
 extern OotCorePlayerView oot_core_player;
 extern bool oot_core_player_valid;
+/* Source Player's A label (OOT_CORE_DO_*), from its last update. */
+unsigned int oot_core_player_do_action(void);
 /* Door Room_RequestNewRoom since the last core update, -1 none. */
 int oot_core_player_room_request(void);
 /* A C-side enemy's hit (1/16 hearts) on the real Player. */
 void oot_core_player_damage(int damage);
 /* Saturn Y jump extension; true when the Player jumped. */
 bool oot_core_player_jump(void);
+void oot_core_carry_cancel(void);
 /* After the host places Link at a spawn: take the Player's own position
 ** (a void-out/respawn spawns him at the respawn point, not the entrance). */
 void oot_core_player_resync(void);
@@ -101,7 +105,6 @@ bool oot_core_hit_tint(int16_t rgb[3]);   /* bomb/Bombchu over Link's head */
 bool oot_core_tool_throw(void);
 bool oot_core_tool_pull(int32_t step_q8[3]); /* hookshot flight this step */
 void oot_core_tool_register(void);  /* C contact AT mirrors of live tools */
-void oot_core_tool_aim_draw(void);  /* one offline-baked first-person tool cel */
 /* Phase 2 draw shim meshes: upload after a bank reset, draw the items. */
 void oot_core_meshes_upload(void);
 void oot_core_meshes_draw(void);
@@ -128,6 +131,7 @@ static inline bool oot_core_owns_kokiri_npcs(void) { return false; }
 static inline void oot_core_async_kick(void) {}
 static inline void oot_core_async_join(void) {}
 static inline bool oot_core_async_busy(void) { return false; }
+static inline unsigned int oot_core_async_violation_line(void) { return 0; }
 static inline bool oot_core_is_playing(void) { return false; }
 static inline bool oot_core_scene_failed(void) { return false; }
 #define oot_core_frame(in) ((void)0)
@@ -154,7 +158,6 @@ static inline bool oot_core_tool_holding(void) { return false; }
 static inline bool oot_core_tool_throw(void) { return false; }
 static inline bool oot_core_tool_pull(int32_t step_q8[3]) { (void)step_q8; return false; }
 static inline void oot_core_tool_register(void) {}
-static inline void oot_core_tool_aim_draw(void) {}
 static inline unsigned int oot_core_ocarina_state(void) { return 0; }
 static inline unsigned int oot_core_ocarina_note(void) { return 0; }
 static inline unsigned int oot_core_ocarina_song(void) { return 0; }

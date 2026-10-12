@@ -56,7 +56,7 @@ SECTIONS {
     .lowfs 0x00249500 (NOLOAD) : {
         *(.lowfs)
     }
-    ASSERT(SIZEOF(.lowfs) <= 0x10000, "Low RAM CD directory exceeds carve")
+    ASSERT(SIZEOF(.lowfs) <= 0xA000, "Low RAM CD directory overlaps forest draw cache")
     .lowcore 0x0023C500 (NOLOAD) : {
         *core.o(.bss)
     }

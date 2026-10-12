@@ -1,6 +1,298 @@
 # Full OoT recomp plan
 
-Current task (human, 2026-10-08): implement Hyrule Field decomp enemies next,
+## Current task and verification (2026-10-12)
+
+**Current request: plan completion of handwritten C gameplay retirement and
+full core ownership.** The executable work order is
+[Full core ownership and C retirement](#full-core-ownership-and-c-retirement).
+This is a planning/source-review update only: no runtime changes, new test
+results, target builds or emulator runs. Existing repair work remains with
+Claude; human owns runtime testing. Subsequent implementation needs an explicit
+file owner at handoff because the shared working tree contains active repairs.
+
+**Gameplay repair handed to Claude; human tests.** Human tested candidate-10 Clean
+`b54638cd` and reports much better performance. Rock grab, invisible held
+Deku Stick and coarse first-person aim are now the priority; they are no
+longer deferred. Preserve candidate-10 speed work and one source Player.
+
+Candidate 10 remains the accepted performance baseline: envelope v3,
+conditional attributes and touched-tile fog reduce prepare from 23-30 to
+12-15 ms. Moving whole frame remains 64-79 ms (10-15 FPS); aim 50-53 ms
+(16-20 FPS). Moving 20 FPS is unfinished. Its 222 host tests, math audits,
+budget and 1,424-file ISO checks passed. Debug had 496 B of high-RAM spare;
+Clean had 5,968 B. Historical candidates and measurements belong in
+[the handoff](PERFORMANCE_HANDOFF_2026-10-12.md).
+
+Repair implementation in progress, not runtime-accepted:
+- API33 host prop adapter gives source Player a live rock/pot Actor identity.
+  Source owns pickup/put-away/throw and hand attachment; existing host prop
+  physics, collisions and drops remain. Host handles cross the boundary,
+  never host Actor pointers; offer before kick, read after join.
+- Stick rendering reads source item/burn state and hand/tip anchors; no
+  legacy item/ammo state is revived to make it visible.
+- First-person input magnitude is halved before source aim math. Walking,
+  simulation cadence and source camera/projectile alignment remain intact.
+- Saturn tap-ready/tap-fire remains intentional. A physical release after
+  the first tap is not a valid firing test; test a distinct second press.
+
+R0 carry review (Claude, candidate 12: code, host tests and temporary
+Debug `game-perf-kokiri` 5dedadf9 built, 240 B spare; human test pending): cancel/death/room-reset already follow source detach. Grab
+failure fixed: core now applies EnIshi/ObjTsubo offer ranges and Player's
++/-45 deg admission; HUD Grab/Throw/Drop come from source
+`Interface_SetDoAction` via API34 `do_action` (was a reachable stub).
+[Handoff](PERFORMANCE_HANDOFF_2026-10-12.md#gameplay-repair-candidate-12-claude-2026-10-12-r0-carry-review).
+
+Candidate-11 temporary Debug built: 318 host checks pass, one existing skip;
+math audits zero failures, budget passes, all 1,424 ISO files match staging.
+High-RAM spare is 80 B. Short private-desktop observations showed released
+seed on second tap, visible held stick and rock pickup after facing adjustment;
+these do not establish full parity. Human now explicitly says no automated
+emulator testing: Claude fixes, human tests. Emulator closed/config restored.
+Normal Debug/staging and accepted Clean b54638cd preserved. Review carry
+cancellation/throw/drop/room reset and prompt-facing agreement; human checks
+these plus aiming feel, burning sticks and repeated shots. No actor/geometry
+limit cuts, slave rollback or gameplay tick reduction.
+
+## Full core ownership and C retirement
+
+This is the current implementation sequence, superseding older isolated-import
+orders below. "C retirement" means retiring handwritten gameplay authority;
+the source decomp itself is C, and the Saturn backend may remain C. The finished
+game uses source Player, actors, collision, inventory/progression, camera and
+story rules, with explicit Saturn adaptations. All retail scenes, eras,
+day/night/story layers, dungeons, bosses and ending remain in scope.
+
+### Starting point and boundaries
+
+- **Implemented and previously target-built:** real Player and core z_bgcheck
+  are live with `PLAYER_SOURCE=1` / `CORE_COLLISION=1`; source actors, tools,
+  messages and scene packs are partially integrated. Host camera, props,
+  contacts, save/item services and story paths still own gameplay. API33 carry
+  is a temporary host-prop adapter, not source prop replacement.
+- **Host-tested prototype only:** demand animation request/cache code exists;
+  the live makefile uses the whole resident `PLAYANIM.PFB` bank. Production
+  action-start gates, complete cutscene sets and CD servicing remain open.
+- **Runtime acceptance:** candidate-10 speed improvement and particular earlier
+  features have human evidence; complete Player parity, moving 20 FPS and
+  whole-game traversal do not. Candidate-11 temporary Debug repair evidence
+  above must not be applied to the preserved candidate-10 Clean image.
+- **Keep:** Saturn SGL/VDP rendering, Link meshes/gear/skinning, sprite drawing,
+  input mapping and labels, HUD/pause/minimap presentation, audio/CD, backup
+  device/file format adapters, asset conversion, loaders and SH-2 scheduling.
+  Move gameplay decisions out of these modules where still present. Do not
+  delete `player_*.c` by wildcard: `player_input.c` contains required adaptation.
+- **Retire:** duplicate action machines, world/contact solvers, item/reward
+  writers, actor/story scripts and proxy Player. Thin queries over the single
+  core world and presentation snapshots may remain; permanent duplicate
+  gameplay worlds or state machines may not.
+
+### Ownership ledger to close
+
+These are source-inspected migration units, not completed replacement claims.
+Before changing each unit, expand its row into exact symbols/callers, preserved
+behaviors, source counterpart, field writer, tests and human acceptance evidence.
+Use [PLAYER_MIGRATION.md](PLAYER_MIGRATION.md) for the Link preservation detail,
+and existing actor/route ledgers for content rather than inventing parallel lists.
+
+| Unit / current files | Required final owner | Retire or retain after acceptance |
+| --- | --- | --- |
+| `recomp.c`, `player_air/bg/climb/crawl/lift/push/slope/water/items.c`, `link_anim_state.c`, proxy `bridge_player.cpp` | Source Player and source action/animation timing | Delete old movement/action/item branches and proxy; keep pad conversion, renderer, frame decoder and render interpolation |
+| `oot_core_host.c`, `save_state.c`, `health_hud.c`, `bridge_items.cpp`, `bridge_player_source.cpp` | Source inventory/health/magic/equipment and progression state, with one authoritative writer per field | Replace per-tick bidirectional mirrors and host mutation callbacks with commands/snapshots; retain serialization, device I/O and HUD drawing |
+| `attention.c`, `recomp_camera.c`, `recomp_follow.c`, `player_camera.c`, camera hooks in bridges | Source Attention and camera modes, plus explicit Saturn camera additions | Remove duplicate target selection and camera gameplay rules; retain view/projection adapter, overhead/house controls and accepted easing |
+| `world_props.c`, `gameplay.c`, `item_drop.c`, `dungeon_doors/puzzles/torches/webs.c` | Source prop/puzzle/drop actors and source flags/contact responses | Replace carry proxies, host pushes/warps and reward rules per actor; retain prop geometry drawing and loading |
+| `actor_sys.c`, `collide.c`, legacy enemy modules and host combat in `gameplay.c` | Source Actor lifecycle and AT/AC/OC collision checks | Remove C actor pool/contact dispatch only after its last live consumer is migrated; retain snapshot-to-render dispatch |
+| `story_route.c`, `emerald_story.c`, `cutscene.c`, `cutscene_actor.c`, `scene_flow.c`, remaining NPC logic in `gameplay.c` | Source scene/entrance, actor, message and cutscene rules | Retain transactional loading, fades, camera/render/audio adapters; remove copied quest/cue/reward decisions |
+| `bg_core_link.c`, `bg_core_shim.c`, `recomp_collision.c`, `shared/lib/collision` runtime selection | Core z_bgcheck storage, queries and dynamic actors | Remove C Player wrappers/legacy solver once unused; keep needed read-only core-query adapters; retire C dyna proxies with their owning props |
+| `minimap.c`, HUD/pause/file-select and music/environment hooks | Core supplies map/progression/time/item/music intent; Saturn presents it | Keep backend code; audit map discovery, menu mutations, clock/song rules and music triggers for hidden gameplay ownership |
+
+For every bridge `STUB`, `HOST` or copied `REAL` body, record its source function
+and classify it as a required gameplay replacement, retained platform service,
+or proven unreachable N64-only operation. Reachable camera, room, reward,
+cutscene and item no-ops are open requirements, even when the link succeeds.
+Importer patches belong in `tools/oot_core_import.py` or its source modules;
+generated `build/oot-core` edits cannot be the sole implementation.
+
+### Ordered implementation waves
+
+| Wave | Concrete deliverable | Completion gate |
+| --- | --- | --- |
+| R0 — preserve the live baseline | Close rock pickup/throw/cancel/room-reset, held/burning stick, low-FPS aim and repeated-shot parity. Inventory remaining Player fixes and every cross-boundary writer; capture matching source/build identities. | Focused executing checks plus human repair acceptance; preserve candidate-10 speed work, both CPUs, actor/heap capacities and ordinary images |
+| R1 — core state and item transactions | Make core save/inventory/progression state authoritative for live play. Load once from the versioned Saturn save, apply menu/equipment/reward commands once, publish read-only snapshots after join, serialize a coherent core snapshot. Migrate health, ammo, magic, bottles/fairies, rupees, equipment, keys and flags by field group. | No field has two writers; save/reload, death/revive, era/equip change and reward consumption round trips pass; old saves/preferences and session-only cheats preserved |
+| R2 — production demand animation | Wire the existing cache into real Player action gates and scene/cutscene entry. Inventory common/age/equipment sets and complete cutscene dependencies; implement prefetch, owned reservations/pins, cancellation and error recovery through CD/audio services. | Common movement stays ready; no action/cue/reward advances on a cold clip; full cutscene preloaded/pinned without per-shot I/O; measured working set and load/recovery peaks fit |
+| R3 — retire C Player and proxy | Complete remaining movement/combat/water/climb/talk/gear preservation rows. Move targeting authority to source Attention. Split mixed files, remove accepted C Player branches, `link_anim_state.c` action logic, C projectiles/item timers and proxy `bridge_player.cpp`. | Both-era human parity batches pass; production link has only source Player; removed symbols have no remaining callers; pad/UI/render adapters remain functional |
+| R4 — core camera, scene and story services | Replace reachable camera/one-point/room/transition stubs with source behavior adapted to fixed point. Preserve overhead turns, first-person/house modes and Saturn prompts. Transfer entrance/respawn, dialogue-close, song, time travel, cutscene cue and progression decisions into core. | Route round trips, failed-load restoration, doors/warps/death, whole-cutscene entry/exit and source quest predicates pass; no duplicate cue/reward/camera controller |
+| R5 — retire host actors, props and contacts | Replace each remaining host prop/NPC/enemy/puzzle with its source actor in scene packs; move combat and dynamic-platform ownership with it. Keep API33 carry/contact adapters only until their individual consumers are accepted. | Each actor retains spawn conditions, damage/stun/tool/hold interactions, talk/reward/drop rules and flags; scene budget covers all reachable actors/effects; delete host owner immediately after that unit's acceptance |
+| R6 — complete the full game | Finish remaining scene/era/layer rosters, source entrance graph, horses and minigames, bottles/trades/songs, adult dungeons, bosses and ending. Field/Water Temple work and the opening route seed the order, not a scope limit. | Coverage ledger tracks every retail scene/layer and required dynamic dependency with separate host/target/human evidence; complete child/adult progression and save round trips accepted |
+| R7 — remove remaining production fallbacks | Delete obsolete C gameplay build branches, `PLAYER_SOURCE=0` / `CORE_COLLISION=0` production selections and remaining no-core gameplay mode; remove dead ABI, loaders, generated payloads and reserved storage only after consumer audit. | Matching Debug/Clean links and disc contents have no retired owner or fallback; measured reclaimed memory; all remaining bridges are documented backend services; no unresolved required gameplay stub |
+
+R0 is the current implementation task, assigned to Claude; carry review
+is candidate 12 (above), remaining R0 items await human checks/inventory. R1 and R2
+then close the state/animation prerequisites for R3. R4/R5 may be staged by a
+bounded subsystem once its R1/R3 dependencies are ready; source actor work that
+does not touch active repairs can continue under its existing plan. R6 proceeds
+per accepted scene pack, without waiting to collect every actor into one giant
+cutover. R7 cleanup happens incrementally after each acceptance, with a final
+whole-tree pass. Do not postpone all deletions until the full game is playable.
+The moving-20-FPS target remains required; optimize the chosen core ownership
+and fix severe regressions within each wave rather than gate migration on an
+open-ended benchmark project.
+
+R5 content order: finish current Kokiri/interior/Deku Tree legacy overlap;
+close already-open Field and Water Temple dependencies under their plans;
+continue Lost Woods/Field/Ranch/Market/Castle/Kakariko and the remaining game
+in source progression/dependency order. Boss exemption preserves models,
+pose-driven hitboxes and puzzles while source boss logic replaces handwritten
+logic. Non-boss NPCs/animals/fairies/enemies use baked sprites, semantic gameplay
+anchors and clip clocks, never runtime skeletons or model fallback. Update
+[ACTOR_SPRITE_ROLLOUT_PLAN.md](ACTOR_SPRITE_ROLLOUT_PLAN.md) and its coverage
+ledger in every actor implementation task; map admission alone is not readiness.
+
+### Acceptance and deletion protocol
+
+For each row, record **implemented / host-tested / target-built /
+human-accepted / retired** separately, with exact artifact identity and remaining
+gaps. A prototype, successful import, passing build or narrow runtime observation
+does not advance the other columns. No new result is claimed by this plan.
+
+1. Trace actual callers and writers in the current shared tree; preserve every
+   Saturn addition and its verification before changing the owner. Keep only one
+   live owner during transition. Each rollback path needs a named replacement
+   and acceptance gate; it must not become the default development target.
+2. Test the affected ownership boundary with executing checks: input edges across
+   skipped ticks, exactly-once damage/items/rewards, stale handle rejection,
+   dynamic carry/contact history, save round trips, cancellation and failed scene
+   restore as applicable. Adapt legacy fixtures to the new public contract before
+   removing their implementation dependencies; do not delete coverage to go green.
+3. Preserve the 20 Hz/input/contact contract and master/slave ownership. Offer
+   commands before core kick, read coherent snapshots after join; no renderer or
+   UI access to mutating core state. Core owns movement; remaining host displacement
+   or warp requests need explicit ownership and eventual source replacement.
+4. Build in WSL per [BUILD.md](BUILD.md), using matching host/core/scene packs,
+   ABI and asset formats. Run relevant math audits, region/heap/VRAM/load-peak
+   guards and ISO/staging checks. 32-bit stored values and native SH-2 products
+   stay allowed; software-wide/soft-float helpers remain banned. Reserve no
+   speculative deletion savings and reduce no actor, geometry or heap capacities.
+5. Human runs relevant movement/combat/items/water/climb/dialogue/cutscene/
+   era/save/route checks on the matching image. **No automated emulator testing.**
+   Preserve accepted images while preparing the next authorized candidate; do
+   not overwrite mounted discs. Runtime failure keeps that unit unaccepted.
+6. After acceptance, remove only the obsolete owner's code, callers, build
+   inputs, adapters and assets. Recheck the resolved link and stage, measure
+   actual savings, and reconcile this plan plus the unit's handoff. Retain needed
+   backend code even if its old filename contains `player` or `gameplay`.
+
+Full-core completion requires all required gameplay owned by source-backed core
+systems, preserved Saturn functionality, accepted full-game coverage and retired
+duplicate owners. A Player proxy, shared query bridge, source-only build or 101
+registered maps alone does not satisfy that result.
+
+## Prior review checkpoints (historical evidence, 2026-10-12)
+
+Latest (Claude, 2026-10-12): Mednafen `slave scene prepare stalled (N)` root
+cause found and fixed in code: the FRT counter was read as a 16-bit word;
+Mednafen returns only FRC >> 8, so the extended timer jumped 293 ms per byte
+wrap and fired the watchdog falsely (human N values 19-52 prove the slave was
+running). Byte FRCH->FRCL reads now; usual Clean image rebuilt; audit now
+fails on FRT word loads. Human now reports no crash, but Mednafen about 5 FPS
+versus Kronos 20. Exact test duration/routes unspecified. Earlier Mednafen timer/profiler numbers are
+invalid. [Fix record](PERFORMANCE_REVIEW_2026-10-12.md#root-cause-and-fix--frt-word-read-claude-2026-10-12).
+Exit/aim acceptance remains unspecified.
+
+Human reports Claude's slave/speed work raised FPS from 10 to 20; the new slave
+jobs must be preserved. Current task is Astra's authorized combined Debug
+performance batch (handoff after sign profiling); no Clean builds until Debug
+is ready for the human's 20 FPS test. Six focused timer/job
+tests and 11 audit self-tests independently passed at the earlier checkpoint.
+Claude 2026-10-12 follow-up: the slave wrap limitation is fixed (slave FRT
+/128 per job) and Debug `build/game.cue` adds VBlank pacing, master-waits and
+slave-job rows 16-17 plus slave core profiling (Clean rebuilt to match). Next:
+human Mednafen Debug reading with Shift+F1 in Kokiri; assign the 5 vs 20 FPS
+gap only from that. Guide: DEBUG_OVERLAY.md "Mednafen reading".
+Since then: prep-first scheduling and Low RAM geometry are built and human
+measurements show gains: title 20 FPS, Kokiri idle 8, moving about 6.6. Music
+check passes. Coverage is now complete and averaged; latest human Debug shot
+shows signs 29.7 ms out of 30.4 ms world-props remainder, whole frame 114 ms.
+Astra batch implements conservative sign culling, one intact-sign geometry
+batch with piece fallback, high-WRAM C actor pool, validated handle hints and
+single-read NPC pose access. Sign partFlags are snapshotted before slave work
+to avoid drawing through live actor lists. 66 focused host tests pass.
+Final Debug target build passes, .bss 0x06080C50 (13,232 bytes spare), both
+math audits zero failures and all 1,434 ISO payloads match staging. Clean
+hash c3f29128 remains unchanged. Full evidence is in the performance review;
+Human retest: up to 13 FPS idle; screenshots show 12 FPS at fr80.2 ms and
+8.1 FPS at fr116.8 ms. Gains observed; sustained 20 FPS not demonstrated.
+Dialogue rows freeze (except bottom VRAM/M/S), so chat FPS is stale evidence.
+Human says leave that overlay behavior alone. Current follow-up implements
+joined DMA cel uploads, protected/rotating cel-cache replacement, exact
+visible-vertex packing, and concurrent master scene prep/slave core updates
+(M default, old P/C orders selectable). No gameplay ticks/contacts/story cut.
+Follow-up Debug built: 81 host tests pass, .bss 0x060813A0 (11,360 B spare),
+host/core math audits clean and all 1,434 ISO payloads match staging. Debug
+hash 5f3eec29; Clean unchanged at c3f29128. Human retest confirms idle
+12-18.7 FPS, moving about 8 FPS; aiming also slows substantially. Human clarified
+rock grab fails and held C-button stick is invisible: separate issues. NPC talk
+was working; general talk failure/phantom stick diagnosis withdrawn. Human
+explicitly defers both bugs and requests performance work. No full gameplay acceptance.
+Interaction follow-up adds retained source-input diagnostics on Debug row 21;
+80 control/aim host tests pass, including A surviving a skipped tick without
+generating an item press. Diagnostic Debug 7f39dee3 built; both math audits
+pass, all 1,434 ISO files match staging, Clean unchanged. Root cause remains
+open. Human trace confirms A delivered to grounded, empty-handed Player, no
+talk offer/message; no gameplay fix claimed. Current performance batch preserves
+vertex prefix order across cull changes and computes side masks once per vertex,
+with no changed visibility criteria. 16 focused tests pass; Debug 4568aa9c built,
+both math audits clean, 1,434 ISO files match staging, Clean unchanged. Runtime
+moving-frame gain not measured yet; compare whole frame and mp/pk, not pp alone.
+Aim pose optimization remains open; both deferred bugs stay in BUG_FEATURE_LOG.
+New larger rendering batch replaces in-place packing by a bounded high-WRAM
+draw-point gather (512 vertices). Only visible indices change and are restored
+before rebuilding; source points/hidden faces stay untouched. Overflow uses
+the complete bank, not dropped geometry. Modes 0/full and 1/in-place remain.
+Player anchor-only hierarchy walk retains source overrides/post callbacks and
+matrix operations but omits discarded per-limb N64 matrix/display output.
+30 focused tests pass, one existing migration test skips; additional control/
+aim/anchor suite 81 pass. Debug c9cc6dc8 built, .bss ends 0x06082DB0 (4,688 B
+spare), both math audits clean, 1,434 ISO payloads match staging. Clean unchanged.
+Runtime moving/aim gain and full-turn/reload/weapon parity remain unaccepted.
+Artifact details and combined human test gates in the performance review.
+Latest small shadow cost does not support thrashing as the large cost.
+jw0 does not rule out core contention gains.
+Slave /128 extends the wrap period to about 293 ms; it is not an unlimited
+duration counter. See the latest performance review for screenshot units and
+test limits. Clean movement/aim/exits/reloads remain pending acceptance.
+Real Player and core collision are live in Clean (`PLAYER_SOURCE=1`,
+`CORE_COLLISION=1`); slave jobs remain enabled. Migration parity and human
+acceptance are incomplete. The whole resident animation bank does not satisfy
+the demand-loading requirement.
+
+Current fixes, scope, tests and acceptance queue:
+[performance review](PERFORMANCE_REVIEW_2026-10-12.md). Repairs cover slot order,
+source aim/input adapters, uncached slave ownership, shared pose caching,
+collision stamp initialization and duplicate proxy tool timers. WSL Clean rebuild
+passes; 102 focused tests pass, one legacy probe wrapper skips (separate collision
+probe executed). Host/core SH-2 audits pass; all 1,434 ISO files match staging.
+Human says the first repairs seem okay, then reports an oversized aiming arrow,
+wrong exits into Lost Woods, and repeated Mednafen scene-preparation timeouts on
+the title screen and in Kokiri Forest (Link's house works). Crash now reported
+absent after Claude's timer repair; route/aim acceptance and moving-FPS signoff remain open.
+Follow-up code removes the aiming overlay and hides the nocked arrow only in
+first person, imports and binds original per-layer exit lists, bounds source
+exit indices, and passes entrance spawn/respawn identity before Player init.
+Slave scene preparation keeps its job but now receives explicit timer ownership
+and publishes progress for the watchdog. This addresses false completion
+deadlines and adds a stalled-progress diagnostic; this earlier attempt did not
+fix the FRT read defect. Expanded host batch: 118 pass, one legacy probe wrapper skips.
+API32/format-3 Clean rebuild passes; .bss ends 0x0607D250 (28,080 B spare),
+host/core math audits pass, and all 1,434 ISO files match staging. Human
+route/aim runtime acceptance remains unspecified. That Mednafen retest failed;
+the false-timeout cause (16-bit FRT read) is fixed above; latest human reports no crash.
+The dated artifact sizes and open-next-step claims below describe their own
+checkpoints; current ownership and next actions are this section and the final
+queue, not the older isolated-migration state.
+
+## Earlier implementation checkpoints
+
+Prior task (human, 2026-10-08): implement Hyrule Field decomp enemies next,
 superseding the earlier enemy scene order. Field scene-pack/source sprite work
 is in progress. Focused source spawn/drop probes and isolated WSL SH-2 actor
 compilation pass. The 59-case focused host batch passes; actor/effect pack links
@@ -146,7 +438,7 @@ inside scene_flow_load; C props are core DynaPoly proxies; C scene buffer,
 index and core->C dyna mirror gone. Core API v27. Host probe/focused tests pass
 (6 pre-existing fixture errors); Clean rebuilt, audits clean, main .bss
 0x060818A0 (10,080 B spare). Speed vs C and runtime acceptance open (human
-Clean play). Next: phase 3 frame bank; phase 4 waits on phase 1 space.
+Clean play). The subsequent real-Player cutover supersedes that phase ordering.
 Real Player first cut (Claude, 2026-10-09, human "replace all of the player
 C with decomp"): `PLAYER_SOURCE=1` in Clean. Scene NPC/prop actors moved to
 63 per-scene packs (phase 1, Claude by human choice), real z_player linked
@@ -158,9 +450,9 @@ En_Elf (C-up prompt live). Speed work toward the 20 FPS goal (Debug readings,
 Kokiri): 6 FPS -> 15 FPS via z_bgcheck integer fast paths, catch-up cap,
 camera constraint once per frame, Link skin inline, shadow/HUD caches, and the
 second SH-2 running the decomp core update, Link's skin and the scene prepare
-(PLAYER_MIGRATION.md speed sections, DEBUG_OVERLAY.md). Open: 20 FPS, SGL
-slave contention, runtime confirmation of the latest builds; gap list in
-PLAYER_MIGRATION.md.
+(PLAYER_MIGRATION.md speed sections, DEBUG_OVERLAY.md). Human now reports
+10→20 FPS, with moving-frame and item regressions under the current review.
+Broader runtime acceptance and migration parity remain open.
 
 Enemy groundwork (Astra, 2026-10-08): [ENEMY_ROLLOUT_PLAN.md](ENEMY_ROLLOUT_PLAN.md)
 and [source design review](ENEMY_DESIGN_REVIEW.md). All five review choices are
@@ -180,8 +472,8 @@ gear actors wait for real Player. The old W0b gate remains for its pilot scenes;
 the human explicitly advanced Field and Water Temple before that sequence.
 
 The following dated reviews/checkpoints retain historical evidence. Current
-enemy status is above and in its plan; current Player ownership remains C,
-with isolated migration work described in PLAYER_MIGRATION.md. Older priority,
+enemy status is above and in its plan; current Player ownership is the real
+core Player, with remaining parity work in PLAYER_MIGRATION.md. Older priority,
 slot-count, scene-discovery and plan-only claims do not supersede those states.
 
 Astra shim review (2026-10-06; source inspection, tests not rerun):
@@ -376,16 +668,14 @@ benchmark results. All existing Saturn adaptations, added features and Link fixe
 must survive on top of the decomp implementation. It supersedes the older
 actor-first continuation below. Full-game scope and existing unfinished work stay.
 
-Current state: C owns Link movement/actions; bridge_player.cpp supplies a proxy
-to core actors. Link and core actors still use separate collision worlds. The
-gallery prop and its geometry bridge are implemented with host/target evidence
-recorded in OOT_CORE_PIPELINE_PLAN.md; human runtime acceptance is pending.
-Migration staging has started on `oot-core` (Codex, 2026-10-06), fast-forwarded
-to the current main baseline so existing fixes survive. The code/test-backed
+Current state: real Player owns movement/actions; core z_bgcheck is the shared
+collision world in Clean. Saturn input, camera, renderer, save/UI and remaining
+C actors use adapters. Legacy Player/proxy paths remain behind rollback until
+acceptance. Current review repairs item/aim and slave handoff regressions;
+migration parity, demand loading and runtime acceptance remain open. The
 [behavior inventory and dependency map](PLAYER_MIGRATION.md) records preservation
 units, owners and gaps; individual inline-fix/test-case audit remains required
-before each subsystem cutover. A separate importer stages the three real Player
-sources through production fixups without changing the playable source list.
+before accepting each subsystem cutover. Historical staging evidence follows:
 WSL host syntax passes all three after scoped enum/Fx and scaled rumble fixes.
 Two focused tests pass, including 102,000 rumble ticks matching source pulse
 timing with actual Fx32. Literal-range audit closed (Claude, 2026-10-06; five
@@ -397,19 +687,18 @@ headers, against a 501,840 B core baseline. Its proposed five-region capacity
 was 679,936 B; historical margins and later adapter estimates remain recorded
 in PLAYER_MIGRATION.md. W0a changes the resident core, so those retention totals
 and the 20,692 B / 11,808 B / 2,514 B margins are not current fit evidence.
-Rerun combined retention and placement with the current inventory ELF/BIN and matching
-objects, current dependencies/adapters, collision proxies, alignment and load
-peaks. Require one resolved ELF and validated per-region loading before Player
-cutover; no heap reduction or speculative C-Link-retirement credit.
+Use current resolved Clean/core artifacts for further placement work, including
+dependencies/adapters, collision proxies, alignment and load peaks. Do not count
+speculative C-Link retirement or reduce heap capacity to admit new work.
 Older whole-frame-bank deficits are historical comparison data. The current
 human contract is a bounded demand-loaded common/action cache with complete
 cutscene preloading/pinning. Measure its metadata, decoder, loading/recovery
 scratch and full live working sets alongside W0a scene resources. Current
-Player memory fit, resolved placement/link and production loader remain open.
+whole-bank runtime does not close demand-cache working-set admission.
 Native Draw remains reachable from source actions; skeletons cannot be blank
 placeholders. 9 duplicate owners and 713 unresolved symbols mapped in
-PLAYER_MIGRATION.md. Isolated relocatable GC probes only; no resolved target game link/build, bake,
-runtime ownership replacement or human acceptance is claimed.
+PLAYER_MIGRATION.md as historical isolated-probe evidence. Real Player is now
+target-linked and running; those old unresolved counts are not current blockers.
 
 Rules and sequence:
 1. Before replacement, inventory existing Link behavior from actual code, tests
@@ -438,12 +727,11 @@ Rules and sequence:
    shared core collision world; no permanent proxy or second gameplay solver.
 4. Preserve dynamic collision semantics: contact/bg IDs, standing/riding and
    switch feedback, required transforms, enable/delete lifecycle, surfaces,
-   water and camera metadata. A collision-query adapter alone is not completion.
-   The gallery bridge is temporary static-building support: source review found
-   Y-only rotation, uniform scale from X, missing water/camera data and no rider
-   feedback to core. It calls bg_dyna_set every core step, rebuilding transformed
-   triangles/bounds even when unchanged. Avoid that repeated work while the
-   bridge remains, without erasing previous transforms needed for rider motion.
+   water and camera metadata. Core z_bgcheck already owns the world; remaining
+   C prop proxies must retire with their source actor replacements. Recheck
+   actual transform/contact ownership and unchanged-transform costs before
+   each retirement; do not treat the older gallery mirror's limitations as
+   current evidence or erase previous transforms needed for rider motion.
 5. Measure whole collision/update cost, memory and dynamic rebuilds on the target
    as migration proceeds, alongside representative query costs. Neither core nor
    C is presumed faster. Results guide bounded optimization of the chosen core
@@ -457,8 +745,11 @@ Rules and sequence:
    alone does not finish migration. Completion requires real Player ownership,
    preserved Saturn functionality, retired duplicate paths and runtime acceptance.
 
-The current inventory Clean margin is 1,792 B; its resident core is 510,184 B.
-This supersedes the water/menu 2,240 B margin. Older failures, margins and build holds below
+Candidate-10 Clean margin is 5,968 B; Debug margin is 496 B. The gameplay
+repair temporary Debug link has 80 B spare; host/audit/budget/ISO checks pass,
+while human runtime acceptance remains pending.
+Earlier 28,176 B, inventory 1,792 B and water/menu 2,240 B margins are historical.
+Older failures, margins and build holds below
 describe their named checkpoints, not current headroom or a new hold.
 
 ## Historical checkpoints and retained verification gaps
@@ -1075,6 +1366,11 @@ counts and image contents describe those builds, not the current continuation.
 
 ## Next actions / remaining work
 
+Implementation order is R0-R7 in
+[Full core ownership and C retirement](#full-core-ownership-and-c-retirement).
+The queue below preserves earlier acceptance/content requirements within those
+waves; it does not authorize a separate performance-first task or emulator use.
+
 Human accepted the current mode-2 Clean texture look; Clean now defaults to
 that mode. See the measurement handoff above. Broader Kokiri/Field route checks
 and the other visual/gameplay acceptance items below remain open.
@@ -1084,18 +1380,17 @@ crosshair, repeated arrow/hook shots, contacts/return, bombs and adult gear
 selection plus texture/fallback restoration. Global source movement now runs
 at the intended rate; also check existing source NPC behavior in real rooms.
 
-Next implementation: continue all inventory actions through mandatory Link migration under the rules at the
-top of this plan and PLAYER_MIGRATION.md. Initial inventory and isolated real
-source staging, tested fixed-point patches and the isolated SH-2 object audit
-exist. Remeasure combined retention and the candidate five-region placement
-using the current inventory ELF/BIN and matching objects; the 659,244 B retention and
-old partition margins describe the earlier checkpoint only. Include remaining
-engine hooks, skeletons, current collision adapters and demand-cache/load peaks,
-then partition sections with linker guards and complete the versioned loader.
-Require a resolved link and overlap/allocation checks before accepting fit.
-Temporary-copy duplicate removal is historical evidence; live owners and C Link
-remain until their cutover. Heap and actor capacities stay intact.
-Complete each subsystem's detailed fix audit before its staged cutover.
+Next implementation: close real Player preservation gaps under PLAYER_MIGRATION.md.
+First human validates the active rock/stick/aim repair against candidate-10 Clean;
+then close core state/items and production demand animation toward C Player
+retirement. Carry measured moving-frame optimization through those waves.
+Retain exit checks for Ranch, Zora's
+Domain and the Saria bridge. Also check repaired C mapping,
+repeated shots, cancel and idle/moving FPS with the slave enabled. Continue
+source inventory/camera parity and demand animation loading; measure new memory
+requirements against the current resolved artifacts. Do not restart the already
+live Player/collision cutover or treat rollback C paths as authoritative.
+Retire each legacy path only after acceptance. Heap/actor capacities stay intact.
 The older actor/Fx32 order does not defer this directive. Wave 0 host/target
 evidence remains in the pipeline handoff. The following are retained verification
 gaps and full-game requirements, not competing permission to postpone migration.
@@ -1116,8 +1411,8 @@ gaps and full-game requirements, not competing permission to postpone migration.
 1. Preserve passing combined regression verification and the usual Clean image,
    heap sizes, actor capacities and SDK error handler. Human still checks all
    inventory/quest pages, Ocarina input, both eras, house views, door/tomb art,
-   steady hearts and populated Ranch/Kakariko frame timings. Astra's authorized
-   emulator control is scoped to the warp diagnostic. Capped items remains
+   steady hearts and populated Ranch/Kakariko frame timings. Human owns all
+   runtime checks; earlier emulator-control exceptions are superseded. Capped items remains
    opt-in on Begin Play Test; A toggles the highlighted
    All Items or Link age option. Complete the missing source song actors and adult story path.
 2. Finish the source entrance graph. Current route audit separates structural
@@ -1126,9 +1421,10 @@ gaps and full-game requirements, not competing permission to postpone migration.
    all retail maps; nine debug-only entries need unavailable source inputs.
    Special grotto returns, alternate collision/spawn headers, transition cameras/fades and
    unimported scripted/warp actors remain blockers. Kakariko cutscene layers also
-   share collision exit indices beyond their shorter exit arrays; the old audit
-   overreads following light data as entrances. Bound extraction by referenced
-   data before trusting those edges; do not guess a destination. Preserve keys and boss logic.
+   share collision exit indices beyond their shorter exit arrays; real Player
+   now bounds those indices against the selected imported list. The older host
+   route audit can still overread following light data as entrances. Bound that
+   extraction before trusting those edges; do not guess a destination. Preserve keys and boss logic.
 3. Review and extend the generated actor ledger across eras/time/story/dynamic
    triggers. Enemy W0a groundwork is implemented and target-built; human runtime
    acceptance remains open. Enemy work runs alongside mandatory Link migration; follow
@@ -1144,7 +1440,11 @@ gaps and full-game requirements, not competing permission to postpone migration.
    20 Hz/input/hit-volume contract and boss exemption. Do not archive a replaced
    C system before human acceptance of its replacement.
 4. Performance implementation remains open: establish per-displayed-frame CPU
-   totals and draw-completion timing. Heading target verification is complete;
+   totals and draw-completion timing. Current gate is sustained Mednafen 20 FPS
+   moving/aiming using M and unchanged emulator settings; latest batch/status
+   is at the top. Human now prioritizes grab/stick/aim repairs before further
+   performance work; these are no longer deferred.
+   Heading target verification is complete;
    preserve the recorded Fx32/helper removal and audit new Player paths. Pass
    prop matrices directly where supported; profile the full collision workload.
    Sprite pose separation is implemented for the current sprite NPC cast.
@@ -1154,10 +1454,13 @@ gaps and full-game requirements, not competing permission to postpone migration.
    are allowed; software-wide/soft-float fallback is not. A storage-width change needs matching collision/units and
    scene/object blob changes. Broad -O2 and relocating the whole blob are not
    validated solutions. Verify the matching artifact before budgeting Player.
-   The matching inventory build leaves 1,792 B before SGL; the historical
+   Candidate-10 Debug leaves 496 B before SGL; accepted Clean leaves 5,968 B.
+   Gameplay-repair temporary Debug link leaves 80 B; host/audit/budget/ISO checks
+   pass, human acceptance pending. The historical
    272-byte curtain and 2,240-byte water/menu margins are superseded. Older 304/2,704/8,736-byte
    reports are not available headroom; the 2,704-byte report was a mixed build.
-   No new FPS or CPU-versus-VDP1 conclusion is established.
+   Human reports prior idle gains to 12-18.7 FPS but moving about 8; target
+   20 while moving remains open. Human tests; no automated emulator runs.
 5. CD house-exit fix still needs verification; Navi room-read
    pauses and late music cues remain open. No CD test is requested now; the
    separate polygon plan proposes a human movement gate after an authorized P1.

@@ -10,6 +10,9 @@ every 1-to-3-underscore prefix counts. 32-bit helpers (___sdivsi3,
 ___udivsi3, ___ashiftrt_r4_*, ___lshrsi3, ___clzsi2) are allowed.
 Literal-pool and table words that merely decode as mac.l or `sts mach`
 (0x000A is the number 10) are ignored: only dmuls/dmulu count.
+Word/long loads from the 8-bit FRT block (0xFFFFFE10-1F) also FAIL: FRC must
+be read FRCH then FRCL as bytes. Mednafen returns only FRC >> 8 for a word
+read (the 2026-10-12 false slave-prepare watchdog).
 
 usage: audit_oot_core_wide.py DISASM.txt   (exit 1 when anything is found)
        audit_oot_core_wide.py --self-test  (positive/negative controls)
@@ -31,20 +34,44 @@ WIDE_HELPERS = re.compile(
 # Helper bodies themselves (libgcc / fp-bit): 2-3 leading underscores and not
 # a mangled C++ name. Game C functions carry ONE leading underscore (_main).
 LIBGCC = re.compile(r'^_{2,3}(?![_Z])')
+# Register loaded with an FRT address (pool comment `! fe12` or `! fffffe12`),
+# then dereferenced by a word or long load.
+FRT_POOL = re.compile(r',(r\d+)\s*! (?:ffff)?fe1[0-9a-f]\s*$', re.I)
+WIDE_LOAD = re.compile(r'^@(?:\(\d+,)?(r\d+)\)?\+?,')
+DEST = re.compile(r',(r\d+)\s*(?:!.*)?$')
 
 
 def audit(lines):
     func = '?'
+    frt = set()
+    flow_end = 0    # 2 at rts/bra/jmp, 1 in its delay slot; then pool data
     found = Counter()
     for line in lines:
         m = FUNC.match(line)
         if m:
             func = m.group(1)
+            frt = set()
+            flow_end = 0
             continue
         m = INSN.match(line)
         if not m:
             continue
         op, args = m.group(2), m.group(3)
+        if flow_end:
+            flow_end -= 1
+            if not flow_end:
+                frt.clear()  # literal pools after the branch decode as junk
+        if op in ('rts', 'rte', 'bra', 'braf', 'jmp'):
+            flow_end = 2
+        w = WIDE_LOAD.match(args)
+        if op in ('mov.w', 'mov.l') and w and w.group(1) in frt:
+            found[(func, 'FRT word access')] += 1
+        d = DEST.search(args)
+        if d:
+            frt.discard(d.group(1))
+        f = FRT_POOL.search(args)
+        if op in ('mov.w', 'mov.l') and f:
+            frt.add(f.group(1))
         if op in ('dmuls.l', 'dmulu.l'):
             found[(func, op)] += 1
         elif re.search(r'0xffffff(0[04]|1[04])\b', args, re.I):
@@ -109,6 +136,27 @@ SELF_TEST = [
  2770000:	d0 02       	mov.l	277000c <_hud+0xc>,r0	! 27c8000 <_siprintf>
  2770002:	d0 03       	mov.l	2770010 <_hud+0x10>,r0	! 27c8000 <___jo_sprintf_buf>
  2770004:	d0 04       	mov.l	2770014 <_hud+0x14>,r0	! 27c8000 <_transform>
+''', 0),
+    ('FRT counter read as a word', '''
+06018992 <_read_ticks>:
+ 6018992:	91 0f       	mov.w	60189b4 <_read_ticks+0x22>,r1	! fe12
+ 6018994:	67 11       	mov.w	@r1,r7
+''', 1),
+    ('negative: FRT byte reads, reassigned register', '''
+06018992 <_read_ticks>:
+ 6018992:	91 0f       	mov.w	60189b4 <_read_ticks+0x22>,r1	! fe12
+ 6018994:	67 10       	mov.b	@r1,r7
+ 6018996:	60 10       	mov.b	@(1,r1),r0
+ 6018998:	d1 08       	mov.l	60189b8 <_read_ticks+0x26>,r1	! 6078f94 <_previous_count>
+ 601899a:	62 11       	mov.w	@r1,r2
+''', 0),
+    ('negative: literal pool after rts decodes as a load', '''
+06019104 <_skin_slave_job>:
+ 6019146:	96 1f       	mov.w	6019188 <_skin_slave_job+0x84>,r6	! fe12
+ 601914c:	61 60       	mov.b	@r6,r1
+ 6019182:	00 0b       	rts
+ 6019184:	68 f6       	mov.l	@r15+,r8
+ 6019196:	53 64       	mov.l	@(16,r6),r3
 ''', 0),
     ('negative: helper bodies themselves', '''
 027c8000 <___divdi3>:

@@ -18,6 +18,7 @@ class SideCull(unittest.TestCase):
 
     def test_culled_quads_are_never_visible(self):
         side_out = backend.function(ROOT / 'src/kokiri_sgl.c', 'static int side_out(')
+        side_out = backend.function(ROOT / 'src/kokiri_sgl.c', 'static short side_mask(') + side_out
         self.run_c(r'''
 #include <assert.h>
 #include <math.h>
@@ -27,7 +28,8 @@ typedef int32_t POINT[3];
 static POINT points[4];
 static struct { POINT *pntbl; } kokiri_pdata = { points };
 static struct { int32_t x, y, z; } recomp_camera;
-static short forest_depth[4], forest_side[4];
+static short prep_depth[4];
+static unsigned char prep_side[4];
 static int side_cull_dist, side_sin_q8, side_cos_q8;
 ''' + side_out + r'''
 static unsigned rng = 12345u;
@@ -53,11 +55,12 @@ int main(void) {
                 int x = bx + rnd(-150, 150), y = by + rnd(-150, 150), z = bz + rnd(-150, 150);
                 int dx = x - recomp_camera.x, dz = z - recomp_camera.z;
                 points[k][0] = x * 65536; points[k][1] = -y * 65536; points[k][2] = z * 65536;
-                forest_depth[k] = (short)(((int64_t)dx * s + (int64_t)dz * c) >> 16);
-                forest_side[k] = (short)(((int64_t)dx * c - (int64_t)dz * s) >> 16);
+                prep_depth[k] = (short)(((int64_t)dx * s + (int64_t)dz * c) >> 16);
+                prep_side[k] = side_mask(prep_depth[k], y-recomp_camera.y,
+                    (short)(((int64_t)dx * c - (int64_t)dz * s) >> 16));
             }
             ++total;
-            if (!side_out(corner)) continue;
+            if (!side_out(corner, prep_side)) continue;
             ++culled;
             for (u = 0; u <= 8; ++u) for (v = 0; v <= 8; ++v) {
                 double a[3], b[3], pnt[3], dx, dy, dz, zf, xr, zt;

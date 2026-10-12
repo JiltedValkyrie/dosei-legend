@@ -20,6 +20,8 @@ class CoreSave(unittest.TestCase):
             + '#include "' + (ROOT / 'src/save_state.c').as_posix() + '"\n' + r'''
 typedef uint32_t u32;
 typedef uint8_t u8;
+typedef int16_t s16;
+typedef struct { u8 buttonItems[4], cButtonSlots[3]; unsigned equipment; } ItemEquips;
 typedef struct { unsigned char playerName[8];int health,healthCapacity,rupees,magicLevel,magic;
     int isMagicAcquired,isDoubleMagicAcquired,isDoubleDefenseAcquired,bgsFlag;
 } SavePlayerData;
@@ -29,15 +31,18 @@ typedef struct {
 } Inventory;
 typedef struct { unsigned long chest,swch,clear,collect; } SavedSceneFlags;
 static struct {
-    struct { int linkAge,nightFlag,dayTime,cutsceneIndex;
+    struct { int linkAge,nightFlag,dayTime,cutsceneIndex,totalDays,bgsDayCount,entranceIndex;
         struct { SavePlayerData playerData;Inventory inventory;
-            struct {unsigned equipment;} equips;
+            ItemEquips equips;
             unsigned short eventChkInf[14],itemGetInf[4],infTable[30];
             SavedSceneFlags sceneFlags[124];
         } info;
     } save;
-    int language;
+    int language,skyboxTime,nextDayTime,sunsSongState,dogIsLost,seqId,natureAmbienceId,forcedSeqId,retainWeatherMode;
 } gSaveContext;
+static int gWeatherMode;
+enum {NEXT_TIME_NONE=0xffff,SUNSSONG_INACTIVE=0,NA_BGM_DISABLED=0xffff,
+      NATURE_ID_DISABLED=0xff,NA_BGM_GENERAL_SFX=0,WEATHER_MODE_CLEAR=0};
 typedef struct {
     struct {struct {unsigned long chest,swch,clear,collect;} flags;} actorCtx;
 } PlayState;
@@ -53,12 +58,14 @@ static unsigned sGenericScene;
 #define FILENAME_PERIOD 0x40
 #define FILENAME_SPACE 0x3f
 enum {SLOT_DEKU_STICK=0,SLOT_DEKU_NUT=1,SLOT_BOMB=2,SLOT_BOW=3,
-      SLOT_SLINGSHOT=6,SLOT_OCARINA=7,SLOT_BOTTLE_1=18};
+      SLOT_SLINGSHOT=6,SLOT_OCARINA=7,SLOT_BOTTLE_1=18,SLOT_BOTTLE_4=21};
+enum {ITEM_SWORD_KOKIRI=0x3b,ITEM_SWORD_MASTER=0x3c,ITEM_SWORD_BIGGORON=0x3d,
+      ITEM_BOTTLE_EMPTY=0x14,ITEM_BOTTLE_POE=0x20,ITEM_BOTTLE_BIG_POE=0x1e};
 enum {ITEM_DEKU_STICK=0,ITEM_DEKU_NUT=1,ITEM_SLINGSHOT=6,ITEM_OCARINA_FAIRY=7,ITEM_OCARINA_OF_TIME=8,ITEM_NONE=255};
 enum {ITEM_SONG_MINUET=0x5a,ITEM_SONG_STORMS=0x65,QUEST_SONG_MINUET=6};
 static struct { u8 (*give_item)(u8 item); } *gOotCoreHost;
 ''' + graphics.function(source, 'static void seed_scene_save(')
-            + graphics.function(source, 'static void save_copy_out(')
+            + graphics.function(source, 'static void save_copy_out(PlayState* play) {')
             + graphics.function(source, 'static void oot_core_set_save(')
             + graphics.function(ROOT / 'oot-core/src/bridge_play.cpp', 'u8 Item_Give(') + r'''
 int main(void) {
@@ -136,7 +143,13 @@ int main(void) {
     in.quest_items=&save_state.quest_items;in.rupees=save_state.rupees;
     in.stick_upgrade=save_state.stick_upgrade;in.nut_upgrade=save_state.nut_upgrade;
     in.stick_ammo=save_state.stick_ammo;in.nut_ammo=save_state.nut_ammo;in.seed_ammo=save_state.ammo_seeds;
+    in.c_slots[0]=3;in.c_slots[1]=9;in.c_slots[2]=2; /* HUD down bow, left hook, right bomb */
     oot_core_set_save(&in);
+    assert(gSaveContext.save.info.equips.buttonItems[1]==11); /* C-left longshot */
+    assert(gSaveContext.save.info.equips.buttonItems[2]==3);  /* C-down bow */
+    assert(gSaveContext.save.info.equips.buttonItems[3]==2);  /* C-right bomb */
+    assert(gSaveContext.save.info.equips.cButtonSlots[0]==9);
+    assert(gSaveContext.save.info.equips.cButtonSlots[1]==3);
     assert(inv->items[7]==8 && inv->items[9]==11 && inv->items[2]==2 && inv->items[3]==3);
     assert(inv->items[22]==0x37 && inv->items[23]==0x2b);
     assert(inv->equipment==0x7777 && inv->upgrades==0x36e4db && inv->questItems==0x00ffffff);

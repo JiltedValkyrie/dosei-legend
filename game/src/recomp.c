@@ -167,6 +167,15 @@ bool recomp_enter_prompt(void) { return link_enter_prompt; }
 /* Last intent_speed passed to player_lift_update, cached for query functions. */
 static int32_t lift_last_speed_q8;
 
+#ifdef PLAYER_SOURCE
+/* Source Player_UpdateInterface labels (Player_CanThrowCarriedActor). */
+bool recomp_lift_hold_actionable(void)
+{
+    unsigned int action = oot_core_player_do_action();
+    return action == OOT_CORE_DO_DROP || action == OOT_CORE_DO_THROW;
+}
+bool recomp_lift_throw_ready(void) { return oot_core_player_do_action() == OOT_CORE_DO_THROW; }
+#else
 bool recomp_lift_hold_actionable(void) { return link_lift.phase == LIFT_HOLD; }
 
 bool recomp_lift_throw_ready(void)
@@ -174,6 +183,7 @@ bool recomp_lift_throw_ready(void)
     return link_lift.phase == LIFT_HOLD &&
            (link_lift.throw_only || lift_last_speed_q8 >= 282);
 }
+#endif
 
 /* Camera_Subj4 (CAM_SET_CRAWLSPACE): first person on the crawlspace's bgCam
 ** line -- points [1] and [n-2] -- at the point nearest Link, looking down
@@ -547,6 +557,18 @@ static void __attribute__((optimize("Os"), noinline)) first_person_camera_step(c
 {
     int32_t focus[3];
     bg_vec_t at;
+#ifdef PLAYER_SOURCE
+    if (item_aim && oot_core_player_valid) {
+        /* The same focus rotation aims the source projectile and Saturn view.
+         * Source pitch is down-positive; Saturn view pitch is up-positive. */
+        at = (bg_vec_t){oot_core_player.focus_x, oot_core_player.focus_y, oot_core_player.focus_z};
+        link_follow.look_yaw = (int16_t)(oot_core_player.focus_yaw - recomp_link_yaw);
+        link_follow.look_pitch = -(int16_t)oot_core_player.focus_pitch;
+        player_camera_first_person(&link_follow, &at, recomp_link_yaw, 0, 0,
+            &recomp_camera, &recomp_yaw, &recomp_pitch, true);
+        return;
+    }
+#endif
     link_focus(focus);
     at = (bg_vec_t){focus[0], focus[1], focus[2]};
     player_camera_first_person(&link_follow, &at, recomp_link_yaw,
@@ -814,6 +836,7 @@ static bool __attribute__((optimize("Os"))) take_door(void)
     int scripted=oot_core_transition_request(false);
     unsigned target,spawn,keep_music,entrance,variant,layer;
     unsigned resident=scene_flow_scene(),resident_spawn=save_state.entrance;
+    unsigned resident_entrance=save_state.source_entrance, resident_source=save_state.source_scene;
     /* A missing destination must not reopen its box every movement step.
      * Rearm only after leaving its neighbourhood (or changing scenes). */
     if (notice_scene != resident || recomp_link.x < notice_x-600 ||
@@ -861,8 +884,14 @@ static bool __attribute__((optimize("Os"))) take_door(void)
      * state even when a later asset read fails. Never retry its warp each step. */
     if(scripted>=0)oot_core_transition_request(true);
     game_mode_set(GAME_MODE_LOADING);
+    /* Real Player initializes its respawn entrance during scene load. Publish
+     * the destination before that init, not after placing the host camera. */
+    save_state.source_entrance=(uint16_t)entrance;
+    save_state.source_scene=scene_entries[target].oot_scene;
     if (!scene_flow_load(target, spawn)) {
         oot_core_cancel_transition_time();
+        save_state.source_entrance=(uint16_t)resident_entrance;
+        save_state.source_scene=resident_source;
         /* A failed load can already have replaced collision, pixels and NPCs.
          * Rebuild the source scene before resuming, at its saved entrance so
          * Link and the restored room bank agree even after room crossings. */
@@ -1105,6 +1134,13 @@ static void __attribute__((optimize("Os"))) level_select_enter(void)
         const scene_spawn_t *p=scene_flow_spawn(scene,i);
         if(p->room==room){spawn=i;exact=true;break;}
     }
+#if defined(DOSEI_BOOT_KOKIRI_TEST) && !defined(DOSEI_CLEAN_TEST)
+    /* Temporary Kokiri benchmark: the Mido-house return is level ground,
+     * (-445,0,-486), facing +Z. Spawn 0 starts below Link's platform and a
+     * straight running test catches its ledge. Use the ordinary scene load
+     * and Player placement below, so source and host share entrance 9. */
+    if(scene==SCENE_SPOT04 && room==0){spawn=9;exact=true;}
+#endif
     if(!exact) {
         for(i=0;i<KOKIRI_PORTAL_COUNT;++i) {
             const kokiri_portal *p=&kokiri_portals[i];int32_t sn,cs,distance;
@@ -1690,7 +1726,10 @@ static void player_source_pad(const player_input_t *in, bool interact, bool atta
         sy = (in->move_buttons & CAMERA_UP ? 80 : 0) - (in->move_buttons & CAMERA_DOWN ? 80 : 0);
         if (sx && sy) { sx = sx * 57 / 80; sy = sy * 57 / 80; }
     }
-    if (in->move_mode == PLAYER_MOVE_WALK) { sx = sx * 2 / 5; sy = sy * 2 / 5; }
+    if (in->look_mode) {
+        sx = -in->look_yaw_delta * 80 / PLAYER_LOOK_YAW_SPEED;
+        sy = -in->look_pitch_delta * 80 / PLAYER_LOOK_PITCH_SPEED;
+    } else if (in->move_mode == PLAYER_MOVE_WALK) { sx = sx * 2 / 5; sy = sy * 2 / 5; }
     a->n64_stick_x = (int8_t)sx;
     a->n64_stick_y = (int8_t)sy;
     a->n64_held = (in->interact_held ? N64_A : 0) | (in->attack_held ? N64_B : 0) |
@@ -1729,8 +1768,39 @@ static void __attribute__((optimize("Os"))) mido_push_link(void)
                                 dz * push / dist);
 }
 
+#if defined(DOSEI_BOOT_KOKIRI_TEST) && !defined(DOSEI_CLEAN_TEST)
+/* Temporary performance image only. Run after jo_main has initialized the
+ * core, scene tables, actor pools, audio and VBlank input, through the same
+ * unsaved Play Test entry used by the visible level-select menu. */
+static bool recomp_boot_kokiri_test(void)
+{
+    static bool entered;
+    if (entered) return false;
+    entered = true;
+    level_select_open();
+    level_select.scene = SCENE_SPOT04;
+    level_select.room = 0;
+    level_select.adult = false;
+    level_select.max_gear = false; /* three hearts; includes slingshot/ammo */
+    game_mode_set(GAME_MODE_FILE_SELECT); /* TITLE cannot enter LOADING directly */
+    level_select_enter();
+    player_input_reset();
+    (void)input_edge_consume(&start_edge);
+    interact_pending = cancel_pending = pause_pending = jump_pending = false;
+    previous_tick = ticks;
+    jo_clear_screen();
+    /* This first update returns before the ordinary layer refresh. Hide the
+     * resident title artwork now, including on a failed scene load/menu. */
+    slScrAutoDisp(NBG0ON | minimap_layer_flags());
+    return true;
+}
+#endif
+
 void recomp_update(void)
 {
+#if defined(DOSEI_BOOT_KOKIRI_TEST) && !defined(DOSEI_CLEAN_TEST)
+    if (recomp_boot_kokiri_test()) return;
+#endif
 #ifdef DOSEI_CUTSCENE_PROBE
     /*
     ** Straight into one cutscene, skipping the title and the file select.
@@ -1818,8 +1888,21 @@ void recomp_update(void)
     if (file_select_visible || game_mode() == GAME_MODE_CUTSCENE)
         player_input_set_dialogue(true);
 
+#ifdef PLAYER_SOURCE
+    if (oot_core_player_valid && oot_core_player.aim_mode == 2 &&
+        (oot_core_player.state1 & (1u << 20)) && game_mode() == GAME_MODE_PLAY &&
+        !gameplay_blocks_world() && !gameplay.dead) {
+        unsigned button = oot_core_player.item_button;
+        item_aim = button >= 1 && button <= 3 ? (button < 3 ? 3 - button : 3) : 0;
+        view_first_person = item_aim != 0;
+    } else if (item_aim) {
+        item_aim = 0;
+        view_first_person = false;
+        snap_camera_to_link();
+    }
+#endif
     if (view_first_person && (game_mode() != GAME_MODE_PLAY || gameplay_blocks_world() ||
-        gameplay.dead || scene_flow_is_interior() || link_crawl.phase != PLAYER_CRAWL_NONE)) {
+        gameplay.dead || (scene_flow_is_interior() && !item_aim) || link_crawl.phase != PLAYER_CRAWL_NONE)) {
         view_first_person = false;
         if (scene_flow_is_interior()) interior_camera();
         else snap_camera_to_link();
@@ -1855,7 +1938,13 @@ void recomp_update(void)
      * took no lock. Kept sampled so the edge is consumed each frame. */
     (void)input.recenter;
     if (input.diagnostics_toggled) recomp_diagnostics_toggled = true;
+    if (input.job_order_toggled) {
+        if (kokiri_parallel_prepare) { kokiri_parallel_prepare = false; kokiri_prep_first = true; }
+        else if (kokiri_prep_first) kokiri_prep_first = false;
+        else kokiri_parallel_prepare = true;
+    }
     if (input.camera_swap_toggled) oot_follow_set_legacy(!oot_follow_legacy());
+    if (input.envelope_toggled) kokiri_scene_envelope_cycle();
     /* Walk/run is a persistent mode, so it is pushed even on a frame with no
      * movement: the next step must already run at the selected speed. */
     kokiri_camera_set_walk(input.move_mode == PLAYER_MOVE_WALK);
@@ -2025,7 +2114,6 @@ void recomp_update(void)
          * animates and collides Link. The host feeds the pad, reads him back
          * after each core update (oot_core_host.c read_player) and keeps the
          * camera, doors, pause/HUD, story and C-side systems. */
-        bool attack_edge = input.attack_pending;
         uint16_t walk = buttons & (CAMERA_UP | CAMERA_DOWN | CAMERA_LEFT | CAMERA_RIGHT);
         unsigned int step_start;
         /* Pose Link from the newest Player joints (joined last frame): the
@@ -2033,7 +2121,7 @@ void recomp_update(void)
          * skins his vertices while the steps run (link_anim_frame_start). */
         frame_timer_begin(FRAME_PHASE_SKINNING);
         if (oot_core_player_valid)
-            link_anim_frame_start(oot_core_player.joints);
+            link_anim_frame_start(oot_core_player.joints, !recomp_first_person());
         frame_timer_end(FRAME_PHASE_SKINNING);
         step_start = frame_timer_ticks();
         perf_sub[PS_R0] += frame_timer_ticks_to_us(step_start - r0_start);
@@ -2042,6 +2130,7 @@ void recomp_update(void)
         if (!music_busy()) scene_music();
         while (steps--) {
             gameplay_input_t action = {0};
+            bool attack_edge = combat_input_take(&combat_input).pressed;
             PERF_T0();
             PS_T0();
             ++perf_steps;
@@ -2070,8 +2159,16 @@ void recomp_update(void)
             action.moving = input.analog ? (input.stick_x || input.stick_y)
                                          : (walk & (CAMERA_UP | CAMERA_DOWN | CAMERA_LEFT | CAMERA_RIGHT)) != 0;
             action.stick_dir = -1;
-            if (!blocked_before && !paused_before && !view_first_person && !input.look_mode)
+            if (!blocked_before && !paused_before &&
+                ((!view_first_person && !input.look_mode) || item_aim)) {
                 player_source_pad(&input, interact_pending, attack_edge, &action);
+                /* C taps are latched across rendered frames without a host
+                 * step; input.c_pressed alone has already been consumed. */
+                static const uint16_t c_press[4] = {0, N64_CDOWN, N64_CLEFT, N64_CRIGHT};
+                if (c_use <= 3) action.n64_press |= c_press[c_use];
+                if (item_aim && (cancel_pending || pause_pending)) action.n64_press |= N64_B;
+                action.n64_held |= action.n64_press;
+            }
             attack_edge = false;
             {
             unsigned int prd0 = frame_timer_ticks();
@@ -2112,6 +2209,9 @@ void recomp_update(void)
                 !view_first_person)
                 (void)oot_core_player_jump();   /* Y: Saturn extension */
             jump_pending = false;
+            /* Only the core consumes C items. Populate its Ocarina/menu
+             * slot after gameplay_step so the retired C tool path cannot fire. */
+            action.c_use = c_use;
             perf_t0 = frame_timer_ticks();
             if (step_core_gameplay(&action, paused_before)) {
                 interact_pending=cancel_pending=pause_pending=jump_pending=false;
@@ -2153,8 +2253,9 @@ void recomp_update(void)
                 view_first_person = false;
                 snap_camera_to_link();
             }
-            if (input.look_mode && (cancel_pending || input.look_exited || pause_pending) && view_first_person) {
+            if (input.look_mode && (cancel_pending || (!item_aim && input.look_exited) || pause_pending) && view_first_person) {
                 view_first_person = false;
+                item_aim = 0;
                 snap_camera_to_link();
             }
             c_up_pending = false;

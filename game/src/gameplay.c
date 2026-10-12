@@ -292,14 +292,12 @@ static void         npc_actors_kill(void)
 #ifdef DOSEI_OOT_CORE
 /* The decomp En_Ko/En_Md standing in for kokiri_npcs[i] (same ENKO_TYPE, or
 ** Mido), so Navi's hover and Z-target keep working on decomp NPCs. */
-static const OotCoreNpcView *core_npc_for(const kokiri_npc_t *npc)
+static const OotCoreNpcView *core_npc_for(const kokiri_npc_t *npc,
+                                        const OotCoreNpcView *v, int n)
 {
-    const OotCoreNpcView *v;
-    int n, k;
-    if (npc->scene != save_state.scene_id || npc->kind == KOKIRI_NPC_SARIA ||
-        !oot_core_owns_kokiri_npcs())
+    int k;
+    if (npc->scene != save_state.scene_id || npc->kind == KOKIRI_NPC_SARIA)
         return 0;
-    n = oot_core_npcs(&v);
     for (k = 0; k < n; ++k)
         if (npc->kind == KOKIRI_NPC_MIDO ? v[k].id == 0x016D /* ACTOR_EN_MD */ :
             v[k].id == 0x0163 /* ACTOR_EN_KO */ && (v[k].params & 0xFF) == (npc->param & 0xFF))
@@ -311,11 +309,17 @@ static const OotCoreNpcView *core_npc_for(const kokiri_npc_t *npc)
 static void         sync_npc_actors(void)
 {
     unsigned int i;
+#ifdef DOSEI_OOT_CORE
+    /* npc_view rebuilds the view by walking source actors. Nothing in this
+     * mirror pass advances the source world, so fetch it once, not per NPC. */
+    const OotCoreNpcView *core_view = 0;
+    int core_count = oot_core_owns_kokiri_npcs() ? oot_core_npcs(&core_view) : 0;
+#endif
     for (i = 0; i < KOKIRI_NPC_COUNT; ++i) {
         const kokiri_npc_t *npc = npc_at(i);
         actor_t *a = actor_resolve(npc_actor[i]);
 #ifdef DOSEI_OOT_CORE
-        const OotCoreNpcView *core = core_npc_for(npc);
+        const OotCoreNpcView *core = core_npc_for(npc, core_view, core_count);
         if (core) {
             if (!a) {
                 a = actor_spawn(&npc_profile, save_state.scene_id, ACTOR_ROOM_NONE,
@@ -367,6 +371,16 @@ bool                gameplay_npcs_present(void)
         if (gameplay_npc_present(i))
             return true;
     return false;
+}
+
+void gameplay_npc_pose(unsigned int npc, int32_t pos[3], uint16_t *yaw)
+{
+    const kokiri_npc_t *p;
+    pos[0] = pos[1] = pos[2] = 0; *yaw = 0;
+    if (npc >= KOKIRI_NPC_COUNT) return;
+    p = npc_at((int)npc);
+    pos[0] = p->x; pos[1] = p->y; pos[2] = p->z;
+    *yaw = p == &kokiri_npcs[npc] && (npc_turned & (1u << npc)) ? npc_turn[npc] : p->yaw;
 }
 
 int32_t             gameplay_npc_x(unsigned int npc)

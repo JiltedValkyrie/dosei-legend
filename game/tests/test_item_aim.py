@@ -24,6 +24,8 @@ class ItemAim(unittest.TestCase):
         route = route[:route.index('                if (!gameplay_blocks_world() && !action.pause &&')]
         projection = recomp[recomp.index('static int project_attention('):]
         projection = projection[:projection.index('\nbool attention_on_screen')]
+        source_pad = recomp[recomp.index('/* N64 BTN_*'):]
+        source_pad = source_pad[:source_pad.index('#endif')]
         source = '#include "%s"\n' % (ROOT.parent / 'shared/lib/collision/div32.h').as_posix() + r'''
 #include <math.h>
 #include <string.h>
@@ -65,13 +67,24 @@ action.c_use=press;action.target_held=target;
 ''' + latch + route + r'''
 last_pitch=action.item_pitch;last_eye=action.item_from_eye;return action.c_use;
 }
+''' + source_pad + r'''
+int source_pad_axis(int yaw,int pitch,int axis){
+    player_input_t in={0};gameplay_input_t a={0};
+    in.look_mode=true;in.look_yaw_delta=yaw;in.look_pitch_delta=pitch;
+    in.move_mode=PLAYER_MOVE_WALK;
+    player_source_pad(&in,false,false,&a);return axis?a.n64_stick_y:a.n64_stick_x;
+}
+int source_pad_c(int button){
+    player_input_t in={0};gameplay_input_t a={0};in.c_pressed=button;
+    player_source_pad(&in,false,false,&a);return a.n64_press;
+}
 ''' + projection + r'''
 int screen(int x,int y,int z,int pitch,int axis){int32_t p[3]={x,y,z},sx,sy;recomp_pitch=pitch;project_attention(p,&sx,&sy);return axis?sy:sx;}
 int screen_pose(int x,int y,int z,int yaw,int pitch,int axis){recomp_yaw=yaw;return screen(x,y,z,pitch,axis);}
 '''
         out = Path(cls.tmp.name)/'aim.dll'
         env = dict(os.environ, PATH=str(GCC.parent)+os.pathsep+os.environ.get('PATH',''))
-        subprocess.run([str(GCC),'-shared','-O2','-I'+str(ROOT/'src'),
+        subprocess.run([str(GCC),'-shared','-fPIC','-O2','-I'+str(ROOT/'src'),
                         '-I'+str(ROOT.parent/'shared/lib/camera'),
                         '-I'+str(ROOT.parent/'shared/lib/collision'),
                         '-x','c','-','-o',str(out),'-lm'],input=source,text=True,check=True,env=env)
@@ -81,6 +94,13 @@ int screen_pose(int x,int y,int z,int yaw,int pitch,int axis){recomp_yaw=yaw;ret
     def tearDownClass(cls): cls.tmp.cleanup()
 
     def setUp(self): self.lib.reset()
+
+    def test_real_player_pad_preserves_direction_and_aim_axes(self):
+        self.assertEqual([self.lib.source_pad_c(c) for c in (2,3,4)], [4,2,1])
+        self.assertEqual(self.lib.source_pad_axis(-420,0,0),80)  # right
+        self.assertEqual(self.lib.source_pad_axis(420,0,0),-80)
+        self.assertEqual(self.lib.source_pad_axis(0,280,1),-80)  # up -> negative source pitch
+        self.assertEqual(self.lib.source_pad_axis(0,-280,1),80)
 
     def test_tap_enters_release_holds_second_tap_fires_and_cancel_exits(self):
         g=self.lib

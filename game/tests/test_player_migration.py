@@ -12,6 +12,20 @@ from test_fx32 import ROOT, host_flags, compiler_env, importer
 
 
 class PlayerMigration(unittest.TestCase):
+    def test_exported_root_matches_source_child_root_adjustment(self):
+        """Player_OverrideLimbDrawGameplayCommon scales the child root by 0.64
+        and lowers it by unk_6C4; the host skin reads the exported root."""
+        text = (ROOT / 'oot-core/src/bridge_player_source.cpp').read_text(errors='replace')
+        block = text[text.index('out->joints[i] = joints[i];'):]
+        block = block[:block.index('out->left_hand')]
+        self.assertIn('if (!LINK_IS_ADULT)', block)
+        self.assertIn('ANIM_FLAG_DISABLE_CHILD_ROOT_ADJUSTMENT', block)
+        self.assertIn('ANIM_FLAG_UPDATE_XZ', block)
+        self.assertIn('ANIM_FLAG_UPDATE_Y', block)
+        self.assertEqual(block.count('* 16 / 25'), 3)
+        self.assertIn('out->joints[1] - (int)this->unk_6C4', block)
+        self.assertEqual(round(0.64 * 25), 16)
+
     def test_rumble_preserves_source_pulse_timing_without_saturation(self):
         rel = 'src/overlays/actors/ovl_player_actor/z_player.c'
         raw = (importer.OOT_DEFAULT / rel).read_text(encoding='utf-8')
@@ -178,7 +192,7 @@ int main() {
             self.assertIn(need, draw)
         self.assertEqual(draw.count('Player_DrawGameplay('), 1)
         self.assertIn('Player_PostLimbDrawGameplay', gameplay)
-        self.assertIn('SkelAnime_DrawFlexLod(', impl)
+        self.assertIn('OotCore_PlayerAnchorPose(', impl)
         self.assertIn('sDListsLodOffset', impl)
         for gone in ('Player_DrawGetItem', 'gEffIceFragment3DL', 'Gfx_SetFog2', 'POLY_'):
             self.assertNotIn(gone, draw)
@@ -283,9 +297,7 @@ int main() {
         self.assertEqual(ctx[cs_only][1], frozenset())
 
     def test_core_region_loader_validates_before_writing(self):
-        spans = [(0x02770000, 589824), (0x0021D800, 40960), (0x002FA000, 24576),
-                 (0x026EC800, 20480), (0x02683800, 4096)]
-        def payload(regions, bss=(0x02770100, 0x02770140), magic=b'ORG1'):
+        def payload(regions, bss=(0x02760100, 0x02760140), magic=b'ORG1'):
             head = magic + struct.pack('>HHII', 1, len(regions), *bss)
             offset = 16 + 12 * len(regions)
             table, body = b'', b''
@@ -293,14 +305,14 @@ int main() {
                 table += struct.pack('>III', address, len(data), offset + len(body))
                 body += data
             return head + table + body
-        good = payload([(0x02770000, b'\x11' * 0x100), (0x0021D800, b'\x22' * 64),
+        good = payload([(0x02760000, b'\x11' * 0x100), (0x0021D800, b'\x22' * 64),
                         (0x02683800 + 4096 - 8, b'\x33' * 8)])
         cases = {
             'good': good,
-            'magic': payload([(0x02770000, b'\x11' * 4)], magic=b'ORG0'),
+            'magic': payload([(0x02760000, b'\x11' * 4)], magic=b'ORG0'),
             'outside': payload([(0x0021D800 + 40960 - 4, b'\x22' * 8)]),
-            'overlap': payload([(0x02770000, b'\x11' * 16), (0x02770008, b'\x22' * 16)]),
-            'bss_cover': payload([(0x02770100, b'\x11' * 16)]),
+            'overlap': payload([(0x02760000, b'\x11' * 16), (0x02760008, b'\x22' * 16)]),
+            'bss_cover': payload([(0x02760100, b'\x11' * 16)]),
             'unaligned': payload([(0x0021D802, b'\x22' * 4)]),
         }
         program = r'''
@@ -308,7 +320,7 @@ int main() {
 #include <stdlib.h>
 #include <string.h>
 #include "oot_core_regions.h"
-static uint8_t mem[5][589824];
+static uint8_t mem[5][655360];
 static uint8_t *map(uint32_t a) {
     for (int i = 0; i < 5; i++)
         if (a >= oot_region_spans[i].address && a < oot_region_spans[i].address + oot_region_spans[i].bytes)
@@ -321,7 +333,7 @@ int main(int argc, char **argv) {
     memset(mem, 0xEE, sizeof mem);
     int r = oot_core_regions_load(buf, n, oot_region_spans, 5, map);
     int touched = 0;
-    for (int i = 0; i < 5; i++) for (int j = 0; j < 589824; j++) touched += mem[i][j] != 0xEE;
+    for (int i = 0; i < 5; i++) for (int j = 0; j < 655360; j++) touched += mem[i][j] != 0xEE;
     printf("%d %d %02x %02x %02x %02x\n", r, touched, mem[0][0], mem[0][0x100], mem[1][0],
            mem[4][4088]);
     return 0;
