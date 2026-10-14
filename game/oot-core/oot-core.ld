@@ -36,6 +36,9 @@ SECTIONS
     }
     .keep_ph : {
         _oot_keep_ph_start = .;
+        /* keep_ph.o first: Draw_Key slot = keep_ph.txt index (Player gear
+         * placeholders follow; they are keyed by address, never by slot). */
+        KEEP(*keep_ph.o(.keep_ph))
         KEEP(*(.keep_ph))
         _oot_keep_ph_end = .;
     }

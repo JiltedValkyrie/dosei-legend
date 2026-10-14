@@ -1,14 +1,23 @@
 # Dosei Legend: full OoT recomp for Sega Saturn
 
-A work-in-progress full OoT recomp using **Jo Engine / SGL**, developed on
-`main`. **Requires the 4 MB RAM expansion cartridge.** The current playable
-route includes Link's house, Kokiri Forest, the sword chest, Kokiri Shop,
-NPC dialogue, traversal, combat, hearts, saves and pause pages.
+A work-in-progress full OoT recomp using **Jo Engine / SGL**. It runs the real
+zeldaret/oot decomp (actors, Player, collision, cutscenes, messages) on the
+Saturn, with a Saturn renderer, audio and platform layer. **Requires the 4 MB
+RAM expansion cartridge.** Development happens on `oot-core`, which is merged
+into `main` at checkpoints.
+
+**Current route (2026-10-13):** new game, Kokiri Forest, the Deku Tree and Gohma,
+Lost Woods, Hyrule Field with the owl, Lon Lon Ranch, Hyrule Castle courtyard
+and Zelda, Kakariko, Death Mountain Trail, Goron City and Dodongo's Cavern
+through King Dodongo. All 101 retail maps load from Level Select, but only this
+child route is being made playable. The full route has not been played through
+on hardware or an emulator yet (see [Known issues](#known-issues-and-limitations)).
 
 The [full recomp plan](game/docs/RECOMP_PLAN.md) covers every scene, era, actor
-and story system. The opening route sets implementation order; whole-game
-completion remains pending. See [current handoff](game/docs/ASTRA_HANDOFF_2026-10-05.md),
-[progress](VSLICEPROGRESS.md) and [known gaps](game/docs/BUG_FEATURE_LOG.md).
+and story system. The current route sets implementation order. Whole-game
+completion is still pending. See the [current handoff](game/docs/CHILD_ROUTE_STOP_HANDOFF_2026-10-13.md),
+[route plan](game/docs/CHILD_ROUTE_DODONGO_PLAN.md) and the full
+[bug and feature log](game/docs/BUG_FEATURE_LOG.md).
 The older [vertical-slice scope](VERTICALSLICE.md) is historical where superseded.
 
 ## Layout
@@ -75,9 +84,11 @@ Replacing a mounted ISO can leave cached file positions pointing at wrong
 assets; cold boot the completed image after a rebuild. Direct launch shortcuts are
 `game/run-kronos-clean.bat`, `game/run-kronos.bat` and
 `game/run-kronos-hires.bat`. Use the `.cue` to retain the disc's audio tracks.
-From a configured MSYS2 shell, `cd game` then `./build.sh --clean` builds Clean;
-`./build.sh` builds Standard and `./build.sh --hires` builds Hi-res.
-See [game build notes](game/README.md) for diagnostic options.
+**Build in WSL Linux only** (not MSYS2/Git Bash). Read
+[BUILD.md](game/docs/BUILD.md) first. From `game/` in WSL,
+`./build.sh --clean OOT_CORE=1` builds Clean and `./build.sh --quick OOT_CORE=1`
+builds Debug (Standard). See [game build notes](game/README.md) for diagnostic
+options.
 
 ## Controls (current build)
 
@@ -199,6 +210,63 @@ candidates are editing assets, not automatically runtime-ready meshes.
 
 Audio tool: `tools/audio-workshop/open-audio-workshop.bat`. Plays US 1.2 SFX
 and music on the PC. No import or export.
+
+## Known issues and limitations
+
+This list covers the main problems. Owners, evidence and smaller items are in the
+[bug and feature log](game/docs/BUG_FEATURE_LOG.md).
+
+### Route blockers
+- **King Dodongo was invisible, and the bombable floor above his room was missing.**
+  Both were caused by the order of the draw lookup tables, the same cause
+  as other invisible props. Fixed in Clean `9676d036`, which has not been
+  played yet.
+- **Sword "air bounce":** after Kakariko, every swing may bounce as if it hit
+  something. The cause is still unknown.
+
+### Not yet verified at runtime
+- No full route playthrough has been done on any image. Builds and host tests
+  pass, but they do not prove gameplay, audio or rendering.
+- Not yet player-tested: the memory fit (an offline model says every scene fits),
+  Lon Lon Ranch loading, the Zelda escape in Hyrule Field, the Gohma motion and
+  the reduced-pose sprites.
+- Playing an ocarina song used to crash with `oot-core fatal 41554446 48 0`. This
+  is fixed in Clean `97ef4cfe` and later, but not in the older Debug `11244013`.
+
+### Performance
+- Speed is usually 10–20 FPS. Moving play is slower than standing still; 20 FPS
+  while moving is not reached yet.
+- Choppy running is possible with the default two-CPU core. Pause > System >
+  Core offers Fast (two CPUs) or Responsive (smoother, slower).
+
+### Saturn adaptations (intentional)
+- Every NPC, animal and non-boss enemy is a baked sprite: no 3D models, no head
+  tracking. Bosses keep 3D models.
+- Some sprites have fewer animation poses to fit memory: child Zelda, Impa, the
+  running man and Lizalfos move choppier. Timing and hitboxes are unchanged.
+- Gohma's animation is stored at reduced precision (under 0.5 world units of error).
+- Player animations load on demand. Item moves for bottles, magic, the hammer,
+  the boomerang and the hookshot load when you close the pause menu. If a
+  CD-audio fanfare is still playing, the menu stays open until it ends.
+- If loading an item's animations fails, using that item silently does nothing
+  until a later pause close or scene load. It retries, but recovery is not
+  guaranteed.
+- The game never reads the CD during play. Loads happen behind loading screens
+  and the pause menu.
+
+### Audio
+- Nature ambience (river, forest sounds) is silent.
+- The cutscene effects sequence (e.g. the Three Goddesses, light rings) is silent.
+- The music renderer is simplified: legato, portamento and envelopes are
+  approximate. The windmill tempo pitch and the Ganon's Tower filter are missing.
+- Rock and pot pickup has no lift sound.
+
+### Gameplay gaps
+- Z-targeting and the shield do not yet work against every decomp enemy.
+- Elemental hits (burn, freeze, shock) and burning wooden shields are not done.
+- Some enemy death effects and the sprite effect renderer are pending.
+- Iron Boots walking speed and sink rate underwater are not source-accurate.
+- Forest Temple room 9 has no Level Select entry.
 
 ## Focused checks
 

@@ -116,7 +116,7 @@ def linker_script(assign):
             '    .data : { *(.data .data.*) . = ALIGN(4); _oot_core_ctors_start = .;',
             '              KEEP(*(SORT(.init_array.*))) KEEP(*(.init_array)) KEEP(*(.ctors))',
             '              _oot_core_ctors_end = .; } > CORE',
-            '    .keep_ph : { _oot_keep_ph_start = .; KEEP(*(.keep_ph)) _oot_keep_ph_end = .; } > CORE',
+            '    .keep_ph : { _oot_keep_ph_start = .; KEEP(*keep_ph.o(.keep_ph)) KEEP(*(.keep_ph)) _oot_keep_ph_end = .; } > CORE',
             '    .bss : { _oot_core_bss_start = .; *(.bss .bss.*) *(COMMON) _oot_core_bss_end = .; } > CORE',
             '    _oot_core_end = .;',
             '    /DISCARD/ : { *(.comment) *(.dtors) *(.fini_array) *(.eh_frame) }',

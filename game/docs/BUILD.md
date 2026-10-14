@@ -1096,3 +1096,14 @@ checks pass; this is not target/runtime acceptance. Size growth is not yet attri
     Clean scripts die there after a good build (the restore trap still runs).
     `build/clean16-build.sh` drops it and prints the md5. Back up the current
     `game-clean.iso` before any Clean rebuild.
+124. **Placeholder tables must keep source order (2026-10-13).** The draw shim
+    keys object/keep display lists by slot, `(address - table start) / 8`.
+    Mesh files are named by position in `O<id>_ph.txt` / `keep_ph.txt`. Since
+    core flags went `-O2` -> `-Os` (2026-10-08), GCC emitted the one-word
+    variables in reverse order. `.keep_ph` also put the Player gear
+    placeholders first. So no object/keep mesh key matched, and King Dodongo
+    and the bombable floor above him drew nothing. Fix: `*_ph.cpp` builds with
+    `-fno-toplevel-reorder`, and `oot-core.ld` links `keep_ph.o` first in
+    `.keep_ph`. `tools/check_ph_order.py` runs after every object and core link
+    and fails the build on any mismatch. Changing the flag does not rebuild
+    old `*_ph.o`; delete them once.
