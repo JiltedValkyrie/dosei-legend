@@ -74,11 +74,22 @@ def build_one(source, output, name, sequence, stem, preserve_intro=False,pitch_a
     notes, tempo, volumes, gain, intro, end, omitted = audio.interpret(
         seq, loop_label or 'SEQ_0000', stop_at_loop=loop_label is not None,pitch_automation=pitch_automation)
     times = audio.timeline(tempo, end)
+    font = ET.parse(source / ('soundfonts/Soundfont_%d.xml' % font_id)).getroot()
+    used = None
+    if font_id == 0:
+        # SFX font (ocarina song fanfares): only the samples these notes play.
+        # Other fonts keep loading every sample (existing banks unchanged).
+        programs = {n['program'] for n in notes}
+        used = set()
+        for e in font.find('Instruments'):
+            if int(e.attrib['ProgramNumber']) in programs:
+                used |= {e.attrib[k] for k in ('Sample', 'SampleLo', 'SampleHi') if k in e.attrib}
+        if 'FONTANY_INSTR_DRUM' in programs:
+            used |= {d.attrib['Sample'] for d in (font.find('Drums') or [])}
     envelopes, instruments, samples, pcm, hashes = audio.load_font(
-        source, font_id)
+        source, font_id, used)
     # Soundfont drum ranges select the sample/envelope/pan by the note key.
     # Keep this adaptation local to cutscene banks; existing music is unchanged.
-    font = ET.parse(source / ('soundfonts/Soundfont_%d.xml' % font_id)).getroot()
     drums = list(font.find('Drums') or [])
     for note in notes:
         if note['program'] != 'FONTANY_INSTR_DRUM':

@@ -306,18 +306,33 @@ def sample_path(source, name):
     directory = source / f'samples/SampleBank_{int(bank)}'
     # Extractor pads large banks to three digits, small banks to one. Resolve
     # the original numeric identity rather than assuming bank zero's width.
+    # Some are extracted as SampleNNN.half.wav (SampleBank_0 ocarina; as
+    # build_action_audio.py reads them).
     matches = [p for p in directory.glob('Sample*.wav')
-               if p.stem.removeprefix('Sample').isdigit()
-               and int(p.stem.removeprefix('Sample')) == int(sample)]
+               if p.stem.removeprefix('Sample').removesuffix('.half').isdigit()
+               and int(p.stem.removeprefix('Sample').removesuffix('.half')) == int(sample)]
     if len(matches) != 1:
         raise FileNotFoundError(f'{name}: expected one sample in {directory}, got {len(matches)}')
     return matches[0]
 
 
-def load_font(source, font_id=6):
+def envelope_points(envelope):
+    """Point delays/targets up to the first control entry. Disable leaves
+    the voice silent; Hang, Goto and Restart hold the reached level."""
+    points = []
+    for p in envelope:
+        if p.tag != 'Point':
+            break
+        points.append((int(p.attrib['Delay']), int(p.attrib['Arg'])))
+    return points
+
+
+def load_font(source, font_id=6, used=None):
+    """used: sample names to load (default every font sample). The SFX font
+    (0) holds 247 samples; its ocarina fanfares need only a few."""
     font = ET.parse(source / f'soundfonts/Soundfont_{font_id}.xml').getroot()
     envelopes = {e.attrib['Name']: dict(release=int(e.attrib['Release']),
-                 points=[(int(p.attrib['Delay']), int(p.attrib['Arg'])) for p in e])
+                 points=envelope_points(e))
                  for e in font.find('Envelopes')}
     instruments = {int(e.attrib['ProgramNumber']): dict(e.attrib) for e in font.find('Instruments')}
     # FONTANY_INSTR_DRUM: the note picks a drum; each drum plays at a fixed
@@ -326,7 +341,7 @@ def load_font(source, font_id=6):
     drums = font.find('Drums')
     if drums is not None:
         instruments['FONTANY_INSTR_DRUM'] = [dict(d.attrib) for d in drums]
-    names = sorted({e.attrib['Name'] for e in font.find('Samples')})
+    names = sorted({e.attrib['Name'] for e in font.find('Samples')} & (set(used) if used is not None else {e.attrib['Name'] for e in font.find('Samples')}))
     original = []
     hashes = {}
     for name in names:

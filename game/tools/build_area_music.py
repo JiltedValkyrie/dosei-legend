@@ -26,6 +26,7 @@ import build_cutscene_audio as bank
 ROOT = Path(__file__).resolve().parents[1]
 NO_MUSIC = 0x7F
 NATURE_AMBIENCE = 0x01  # NA_BGM_NATURE_AMBIENCE: ambience only, no sequence file
+GENERAL_SFX = 0x00      # NA_BGM_GENERAL_SFX: the sound-effect sequence, not music
 
 
 def without_debug(text):
@@ -51,13 +52,16 @@ def without_debug(text):
 
 
 def route_sequences(oot):
-    """Original actor/scene-script requests, including non-area minigame cues."""
+    """Original actor/scene-script/engine requests, including non-area minigame cues."""
     import scene_pack_actors
     import core_cutscene_sources
     table = (oot / 'include/tables/sequence_table.h').read_text(encoding='utf-8')
     ids = {name: int(number) for number, name in re.findall(
         r'DEFINE_SEQUENCE\s*\(Sequence_(\d+),\s*(NA_BGM_\w+)', table)}
     text = '\n'.join(without_debug((oot / path).read_text(encoding='utf-8')) for path in scene_pack_actors.SOURCES)
+    # Engine requests too: z_message plays every ocarina song fanfare
+    # (sOcarinaSongFanfares, learn/play), which no actor names.
+    text += '\n' + '\n'.join(without_debug(p.read_text(encoding='utf-8')) for p in sorted((oot / 'src/code').glob('*.c')))
     asset_root = oot / 'extracted/ntsc-1.2'
     for path in (asset_root / 'assets/scenes').rglob('*_scene.c'):
         if path.stem.removesuffix('_scene') in core_cutscene_sources.SCENES:
@@ -101,8 +105,8 @@ def main():
     source = args.oot / 'extracted/ntsc-1.2/assets/audio'
     routed = {s['id'] for s in json.loads((ROOT / 'assets/audio/songs.json').read_text())['songs']}
     scenes = json.loads((args.generated / 'scene_table.json').read_text())['scenes']
-    required = route_sequences(args.oot) - routed - {NO_MUSIC, NATURE_AMBIENCE}
-    wanted = sorted(({s['seq'] for s in scenes} | required) - routed - {NO_MUSIC, NATURE_AMBIENCE})
+    required = route_sequences(args.oot) - routed - {NO_MUSIC, NATURE_AMBIENCE, GENERAL_SFX}
+    wanted = sorted(({s['seq'] for s in scenes} | required) - routed - {NO_MUSIC, NATURE_AMBIENCE, GENERAL_SFX})
     out = args.generated / 'area_music'
     report = []
     for seq in wanted:

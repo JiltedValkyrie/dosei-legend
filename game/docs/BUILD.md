@@ -1082,3 +1082,17 @@ checks pass; this is not target/runtime acceptance. Size growth is not yet attri
     (layer-mask width; Lon Lon Ranch lists 32 and was rejected at 30). One
     layer may name at most 30 (ObjectContext 32 slots minus keep and Player
     stub); the importer fails the scene otherwise.
+122. **Area music must cover engine requests (2026-10-13).** `build_area_music.py`
+    scanned actor/scene sources only. `z_message` plays the ocarina song fanfares
+    (0x25, 0x35, 0x36, 0x44-0x49), so those had no bank. Song of Time after Field
+    gave host fatal `41554446` (AUDF) `48`: `music_area_fanfare` failed. It now
+    also scans `src/code/*.c` (minus seq 0, the SFX sequence); see
+    `tests/test_area_music_routes.py`. These fanfares use Soundfont 0 (SFX
+    font, 247 samples, `Disable` envelopes, `SampleNNN.half.wav`). Now
+    `load_font(used=...)` loads only the samples played (font 0 only, so
+    other banks stay byte-identical), and envelopes stop at the first
+    non-Point entry. Each fanfare is about 46 KB PCM.
+123. **`build/clean10-verify.py` hard-codes an old Debug ISO hash.** Copied
+    Clean scripts die there after a good build (the restore trap still runs).
+    `build/clean16-build.sh` drops it and prints the md5. Back up the current
+    `game-clean.iso` before any Clean rebuild.
