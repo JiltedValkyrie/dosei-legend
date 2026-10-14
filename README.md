@@ -92,52 +92,49 @@ options.
 
 ## Controls (current build)
 
-These are **Saturn input names**, not PC keyboard keys. Bind your controller in
-Kronos. The System page's label presets change displayed names; they do not
-configure Kronos or remap gameplay inputs. The table assumes default Y jump.
+Bind your pad in the emulator. Labels below are **Saturn buttons** and the
+**Xbox buttons** they usually map to. **Change the on-screen button names** under
+**Pause > System > Labels**: Saturn (Auto), Xbox, N64, GameCube or PlayStation.
+Labels only rename prompts; they do not remap inputs. The jump button can be
+moved under **System > Jump**. These are the defaults:
 
-| Input | Gameplay action |
-| --- | --- |
-| Digital D-pad | Camera-relative movement; steer in the air |
-| 3D pad stick (analog mode) | Proportional movement; Holding B selects walk speed ceiling; B tap cancels / puts away the stick |
-| B | Hold to walk; tap to cancel / put away the stick |
-| Y | Manual jump; no double-jump |
-| X | Attack with equipped sword; cuts grass and damages enemies |
-| Hold R | Guard with equipped shield |
-| A | Context action: talk, advance text, interact; roll when no interaction claims it |
-| B during dialogue | Cancel/close when the conversation allows it; does not toggle walk/run |
-| Hold Z | Lock onto a valid attention target, including NPCs/enemies; release to unlock |
-| Tap Z | Recenter when the press did not acquire a lock |
-| Z / B + Z in first raised camera | Turn 90 degrees clockwise / counter-clockwise per Z press; replaces targeting in this view |
-| Move while holding Z | Strafe/back up while keeping facing |
-| Tap L | Show/hide minimap |
-| L + R + B | Permanent camera easter egg: normal → far/high → higher → steep overhead → north-up top-down → normal |
-| Hold C + D-pad (digital) | N64 C directions; C-Up accepts Navi first, otherwise changes view |
-| D-pad (analog gameplay) | N64 C directions without holding C |
-| Start | Title/menu flow; open or close pause during gameplay |
-| Start during a cutscene | Show skip prompt; press again within two seconds to skip that camera shot |
+| Saturn | Xbox | Action |
+| --- | --- | --- |
+| D-pad (digital pad) | D-pad | Move (camera-relative) |
+| 3D pad stick (analog mode) | Left stick | Proportional movement |
+| A | A | Talk, read, open, grab, advance text; roll while moving |
+| B | B | Hold: walk. Tap: cancel / put away item. Closes text when allowed |
+| X | X | Sword attack |
+| Y | Y | Jump (Saturn addition; OoT's automatic jumps still work) |
+| R (hold) | RT (hold) | Shield |
+| Z (hold) | RB (hold) | Z-target (lock on) NPCs and enemies; strafe while held |
+| Z (tap) | RB (tap) | Recenter the camera behind Link |
+| C + D-pad Down / Left / Right | LB + D-pad Down / Left / Right | Use C-button items (N64 C-Down / C-Left / C-Right) |
+| C + D-pad Up | LB + D-pad Up | C-Up: talk to Navi when she calls, else first-person view |
+| D-pad (analog mode only) | D-pad (analog mode only) | C directions without holding C |
+| L (tap) | LT (tap) | Show / hide minimap |
+| L + R + B | LT + RT + B | Cycle the camera: normal, far, higher, overhead, top-down |
+| Start | Menu | Pause / unpause; title and menus |
+| Start during a cutscene | Menu during a cutscene | Skip prompt; press again within two seconds to skip the shot |
 
-Camera follows automatically. C-Up enters first-person outdoors when grounded
-and free to act. D-pad/stick looks; another action button exits without firing
-that action. Navi calls take priority. Houses start in their original panorama;
-C-Up toggles the overhead picture and back. The shop keeps its fixed view.
-L now toggles the minimap, replacing the temporary hold-L free look.
-Release all three buttons before cycling again. The easter egg is available in
-Clean during outdoor gameplay; boot starts with the normal camera. Raised views
-start facing north and bypass camera obstruction clipping for surveying terrain; Link's
-collision stays active. Interiors, first-person and cutscenes retain their views.
-The first raised view remembers its quarter-turn heading until reboot. Missing
-area warnings stay quiet nearby after dismissal; walk 600 units away to rearm.
-These camera/text changes build and pass host checks; Kronos acceptance is pending.
-Landing rolls depend on landing conditions.
-Find the sword in the maze chest; buy the Deku Shield for 40 rupees in Kokiri
-Shop. **Equip both on the Equipment page** to pass Mido's gear check.
-Acquisition alone does not equip them.
+**Items:** tap an aimed item's C direction to aim, tap again to fire. Tap B
+to cancel. Hold B while aiming to steady the aim. Hold Z (RB) and tap the item to
+shoot a locked target without first person. In first person the D-pad or
+stick looks around.
+
+**Ocarina:** A and the four C directions play the five notes.
+
+**Camera:** the camera follows automatically. Houses start in their original
+fixed picture; C-Up toggles the overhead view. In the raised overhead views, C-Up
+(B + C-Up) turns 90 degrees clockwise (counter-clockwise).
+
+**Core:** under **System > Core**, Fast uses both CPUs. Responsive is smoother but
+slower.
 
 ## Pause pages and item assignment
 
-Press **Start**, use **L/R** to change pages, and **D-pad** to move the cursor
-on either controller type. **Start closes pause**. Blue marks the cursor;
+Press **Start** (Xbox Menu), use **L/R** (LT/RT) to change pages, and the
+**D-pad** to move the cursor. **Start closes pause**. Blue marks the cursor;
 gold marks equipped gear or assigned items. Pause freezes the visible world
 and lowers music by 6 dB; SFX volume is unchanged.
 
@@ -149,20 +146,13 @@ and lowers music by 6 dB; SFX volume is unchanged.
 | **Equipment** | Select an owned sword/shield and press A to equip it |
 | **System** | Save, Load, Title, button-label preset, jump binding and Reset defaults |
 
-To assign an item: highlight it on **Items**, then **hold Saturn C and press
-Down, Left or Right**. This chord is required in pause on **both digital and
-analog pads**; plain D-pad moves the cursor. C-Up remains reserved for Navi/view. Only owned
-items can be assigned. Assigning an item elsewhere removes its previous
-binding. Bindings persist when you save the adventure. The pause hint names
-the modifier as C (Saturn), LB (Xbox), or L1 (PlayStation). N64/GameCube
-presets show Sat C: bind that Saturn input in the emulator; those presets
-do not define a native modifier.
-
-**Live items are implemented.** Tap the assigned slingshot slot to enter aim;
-tap again to fire and use cancel to leave. Releasing the slot keeps aim active.
-Hold target (Xbox RB / Saturn Z) and tap the slot to shoot the locked actor
-without first person. RT remains shield. Center marks show aim; actor markers
-show available/locked targets. Human controller testing remains open.
+To assign an item: highlight it on **Items**, then **hold C (Xbox LB) and
+press D-pad Down, Left or Right**. Use this on both digital and analog pads;
+plain D-pad moves the cursor. Only owned items can be assigned. Assigning an
+item to a new direction removes its old binding. Bindings are saved with the
+adventure. The pause hint names the modifier C (Saturn), LB (Xbox) or L1
+(PlayStation). The N64 and GameCube presets show "Sat C", the Saturn button
+you must bind.
 
 B opens the save prompt from the four adventure pages. In a prompt, D-pad
 changes the choice, A confirms and B cancels. On System, B returns to Equipment.
