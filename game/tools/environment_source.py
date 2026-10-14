@@ -178,8 +178,12 @@ def destination_layer_source(oot):
     body = body.replace('gEntranceTable[((void)0, gSaveContext.save.entranceIndex)].sceneId', 'destination')
     body = body.replace('gSaveContext.sceneLayer', 'layer').replace('IS_CUTSCENE_LAYER', '(layer >= SCENE_LAYER_CUTSCENE_FIRST)')
     body = body.replace('IS_DAY', 'day')
+    body = body.replace('gSaveContext.save.cutsceneIndex', 'cutsceneIndex')
     return ('/* Source Play_Init entrance-layer choice; current layer stays fixed. */\n'
             'static unsigned int OotCore_DestinationLayer(unsigned int destination) {\n'
+            '    u16 cutsceneIndex = gSaveContext.nextCutsceneIndex != NEXT_CS_INDEX_NONE ?\n'
+            '        gSaveContext.nextCutsceneIndex : gSaveContext.save.cutsceneIndex;\n'
+            '    if (cutsceneIndex == CS_INDEX_D) cutsceneIndex = CS_INDEX_NONE;\n'
             '    u16 time = gSaveContext.nextDayTime != NEXT_TIME_NONE ?\n'
             '        gSaveContext.nextDayTime : gSaveContext.save.dayTime;\n'
             '    s32 day = !(time > 49152 || time < 17749);\n'
@@ -190,7 +194,7 @@ def transition_clock_source(oot):
     """Source Play_Init pending-time consumption and day-change notification."""
     source = (pathlib.Path(oot)/'src/code/z_play.c').read_text(encoding='utf-8')
     anchor = '    if (gSaveContext.nextDayTime != NEXT_TIME_NONE)'
-    start = source.index(anchor)
+    start = source.index('    if (gSaveContext.nextCutsceneIndex != NEXT_CS_INDEX_NONE)')
     end = source.index('\n    Cutscene_HandleConditionalTriggers(this);', start)
     begin = _integer_clocks(source[start:end])
     finish = _block(source[source.index('    Interface_Init(this);', end):], anchor)

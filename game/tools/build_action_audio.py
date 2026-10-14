@@ -114,6 +114,14 @@ ITEM_SOUNDS = (
     ('sy_error', 'NA_SE_SY_ERROR', .20, False),
     ('sy_gauge_up', 'NA_SE_SY_GAUGE_UP', .07, True),
 )
+# Skull Kid's source message states wait for the one-shot beats to finish.
+# Keep their full authored note duration, and the silent part of the held
+# 72-tick rhythm period. Ocarina notes use SCSP 29; beats use 28/26.
+MEMORY_SOUNDS = (
+    ('metronome', 'NA_SE_SY_METRONOME', False),
+    ('metronome_2', 'NA_SE_SY_METRONOME_2', False),
+    ('metronome_lv', 'NA_SE_SY_METRONOME_LV', True),
+)
 # Variants that reuse a resident item sound (same source family).
 ITEM_ALIASES = (
     ('NA_SE_IT_SLING_SHOT', 'seed_fire'),       # decomp slingshot seeds
@@ -145,6 +153,8 @@ CORE_SFX_MAP = (
     ('NA_SE_SY_CURSOR', 0, 'ACTION_MESSAGE', 27),
 ) + tuple((sym, 3 if loop else 0, 'ACTION_' + name.upper(), 26 if loop else 28)
           for name, sym, _, loop in ITEM_SOUNDS) + tuple(
+    (sym, 3 if loop else 0, 'ACTION_' + name.upper(), 26 if loop else 28)
+    for name, sym, loop in MEMORY_SOUNDS) + tuple(
     (sym, 0, 'ACTION_' + name.upper(), 28) for sym, name in ITEM_ALIASES)
 
 
@@ -168,6 +178,23 @@ def write_core_sfx_map(oot, out):
     out.mkdir(parents=True, exist_ok=True)
     (out / 'action_decomp_sfx.h').write_text('\n'.join(lines) + '\n', encoding='utf-8')
     return rows
+
+
+def write_ocarina_sfx_durations(records, out):
+    """Source-side completion uses the actual PCM played at the next join."""
+    sounds = {record['name']: record for record in records}
+    lines = ['/* Generated from complete resident metronome PCM, 20 Hz game steps. */',
+             '#ifndef OOT_OCARINA_SFX_DURATION_H', '#define OOT_OCARINA_SFX_DURATION_H']
+    for name, _, loop in MEMORY_SOUNDS:
+        if loop:
+            continue
+        sound = sounds[name]
+        ticks = math.ceil(sound['length'] * 20 / sound['rate'])
+        if not 0 < ticks <= 255:
+            raise ValueError('Metronome duration does not fit source timer')
+        lines.append('#define OOT_SFX_%s_TICKS %d' % (name.upper(), ticks))
+    lines.append('#endif')
+    (out / 'ocarina_sfx_duration.h').write_text('\n'.join(lines) + '\n')
 
 
 def note(name):
@@ -394,6 +421,31 @@ def render_channel(seq, chan, fonts, source, output_rate, once=False, cap=None):
             run = bytearray(render_wave([(note(p) + transpose if p else None, tk / 96,
                                           (v / 127) ** 2) for p, tk, v in notes],
                                         output_rate, shape))
+        elif instr == 'FONTANY_INSTR_DRUM':
+            # seqplayer.c selects the drum by note, then uses its tuned sample
+            # without multiplying by the selecting note's pitch. The soundfont
+            # compiler reflects BaseNote about C4 when producing that tuning.
+            for p, tk, v in notes:
+                seconds = tk / 96
+                if p is None:
+                    run += bytes(round(seconds * output_rate))
+                    continue
+                key = note(p) + transpose
+                drum = next((d for d in fonts[0].findall('.//Drum')
+                             if d.get('Note') and note(d.get('Note')) == key), None)
+                if drum is None:
+                    raise Unsupported('drum ' + p)
+                sample = drum.attrib['Sample']
+                path = source / ('samples/SampleBank_0/Sample%03d.wav' % int(sample.rsplit('_', 1)[1]))
+                if not path.is_file():
+                    path = path.with_suffix('.half.wav')
+                pcm, rate, unity = decode(path)
+                unity = note(drum.get('BaseNote')) if drum.get('BaseNote') else unity
+                rate = int(drum.get('SampleRate', rate))
+                if not tk:
+                    seconds = len(pcm) / rate / 2 ** ((60 - unity) / 12)
+                part = render_path(pcm, rate, unity, [(60, 60, seconds, (v / 127) ** 2)], output_rate)
+                run += part + bytes(max(0, round(seconds * output_rate) - len(part)))
         else:
             m = re.fullmatch(r'SF(\d)_INST_(\d+)', instr)
             if not m:
@@ -721,6 +773,10 @@ def build(oot, source, out):
         chan = item_source[symbol]['channel']
         simple.append((name, render_channel(seq, chan, fonts, source, RATE / 2, once=True,
                                             cap=seconds), chan + ' / ' + symbol))
+    for name, symbol, loop in MEMORY_SOUNDS:
+        chan = item_source[symbol]['channel']
+        simple.append((name, render_channel(seq, chan, fonts, source, RATE / 2, once=loop),
+                       chan + ' / ' + symbol))
     for name, chan in (('pl_damage', 'CHAN_076A'), ('body_hit', 'CHAN_0753'),
                        ('alarm', 'CHAN_5AA5'), ('heart_piece', 'CHAN_5B5B'),
                        ('decide', 'CHAN_58E9'), ('cursor', 'CHAN_5933')):
@@ -777,7 +833,8 @@ def build(oot, source, out):
         bank.extend(pcm)
         bank.extend(bytes(4 + (-len(bank) % 2)))
     for name, pcm, chan in simple:
-        pcm = pcm.rstrip(b'\0') or bytes(1)
+        if name not in {entry[0] for entry in MEMORY_SOUNDS}:
+            pcm = pcm.rstrip(b'\0') or bytes(1)
         if name in AREA_SOUNDS:
             area_pcm[name]=(pcm,dict(name=name,rate=RATE/2,source=chan,sample='channel render',trimmed_silence=0,sha256=hashlib.sha256(pcm).hexdigest()))
             continue
@@ -870,6 +927,7 @@ def build(oot, source, out):
     lines += ['#endif']
     (out/'action_audio_data.h').write_text('\n'.join(lines)+'\n')
     write_core_sfx_map(oot, out)
+    write_ocarina_sfx_durations(records, out)
     area_json = [dict(file=f, bytes=len(b), samples=[dict(area_pcm[n][1], offset=o, length=l)
                                                      for n, (o, l) in t.items()])
                  for f, b, t in area_banks]

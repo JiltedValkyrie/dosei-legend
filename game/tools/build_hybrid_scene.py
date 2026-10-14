@@ -30,6 +30,16 @@ GENERIC_ROOM_VERTEX_LIMIT = 2047
 GENERIC_ROOM_FACE_LIMIT = 1426
 
 
+def room_conversion_policy(prefix, room):
+    """Reserve arena space for the complete boss, props and reward set."""
+    if prefix == 'ddan_boss' and room == 'ddan_boss_room_1':
+        return dict(wall_split_limit=1, room_face_limit=320,
+                    room_pixel_limit=240000)
+    if prefix == 'spot00':
+        return dict(base_tile_limit=32, source_tessellation=True, wall_split_limit=3)
+    return {}
+
+
 def room_pixel_bytes(tiles):
     """Exact KRM1 pixel payload: each cropped tile starts on an 8-byte boundary."""
     return sum((len(tile['pixels']) + 7) // 8 * 8 for tile in tiles.values())
@@ -142,6 +152,32 @@ def load_faces(oot, rom_dir=None, prefix='spot04'):
                                                              for x in v[5:8]) + (v[8],)
                                         for v in face['vertices']]
             faces.extend(display.faces)
+    if prefix == 'ddan_boss':
+        # The XML's canonical offset differs from the US1.2 room by 16 bytes.
+        # Match the named extracted source texture, never a guessed address.
+        path = oot / ('extracted/ntsc-1.2/assets/scenes/dungeons/ddan_boss/'
+                      'gDodongosCavernBossLavaFloorTex.rgba16.png')
+        with Image.open(path) as image:
+            expected = [(r >> 3, g >> 3, b >> 3, bool(a))
+                        for r, g, b, a in image.convert('RGBA').getdata()]
+            dimensions = image.size
+        found = set()
+        visited = set()
+        for face in faces:
+            texture = face.get('texture') or {}
+            address = texture.get('address')
+            if face['room'] != 'ddan_boss_room_1' or address in visited:
+                continue
+            visited.add(address)
+            if (texture.get('width'), texture.get('height')) == dimensions and [
+                    (r >> 3, g >> 3, b >> 3, bool(a))
+                    for r, g, b, a in texture['colors']] == expected:
+                found.add(address)
+        if len(found) != 1:
+            raise ValueError('source King Dodongo lava material must resolve exactly once')
+        for face in faces:
+            if face['room'] == 'ddan_boss_room_1' and (face.get('texture') or {}).get('address') in found:
+                face['surface_tag'] = 0xDD01
     return faces
 
 
@@ -560,6 +596,7 @@ def convert(oot, head, actor, out_dir, patches_only=False, rom_dir=None,
                     mesh=group['tri']['transparent'])
         faces.append(face)
         records.append(dict(source=group['source'], kind=group['kind'], tile=tile,
+                            surface_tag=group['tri'].get('surface_tag', 0),
                             object=group['tri'].get('object',0),
                             room=group['tri']['room'], indices=ids,
                             flat_shaded=flat_surface(group),

@@ -46,6 +46,16 @@ SECTIONS {
 		__bend = . ;			
 	_end = .;			
 	}			
+    /* Cold const host tables: cart HOSTCOLD carve (cached alias). objcopy
+     * writes them to HOSTCOLD.BIN; ram_cart_load_host_cold loads them. */
+    .cart HOST_CART_ADDR : {
+        _cart_start = .;
+        *(.cartd)
+        *(.cartt)
+        . = ALIGN(16); /* objcopy pads the section; loader compares sizes */
+        _cart_end = .;
+    }
+    ASSERT(SIZEOF(.cart) <= 0x5000, "host cold tables exceed cart HOSTCOLD carve")
     /* Explicitly initialised before jo_core_init. No bytes in the CD image. */
     .lowmeta 0x0020B800 (NOLOAD) : {
         __lowmeta_start = .;

@@ -30,7 +30,7 @@ def build(oot, rom_dir, out):
     import build_kokiri_scene as source
     import build_actor_manifest as actors
     from build_progression_manifest import room_records
-    header = '/* Generated original Ydan puzzle collision and child-day placements. */\n'
+    header = '/* Generated original Ydan puzzle collision and child-day placements. */\n#include "host_cold.h"\n'
     meshes = []
     for i, (obj, dl, colname, scale, tex) in enumerate(MODELS):
         matrix = tuple(tuple(scale[r] if r == c else 0 for c in range(3)) for r in range(3))
@@ -50,11 +50,11 @@ def build(oot, rom_dir, out):
             groups=verts+[normal, [min(v[k] for v in verts) for k in range(3)], [max(v[k] for v in verts) for k in range(3)]]
             rows.append('{{'+','.join('{'+','.join(map(str,g))+'}' for g in groups[:3])+'},'+','.join('{'+','.join(map(str,g))+'}' for g in groups[3:])+'}')
             info.append(p['surface'] | p['ignore']<<8 | p['conveyor']<<11)
-        header+='static const collision_triangle_t puzzle_tri_%d[]={%s};\n'%(i,','.join(rows))
+        header+='HOST_COLD static const collision_triangle_t puzzle_tri_%d[]={%s};\n'%(i,','.join(rows))
         header+='static const uint16_t puzzle_info_%d[]={%s};\n'%(i,','.join(map(str,info)))
         header+='static const uint32_t puzzle_surface_%d[]={%s};\n'%(i,','.join('0x%08Xu'%n for pair in col['surfaces'] for n in pair))
         meshes.append('{puzzle_tri_%d,%d,puzzle_info_%d,puzzle_surface_%d,%d,0,0,0,0,0,0}'%(i,len(rows),i,i,len(col['surfaces'])))
-    header+='static const bg_mesh_t puzzle_meshes[]={'+','.join(meshes)+'};\n'
+    header+='HOST_COLD static const bg_mesh_t puzzle_meshes[]={'+','.join(meshes)+'};\n'
     names=actors.table(oot/'include/tables/actor_table.h','DEFINE_ACTOR')
     segments=source.extract(oot,rom_dir,prefix='ydan'); rows=[]
     for room in range(12):

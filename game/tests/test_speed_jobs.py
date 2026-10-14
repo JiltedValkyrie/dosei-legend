@@ -166,6 +166,9 @@ static struct {int x,z;} recomp_link;
 #define OOT_CORE_TOOL_STATE 0
 #define OOT_CORE_TOOL_MAGIC_RESET 1
 static bool gameplay_is_paused(void){return false;}
+static bool responsive;
+static bool ui_core_responsive(void){return responsive;}
+static bool cdda_busy(void){return false;}
 static void snapshot_views(void){snapshots++;}
 static unsigned frame_timer_ticks(void){return ++now;}
 static unsigned frame_timer_ticks_to_us(unsigned t){return t;}
@@ -198,6 +201,9 @@ int main(void){
     /* A stale cached one must not block a fresh kick or invent a join. */
     async_busy=1;
     oot_core_async_join();assert(readbacks==1);
+    responsive=true;
+    oot_core_async_kick();assert(jobs==0 && snapshots==0 && core_due==1);
+    responsive=false;
     oot_core_async_kick();assert(jobs==1 && snapshots==1 && uncached_async_busy==1);
     assert(core_due==0 && box.updates==1 && box.done==0);
     return 0;

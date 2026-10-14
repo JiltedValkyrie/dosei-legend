@@ -105,6 +105,19 @@ void __attribute__((optimize("Os"))) health_hud_magic_start(void)
 
 bool health_hud_magic_idle(void) { return magic_state == MAGIC_IDLE; }
 
+/* Source Great Fairy capacity growth, then the original +4 fill cadence.
+ * Called by the save callback; hardware writes stay in the master's update. */
+void health_hud_magic_acquire(unsigned level)
+{
+    if (level > 2) level = 2;
+    if (level <= save_state.source_magic_level) return;
+    save_state.source_magic_level = (unsigned char)level;
+    magic_fill_target = (unsigned char)(level * 0x30);
+    magic_prev_state = MAGIC_IDLE;
+    magic_state = MAGIC_STEP_CAPACITY;
+    border_white();
+}
+
 bool health_hud_magic_available(unsigned amount)
 {
     return save_state.source_magic_level && save_state.source_magic >= amount;

@@ -37,7 +37,7 @@ unsigned pause_window_step(pause_window_state_t *s, int dx, int dy,
     if (s->page == PAUSE_EXTRA) {
         if (dy || dx) {
             int step = dy ? dy : dx;
-            s->cursor[PAUSE_EXTRA] = (s->cursor[PAUSE_EXTRA] + step + 6) % 6;
+            s->cursor[PAUSE_EXTRA] = (s->cursor[PAUSE_EXTRA] + step + 7) % 7;
             return PAUSE_MOVE;
         }
         if (confirm) {

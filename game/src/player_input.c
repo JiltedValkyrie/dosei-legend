@@ -55,6 +55,10 @@ static int8_t orbit_direction;
 static bool orbit_b_claimed;
 void player_input_set_orbit(bool active) { orbit_active=active; }
 void player_input_set_view_look(bool active) { view_look = active; }
+/* Item aim (human 2026-10-12): B tap cancels on release; held B steadies
+ * the digital aim at low frame rates instead of cancelling on press. */
+static bool view_aim;
+void player_input_set_item_aim(bool active) { view_aim = active; }
 static bool                 diagnostics_chord_held;
 static input_edge_t edge_camera_experiment;
 static volatile bool camera_experiment_held;
@@ -153,7 +157,7 @@ void player_input_sample_pad(uint16_t held, bool analog, uint8_t x, uint8_t y)
     if (held & CAMERA_B) {
         if (!b_down) {
             b_down = true;
-            b_claimed = dialogue_open || view_look;
+            b_claimed = dialogue_open || (view_look && !view_aim);
             if (b_claimed) ++b_cancel_produced;
         }
         if (b_ticks < 255) ++b_ticks;
@@ -397,6 +401,10 @@ void player_input_step(bool in_gameplay, player_input_t *out)
                                     : -horizontal * PLAYER_LOOK_YAW_SPEED;
         out->look_pitch_delta = analog ? out->stick_y * PLAYER_LOOK_PITCH_SPEED / 127
                                       : vertical * PLAYER_LOOK_PITCH_SPEED;
+        if (view_aim && !analog && (held & CAMERA_B)) {
+            out->look_yaw_delta /= 3;
+            out->look_pitch_delta /= 3;
+        }
         out->stick_x = out->stick_y = 0;
         out->shield_held = false;
         look_was_active = true;

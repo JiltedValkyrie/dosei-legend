@@ -1,14 +1,82 @@
 # Full OoT recomp plan
 
-## Current task and verification (2026-10-12)
+## Current task and verification (2026-10-13)
 
-**Current request: plan completion of handwritten C gameplay retirement and
+**Field owl through King Dodongo, including Lon Lon Ranch, Kakariko, Goron
+content, shops, items, enemies and cutscenes; resumed by Claude (Opus) on
+2026-10-13 toward one playable checkpoint.** King Dodongo is the endpoint;
+complete chest-jingle playback is in scope.
+Resume status (Claude, 2026-10-13, part 3): all 81 scene packs link; reward
+atlases, generic sprites and drawbridge range fixed earlier today; ID-only GFS
+directory (1,996/2,560) and HOSTCOLD cart tables/code in place. Heap work
+approved by Astra is done and measured: per-layer scene objects (OoT rule,
+blob format 5, API v36), Gohma CVQ1 chunked track (all 564 poses, error
+0.47 world units), Player demand clips (PLAYC 157 KB boot + PLAYRES 309 KB
+from first scene + scene/age/C-item groups and per-scene cutscene packs;
+was 626 KB resident; cold items wait in `Player_UseItem`), 32 KB music level
+chunks, approved sprite pose caps (child Zelda, Impa, running man,
+Lizalfos), Ranch 32-object blob limit fix. Offline model (allocator proven
+exact by test) now FITS: 101 scenes, 26,174 scenarios + opening/emerald
+chains, 0 fatal, 0 degraded; worst peak 2,276,960/2,475,008 B, min sprite
+guard margin 59,940 B. Matched Debug image md5 11244013 built (.bss 2,016 B
+spare, core 2,440 B free); NOT route-ready and not runtime tested.
+Details: [stop handoff](CHILD_ROUTE_STOP_HANDOFF_2026-10-13.md#resume-part-3-claude-2026-10-13-heap-fits-in-the-model-checkpoint-not-route-ready).
+Work order and closure: [CHILD_ROUTE_DODONGO_PLAN.md](CHILD_ROUTE_DODONGO_PLAN.md).
+The source Player/collision migration remains authoritative; Saturn rendering
+and platform services remain.
+
+Implemented with focused evidence: real source owl/camera/scripts, courtyard
+story, source shops/Ranch/common/reward/mask/minigame NPCs, source DC/Meadow
+enemies and mountain props. Full chest audio is 8.56 seconds/643 sectors;
+CD and item fanfares no longer interrupt it. Latest root audio batch passes
+43 tests; the later memory-game/metronome batch separately passes six ocarina
+and 26 action-audio checks (overlapping evidence, not additive totals).
+Save v14 adds persisted ocarina-game round. Area music bakes33 banks with zero
+failures. No audible or route runtime acceptance is claimed.
+
+Latest resident core SH-2 link ends 0x027FF678 (2,440 bytes free), with
+Low BSS0x9ECC/0xA000. All 81 scene packs link and audit clean. Scene format5,
+API36 and OAP v2/header96/service2 must be rebuilt together. Scene carve is
+320 KiB at0x02710000; core remains at0x02760000 (640 KiB capacity); HOSTCOLD
+20 KiB (18,976 B used, includes cold loader code); bank-2 heap 329,728 B. No
+carve grew in part 3. Heap peaks are modelled offline (tools/heap_peak_model.py:
+FITS). Score/HUD code is in the built host. VRAM/sound peaks and runtime
+acceptance remain open.
+Known unadded actors and source-admission candidates are listed in the stop
+handoff; “everything” is not complete. Guards remain enabled.
+Current Debug build/game.iso md5 11244013 (not runtime tested). Clean is
+untouched; earlier Debug images are in `build/preserved-debug-2026-10-12/` and
+`build/preserved-debug-2026-10-13/` (7580a290).
+King Dodongo now retains source poses/combat with all 20 limb meshes, source
+heart/child warp/Ruby, an offline fire sprite and resident lava-palette cooling.
+Twenty boss/support/effect units pass isolated host/SH-2 checks (197 native
+products, zero audit failures). Source-reachable effect profiles replace the
+missing DC/DMT effect registrations. The bounded arena's complete conservative
+render budget passes in isolation; normal staged banks, latest full packs,
+latest full scene admission and runtime acceptance remain open. Seventeen
+mountain/city source props now pass host/SH-2 checks (195 native products,
+zero failures), and all21 required meshes plus the falling-rock sprite bake.
+Normal import/mesh generation now produces106 meshes; field keep carries
+real Bombwall collision and Grotto keys without changing resident keep keys.
+Three Goddesses source actors pass isolated host/SH-2 and four sprite/16 prop
+bakes. Fairy source rewards pass an executing cue fixture and five source
+units compile; Fairy sprites/beam were included in the completed normal
+generic bake (not visually checked). Reward-persistence fixture now passes;
+score-renderer host code awaits a successful host link. Combined packs link.
+Do not treat isolated passes or pack links as route acceptance.
+Exact stopped state, files and remaining checks:
+[Dodongo actor handoff](DODONGO_ACTORS_2026-10-13.md).
+Side fix, not built into Clean: talk A fills the current text page and
+stops. It no longer sets `sTextboxSkipped` (that flag chains every later
+page). B still skips the rest. Host check is `test_dialogue_core_handoff.py`.
+
+**Standing roadmap: completion of handwritten C gameplay retirement and
 full core ownership.** The executable work order is
 [Full core ownership and C retirement](#full-core-ownership-and-c-retirement).
-This is a planning/source-review update only: no runtime changes, new test
-results, target builds or emulator runs. Existing repair work remains with
-Claude; human owns runtime testing. Subsequent implementation needs an explicit
-file owner at handoff because the shared working tree contains active repairs.
+The retirement roadmap now guides this implementation. Its acceptance gates
+remain open; a source import, host test or target link alone does not retire
+the corresponding host behavior. Human owns runtime testing; no emulator
+automation is authorized.
 
 **Gameplay repair handed to Claude; human tests.** Human tested candidate-10 Clean
 `b54638cd` and reports much better performance. Rock grab, invisible held
@@ -69,9 +137,18 @@ day/night/story layers, dungeons, bosses and ending remain in scope.
   messages and scene packs are partially integrated. Host camera, props,
   contacts, save/item services and story paths still own gameplay. API33 carry
   is a temporary host-prop adapter, not source prop replacement.
-- **Host-tested prototype only:** demand animation request/cache code exists;
-  the live makefile uses the whole resident `PLAYANIM.PFB` bank. Production
-  action-start gates, complete cutscene sets and CD servicing remain open.
+- **Built, not runtime-tested (2026-10-13):** demand Player clips at safe
+  points. PLAYC.PFB (Saturn C clips) from boot, PLAYRES.PFB from the first
+  scene, groups (horse/swim/fish by scene and age; bottle/magic/hammer/
+  boomerang/hookshot by C item) and each scene's complete cutscene pack load
+  behind the loading screen or at pause close; `Player_UseItem` waits for a
+  missing item group. No mid-action CD read. Source review: every path
+  that puts an item on C loads its group before the next press. Covered paths:
+  awards, forced items, scene changes, chained cutscenes and reload. See handoff
+  "Demand-loading proof". OPEN: a heap failure at pause close is silent.
+  Retry exists, but recovery is not guaranteed (logged). Runtime proof is with the human. The per-clip LRU cache prototype
+  (`player_anim_cache.cpp`) stays unused; finer per-action gates remain future
+  work if more Player memory is needed.
 - **Runtime acceptance:** candidate-10 speed improvement and particular earlier
   features have human evidence; complete Player parity, moving 20 FPS and
   whole-game traversal do not. Candidate-11 temporary Debug repair evidence
@@ -125,7 +202,8 @@ generated `build/oot-core` edits cannot be the sole implementation.
 | R6 — complete the full game | Finish remaining scene/era/layer rosters, source entrance graph, horses and minigames, bottles/trades/songs, adult dungeons, bosses and ending. Field/Water Temple work and the opening route seed the order, not a scope limit. | Coverage ledger tracks every retail scene/layer and required dynamic dependency with separate host/target/human evidence; complete child/adult progression and save round trips accepted |
 | R7 — remove remaining production fallbacks | Delete obsolete C gameplay build branches, `PLAYER_SOURCE=0` / `CORE_COLLISION=0` production selections and remaining no-core gameplay mode; remove dead ABI, loaders, generated payloads and reserved storage only after consumer audit. | Matching Debug/Clean links and disc contents have no retired owner or fallback; measured reclaimed memory; all remaining bridges are documented backend services; no unresolved required gameplay stub |
 
-R0 is the current implementation task, assigned to Claude; carry review
+R0 remains the repair work order, assigned to Claude; this Codex run is stopped
+by the human as recorded above. Carry review
 is candidate 12 (above), remaining R0 items await human checks/inventory. R1 and R2
 then close the state/animation prerequisites for R3. R4/R5 may be staged by a
 bounded subsystem once its R1/R3 dependencies are ready; source actor work that
@@ -564,8 +642,10 @@ and evict unreferenced clips within a bounded cache. A cold clip is a load reque
 not a missing-asset error. Never skip gameplay or start cue clocks without data.
 This supersedes all-clips-resident and scene-load-only animation restrictions.
 Detailed contract: PLAYER_MIGRATION.md, "Demand-loaded Player animation".
-Request/cache/readiness implementation and memory/latency verification remain
-pending; existing whole-bank measurements are historical comparison baselines.
+2026-10-13: group/scene-level demand loading is built (see status above;
+PLAYER_MIGRATION.md has the split). Heap fit is modelled; runtime latency of
+pause-close loads and cold-item waits is unmeasured. Whole-bank measurements
+are historical comparison baselines.
 Continue isolated Player/collision integration with this revised frame-bank plan.
 
 

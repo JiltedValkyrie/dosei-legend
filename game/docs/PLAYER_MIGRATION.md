@@ -432,7 +432,30 @@ Implementation contract:
   recoverable where possible; never resume with stale pointers. Existing
   loading-screen reload rollback remains available when old clips were evicted.
 
-Status (Claude, 2026-10-06): isolated request/cache layer implemented and
+Status (Claude, 2026-10-13, built, not runtime-tested): live demand loading at
+safe points replaces the whole resident bank. `tools/split_player_bank.py`
+cuts ALL.PFB (byte-identical blocks, every id in exactly one family):
+- PLAYC.PFB 157,488 B: every Saturn C cutscene clip, registered at boot (the
+  new-game opening runs on it alone).
+- PLAYRES.PFB 309,128 B: the rest of the common set (movement, combat, damage,
+  recovery, ocarina, get-item...), loaded at the first scene load and kept
+  until file/level select.
+- Groups by scene/age: HORSE 41 KB (adult; z_horse.c horse scenes), SWIM 11 KB
+  (scenes with water boxes), FISH 5 KB (fishing pond).
+- Groups by C item: BOTTLE 19 KB, MAGIC 19 KB, HAMMER 8 KB, BOOM 6 KB, HOOK
+  3 KB. Loaded at scene load and when the pause menu closes (behind the menu;
+  a CD-DA fanfare keeps the menu up). `Player_UseItem` (importer patch)
+  refuses an item whose group is absent: the cold action waits, no state
+  change.
+- PCS<scene>.PFB: each scene's cutscene-only clips (31 packs, max 18.5 KB),
+  every shot and branch, pinned from scene load to unload.
+Group loads happen after play_destroy and before play_init; release order is
+unregister then free. A missing clip outside these rules is the existing loud
+PFB fatal. Heap fit: tools/heap_peak_model.py FITS (handoff part 3).
+Not measured: load latency, runtime cold-item wait. Finer per-action gates
+(normal_* clips, 192 KB) remain possible future work.
+
+Previous status (Claude, 2026-10-06): isolated request/cache layer implemented and
 host-tested (`oot-core/src/player_anim_cache.cpp`, not in live sources):
 - disc manifest = ALL.PFB header; asynchronous host reads; bounded arena
 - every block validated before it is published to the decoder

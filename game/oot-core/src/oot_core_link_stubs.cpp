@@ -10,14 +10,17 @@
 #include "oot_core_host.h"
 
 extern const OotCoreHost* gOotCoreHost;
+extern void OotCore_OcarinaSfxStarted(u16 sfxId);
+extern void OotCore_AudioSfxPitched(u16 sfxId, Vec3f* pos, f32 frequency);
 
 Vec3f gSfxDefaultPos;
-f32 gSfxDefaultFreqAndVolScale;
+f32 gSfxDefaultFreqAndVolScale=FXL(1.0f);
 s8 gSfxDefaultReverb;
 RegEditor* gRegEditor;
 
 void Audio_PlaySfxGeneral(u16 sfxId, Vec3f* pos, u8 token, f32* freqScale, f32* vol, s8* reverbAdd) { /* HOST */
     if (gOotCoreHost != NULL && gOotCoreHost->play_sfx != NULL) {
-        gOotCoreHost->play_sfx(sfxId, pos ? (s32)pos->x : 0, pos ? (s32)pos->y : 0, pos ? (s32)pos->z : 0);
+        OotCore_OcarinaSfxStarted(sfxId);
+        OotCore_AudioSfxPitched(sfxId,pos,freqScale?*freqScale:FXL(1.0f));
     }
 }

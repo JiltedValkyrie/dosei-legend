@@ -2,6 +2,7 @@
 import ctypes
 import os
 import pathlib
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -13,7 +14,9 @@ from environment_source import (clock_source, room_clock_source, room_time, sky_
     clock_events_source)
 
 OOT = pathlib.Path('D:/Workspace-Claude/game-decomps/n64/oot')
-GCC = pathlib.Path('C:/msys64/mingw64/bin/gcc.exe')
+if not OOT.exists():
+    OOT = pathlib.Path('/mnt/d/Workspace-Claude/game-decomps/n64/oot')
+GCC = pathlib.Path(shutil.which('gcc') or 'C:/msys64/mingw64/bin/gcc.exe')
 
 
 @unittest.skipUnless(OOT.exists() and GCC.exists(), 'source and host GCC required')
@@ -37,7 +40,7 @@ typedef struct {PauseContext pauseCtx; GameOverContext gameOverCtx;
  InterfaceContext interfaceCtx; struct {struct {int type;} curRoom;} roomCtx;
  int transitionType,haltAllActors,sceneId,nextEntranceIndex,transitionTrigger;} PlayState;
 struct {struct {u16 dayTime;int nightFlag,cutsceneIndex,entranceIndex,linkAge,totalDays,bgsDayCount;} save;
- u16 skyboxTime,nextDayTime;int gameMode,sceneLayer,sunsSongState,nextTransitionType,respawnFlag,
+ u16 skyboxTime,nextDayTime,nextCutsceneIndex;int gameMode,sceneLayer,sunsSongState,nextTransitionType,respawnFlag,
  seqId,natureAmbienceId,dogIsLost;} gSaveContext;
 typedef struct {u16 time;unsigned char time_speed,time_flags,room_type,behavior_flags;} OotSceneLayer;
 u16 gTimeSpeed;
@@ -53,6 +56,9 @@ int advance,stones,event48,rental,last_sfx;
 #define OOT_VERSION NTSC_1_2
 #include "versions.h"
 #define CS_INDEX_0 0xFFF0
+#define CS_INDEX_D 0xFFFD
+#define CS_INDEX_NONE 0
+#define NEXT_CS_INDEX_NONE 0xFFEF
 #define ENTR_LAKE_HYLIA_8 0x604
 #define SUNSSONG_INACTIVE 0
 #define SUNSSONG_START 1
@@ -112,6 +118,7 @@ static void OotCore_DaySequenceUpdate(PlayState* play) { (void)play; }
 unsigned tick(unsigned time,unsigned sky,unsigned speed,unsigned flags) {
  PlayState p={0};
  gSaveContext.nextDayTime=NEXT_TIME_NONE;
+ gSaveContext.nextCutsceneIndex=NEXT_CS_INDEX_NONE;
  gSaveContext.save.dayTime=time;gSaveContext.skyboxTime=sky;gTimeSpeed=speed;
  gSaveContext.save.nightFlag=time>49152 || time<17749;
  gSaveContext.gameMode=(flags>>7)&1;
@@ -137,6 +144,7 @@ void song_setup(unsigned time,unsigned speed,unsigned type,unsigned restriction)
  gSaveContext.save.dayTime=time;gSaveContext.skyboxTime=time;
  gSaveContext.save.nightFlag=time>49152||time<17749;
  gSaveContext.save.entranceIndex=0x33;gSaveContext.nextDayTime=NEXT_TIME_NONE;
+ gSaveContext.nextCutsceneIndex=NEXT_CS_INDEX_NONE;
  song_play.envCtx.sceneTimeSpeed=speed;gTimeSpeed=speed;
  song_play.roomCtx.curRoom.type=type;song_play.interfaceCtx.restrictions.sunsSong=restriction;
  rental=advance=last_sfx=0;OotCore_SunSongStart(&song_play);
@@ -171,21 +179,36 @@ void song_gate(unsigned which) {
  gSaveContext.sunsSongState=0;OotCore_SunSongStart(&song_play);
 }
 unsigned song_state(void){return gSaveContext.sunsSongState;}
+unsigned destination_cutscene(unsigned next) {
+ gSaveContext.nextCutsceneIndex=next;
+ unsigned layer=OotCore_DestinationLayer(96);
+ OotCore_TransitionTimeBegin();
+ return layer | ((unsigned)gSaveContext.save.cutsceneIndex<<8) |
+     ((unsigned)(gSaveContext.nextCutsceneIndex==NEXT_CS_INDEX_NONE)<<31);
+}
 '''
         (folder/'clock.c').write_text(stub + clock_source(OOT) + room_clock_source(OOT) +
              sun_song_source(OOT) + destination_layer_source(OOT) + transition_clock_source(OOT) +
              clock_events_source(OOT) + wrapper)
         env=dict(os.environ,PATH=str(GCC.parent)+os.pathsep+os.environ.get('PATH',''))
-        subprocess.run([str(GCC),'-shared','-O2','-I'+str(OOT/'include'),str(folder/'clock.c'),'-o',str(folder/'clock.dll')],check=True,env=env)
+        link_flags = ['-Wl,-Bsymbolic'] if os.name != 'nt' else []
+        subprocess.run([str(GCC),'-shared','-fPIC','-O2',*link_flags,'-I'+str(OOT/'include'),str(folder/'clock.c'),'-o',str(folder/'clock.dll')],check=True,env=env)
         cls.lib=ctypes.CDLL(str(folder/'clock.dll'))
         cls.lib.tick.argtypes=[ctypes.c_uint]*4
         cls.lib.tick.restype=ctypes.c_uint
         cls.lib.room.argtypes=[ctypes.c_uint]*4
         cls.lib.room.restype=ctypes.c_uint
         for name,count in [('song_setup',4),('song_tick',0),('song_field',1),('song_time',1),
-                           ('song_load',0),('destination',6),('song_gate',1),('song_state',0)]:
+                           ('song_load',0),('destination',6),('song_gate',1),('song_state',0),('destination_cutscene',1)]:
             function=getattr(cls.lib,name);function.argtypes=[ctypes.c_uint]*count
             function.restype=ctypes.c_uint
+
+    def test_cutscene_destination_preview_and_consumption(self):
+        self.lib.song_setup(32768, 0, 0, 0)
+        self.lib.destination(96,32768,1,0,0,0)
+        self.assertEqual(self.lib.destination_cutscene(0xFFF2), 0x80000000 | (0xFFF2<<8) | 6)
+        self.assertEqual(self.lib.destination_cutscene(0xFFFD), 0x80000000)
+        self.assertEqual(self.lib.destination_cutscene(0xFFEF), 0x80000000)
 
     def test_day_night_wrap_and_fast_song(self):
         for time,speed,expected in [(32768,10,32778),(0,10,20),(65530,10,14),

@@ -190,6 +190,8 @@ static void texture_probe(void)
 ** renderer and attention's on-screen test. */
 int32_t             recomp_screen_distance(void)
 {
+    int core_distance = oot_core_cutscene_screen_distance();
+    if (core_distance > 0) return core_distance;
     if(story_owl_talking())return story_owl_screen_distance();
     if (cutscene_screen_distance() > 0)
         return (int32_t)cutscene_screen_distance();
@@ -610,6 +612,9 @@ static void __attribute__((optimize("Os"))) viewer_draw(void)
     if (cutscene_is_playing() && !cutscene_hides_scene())
         kokiri_cutscene_effects_draw();
     if(!cutscene_hides_scene())emerald_story_draw();
+    /* Use the same joined snapshot/FOV as this frame's world before join
+     * publishes the next source camera sample. */
+    oot_core_cutscene_letterbox_draw();
     oot_core_async_join();
     kokiri_shadow_resolve();
     rejected_total += kokiri_scene_rejected();
@@ -661,6 +666,8 @@ static void __attribute__((optimize("Os"))) viewer_draw(void)
     }
 #endif
     play_test_room();
+    oot_core_timer_draw(!gameplay_is_paused() && !recomp_title_is_visible() &&
+                        !recomp_file_select_is_visible() && !cutscene_is_playing());
     game_over_screen();
     file_select_screen();
     if (!gameplay_blocks_world() && !cutscene_is_playing()) viewer_hud();
@@ -1186,13 +1193,17 @@ static void __attribute__((optimize("Os"))) inventory_menu(void)
             pause_windows_printf(8, 14, "%c Labels: %-17s", selected == 3 ? '>' : ' ', ui_label_name());
             pause_windows_printf(8, 16, "%c Jump: %-10s (%c)  ", selected == 4 ? '>' : ' ',
                       *jump ? jump : "Unmapped", "YABXCZLR"[ui_jump_binding()]);
-            pause_windows_printf(8, 18, "%c Reset defaults          ", selected == 5 ? '>' : ' ');
-            pause_windows_printf(7, 20, "Pad 1: %-23s", pad);
-            pause_windows_printf(7, 22, "%s: OK  %s: Close     ",
+            pause_windows_printf(8, 18, "%c Core: %-18s", selected == 5 ? '>' : ' ',
+                      ui_core_responsive() ? "Responsive" : "Fast (2 CPUs)");
+            pause_windows_printf(8, 20, "%c Reset defaults          ", selected == 6 ? '>' : ' ');
+            pause_windows_printf(7, 22, "Pad 1: %-23s", pad);
+            pause_windows_printf(7, 24, "%s: OK  %s: Close     ",
                       ui_button_label(UI_KEY_A, analog), ui_button_label(UI_KEY_START, analog));
             pause_windows_printf(8, 25, "%-24s", minimap_enemy_dots() ? "Enemy map: ON" : "");
             pause_windows_printf(7, 27, "%-27s", report == 0 ? "Settings NOT saved" :
-                      selected == 4 ? "Replaces old button action" : report == 1 ? "Settings saved" : "");
+                      selected == 4 ? "Replaces old button action" :
+                      selected == 5 ? (ui_core_responsive() ? "Less lag, lower FPS" : "More FPS, 1 frame lag") :
+                      report == 1 ? "Settings saved" : "");
         }
         return;
     }
@@ -1637,6 +1648,14 @@ void __attribute__((optimize("Os"))) jo_main(void)
         jo_printf(2, 13, "Saturn RAM expansion cartridge.");
         jo_printf(2, 15, "In Kronos: set Cartridge/Type to");
         jo_printf(2, 16, "the 32 Mbit DRAM cart (type 7).");
+        jo_core_run();
+        return;
+    }
+    /* Cold const tables (host_cold.h) are read only after this load. */
+    if (!ram_cart_load_host_cold()) {
+        jo_printf(2, 10, "HOSTCOLD.BIN MISSING OR MISMATCHED");
+        jo_printf(2, 12, "Rebuild: it must come from the");
+        jo_printf(2, 13, "same link as 0.BIN.");
         jo_core_run();
         return;
     }

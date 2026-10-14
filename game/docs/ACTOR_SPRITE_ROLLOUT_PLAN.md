@@ -1,5 +1,104 @@
 # All-scene NPC and enemy sprite rollout
 
+**2026-10-13 stopped state:** human ended implementation/build work for token
+budget. Normal generic bake was interrupted; sheets are partially overwritten
+but generic_sprites.json/.h still date Oct12. Archives and coverage were not
+regenerated. Reward atlas generation also fails on two recipes. Do not infer
+whole-scene readiness from isolated evidence below. Exact remaining work:
+[stop handoff](CHILD_ROUTE_STOP_HANDOFF_2026-10-13.md).
+
+Meadow/Castle continuation: Wolfos/Deku Scrub source actions and five offline
+Wolfos combat anchors, source patrol/stealth guards, bridge/box/pad props are
+imported. Meadow's isolated47-sheet bake passed; full import/core link compiled
+the actor units. Drawbridge large-literal fixed-point debt remains unresolved.
+Mask four-actor and twelve-minigame batches pass isolated source/SH-2 checks;
+four minigame and three mask host tests pass. Per-scene NPC snapshot service
+passes executing variants/clones/visibility/capacity tests and SH-2 audit
+(38 allowed products, zero failures); matching final archives remain open.
+
+Child owl/courtyard continuation (2026-10-13): real EnOwl now owns Field
+dialogue/departure and DMT transport predicates, using ten offline sheets and
+source clip/phase clocks. Host owl retirement is conditional on actual source
+profile admission. EnZl4, DemoIm and the courtyard Ganondorf EnViewer type8
+retain source talk/cues/letter/Lullaby actions with all47 clips baked; required
+Zelda root motion uses1002 bytes of offline XZ anchors. No actor pose arrays,
+joint/morph evaluation, head tracking or mesh fallback are introduced. Four
+actor TUs pass isolated host/SH-2 checks; source handshake/transport/root-motion
+tests pass. Joined source cameras, letterbox and exact scene-local OnePoint
+recipes have executing source tests. Initial isolated sprite bytes are coverage
+evidence only; final archives and whole-scene heap/VRAM admission remain open.
+See [camera/courtyard evidence](CHILD_ROUTE_CAMERAS_2026-10-13.md).
+
+Boss/support continuation: King Dodongo retains its real 48-limb skeleton,
+19-sphere contacts and 20 baked rigid meshes under the boss exception.
+En_Bdfire keeps source burn/motion with eight offline fire cels; heart and
+child warp use source props/rewards. Initial eight enemy adapters bake53
+sheets. Complete boss arena render budget passes in isolation after reducing
+optional room detail, with no actor omission. Source effect updates now have
+per-pack generated profile closure. Final archives/packs/heap and runtime
+acceptance remain open; [evidence](DODONGO_ACTORS_2026-10-13.md).
+
+Mountain falling-rock hazards retain their source collision, splits and
+damage in EnFireRock, with one static offline sprite and no skeleton/mesh
+fallback. Seventeen related source prop/hazard actors pass isolated SH-2 and
+host checks; final scene archives/budgets and runtime acceptance remain open.
+
+Child cavern continuation (2026-10-13): eleven source adapters now cover baby
+and adult Dodongos, Armos, Lizalfos, shop scrub/merchant/nut, scarecrow, Beamos,
+wall/Gold Skulltulas and tokens. Draw-owned contacts/status clocks execute in
+Update. Beamos uses the source aim scalars for its ray, eye quad and damaging
+beam; Skulltula wall-normal gameplay math remains, with seven offline semantic
+points and no runtime pose. Original damage/drop/token action bodies remain.
+Nine source checks and the original executing reward/bomb/merchant probe pass;
+all eleven units plus helper compile on SH-2 (250 allowed products, no failing
+wide/float helpers). Eight additional normal/gold/Beamos/token sheets bake;
+the final archive and expanded pack/heap checks remain open. Token count and
+the source's 24 flag groups pass save/reload without endian aliasing. This
+does not establish gameplay/runtime acceptance.
+
+Child route NPC continuation (2026-10-13, source/isolated validation):
+`child_route_npcs.py` adapts En_Go2, En_Du, En_Heishi2,
+En_Daiku_Kakariko and En_Niw_Lady to clock-only sprites. Pose arrays, limb
+callbacks and head/torso interpolation are removed; original body-turn
+timers/RNG, dialogue, cucco counting, item handshakes and quest predicates
+remain. Goron Draw-owned focus/effect clocks now run in Update. Bakes include
+curled/rolling Gorons, static castle guards, all four carpenter heads, and
+Cucco lady animations from the separate object_os_anime. Five NPC sources and
+the guard's two source gates compile for SH-2 in isolation; 57 sprite sheets
+bake successfully. Reward/turning/source-preservation host checks pass.
+The gate meshes retain their original dynamic collision and saved-open flags.
+Source shops now add En_Ossan clock-only keepers, En_GirlA static stock sprites
+and source En_Tana shelves in Bazaar, both potion shops, Bombchu, Mask and
+Goron shops. Original fifty stock entries produce 34 sprite recipes; seven
+keeper bodies include separate Kokiri heads and cross-object Goron/Zora
+animation keys. Isolated keeper/stock bake passes (54 sheets, 351,020 bytes,
+including shared Goron clips), three actor units compile, and six focused host
+tests pass for source predicates, parent/fanfare charging, stock flags, grants,
+same-update inventory mirroring and shop input. The source cursor reuses the
+existing 8 KB cursor bank; enabled shelf arrows use untextured primitives.
+Kokiri's current counter keeps its existing owner. Source view admission and
+whole-scene packs/texture/heap budgets are separate from these isolated results.
+Ranch source child Epona/normal horses now run original actions with clock-only
+skins, source clone placements and one cheap semantic head contact. Fourteen
+horse sheets bake (170,776 bytes). Existing Malon/Ingo/Talon/Cucco/cow adapters
+retire embedded pose arrays; source timer and Talon bottle/refill handshakes
+pass three focused host tests. Ten source/helper units compile in isolation.
+Market/Kakariko eight common NPC sources compile, including all 21 Hylian
+model/head/costume variants and guest, source rooftop heart piece and beggar
+bottle predicates. Forty shared-object sheets bake (344,596 bytes); four
+focused source/executing reward tests pass. Five further reward actors add
+Dog, Medigoron, cursed/token-reward family and child Dampe; their source actions
+compile in isolation and 56 shared-object sheets bake (668,392 bytes). Family
+heads/dances are decoded from the source overlay offline; six costumes retain
+source dance clocks. Three focused reward/contact/source tests pass. Original
+wallet selection, token claim flag, dog follow identity and Dampe finite prize
+bag remain authoritative. No runtime character pose allocation/evaluation is
+added. Whole-scene texture/heap/pack validation and human acceptance remain
+open. Mask/minigame source batches are now staged as described above; missing
+route actors and combined admission remain explicit work. This
+checkpoint does not mark the whole route or actor coverage complete. See
+[child route plan](CHILD_ROUTE_DODONGO_PLAN.md).
+
 Current Field follow-up (2026-10-08): source En_Encount1, En_Skb, En_Peehat and
 En_Po_Field are imported into a Field-only OAP, with six source EffectSs profiles.
 Child/night/adult placement stays in the original layer lists and source actions.
@@ -180,6 +279,19 @@ automatic talk offers and milk reward/textbox parent handshakes. Talon's timer/
 carry minigame, ocarina/song interactions and other unsupported rewards remain
 open. Combined target/human verification is tracked in the game plan.
 
+Stopped 2026-10-13 creation/Fairy batch: DemoEffect's three gods use four
+offline body/aura sheets (46,704 bytes), with original source cue movement and
+Update-owned presentation clocks. Sixteen creation/environment prop meshes
+pass isolated baking; the two source actors pass host/SH-2 compile. Great
+Fairy and refill beam keep source rewards/actions; the Fairy has no runtime
+joint/morph arrays, skeleton draw or head tracking. Source cosmetic particles
+are bounded32. Fairy/beam plus three newly reached effects pass five-unit
+host/SH-2 compilation and the original cue-reward fixture. Fairy sprite/beam
+bake has NOT run. Latest save-reward and score presentation edits are untested,
+and combined packs still have unresolved legend/boss/audio symbols. User
+stopped work; no image/runtime acceptance. Exact files and resume checks:
+[actor handoff](DODONGO_ACTORS_2026-10-13.md).
+
 Prior checkpoint implementation, Clean target-built then (runtime pending):
 C Kokiri NPCs, shopkeeper and Saria greeting use SPR; generic Ingo, child
 and adult Malon, Talon, Cucco and cow use sprite clocks and compact object
@@ -296,7 +408,7 @@ Do not claim FPS from bytes saved or a successful compiler run.
 | Wave | Work | Required exit evidence |
 | --- | --- | --- |
 | 0, active | Retain implemented Ranch keys/reservation, compact NPC data and fairy/cutscene mesh removal; review generated coverage ledger and complete scene resource reports/integration repairs | Current host tests + usual Clean target; human Ranch/forest/opening checks remain separate |
-| 1 | Import Ranch gameplay horses and all current scene NPC variants; audit child/adult Malon/Ingo/Talon, Cuccos/cows, interiors and night layers | Every reachable Ranch actor/state renders, talks/interacts and survives save/re-entry; populated VRAM/CPU/VDP1 measurements |
+| 1 | Integrate and accept the admitted source Ranch horses/timer and child NPC variants; finish remaining mask/minigame actors, audit child/adult Malon/Ingo/Talon, Cuccos/cows, interiors and night layers | Every reachable Ranch actor/state renders, talks/interacts and survives save/re-entry; populated VRAM/CPU/VDP1 measurements |
 | 2 | Convert currently playable forest/Tree/Field non-boss enemies; retain attacks, projectiles, stun, death/rewards/drops; leave bosses and complex gameplay hitboxes intact | Combat/drop regressions and human encounters; no non-exempt character mesh or pose payload in ready scenes |
 | 3 | Remaining child-era overworld/towns/interiors and child dungeons, shops/minigames, companions and cutscene duplicates | Per-scene coverage matrix, spawn-chain closure, resource gates and runtime acceptance |
 | 4 | Adult-era maps/dungeons and all past/future changes, revisits, story replacements and transformations; preserve boss exemption | Both eras + transition/save/reload scenarios; no default-layer-only acceptance |

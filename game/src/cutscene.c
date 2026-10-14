@@ -1022,6 +1022,8 @@ unsigned int cutscene_frame(void)
 
 int16_t cutscene_camera_roll(void)
 {
+    const OotCoreCutsceneCameraView* core = oot_core_cutscene_camera();
+    if (core && core->active) return core->roll;
     return state.active && state.track ? state.track[state.applied_frame].roll : 0;
 }
 

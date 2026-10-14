@@ -138,6 +138,7 @@ static void     pack_payload(const save_state_t *state, cursor *c)
     put8(c,state->source_double_defense);put8(c,state->source_tokens);
     put8(c,state->boots);
     put32(c,state->total_days);put32(c,state->bgs_day_count);
+    put8(c,state->ocarina_game_round);
 }
 
 static void     unpack_payload(save_state_t *state, cursor *c, uint16_t version)
@@ -230,6 +231,8 @@ static void     unpack_payload(save_state_t *state, cursor *c, uint16_t version)
     if(version>=13) {
         state->total_days=get32(c);state->bgs_day_count=get32(c);
     }
+    state->ocarina_game_round=version>=14?get8(c):0;
+    if(state->ocarina_game_round>3)state->ocarina_game_round=3;
     if(state->boots>2 || !(state->source_equipment&(0x1000u<<state->boots)) ||
         (state->boots && state->link_age))state->boots=SAVE_BOOTS_KOKIRI;
     {
@@ -253,7 +256,8 @@ static unsigned int payload_bytes(uint16_t version)
            version == 9 ? SAVE_FILE_V9_PAYLOAD_BYTES :
            version == 10 ? SAVE_FILE_V10_PAYLOAD_BYTES :
            version == 11 ? SAVE_FILE_V11_PAYLOAD_BYTES :
-           version == 12 ? SAVE_FILE_V12_PAYLOAD_BYTES : SAVE_FILE_PAYLOAD_BYTES;
+           version == 12 ? SAVE_FILE_V12_PAYLOAD_BYTES :
+           version == 13 ? SAVE_FILE_V13_PAYLOAD_BYTES : SAVE_FILE_PAYLOAD_BYTES;
 }
 
 /* ---- public ------------------------------------------------------------ */
@@ -300,7 +304,7 @@ static save_file_status validate(const uint8_t *in, unsigned int bytes)
         return (SAVE_FILE_BAD_MAGIC);
     }
     version = (uint16_t)((in[4] << 8) | in[5]);
-    if (version != SAVE_FILE_VERSION && version != 12 && version != 11 && version != 10 && version != 9 && version != 8 && version != 7 && version != 6 && version != 5 && version != 4 && version != 3 &&
+    if (version != SAVE_FILE_VERSION && version != 13 && version != 12 && version != 11 && version != 10 && version != 9 && version != 8 && version != 7 && version != 6 && version != 5 && version != 4 && version != 3 &&
         version != 2)
         return (SAVE_FILE_BAD_VERSION);
     payload = payload_bytes(version);

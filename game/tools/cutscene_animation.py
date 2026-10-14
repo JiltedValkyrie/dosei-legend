@@ -75,3 +75,62 @@ def write_track(path, frames):
     data += struct.pack('>%dH' % len(indices), *indices) + b''.join(unique)
     path.write_bytes(data)
     print('  motion: %s, %d poses, %d bytes' % (path.name, len(unique), len(data)))
+
+
+CVQ1_SECTOR = 2048
+CVQ1_HEADER = 32
+
+
+def cvq1_pose_bytes(vertices):
+    return (24 + vertices * 3 + 3) & ~3
+
+
+def quantize_track(path, chunk_poses=32):
+    """CVA1 -> CVQ1 in place: every pose keeps its own per-axis range, 8 bits
+    per coordinate (max error = range / 510 Q6 units), so a large boss track
+    needs no single contiguous block. src/cutscene_actor.c reads it.
+
+      0x00 'CVQ1', u32 vertices, poses, ticks, chunk_poses, pose_bytes,
+      0x18 u32 chunk_sectors, first_sector; 0x20 u16 tick->pose[ticks].
+      Chunk c (chunk_poses poses) starts at sector first + c * chunk_sectors
+      and is zero-padded to it. Pose: s32 base[3], s32 step[3] (FIXED, the
+      draw's Q6 * 1024 scale, Y already negated), then u8 q[vertices][3];
+      point = base + q * step.
+    Returns the worst error in world units."""
+    data = path.read_bytes()
+    magic, vertices, poses, ticks = struct.unpack_from('>4sIII', data)
+    if magic != b'CVA1':
+        raise ValueError('%s: not CVA1' % path)
+    order = struct.unpack_from('>%dH' % ticks, data, 16)
+    at = 16 + ticks * 2
+    pose_bytes = cvq1_pose_bytes(vertices)
+    chunk_sectors = (chunk_poses * pose_bytes + CVQ1_SECTOR - 1) // CVQ1_SECTOR
+    head = struct.pack('>4s7I', b'CVQ1', vertices, poses, ticks, chunk_poses, pose_bytes,
+                       chunk_sectors, 0)
+    head += struct.pack('>%dH' % ticks, *order)
+    first = (len(head) + CVQ1_SECTOR - 1) // CVQ1_SECTOR
+    head = head[:28] + struct.pack('>I', first) + head[32:]
+    out = bytearray(head + bytes(first * CVQ1_SECTOR - len(head)))
+    worst = 0.0
+    for c in range(0, poses, chunk_poses):
+        chunk = bytearray()
+        for p in range(c, min(poses, c + chunk_poses)):
+            vals = struct.unpack_from('>%dh' % (vertices * 3), data, at + p * vertices * 6)
+            axes = [[vals[i * 3 + a] * (-1 if a == 1 else 1) for i in range(vertices)] for a in range(3)]
+            base, step, q = [], [], []
+            for w in axes:
+                lo, hi = min(w), max(w)
+                s = round((hi - lo) * 1024 / 255)
+                base.append(lo * 1024)
+                step.append(s)
+                q.append([0 if not s else min(255, max(0, round((v - lo) * 1024 / s))) for v in w])
+                for v, k in zip(w, q[-1]):
+                    worst = max(worst, abs(lo * 1024 + k * s - v * 1024) / 65536)
+            rec = struct.pack('>6i', *(base + step))
+            rec += bytes(q[a][i] for i in range(vertices) for a in range(3))
+            chunk += rec + bytes(pose_bytes - len(rec))
+        out += chunk + bytes(chunk_sectors * CVQ1_SECTOR - len(chunk))
+    path.write_bytes(bytes(out))
+    print('  motion: %s CVQ1, %d poses in %d-pose chunks, %d bytes, max error %.3f world units' %
+          (path.name, poses, chunk_poses, len(out), worst))
+    return worst

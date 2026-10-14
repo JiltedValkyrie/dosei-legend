@@ -5,6 +5,14 @@ Do not use MSYS2 or Git Bash for builds.
 
 ## Build commands
 
+2026-10-13 child-route batch part 3 (Claude): matched Debug built (md5
+11244013) with per-layer scene objects (format 5, API 36), Player bank split,
+Gohma CVQ1, 32 KB music level chunks and cold loaders in HOSTCOLD `.cartt`
+(BUILD.md 115-121). `tools/heap_peak_model.py` FITS on the staged disc.
+Old Debug images preserved (`build/preserved-debug-2026-10-12/`, `-10-13/`).
+OAP v2/96-byte header/services ABI2 unchanged; rebuild core + packs + OOCs together.
+Full status and resume order: [stop handoff](CHILD_ROUTE_STOP_HANDOFF_2026-10-13.md).
+
 Current baseline: candidate 10 passed its target boundary (Debug 496 B
 spare, Clean 5,968 B), audits, budget and ISO/staging comparisons. The old
 112 B overflow was resolved by candidate 8; it is not a current blocker.
@@ -983,3 +991,94 @@ checks pass; this is not target/runtime acceptance. Size growth is not yet attri
     the build failed the SGL boundary by 16 B; as a plain function in
     `oot_core_host.c` the same batch had 240 B spare. Load image sections are
     0x20-aligned: savings under 32 B may not move `.bss` end at all.
+
+111. **Child-route compile check (2026-10-12).** `build/route-c0-check.sh`
+    runs the importer, core meshes and sign staging, `--quick OOT_CORE=1`,
+    then restores ordinary Debug staging/image (results in
+    `build/route-check/`). `--quick` alone never reruns the importer, so
+    scene-pack/actor list changes need it. Pack actors that are not in a
+    built object fail to link on `object_*` symbols: add the object to
+    `OBJECTS` (symbols come from obj_syms.ld; only scenes listing the object
+    load its payload). Source actors calling missing core camera/cutscene
+    functions need a classified stub in the bridges, not a pack copy.
+
+112. **Scene carve 320 KiB; pack-only symbols (2026-10-13).** Dodongo's Cavern
+    needed 305,136 B (OOC 76,560 + OOB + OAP 213,564). Carve is now 0x50000 at
+    0x02710000, 128 KiB taken from bank-2 cart heap in total; core stays at
+    0x02760000. Change makefile, ram_cart.h (SCENECOL/OOTCORE offsets, FIXED),
+    bridge_actor_pack.cpp defaults, build_actor_packs.py defaults and
+    test_actor_packs.py together. `pack.ld` PROVIDEs segment aliases
+    `D_01000000` (billboard = gIdentityMtx; core billboard stays identity) and
+    `D_06000000` (0x06000000, mapped by SEGMENTED_TO_VIRTUAL). Actor-local
+    cutscene data files (`*_cutscene_data.c`) are not imported: EnOkarinaTag
+    script refs are weak and `check_okarina_pack` fails import if a pack scene
+    spawns tag type 2/4. Use `make -k ... oot-scene-packs`; plain -j stops at
+    the first failing pack and its log mislabels interleaved errors.
+
+113. **CD directory is ID-only + exact keys (2026-10-13).** GFS name table
+    (24 B/entry) filled the 0xA000 low carve at 1,536 entries. fs_low.c now
+    boots GFS with a temporary name table in RAM_LOW_FOREST_BANK, then keeps
+    an ID-only table (12 B/entry, DOSEI_FS_MAX_FILES=2560) in .lowfs and exact
+    packed 8.3 keys (two u32, base 38 + dot flag) in the old cart MUSICTRG gap
+    (RAM_CART_FSKEYS, 20 KiB, no heap cost). File id = ISO position, so keys
+    must be strictly increasing: check_disc_directory.py checks staging
+    (capacity, 8.3, collisions) and, after mkisofs, `--iso` checks real order
+    and deletes the image on failure. The makefile maps every GFS_NameToId to
+    dosei_gfs_name_to_id; jo_fs_cd reloads via a temporary heap name table.
+    Only 8.3 names; reports (e.g. kingdodongo_meshes.json) stay out of build/cd.
+114. **HOSTCOLD cart section (2026-10-13).** Debug .bss was 12,016 B over the
+    SGL base. Cold const tables marked HOST_COLD (host_cold.h: generated
+    puzzle/wall/web/tree-mouth collision, dialogue pages/rules, cutscene
+    tables, core_sprite_rows; 15,824 B) link into `.cart` at the HOSTCOLD
+    carve's cached alias (0x026D2C00 core / 0x027FB000 non-core), objcopy to
+    HOSTCOLD.BIN (0.BIN/raw use `-R .cart`), and main loads it right after the
+    cart claim (size/address checked, else halt with a message). Keep the
+    section end ALIGN(16): objcopy pads it and the loader compares sizes.
+    Never mark a table read before that load. Cart offsets MSGDATA/SCENECOL/
+    OOTCORE moved +0x5000 with FIXED_BYTES; core/scene absolute addresses kept.
+
+115. **Scene blob format 5: per-layer objects (2026-10-13).** `OotSceneBlob`
+    gained `layer_objects`/`num_object_layers` (>= 4 masks, bit k = objects[k]);
+    format 0x4f4f4305, API v36. Sprite preload and `set_objects` follow only
+    the destination layer (`ENTRY->destination_layer`, after `mirror_save`,
+    which now runs once before the preload). The host halts the scene if
+    `play_init` picks another layer. Importer, core and every OOC rebuild
+    together; an old OOC is rejected by `scene_valid`.
+
+116. **Player bank split (2026-10-13).** `PLAYANIM.PFB` is gone. The makefile
+    runs `tools/split_player_bank.py` on `bank_full/ALL.PFB`: `PLAYC.PFB`
+    (C clips, boot), `PLAYRES.PFB` (common, first scene load until session
+    reset), `PG<group>.PFB`, `PCS<oot scene>.PFB` and
+    `build/generated/player_groups.h` (host tables, HOST_COLD). Group bit
+    order lives in `oot_core_api.h` `OOT_CORE_PLAYER_GROUP_*`; the splitter
+    refuses a mismatch. Every Saturn C clip (`build_link_model.CLIPS`) is
+    forced resident. The importer patches `Player_UseItem` (gate) — anchor
+    change fails the import.
+
+117. **Gohma track is CVQ1 (2026-10-13).** `build_gohma.py` converts
+    `GOHMA.ANM` to 8-bit per-pose quantized chunks (32 poses, sector aligned;
+    max error 0.47 world units, build fails at >= 1). `cutscene_actor.c` reads
+    chunks with sector reads; CVA1 tracks (others, clip swaps) unchanged.
+    No `JO_SECTOR_SIZE` in game sources (fs.h is not included): use a local
+    2048 constant.
+
+118. **No new inline bodies in shared blob headers either.** `oot_scene_blob.h`
+    is included by host C; its helper is a macro (see 110).
+
+119. **HOSTCOLD also holds cold code (`.cartt`, 2026-10-13).** `HOST_COLD_CODE`
+    (host_cold.h: section + noinline) puts load-time functions in the cart
+    HOSTCOLD section; they execute from cart RAM. Use only for code that runs
+    after `ram_cart_load_host_cold()` (main, right after the cart claim). This
+    batch's loaders (+3.3 KB) had pushed `.bss` 512 B over the SGL base.
+    HOSTCOLD is 20,480 B; 18,976 used. A forward declaration of a static cold
+    function may omit the attribute; the definition must carry it.
+
+120. **Music level tables are 32 KB chunks.** `music.c` `levels[]` /
+    `pending_levels[]` are chunk arrays (byte b at `[b >> 15][b & 32767]`),
+    `levels_live` gates the vblank reader. Test fixtures that poke music.c
+    internals set `levels[0]` + `levels_live`, never assign `levels`.
+
+121. **Scene object limits.** `OOT_SCENE_MAX_OBJECTS` 32 is the per-scene union
+    (layer-mask width; Lon Lon Ranch lists 32 and was rejected at 30). One
+    layer may name at most 30 (ObjectContext 32 slots minus keep and Player
+    stub); the importer fails the scene otherwise.

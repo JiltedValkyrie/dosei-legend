@@ -730,8 +730,13 @@
       "source": "src/overlays/actors/ovl_En_Box/z_en_box.c",
       "source_sha256": "c6613d7f505915a66f271fb295f71f6d2c0b3e77fa420fb91907ccada289a71e",
       "visual_policy": "classification_review_required",
-      "gameplay_owner": "not_imported_native_owner_requires_review",
-      "scene_pack_scope": null,
+      "gameplay_owner": "decomp_imported",
+      "scene_pack_scope": [
+        1,
+        18,
+        96,
+        98
+      ],
       "clip_candidates": [
         "EnBox_AppearAnimation"
       ],
@@ -850,14 +855,13 @@
       "timing_events": "original action clock; clip events need per-actor review",
       "collider_attachment_recipe": "review_required",
       "verification": {
-        "implemented": false,
+        "implemented": true,
         "host_tested": false,
         "target_built": false,
         "human_accepted": false
       },
       "blockers": [
         "visual classification unresolved; category is not an exemption",
-        "gameplay owner / native parity not verified",
         "era/time/params/story/dialogue/reward/persistence scenarios not accepted"
       ],
       "boss_dependency_of": []
@@ -3616,7 +3620,7 @@
       "source": "src/overlays/actors/ovl_En_Elf/z_en_elf.c",
       "source_sha256": "fc4c84622d250ae0322a0cf59267ea074193cb02757344533b08965125461c3a",
       "visual_policy": "sprite_required",
-      "gameplay_owner": "not_imported_native_owner_requires_review",
+      "gameplay_owner": "decomp_imported",
       "scene_pack_scope": null,
       "clip_candidates": [
         "gFairyAnim"
@@ -3731,13 +3735,12 @@
       "timing_events": "original action clock; clip events need per-actor review",
       "collider_attachment_recipe": "review_required",
       "verification": {
-        "implemented": false,
+        "implemented": true,
         "host_tested": false,
         "target_built": false,
         "human_accepted": false
       },
       "blockers": [
-        "gameplay owner / native parity not verified",
         "sprite recipe/package mapping unverified or missing",
         "era/time/params/story/dialogue/reward/persistence scenarios not accepted"
       ],
@@ -3909,7 +3912,7 @@
         {
           "object_id": 19,
           "skeleton_key": 8,
-          "package": "G01305.SP2",
+          "package": "G01307.SP2",
           "clips": [
             "gCuccoAnim"
           ],
@@ -4337,7 +4340,7 @@
         {
           "object_id": 24,
           "skeleton_key": 8,
-          "package": "G01806.SP2",
+          "package": "G01808.SP2",
           "clips": [
             "gPeehatLandingAnim",
             "gPeehatFlyingAnim",
@@ -4626,8 +4629,13 @@
       "source": "src/overlays/actors/ovl_En_Holl/z_en_holl.c",
       "source_sha256": "4f9b10c9eb86332c3c56c1bb3fd2d5d3c17ca33281c0244c5cc91a2c09ea7ed9",
       "visual_policy": "classification_review_required",
-      "gameplay_owner": "not_imported_native_owner_requires_review",
-      "scene_pack_scope": null,
+      "gameplay_owner": "decomp_imported",
+      "scene_pack_scope": [
+        1,
+        18,
+        96,
+        98
+      ],
       "clip_candidates": [],
       "source_predicates": [
         "SCENE_SPIRIT_TEMPLE"
@@ -4649,14 +4657,13 @@
       "timing_events": "original action clock; clip events need per-actor review",
       "collider_attachment_recipe": "review_required",
       "verification": {
-        "implemented": false,
+        "implemented": true,
         "host_tested": false,
         "target_built": false,
         "human_accepted": false
       },
       "blockers": [
         "visual classification unresolved; category is not an exemption",
-        "gameplay owner / native parity not verified",
         "era/time/params/story/dialogue/reward/persistence scenarios not accepted"
       ],
       "boss_dependency_of": []
@@ -8000,8 +8007,13 @@
       "source": "src/overlays/actors/ovl_Bg_Dodoago/z_bg_dodoago.c",
       "source_sha256": "5296037c7ac193ffff0841bb8b87fd61d5e558bfbbdd04e201fbf0556d7f8d49",
       "visual_policy": "classification_review_required",
-      "gameplay_owner": "not_imported_native_owner_requires_review",
-      "scene_pack_scope": null,
+      "gameplay_owner": "decomp_imported",
+      "scene_pack_scope": [
+        1,
+        18,
+        96,
+        98
+      ],
       "clip_candidates": [],
       "source_predicates": [
         "EVENTCHKINF_B0"
@@ -8046,14 +8058,13 @@
       "timing_events": "original action clock; clip events need per-actor review",
       "collider_attachment_recipe": "review_required",
       "verification": {
-        "implemented": false,
+        "implemented": true,
         "host_tested": false,
         "target_built": false,
         "human_accepted": false
       },
       "blockers": [
         "visual classification unresolved; category is not an exemption",
-        "gameplay owner / native parity not verified",
         "era/time/params/story/dialogue/reward/persistence scenarios not accepted"
       ],
       "boss_dependency_of": []
@@ -8746,8 +8757,13 @@
       "source": "src/overlays/actors/ovl_Bg_Hidan_Curtain/z_bg_hidan_curtain.c",
       "source_sha256": "ac87bf1c5fa269a81666781412017859e3fd24a40d4887d931572a53d919014e",
       "visual_policy": "classification_review_required",
-      "gameplay_owner": "not_imported_native_owner_requires_review",
-      "scene_pack_scope": null,
+      "gameplay_owner": "decomp_imported",
+      "scene_pack_scope": [
+        1,
+        18,
+        96,
+        98
+      ],
       "clip_candidates": [],
       "source_predicates": [
         "IS_CUTSCENE_LAYER"
@@ -8793,14 +8809,13 @@
       "timing_events": "original action clock; clip events need per-actor review",
       "collider_attachment_recipe": "review_required",
       "verification": {
-        "implemented": false,
+        "implemented": true,
         "host_tested": false,
         "target_built": false,
         "human_accepted": false
       },
       "blockers": [
         "visual classification unresolved; category is not an exemption",
-        "gameplay owner / native parity not verified",
         "era/time/params/story/dialogue/reward/persistence scenarios not accepted"
       ],
       "boss_dependency_of": []
@@ -9147,8 +9162,13 @@
       "source": "src/overlays/actors/ovl_En_Bombf/z_en_bombf.c",
       "source_sha256": "1eb6ad19eae7b60a7ca0a22d0c5d4de0ce15c77e7305a0a65ded5eaab46c3271",
       "visual_policy": "classification_review_required",
-      "gameplay_owner": "not_imported_native_owner_requires_review",
-      "scene_pack_scope": null,
+      "gameplay_owner": "decomp_imported",
+      "scene_pack_scope": [
+        1,
+        18,
+        96,
+        98
+      ],
       "clip_candidates": [],
       "source_predicates": [],
       "source_condition_sites": [
@@ -9245,14 +9265,13 @@
       "timing_events": "original action clock; clip events need per-actor review",
       "collider_attachment_recipe": "review_required",
       "verification": {
-        "implemented": false,
+        "implemented": true,
         "host_tested": false,
         "target_built": false,
         "human_accepted": false
       },
       "blockers": [
         "visual classification unresolved; category is not an exemption",
-        "gameplay owner / native parity not verified",
         "era/time/params/story/dialogue/reward/persistence scenarios not accepted"
       ],
       "boss_dependency_of": []
@@ -10100,8 +10119,13 @@
       "source": "src/overlays/actors/ovl_Bg_Ddan_Jd/z_bg_ddan_jd.c",
       "source_sha256": "e9f6a9056de168ec7513aba481e59346caa3ab51de94c7ac7bdc8ea4b2f2d130",
       "visual_policy": "classification_review_required",
-      "gameplay_owner": "not_imported_native_owner_requires_review",
-      "scene_pack_scope": null,
+      "gameplay_owner": "decomp_imported",
+      "scene_pack_scope": [
+        1,
+        18,
+        96,
+        98
+      ],
       "clip_candidates": [],
       "source_predicates": [],
       "source_condition_sites": [
@@ -10129,14 +10153,13 @@
       "timing_events": "original action clock; clip events need per-actor review",
       "collider_attachment_recipe": "review_required",
       "verification": {
-        "implemented": false,
+        "implemented": true,
         "host_tested": false,
         "target_built": false,
         "human_accepted": false
       },
       "blockers": [
         "visual classification unresolved; category is not an exemption",
-        "gameplay owner / native parity not verified",
         "era/time/params/story/dialogue/reward/persistence scenarios not accepted"
       ],
       "boss_dependency_of": []
@@ -10152,8 +10175,13 @@
       "source": "src/overlays/actors/ovl_Bg_Breakwall/z_bg_breakwall.c",
       "source_sha256": "b905e5297ee5ff31e7d1c573351bebd1386c147553218aca819a5cae77091fc3",
       "visual_policy": "classification_review_required",
-      "gameplay_owner": "not_imported_native_owner_requires_review",
-      "scene_pack_scope": null,
+      "gameplay_owner": "decomp_imported",
+      "scene_pack_scope": [
+        1,
+        18,
+        96,
+        98
+      ],
       "clip_candidates": [],
       "source_predicates": [
         "EVENTCHKINF_B0"
@@ -10207,14 +10235,13 @@
       "timing_events": "original action clock; clip events need per-actor review",
       "collider_attachment_recipe": "review_required",
       "verification": {
-        "implemented": false,
+        "implemented": true,
         "host_tested": false,
         "target_built": false,
         "human_accepted": false
       },
       "blockers": [
         "visual classification unresolved; category is not an exemption",
-        "gameplay owner / native parity not verified",
         "era/time/params/story/dialogue/reward/persistence scenarios not accepted"
       ],
       "boss_dependency_of": [
@@ -10357,8 +10384,13 @@
       "source": "src/overlays/actors/ovl_Bg_Ddan_Kd/z_bg_ddan_kd.c",
       "source_sha256": "3f83cbff9ba3609f3e165c43216e615fb3cbd633dd733c036705189318040b2d",
       "visual_policy": "classification_review_required",
-      "gameplay_owner": "not_imported_native_owner_requires_review",
-      "scene_pack_scope": null,
+      "gameplay_owner": "decomp_imported",
+      "scene_pack_scope": [
+        1,
+        18,
+        96,
+        98
+      ],
       "clip_candidates": [],
       "source_predicates": [],
       "source_condition_sites": [
@@ -10383,14 +10415,13 @@
       "timing_events": "original action clock; clip events need per-actor review",
       "collider_attachment_recipe": "review_required",
       "verification": {
-        "implemented": false,
+        "implemented": true,
         "host_tested": false,
         "target_built": false,
         "human_accepted": false
       },
       "blockers": [
         "visual classification unresolved; category is not an exemption",
-        "gameplay owner / native parity not verified",
         "era/time/params/story/dialogue/reward/persistence scenarios not accepted"
       ],
       "boss_dependency_of": []
@@ -12644,8 +12675,13 @@
       "source": "src/overlays/actors/ovl_En_Trap/z_en_trap.c",
       "source_sha256": "47cae5cc8cd6399b7248aab0a2b45ecbfe879c3763bafa62d34c1f50a4d85a5c",
       "visual_policy": "classification_review_required",
-      "gameplay_owner": "not_imported_native_owner_requires_review",
-      "scene_pack_scope": null,
+      "gameplay_owner": "decomp_imported",
+      "scene_pack_scope": [
+        1,
+        18,
+        96,
+        98
+      ],
       "clip_candidates": [],
       "source_predicates": [],
       "source_condition_sites": [
@@ -12705,14 +12741,13 @@
       "timing_events": "original action clock; clip events need per-actor review",
       "collider_attachment_recipe": "review_required",
       "verification": {
-        "implemented": false,
+        "implemented": true,
         "host_tested": false,
         "target_built": false,
         "human_accepted": false
       },
       "blockers": [
         "visual classification unresolved; category is not an exemption",
-        "gameplay owner / native parity not verified",
         "era/time/params/story/dialogue/reward/persistence scenarios not accepted"
       ],
       "boss_dependency_of": []
@@ -13263,7 +13298,7 @@
         {
           "object_id": 136,
           "skeleton_key": 56,
-          "package": "G08809.SP2",
+          "package": "G0880C.SP2",
           "clips": [
             "gTalonSitSleepingAnim",
             "gTalonStandAnim",
@@ -20294,7 +20329,7 @@
         {
           "object_id": 192,
           "skeleton_key": 200,
-          "package": "G0C002.SP2",
+          "package": "G0C004.SP2",
           "clips": [
             "gIngoRunningAnim",
             "gIngoGloatingAnim",
@@ -21190,7 +21225,7 @@
         {
           "object_id": 208,
           "skeleton_key": 56,
-          "package": "G0D004.SP2",
+          "package": "G0D006.SP2",
           "clips": [
             "gMalonAdultIdleAnim",
             "gMalonAdultStandStillAnim",
@@ -22606,7 +22641,7 @@
         {
           "object_id": 224,
           "skeleton_key": 24,
-          "package": "G0E003.SP2",
+          "package": "G0E005.SP2",
           "clips": [
             "gMalonChildIdleAnim",
             "gMalonChildSingAnim"
@@ -24912,8 +24947,13 @@
       "source": "src/overlays/actors/ovl_Obj_Oshihiki/z_obj_oshihiki.c",
       "source_sha256": "6ae9a9e0799f71b388acc8e2bfab19a86f311b2f3390700f2dc01be6d506d191",
       "visual_policy": "classification_review_required",
-      "gameplay_owner": "not_imported_native_owner_requires_review",
-      "scene_pack_scope": null,
+      "gameplay_owner": "decomp_imported",
+      "scene_pack_scope": [
+        1,
+        18,
+        96,
+        98
+      ],
       "clip_candidates": [],
       "source_predicates": [
         "SCENE_DEKU_TREE",
@@ -25005,14 +25045,13 @@
       "timing_events": "original action clock; clip events need per-actor review",
       "collider_attachment_recipe": "review_required",
       "verification": {
-        "implemented": false,
+        "implemented": true,
         "host_tested": false,
         "target_built": false,
         "human_accepted": false
       },
       "blockers": [
         "visual classification unresolved; category is not an exemption",
-        "gameplay owner / native parity not verified",
         "era/time/params/story/dialogue/reward/persistence scenarios not accepted"
       ],
       "boss_dependency_of": []
@@ -25525,7 +25564,7 @@
       "source": "src/overlays/actors/ovl_Arrow_Fire/z_arrow_fire.c",
       "source_sha256": "687226be59a51c857d28e0bb4669ea47d9cc4f959dfddc4bae3af8420a24714a",
       "visual_policy": "classification_review_required",
-      "gameplay_owner": "not_imported_native_owner_requires_review",
+      "gameplay_owner": "decomp_imported",
       "scene_pack_scope": null,
       "clip_candidates": [],
       "source_predicates": [],
@@ -25546,14 +25585,13 @@
       "timing_events": "original action clock; clip events need per-actor review",
       "collider_attachment_recipe": "review_required",
       "verification": {
-        "implemented": false,
+        "implemented": true,
         "host_tested": false,
         "target_built": false,
         "human_accepted": false
       },
       "blockers": [
         "visual classification unresolved; category is not an exemption",
-        "gameplay owner / native parity not verified",
         "era/time/params/story/dialogue/reward/persistence scenarios not accepted"
       ],
       "boss_dependency_of": []
@@ -25569,7 +25607,7 @@
       "source": "src/overlays/actors/ovl_Arrow_Ice/z_arrow_ice.c",
       "source_sha256": "31f5e78b5116fd845448d032a38013ac237267a185ed5da3f1462a367985a4da",
       "visual_policy": "classification_review_required",
-      "gameplay_owner": "not_imported_native_owner_requires_review",
+      "gameplay_owner": "decomp_imported",
       "scene_pack_scope": null,
       "clip_candidates": [],
       "source_predicates": [],
@@ -25590,14 +25628,13 @@
       "timing_events": "original action clock; clip events need per-actor review",
       "collider_attachment_recipe": "review_required",
       "verification": {
-        "implemented": false,
+        "implemented": true,
         "host_tested": false,
         "target_built": false,
         "human_accepted": false
       },
       "blockers": [
         "visual classification unresolved; category is not an exemption",
-        "gameplay owner / native parity not verified",
         "era/time/params/story/dialogue/reward/persistence scenarios not accepted"
       ],
       "boss_dependency_of": []
@@ -25613,7 +25650,7 @@
       "source": "src/overlays/actors/ovl_Arrow_Light/z_arrow_light.c",
       "source_sha256": "7194a43920fa509894cc7b2517dc1b7f3727092922b9db447fa8edce06a4b031",
       "visual_policy": "classification_review_required",
-      "gameplay_owner": "not_imported_native_owner_requires_review",
+      "gameplay_owner": "decomp_imported",
       "scene_pack_scope": null,
       "clip_candidates": [],
       "source_predicates": [],
@@ -25634,14 +25671,13 @@
       "timing_events": "original action clock; clip events need per-actor review",
       "collider_attachment_recipe": "review_required",
       "verification": {
-        "implemented": false,
+        "implemented": true,
         "host_tested": false,
         "target_built": false,
         "human_accepted": false
       },
       "blockers": [
         "visual classification unresolved; category is not an exemption",
-        "gameplay owner / native parity not verified",
         "era/time/params/story/dialogue/reward/persistence scenarios not accepted"
       ],
       "boss_dependency_of": []
@@ -26871,8 +26907,13 @@
       "source": "src/overlays/actors/ovl_Elf_Msg/z_elf_msg.c",
       "source_sha256": "670a2add002b0bf7eb89c2a0c8322fa7b5a117de42466bc51e9ff5c2523b7b5b",
       "visual_policy": "classification_review_required",
-      "gameplay_owner": "not_imported_native_owner_requires_review",
-      "scene_pack_scope": null,
+      "gameplay_owner": "decomp_imported",
+      "scene_pack_scope": [
+        1,
+        18,
+        96,
+        98
+      ],
       "clip_candidates": [],
       "source_predicates": [],
       "source_condition_sites": [
@@ -26949,14 +26990,13 @@
       "timing_events": "original action clock; clip events need per-actor review",
       "collider_attachment_recipe": "review_required",
       "verification": {
-        "implemented": false,
+        "implemented": true,
         "host_tested": false,
         "target_built": false,
         "human_accepted": false
       },
       "blockers": [
         "visual classification unresolved; category is not an exemption",
-        "gameplay owner / native parity not verified",
         "era/time/params/story/dialogue/reward/persistence scenarios not accepted"
       ],
       "boss_dependency_of": []
@@ -27870,8 +27910,13 @@
       "source": "src/overlays/actors/ovl_Obj_Bombiwa/z_obj_bombiwa.c",
       "source_sha256": "36c9d2e86ebff011587a750314b7af3a0b956ffc074b65317516a020bc0b4ded",
       "visual_policy": "classification_review_required",
-      "gameplay_owner": "not_imported_native_owner_requires_review",
-      "scene_pack_scope": null,
+      "gameplay_owner": "decomp_imported",
+      "scene_pack_scope": [
+        1,
+        18,
+        96,
+        98
+      ],
       "clip_candidates": [],
       "source_predicates": [],
       "source_condition_sites": [
@@ -27900,14 +27945,13 @@
       "timing_events": "original action clock; clip events need per-actor review",
       "collider_attachment_recipe": "review_required",
       "verification": {
-        "implemented": false,
+        "implemented": true,
         "host_tested": false,
         "target_built": false,
         "human_accepted": false
       },
       "blockers": [
         "visual classification unresolved; category is not an exemption",
-        "gameplay owner / native parity not verified",
         "era/time/params/story/dialogue/reward/persistence scenarios not accepted"
       ],
       "boss_dependency_of": []
@@ -27923,8 +27967,13 @@
       "source": "src/overlays/actors/ovl_Obj_Switch/z_obj_switch.c",
       "source_sha256": "550d21493a4a1abe3137bffe3dd4ad7a1e3ee6ced20d69b16dfc6c2e3d581bd3",
       "visual_policy": "classification_review_required",
-      "gameplay_owner": "not_imported_native_owner_requires_review",
-      "scene_pack_scope": null,
+      "gameplay_owner": "decomp_imported",
+      "scene_pack_scope": [
+        1,
+        18,
+        96,
+        98
+      ],
       "clip_candidates": [],
       "source_predicates": [],
       "source_condition_sites": [
@@ -27988,14 +28037,13 @@
       "timing_events": "original action clock; clip events need per-actor review",
       "collider_attachment_recipe": "review_required",
       "verification": {
-        "implemented": false,
+        "implemented": true,
         "host_tested": false,
         "target_built": false,
         "human_accepted": false
       },
       "blockers": [
         "visual classification unresolved; category is not an exemption",
-        "gameplay owner / native parity not verified",
         "era/time/params/story/dialogue/reward/persistence scenarios not accepted"
       ],
       "boss_dependency_of": []
@@ -28115,8 +28163,13 @@
       "source": "src/overlays/actors/ovl_Obj_Hsblock/z_obj_hsblock.c",
       "source_sha256": "27ed6295d0d3a510a0f7dd60684414151bbf8bdb9f01d0c7f5afd8ee0a95b78a",
       "visual_policy": "classification_review_required",
-      "gameplay_owner": "not_imported_native_owner_requires_review",
-      "scene_pack_scope": null,
+      "gameplay_owner": "decomp_imported",
+      "scene_pack_scope": [
+        1,
+        18,
+        96,
+        98
+      ],
       "clip_candidates": [],
       "source_predicates": [
         "SCENE_FIRE_TEMPLE"
@@ -28165,14 +28218,13 @@
       "timing_events": "original action clock; clip events need per-actor review",
       "collider_attachment_recipe": "review_required",
       "verification": {
-        "implemented": false,
+        "implemented": true,
         "host_tested": false,
         "target_built": false,
         "human_accepted": false
       },
       "blockers": [
         "visual classification unresolved; category is not an exemption",
-        "gameplay owner / native parity not verified",
         "era/time/params/story/dialogue/reward/persistence scenarios not accepted"
       ],
       "boss_dependency_of": []
@@ -35538,7 +35590,7 @@
         {
           "object_id": 109,
           "skeleton_key": 8,
-          "package": "G06D07.SP2",
+          "package": "G06D09.SP2",
           "clips": [
             "gPoeFieldDamagedAnim",
             "gPoeFieldFleeAnim",
@@ -40106,7 +40158,7 @@
         {
           "object_id": 388,
           "skeleton_key": 32,
-          "package": "G18408.SP2",
+          "package": "G1840B.SP2",
           "clips": [
             "gStalchildAttackingAnim",
             "gStalchildDyingAnim",
@@ -44100,7 +44152,6 @@
         "ACTOR_EN_A_OBJ",
         "ACTOR_EN_BOX",
         "ACTOR_EN_DEKUBABA",
-        "ACTOR_EN_ELF",
         "ACTOR_EN_GOMA",
         "ACTOR_EN_HINTNUTS",
         "ACTOR_EN_INSECT",
@@ -45125,23 +45176,14 @@
         "ACTOR_OBJ_TSUBO"
       ],
       "missing_gameplay_candidates": [
-        "ACTOR_BG_BREAKWALL",
-        "ACTOR_BG_DDAN_JD",
-        "ACTOR_BG_DDAN_KD",
-        "ACTOR_BG_DODOAGO",
-        "ACTOR_BG_HIDAN_CURTAIN",
         "ACTOR_DEMO_KANKYO",
         "ACTOR_DEMO_TRE_LGT",
         "ACTOR_DOOR_TOKI",
-        "ACTOR_ELF_MSG",
         "ACTOR_EN_AM",
         "ACTOR_EN_A_OBJ",
-        "ACTOR_EN_BOMBF",
-        "ACTOR_EN_BOX",
         "ACTOR_EN_DNS",
         "ACTOR_EN_DODOJR",
         "ACTOR_EN_DODONGO",
-        "ACTOR_EN_ELF",
         "ACTOR_EN_FIREFLY",
         "ACTOR_EN_INSECT",
         "ACTOR_EN_KAKASI2",
@@ -45150,13 +45192,9 @@
         "ACTOR_EN_SHOPNUTS",
         "ACTOR_EN_SI",
         "ACTOR_EN_SW",
-        "ACTOR_EN_TRAP",
         "ACTOR_EN_VM",
         "ACTOR_EN_ZF",
-        "ACTOR_OBJ_HSBLOCK",
-        "ACTOR_OBJ_ICE_POLY",
-        "ACTOR_OBJ_OSHIHIKI",
-        "ACTOR_OBJ_SWITCH"
+        "ACTOR_OBJ_ICE_POLY"
       ],
       "budget": {
         "room_plus_actor_effect_peak": null,
@@ -47681,7 +47719,6 @@
         "ACTOR_EN_BB",
         "ACTOR_EN_BOX",
         "ACTOR_EN_DEKUBABA",
-        "ACTOR_EN_ELF",
         "ACTOR_EN_FLOORMAS",
         "ACTOR_EN_KAKASI2",
         "ACTOR_EN_LIGHT",
@@ -49277,7 +49314,6 @@
         "ACTOR_EN_BOX",
         "ACTOR_EN_BW",
         "ACTOR_EN_DU",
-        "ACTOR_EN_ELF",
         "ACTOR_EN_FD",
         "ACTOR_EN_FD_FIRE",
         "ACTOR_EN_FIREFLY",
@@ -50520,7 +50556,6 @@
         "ACTOR_EN_A_OBJ",
         "ACTOR_EN_BLKOBJ",
         "ACTOR_EN_BOX",
-        "ACTOR_EN_ELF",
         "ACTOR_EN_FIREFLY",
         "ACTOR_EN_GOROIWA",
         "ACTOR_EN_KAKASI2",
@@ -52281,7 +52316,6 @@
         "ACTOR_EN_BB",
         "ACTOR_EN_BOX",
         "ACTOR_EN_BW",
-        "ACTOR_EN_ELF",
         "ACTOR_EN_FIREFLY",
         "ACTOR_EN_FLOORMAS",
         "ACTOR_EN_G_SWITCH",
@@ -53667,7 +53701,6 @@
         "ACTOR_EN_BOX",
         "ACTOR_EN_DH",
         "ACTOR_EN_DHA",
-        "ACTOR_EN_ELF",
         "ACTOR_EN_FIREFLY",
         "ACTOR_EN_FLOORMAS",
         "ACTOR_EN_G_SWITCH",
@@ -54393,7 +54426,6 @@
         "ACTOR_EN_DEKUBABA",
         "ACTOR_EN_DH",
         "ACTOR_EN_DHA",
-        "ACTOR_EN_ELF",
         "ACTOR_EN_FIREFLY",
         "ACTOR_EN_G_SWITCH",
         "ACTOR_EN_INSECT",
@@ -55708,9 +55740,6 @@
         "ACTOR_SHOT_SUN"
       ],
       "missing_gameplay_candidates": [
-        "ACTOR_ARROW_FIRE",
-        "ACTOR_ARROW_ICE",
-        "ACTOR_ARROW_LIGHT",
         "ACTOR_BG_HAKA_SGAMI",
         "ACTOR_BG_ICE_OBJECTS",
         "ACTOR_BG_ICE_SHELTER",
@@ -55723,7 +55752,6 @@
         "ACTOR_DOOR_WARP1",
         "ACTOR_ELF_MSG",
         "ACTOR_EN_BOX",
-        "ACTOR_EN_ELF",
         "ACTOR_EN_FIREFLY",
         "ACTOR_EN_FZ",
         "ACTOR_EN_G_SWITCH",
@@ -57104,7 +57132,6 @@
         "ACTOR_EN_BOX",
         "ACTOR_EN_BUTTE",
         "ACTOR_EN_BW",
-        "ACTOR_EN_ELF",
         "ACTOR_EN_FIREFLY",
         "ACTOR_EN_FISH",
         "ACTOR_EN_GOROIWA",
@@ -57561,7 +57588,6 @@
         "ACTOR_DOOR_GERUDO",
         "ACTOR_DOOR_TOKI",
         "ACTOR_EN_DAIKU",
-        "ACTOR_EN_ELF",
         "ACTOR_EN_GE2",
         "ACTOR_EN_GE3",
         "ACTOR_EN_GELDB",
@@ -58965,9 +58991,6 @@
         "ACTOR_SHOT_SUN"
       ],
       "missing_gameplay_candidates": [
-        "ACTOR_ARROW_FIRE",
-        "ACTOR_ARROW_ICE",
-        "ACTOR_ARROW_LIGHT",
         "ACTOR_BG_GND_DARKMEIRO",
         "ACTOR_BG_GND_FIREMEIRO",
         "ACTOR_BG_GND_ICEBLOCK",
@@ -58995,7 +59018,6 @@
         "ACTOR_EN_BOX",
         "ACTOR_EN_BW",
         "ACTOR_EN_DNS",
-        "ACTOR_EN_ELF",
         "ACTOR_EN_FIREFLY",
         "ACTOR_EN_FZ",
         "ACTOR_EN_GOROIWA",
@@ -60059,7 +60081,6 @@
         "ACTOR_ITEM_B_HEART"
       ],
       "missing_gameplay_candidates": [
-        "ACTOR_BG_BREAKWALL",
         "ACTOR_BOSS_DODONGO",
         "ACTOR_DEMO_KANKYO",
         "ACTOR_DEMO_TRE_LGT",
@@ -60067,8 +60088,6 @@
         "ACTOR_DOOR_WARP1",
         "ACTOR_EN_A_OBJ",
         "ACTOR_EN_BDFIRE",
-        "ACTOR_EN_BOMBF",
-        "ACTOR_EN_BOX",
         "ACTOR_EN_RIVER_SOUND",
         "ACTOR_ITEM_B_HEART"
       ],
@@ -61949,7 +61968,6 @@
         "ACTOR_EN_ATTACK_NIW",
         "ACTOR_EN_BUTTE",
         "ACTOR_EN_DOG",
-        "ACTOR_EN_ELF",
         "ACTOR_EN_FISH",
         "ACTOR_EN_HEISHI2",
         "ACTOR_EN_HY",
@@ -62261,8 +62279,7 @@
         "ACTOR_EN_GS"
       ],
       "missing_gameplay_candidates": [
-        "ACTOR_BG_SPOT16_DOUGHNUT",
-        "ACTOR_EN_ELF"
+        "ACTOR_BG_SPOT16_DOUGHNUT"
       ],
       "budget": {
         "room_plus_actor_effect_peak": null,
@@ -62333,8 +62350,7 @@
       ],
       "missing_gameplay_candidates": [
         "ACTOR_BG_SPOT16_DOUGHNUT",
-        "ACTOR_EN_DOG",
-        "ACTOR_EN_ELF"
+        "ACTOR_EN_DOG"
       ],
       "budget": {
         "room_plus_actor_effect_peak": null,
@@ -62395,8 +62411,7 @@
         "ACTOR_EN_GS"
       ],
       "missing_gameplay_candidates": [
-        "ACTOR_BG_SPOT16_DOUGHNUT",
-        "ACTOR_EN_ELF"
+        "ACTOR_BG_SPOT16_DOUGHNUT"
       ],
       "budget": {
         "room_plus_actor_effect_peak": null,
@@ -62470,7 +62485,6 @@
         "ACTOR_OBJ_TSUBO"
       ],
       "missing_gameplay_candidates": [
-        "ACTOR_EN_ELF",
         "ACTOR_EN_RIVER_SOUND"
       ],
       "budget": {
@@ -62527,9 +62541,7 @@
         "ACTOR_EN_KO",
         "ACTOR_OBJ_TSUBO"
       ],
-      "missing_gameplay_candidates": [
-        "ACTOR_EN_ELF"
-      ],
+      "missing_gameplay_candidates": [],
       "budget": {
         "room_plus_actor_effect_peak": null,
         "reason": "simultaneous dynamic spawn and native actor sets require review"
@@ -62604,8 +62616,7 @@
         "ACTOR_DEMO_KANKYO",
         "ACTOR_DEMO_TRE_LGT",
         "ACTOR_DOOR_TOKI",
-        "ACTOR_EN_BOX",
-        "ACTOR_EN_ELF"
+        "ACTOR_EN_BOX"
       ],
       "budget": {
         "room_plus_actor_effect_peak": null,
@@ -62671,7 +62682,6 @@
         "ACTOR_EN_SA"
       ],
       "missing_gameplay_candidates": [
-        "ACTOR_EN_ELF",
         "ACTOR_EN_SA"
       ],
       "budget": {
@@ -62888,7 +62898,6 @@
         "ACTOR_EN_TANA"
       ],
       "missing_gameplay_candidates": [
-        "ACTOR_EN_ELF",
         "ACTOR_EN_GIRLA",
         "ACTOR_EN_GO2",
         "ACTOR_EN_HY",
@@ -62959,7 +62968,6 @@
         "ACTOR_EN_WONDER_ITEM"
       ],
       "missing_gameplay_candidates": [
-        "ACTOR_EN_ELF",
         "ACTOR_EN_GIRLA",
         "ACTOR_EN_HEISHI2",
         "ACTOR_EN_OSSAN",
@@ -63013,7 +63021,6 @@
         "ACTOR_EN_TANA"
       ],
       "missing_gameplay_candidates": [
-        "ACTOR_EN_ELF",
         "ACTOR_EN_GIRLA",
         "ACTOR_EN_OSSAN",
         "ACTOR_EN_TANA"
@@ -63071,7 +63078,6 @@
         "ACTOR_EN_ZO"
       ],
       "missing_gameplay_candidates": [
-        "ACTOR_EN_ELF",
         "ACTOR_EN_GIRLA",
         "ACTOR_EN_OSSAN",
         "ACTOR_EN_TANA",
@@ -63131,7 +63137,6 @@
       ],
       "missing_gameplay_candidates": [
         "ACTOR_EN_DAIKU_KAKARIKO",
-        "ACTOR_EN_ELF",
         "ACTOR_EN_GIRLA",
         "ACTOR_EN_OSSAN",
         "ACTOR_EN_TANA"
@@ -63189,7 +63194,6 @@
         "ACTOR_EN_TANA"
       ],
       "missing_gameplay_candidates": [
-        "ACTOR_EN_ELF",
         "ACTOR_EN_GIRLA",
         "ACTOR_EN_HY",
         "ACTOR_EN_OSSAN",
@@ -63243,7 +63247,6 @@
         "ACTOR_EN_TANA"
       ],
       "missing_gameplay_candidates": [
-        "ACTOR_EN_ELF",
         "ACTOR_EN_GIRLA",
         "ACTOR_EN_OSSAN",
         "ACTOR_EN_TANA"
@@ -63306,7 +63309,6 @@
         "ACTOR_EN_WONDER_TALK2"
       ],
       "missing_gameplay_candidates": [
-        "ACTOR_EN_ELF",
         "ACTOR_EN_GIRLA",
         "ACTOR_EN_GUEST",
         "ACTOR_EN_OSSAN",
@@ -63617,7 +63619,6 @@
         "ACTOR_EN_WONDER_ITEM"
       ],
       "missing_gameplay_candidates": [
-        "ACTOR_EN_ELF",
         "ACTOR_EN_HEISHI2",
         "ACTOR_EN_HY",
         "ACTOR_EN_NIW_LADY",
@@ -63694,7 +63695,6 @@
         "ACTOR_OBJ_KIBAKO2"
       ],
       "missing_gameplay_candidates": [
-        "ACTOR_EN_ELF",
         "ACTOR_EN_MK",
         "ACTOR_EN_RIVER_SOUND",
         "ACTOR_EN_SI",
@@ -64014,9 +64014,7 @@
       "reachable_actor_candidates": [
         "ACTOR_EN_ELF"
       ],
-      "missing_gameplay_candidates": [
-        "ACTOR_EN_ELF"
-      ],
+      "missing_gameplay_candidates": [],
       "budget": {
         "room_plus_actor_effect_peak": null,
         "reason": "simultaneous dynamic spawn and native actor sets require review"
@@ -64793,7 +64791,6 @@
         "ACTOR_EN_DNT_DEMO",
         "ACTOR_EN_DNT_JIJI",
         "ACTOR_EN_DNT_NOMAL",
-        "ACTOR_EN_ELF",
         "ACTOR_EN_EX_ITEM",
         "ACTOR_EN_EX_RUPPY",
         "ACTOR_EN_FISH",
@@ -64954,7 +64951,6 @@
         "ACTOR_DOOR_TOKI",
         "ACTOR_EN_A_OBJ",
         "ACTOR_EN_BOX",
-        "ACTOR_EN_ELF",
         "ACTOR_EN_RIVER_SOUND"
       ],
       "budget": {
@@ -65277,7 +65273,6 @@
         "ACTOR_DOOR_TOKI",
         "ACTOR_EN_A_OBJ",
         "ACTOR_EN_BOX",
-        "ACTOR_EN_ELF",
         "ACTOR_EN_FIREFLY",
         "ACTOR_EN_OKARINA_TAG",
         "ACTOR_EN_RD",
@@ -66240,9 +66235,6 @@
         "ACTOR_ITEM_OCARINA"
       ],
       "missing_gameplay_candidates": [
-        "ACTOR_ARROW_FIRE",
-        "ACTOR_ARROW_ICE",
-        "ACTOR_ARROW_LIGHT",
         "ACTOR_BG_MJIN",
         "ACTOR_BG_SPOT02_OBJECTS",
         "ACTOR_BG_TOKI_HIKARI",
@@ -66466,9 +66458,6 @@
         "ACTOR_EN_RU2"
       ],
       "missing_gameplay_candidates": [
-        "ACTOR_ARROW_FIRE",
-        "ACTOR_ARROW_ICE",
-        "ACTOR_ARROW_LIGHT",
         "ACTOR_DEMO_6K",
         "ACTOR_DEMO_DU",
         "ACTOR_DEMO_EFFECT",
@@ -66476,7 +66465,6 @@
         "ACTOR_DEMO_SA",
         "ACTOR_DOOR_WARP1",
         "ACTOR_EFF_DUST",
-        "ACTOR_EN_ELF",
         "ACTOR_EN_M_FIRE1",
         "ACTOR_EN_NB",
         "ACTOR_EN_RIVER_SOUND",
@@ -67263,7 +67251,6 @@
         "ACTOR_DOOR_TOKI",
         "ACTOR_ELF_MSG2",
         "ACTOR_EN_BOX",
-        "ACTOR_EN_ELF",
         "ACTOR_EN_FU",
         "ACTOR_EN_HEISHI2",
         "ACTOR_EN_HONOTRAP",
@@ -67510,9 +67497,6 @@
         "ACTOR_ITEM_OCARINA"
       ],
       "missing_gameplay_candidates": [
-        "ACTOR_ARROW_FIRE",
-        "ACTOR_ARROW_ICE",
-        "ACTOR_ARROW_LIGHT",
         "ACTOR_DEMO_6K",
         "ACTOR_DEMO_EFFECT",
         "ACTOR_DEMO_IM",
@@ -67777,8 +67761,7 @@
       ],
       "missing_gameplay_candidates": [
         "ACTOR_BG_SPOT15_RRBOX",
-        "ACTOR_EN_ATTACK_NIW",
-        "ACTOR_EN_ELF"
+        "ACTOR_EN_ATTACK_NIW"
       ],
       "budget": {
         "room_plus_actor_effect_peak": null,
@@ -70442,9 +70425,6 @@
         "ACTOR_SHOT_SUN"
       ],
       "missing_gameplay_candidates": [
-        "ACTOR_ARROW_FIRE",
-        "ACTOR_ARROW_ICE",
-        "ACTOR_ARROW_LIGHT",
         "ACTOR_BG_SPOT00_BREAK",
         "ACTOR_BG_SPOT00_HANEBASI",
         "ACTOR_BG_UMAJUMP",
@@ -70458,7 +70438,6 @@
         "ACTOR_EFF_DUST",
         "ACTOR_ELF_MSG2",
         "ACTOR_EN_A_OBJ",
-        "ACTOR_EN_ELF",
         "ACTOR_EN_GANON_MANT",
         "ACTOR_EN_HEISHI2",
         "ACTOR_EN_INSECT",
@@ -71818,9 +71797,6 @@
         "ACTOR_OBJ_TSUBO"
       ],
       "missing_gameplay_candidates": [
-        "ACTOR_ARROW_FIRE",
-        "ACTOR_ARROW_ICE",
-        "ACTOR_ARROW_LIGHT",
         "ACTOR_BG_GATE_SHUTTER",
         "ACTOR_BG_HIDAN_CURTAIN",
         "ACTOR_BG_HIDAN_FWBIG",
@@ -71839,7 +71815,6 @@
         "ACTOR_EN_A_OBJ",
         "ACTOR_EN_BUTTE",
         "ACTOR_EN_DAIKU_KAKARIKO",
-        "ACTOR_EN_ELF",
         "ACTOR_EN_FISH",
         "ACTOR_EN_HEISHI2",
         "ACTOR_EN_HEISHI4",
@@ -73593,7 +73568,6 @@
         "ACTOR_EN_BOX",
         "ACTOR_EN_BUTTE",
         "ACTOR_EN_CS",
-        "ACTOR_EN_ELF",
         "ACTOR_EN_FIREFLY",
         "ACTOR_EN_FISH",
         "ACTOR_EN_INSECT",
@@ -74228,7 +74202,6 @@
         "ACTOR_DOOR_ANA",
         "ACTOR_EN_ATTACK_NIW",
         "ACTOR_EN_BUTTE",
-        "ACTOR_EN_ELF",
         "ACTOR_EN_FISH",
         "ACTOR_EN_FR",
         "ACTOR_EN_HEISHI2",
@@ -75914,7 +75887,6 @@
         "ACTOR_EN_BOX",
         "ACTOR_EN_DEKUBABA",
         "ACTOR_EN_DEKUNUTS",
-        "ACTOR_EN_ELF",
         "ACTOR_EN_GOROIWA",
         "ACTOR_EN_HEISHI2",
         "ACTOR_EN_INSECT",
@@ -76285,9 +76257,6 @@
         "ACTOR_OBJECT_KANKYO"
       ],
       "missing_gameplay_candidates": [
-        "ACTOR_ARROW_FIRE",
-        "ACTOR_ARROW_ICE",
-        "ACTOR_ARROW_LIGHT",
         "ACTOR_BG_MJIN",
         "ACTOR_BG_SPOT05_SOKO",
         "ACTOR_DEMO_KANKYO",
@@ -76296,7 +76265,6 @@
         "ACTOR_DOOR_WARP1",
         "ACTOR_ELF_MSG",
         "ACTOR_EN_DEKUNUTS",
-        "ACTOR_EN_ELF",
         "ACTOR_EN_HEISHI2",
         "ACTOR_EN_KAKASI2",
         "ACTOR_EN_LIGHT",
@@ -76904,9 +76872,6 @@
         "ACTOR_SHOT_SUN"
       ],
       "missing_gameplay_candidates": [
-        "ACTOR_ARROW_FIRE",
-        "ACTOR_ARROW_ICE",
-        "ACTOR_ARROW_LIGHT",
         "ACTOR_BG_HAKA",
         "ACTOR_BG_MJIN",
         "ACTOR_BG_SPOT06_OBJECTS",
@@ -76918,7 +76883,6 @@
         "ACTOR_EN_A_OBJ",
         "ACTOR_EN_BUTTE",
         "ACTOR_EN_CROW",
-        "ACTOR_EN_ELF",
         "ACTOR_EN_FISH",
         "ACTOR_EN_INSECT",
         "ACTOR_EN_ISHI",
@@ -77392,7 +77356,6 @@
         "ACTOR_EN_BOX",
         "ACTOR_EN_BUTTE",
         "ACTOR_EN_DIVING_GAME",
-        "ACTOR_EN_ELF",
         "ACTOR_EN_EX_RUPPY",
         "ACTOR_EN_FISH",
         "ACTOR_EN_INSECT",
@@ -78086,7 +78049,6 @@
         "ACTOR_EFF_DUST",
         "ACTOR_EN_A_OBJ",
         "ACTOR_EN_BUTTE",
-        "ACTOR_EN_ELF",
         "ACTOR_EN_FISH",
         "ACTOR_EN_HEISHI2",
         "ACTOR_EN_INSECT",
@@ -78717,7 +78679,6 @@
         "ACTOR_EN_A_OBJ",
         "ACTOR_EN_BOX",
         "ACTOR_EN_BUTTE",
-        "ACTOR_EN_ELF",
         "ACTOR_EN_FISH",
         "ACTOR_EN_GE1",
         "ACTOR_EN_GE2",
@@ -79725,7 +79686,6 @@
         "ACTOR_EN_BUTTE",
         "ACTOR_EN_DNS",
         "ACTOR_EN_DNT_NOMAL",
-        "ACTOR_EN_ELF",
         "ACTOR_EN_EX_ITEM",
         "ACTOR_EN_EX_RUPPY",
         "ACTOR_EN_FISH",
@@ -80268,9 +80228,6 @@
         "ACTOR_OBJ_MURE2"
       ],
       "missing_gameplay_candidates": [
-        "ACTOR_ARROW_FIRE",
-        "ACTOR_ARROW_ICE",
-        "ACTOR_ARROW_LIGHT",
         "ACTOR_BG_MJIN",
         "ACTOR_BG_SPOT02_OBJECTS",
         "ACTOR_BG_SPOT11_BAKUDANKABE",
@@ -80286,7 +80243,6 @@
         "ACTOR_EFF_DUST",
         "ACTOR_EN_BOX",
         "ACTOR_EN_CROW",
-        "ACTOR_EN_ELF",
         "ACTOR_EN_ENCOUNT1",
         "ACTOR_EN_HATA",
         "ACTOR_EN_HEISHI2",
@@ -81246,7 +81202,6 @@
         "ACTOR_DOOR_TOKI",
         "ACTOR_EN_A_OBJ",
         "ACTOR_EN_BOX",
-        "ACTOR_EN_ELF",
         "ACTOR_EN_GE1",
         "ACTOR_EN_GE2",
         "ACTOR_EN_G_SWITCH",
@@ -81843,7 +81798,6 @@
         "ACTOR_DOOR_ANA",
         "ACTOR_EN_ATTACK_NIW",
         "ACTOR_EN_BUTTE",
-        "ACTOR_EN_ELF",
         "ACTOR_EN_FISH",
         "ACTOR_EN_HEISHI2",
         "ACTOR_EN_HEISHI3",
@@ -82578,9 +82532,6 @@
         "ACTOR_SHOT_SUN"
       ],
       "missing_gameplay_candidates": [
-        "ACTOR_ARROW_FIRE",
-        "ACTOR_ARROW_ICE",
-        "ACTOR_ARROW_LIGHT",
         "ACTOR_BG_BOMBWALL",
         "ACTOR_BG_SPOT16_BOMBSTONE",
         "ACTOR_BG_SPOT16_DOUGHNUT",
@@ -82597,9 +82548,6 @@
         "ACTOR_DOOR_WARP1",
         "ACTOR_EFF_DUST",
         "ACTOR_EN_A_OBJ",
-        "ACTOR_EN_BOMBF",
-        "ACTOR_EN_BOX",
-        "ACTOR_EN_ELF",
         "ACTOR_EN_ENCOUNT2",
         "ACTOR_EN_FIRE_ROCK",
         "ACTOR_EN_GO2",
@@ -82617,7 +82565,6 @@
         "ACTOR_EN_TITE",
         "ACTOR_ITEM_ETCETERA",
         "ACTOR_OBJ_BEAN",
-        "ACTOR_OBJ_BOMBIWA",
         "ACTOR_OBJ_HAMISHI",
         "ACTOR_OBJ_MAKEKINSUTA",
         "ACTOR_SHOT_SUN"
@@ -83255,9 +83202,6 @@
         "ACTOR_OBJ_TSUBO"
       ],
       "missing_gameplay_candidates": [
-        "ACTOR_ARROW_FIRE",
-        "ACTOR_ARROW_ICE",
-        "ACTOR_ARROW_LIGHT",
         "ACTOR_BG_BOMBWALL",
         "ACTOR_BG_HIDAN_DALM",
         "ACTOR_BG_MJIN",
@@ -83270,7 +83214,6 @@
         "ACTOR_EN_A_OBJ",
         "ACTOR_EN_BB",
         "ACTOR_EN_DNS",
-        "ACTOR_EN_ELF",
         "ACTOR_EN_HEISHI2",
         "ACTOR_EN_INSECT",
         "ACTOR_EN_ISHI",
@@ -84943,7 +84886,6 @@
         "ACTOR_OBJ_TSUBO"
       ],
       "missing_gameplay_candidates": [
-        "ACTOR_BG_BREAKWALL",
         "ACTOR_BG_SPOT18_BASKET",
         "ACTOR_BG_SPOT18_FUTA",
         "ACTOR_BG_SPOT18_OBJ",
@@ -84954,10 +84896,7 @@
         "ACTOR_DOOR_ANA",
         "ACTOR_DOOR_TOKI",
         "ACTOR_EN_A_OBJ",
-        "ACTOR_EN_BOMBF",
-        "ACTOR_EN_BOX",
         "ACTOR_EN_DU",
-        "ACTOR_EN_ELF",
         "ACTOR_EN_GM",
         "ACTOR_EN_GO2",
         "ACTOR_EN_INSECT",
@@ -84968,9 +84907,7 @@
         "ACTOR_EN_SI",
         "ACTOR_EN_SW",
         "ACTOR_OBJ_BEAN",
-        "ACTOR_OBJ_BOMBIWA",
         "ACTOR_OBJ_HAMISHI",
-        "ACTOR_OBJ_HSBLOCK",
         "ACTOR_OBJ_ICE_POLY",
         "ACTOR_OBJ_KIBAKO2",
         "ACTOR_OBJ_TIMEBLOCK"
@@ -86927,7 +86864,7 @@
   "summary": {
     "profiles": 429,
     "scenes": 110,
-    "imported_profiles": 30,
+    "imported_profiles": 48,
     "ready_scenes": 0
   },
   "source_revision": "c2aff68a86400830e0264a07024214671d4161a7"

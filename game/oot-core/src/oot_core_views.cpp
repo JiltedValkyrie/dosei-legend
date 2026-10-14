@@ -12,10 +12,12 @@
 #include "oot_prelude.h"
 #include "ultra64.h"
 #include "actor.h"
+#include "array_count.h"
 #include "message.h"
 #include "message_data_fmt.h"
 #include "play_state.h"
 #include "player.h"
+#include "z_lib.h"
 #include "save.h"
 #include "effect.h"
 #include "overlays/actors/ovl_En_Ko/z_en_ko.h"
@@ -23,12 +25,15 @@
 #include "overlays/actors/ovl_En_Kanban/z_en_kanban.h"
 #include "oot_sign_visual.h"
 #include "oot_core_api.h"
+#include "oot_actor_pack.h"
 #include "overlays/actors/ovl_En_In/z_en_in.h"
 #include "overlays/actors/ovl_En_Ma1/z_en_ma1.h"
 #include "overlays/actors/ovl_En_Ma2/z_en_ma2.h"
 #include "overlays/actors/ovl_En_Ta/z_en_ta.h"
 #include "overlays/actors/ovl_En_Niw/z_en_niw.h"
 #include "overlays/actors/ovl_En_Cow/z_en_cow.h"
+#include "overlays/actors/ovl_En_Horse_Link_Child/z_en_horse_link_child.h"
+#include "overlays/actors/ovl_En_Horse_Normal/z_en_horse_normal.h"
 #include "overlays/actors/ovl_En_Skb/z_en_skb.h"
 #include "overlays/actors/ovl_En_Peehat/z_en_peehat.h"
 #include "overlays/actors/ovl_En_Po_Field/z_en_po_field.h"
@@ -38,40 +43,147 @@
 #include "overlays/actors/ovl_En_Firefly/z_en_firefly.h"
 #include "overlays/actors/ovl_En_Ny/z_en_ny.h"
 #include "assets/objects/object_ny/object_ny.h"
+#include "overlays/actors/ovl_En_Go2/z_en_go2.h"
+#include "overlays/actors/ovl_En_Du/z_en_du.h"
+#include "overlays/actors/ovl_En_Sa/z_en_sa.h"
+#include "overlays/actors/ovl_En_Owl/z_en_owl.h"
+#include "overlays/actors/ovl_En_Zl4/z_en_zl4.h"
+#include "overlays/actors/ovl_Demo_Im/z_demo_im.h"
+#include "overlays/actors/ovl_En_Viewer/z_en_viewer.h"
+#include "overlays/actors/ovl_En_Heishi2/z_en_heishi2.h"
+#include "overlays/actors/ovl_En_Heishi1/z_en_heishi1.h"
+#include "overlays/actors/ovl_En_Heishi3/z_en_heishi3.h"
+#include "overlays/actors/ovl_En_Daiku_Kakariko/z_en_daiku_kakariko.h"
+#include "overlays/actors/ovl_En_Niw_Lady/z_en_niw_lady.h"
+#include "overlays/actors/ovl_En_Dodojr/z_en_dodojr.h"
+#include "overlays/actors/ovl_En_Dodongo/z_en_dodongo.h"
+#include "overlays/actors/ovl_En_Am/z_en_am.h"
+#include "overlays/actors/ovl_En_Zf/z_en_zf.h"
+#include "overlays/actors/ovl_En_Shopnuts/z_en_shopnuts.h"
+#include "overlays/actors/ovl_En_Dns/z_en_dns.h"
+#include "overlays/actors/ovl_En_Kakasi2/z_en_kakasi2.h"
+#include "overlays/actors/ovl_En_Vm/z_en_vm.h"
+#include "overlays/actors/ovl_En_Sw/z_en_sw.h"
+#include "overlays/actors/ovl_En_Wf/z_en_wf.h"
+#include "overlays/actors/ovl_En_Dekunuts/z_en_dekunuts.h"
+#include "assets/objects/object_dekunuts/object_dekunuts.h"
+#include "assets/objects/object_st/object_st.h"
+#include "overlays/actors/ovl_En_Ossan/z_en_ossan.h"
+#include "overlays/actors/ovl_En_GirlA/z_en_girla.h"
+#include "child_route_shop_items.h"
+#include "child_common_keys.h"
+#include "overlays/actors/ovl_En_Ex_Item/z_en_ex_item.h"
+#include "overlays/actors/ovl_Item_Etcetera/z_item_etcetera.h"
+#include "overlays/actors/ovl_En_Ex_Ruppy/z_en_ex_ruppy.h"
+#include "overlays/actors/ovl_En_G_Switch/z_en_g_switch.h"
+#include "overlays/actors/ovl_En_Syateki_Man/z_en_syateki_man.h"
+#include "overlays/actors/ovl_En_Bom_Bowl_Man/z_en_bom_bowl_man.h"
+#include "overlays/actors/ovl_En_Takara_Man/z_en_takara_man.h"
+#include "assets/objects/object_skj/object_skj.h"
+#include "overlays/actors/ovl_En_Cs/z_en_cs.h"
+#include "overlays/actors/ovl_En_Mm/z_en_mm.h"
+#include "overlays/actors/ovl_En_Skj/z_en_skj.h"
+#include "overlays/actors/ovl_En_Dog/z_en_dog.h"
+#include "overlays/actors/ovl_En_Gm/z_en_gm.h"
+#include "overlays/actors/ovl_En_Ssh/z_en_ssh.h"
+#include "overlays/actors/ovl_En_Sth/z_en_sth.h"
+#include "overlays/actors/ovl_En_Tk/z_en_tk.h"
+#include "overlays/actors/ovl_En_Hy/z_en_hy.h"
+#include "overlays/actors/ovl_En_Heishi4/z_en_heishi4.h"
+#include "overlays/actors/ovl_En_Hs2/z_en_hs2.h"
+#include "overlays/actors/ovl_En_Ani/z_en_ani.h"
+#include "overlays/actors/ovl_En_Tg/z_en_tg.h"
+#include "overlays/actors/ovl_En_Toryo/z_en_toryo.h"
+#include "overlays/actors/ovl_En_Syateki_Niw/z_en_syateki_niw.h"
+#include "overlays/actors/ovl_En_Guest/z_en_guest.h"
+#include "oot_core_shop.h"
+#include "overlays/actors/ovl_Boss_Dodongo/z_boss_dodongo.h"
+#include "overlays/actors/ovl_En_Bdfire/z_en_bdfire.h"
+#include "overlays/actors/ovl_En_Fire_Rock/z_en_fire_rock.h"
+#include "overlays/actors/ovl_En_Encount2/z_en_encount2.h"
+#include "overlays/actors/ovl_Demo_Effect/z_demo_effect.h"
+#include "overlays/actors/ovl_Bg_Dy_Yoseizo/z_bg_dy_yoseizo.h"
+#include "assets/objects/object_god_lgt/object_god_lgt.h"
+#include "assets/objects/object_efc_star_field/object_efc_star_field.h"
+#include "assets/objects/object_kingdodongo/object_kingdodongo.h"
+#include "assets/objects/object_oF1d_map/object_oF1d_map.h"
+#include "assets/objects/object_sd/object_sd.h"
+#include "assets/objects/object_shopnuts/object_shopnuts.h"
 #include "z_actor_dlftbls.h"
 
 extern u32 gOotCoreFlags; /* oot_core_api.cpp, OOT_CORE_FLAG_* */
 
-/* SkelAnime of a generic NPC (oot_core_import GENERIC_NPC_SOURCES) for the
- * sprite path. New generic NPC actor: add its struct here. */
-static const SkelAnime* GenericNpc_Skel(Actor* a) {
-    switch (a->id) {
-        case ACTOR_EN_IN: return &((EnIn*)a)->skelAnime;
-        case ACTOR_EN_MA1: return &((EnMa1*)a)->skelAnime;
-        case ACTOR_EN_MA2: return &((EnMa2*)a)->skelAnime;
-        case ACTOR_EN_TA: return &((EnTa*)a)->skelAnime;
-        case ACTOR_EN_NIW: return &((EnNiw*)a)->skelAnime;
-        case ACTOR_EN_COW: return &((EnCow*)a)->skelAnime;
-        case ACTOR_EN_SKB: return &((EnSkb*)a)->skelAnime;
-        case ACTOR_EN_PEEHAT: return &((EnPeehat*)a)->skelAnime;
-        case ACTOR_EN_PO_FIELD: return &((EnPoField*)a)->skelAnime;
-        case ACTOR_EN_SB: return &((EnSb*)a)->skelAnime;
-        case ACTOR_EN_WEIYER: return &((EnWeiyer*)a)->skelAnime;
-        case ACTOR_EN_TITE: return &((EnTite*)a)->skelAnime;
-        case ACTOR_EN_FIREFLY: return &((EnFirefly*)a)->skelAnime;
-        default: return NULL;
-    }
-}
-
 extern PlayState* gOotCorePlay; /* oot_core_api.cpp */
 extern EffectSsInfo sEffectSsInfo;
+
+int OotCore_ShopView(OotCoreShopView* out) {
+    if (!out) return 0;
+    *out = {};
+    if (!gOotCorePlay) return 0;
+    for (Actor* actor = gOotCorePlay->actorCtx.actorLists[ACTORCAT_NPC].head; actor; actor = actor->next) {
+        if (actor->id != ACTOR_EN_OSSAN || !actor->update) continue;
+        const EnOssan* shop = (const EnOssan*)actor;
+        out->flags = OOT_SHOP_OWNED;
+        out->state = shop->stateFlag;
+        out->face_degrees = (s16)shop->cameraFaceAngle;
+        out->cursor_index = shop->cursorIndex;
+        out->pulse = (u8)(int)(shop->cursorAnimTween * 255);
+        if (GET_PLAYER(gOotCorePlay)->stateFlags2 & PLAYER_STATE2_29) out->flags |= OOT_SHOP_BROWSING;
+        if (shop->stateFlag == OSSAN_STATE_FACING_SHOPKEEPER ||
+            (shop->stateFlag >= OSSAN_STATE_LOOK_SHELF_LEFT && shop->stateFlag <= OSSAN_STATE_LOOK_SHOPKEEPER))
+            out->flags |= OOT_SHOP_CONTROL;
+        if (shop->stickLeftPrompt.isEnabled) out->flags |= OOT_SHOP_LEFT;
+        if (shop->stickRightPrompt.isEnabled) out->flags |= OOT_SHOP_RIGHT;
+        if (shop->drawCursor && shop->cursorIndex < 8 && shop->shelfSlots[shop->cursorIndex]) {
+            const Actor* stock = &shop->shelfSlots[shop->cursorIndex]->actor;
+            out->flags |= OOT_SHOP_CURSOR;
+            out->cursor[0] = (int)stock->world.pos.x;
+            out->cursor[1] = (int)(stock->world.pos.y + stock->shape.yOffset * stock->scale.y) + 5;
+            out->cursor[2] = (int)stock->world.pos.z;
+        }
+        return 1;
+    }
+    return 0;
+}
+
+#include "child_route_effect_views.inc"
 
 int OotCore_EffectView(OotCoreEffectView* out, unsigned int capacity, unsigned int* omitted) {
     unsigned int count = 0, dropped = 0;
     if (!out) capacity = 0;
     if (capacity > OOT_CORE_EFFECT_VIEWS_MAX) capacity = OOT_CORE_EFFECT_VIEWS_MAX;
+    /* A killed boss has no draw view. The source clear flag still needs to
+     * restore the cooled arena when loading a completed boss room. */
+    if (gOotCorePlay && gOotCorePlay->sceneId == SCENE_DODONGOS_CAVERN_BOSS) {
+        unsigned phase = Flags_GetClear(gOotCorePlay, 1) ? 256 : 0;
+        for (Actor* actor = gOotCorePlay->actorCtx.actorLists[ACTORCAT_BOSS].head;
+             actor; actor = actor->next)
+            if (actor->id == ACTOR_BOSS_DODONGO && actor->update)
+                phase = ((BossDodongo*)actor)->saturnLavaPhase;
+        if (count == capacity) ++dropped;
+        else {
+            OotCoreEffectView* row = &out[count++];
+            row->x = row->y = row->z = 0;
+            for (unsigned j = 0; j < 13; ++j) row->regs[j] = 0;
+            row->regs[0] = phase; row->life = 1;
+            row->type = OOT_CORE_EFFECT_DODONGO_LAVA;
+            row->priority = 0; row->slot = 0xffff;
+        }
+    }
     /* Prioritize damaging actor-owned flames over decorative particles. */
     if (gOotCorePlay) {
+        for (Actor* actor = gOotCorePlay->actorCtx.actorLists[ACTORCAT_ENEMY].head; actor; actor = actor->next) {
+            if (actor->id != ACTOR_EN_VM || !actor->update) continue;
+            const EnVm* beamos = (const EnVm*)actor;
+            if (beamos->unk_260 < 3 || beamos->beamScale.z <= 0) continue;
+            if (count == capacity) { ++dropped; continue; }
+            OotCoreEffectView* row = &out[count++];
+            *row = {};
+            row->x = (int)beamos->beamPos1.x; row->y = (int)beamos->beamPos1.y; row->z = (int)beamos->beamPos1.z;
+            row->regs[0] = (int)beamos->beamPos3.x; row->regs[1] = (int)beamos->beamPos3.y;
+            row->regs[2] = (int)beamos->beamPos3.z; row->regs[3] = 2;
+            row->life = 1; row->type = OOT_CORE_EFFECT_BEAMOS_BEAM; row->slot = 0xffff;
+        }
         for (unsigned cat = 0; cat < ACTORCAT_MAX; ++cat)
         for (Actor* actor = gOotCorePlay->actorCtx.actorLists[cat].head; actor; actor = actor->next) {
             if (actor->id != ACTOR_EN_PO_FIELD || !actor->update) continue;
@@ -84,6 +196,46 @@ int OotCore_EffectView(OotCoreEffectView* out, unsigned int capacity, unsigned i
             for (unsigned j = 0; j < 13; ++j) row->regs[j] = 0;
             row->life = poe->flameTimer; row->type = OOT_CORE_EFFECT_POE_FLAME;
             row->priority = 0; row->slot = 0xffff;
+        }
+    }
+    if (gOotCorePlay && gOotCorePlay->sceneId == SCENE_DODONGOS_CAVERN_BOSS) {
+        for (Actor* actor = gOotCorePlay->actorCtx.actorLists[ACTORCAT_BOSS].head;
+             actor; actor = actor->next) {
+            if (actor->id != ACTOR_BOSS_DODONGO || !actor->update) continue;
+            const BossDodongo* boss = (const BossDodongo*)actor;
+            for (unsigned i = 0; i < BOSS_DODONGO_EFFECT_COUNT; ++i) {
+                const BossDodongoEffect* effect = &boss->effects[i];
+                if (effect->unk_24 != 1 || effect->alpha <= 0) continue;
+                if (count == capacity) { ++dropped; continue; }
+                OotCoreEffectView* row = &out[count++];
+                row->x = (int)effect->unk_00.x; row->y = (int)effect->unk_00.y;
+                row->z = (int)effect->unk_00.z;
+                for (unsigned j = 0; j < 13; ++j) row->regs[j] = 0;
+                row->regs[0] = (int)(effect->unk_2C * 500);
+                row->regs[1] = effect->color.r; row->regs[2] = effect->color.g;
+                row->regs[3] = effect->color.b; row->regs[4] = effect->alpha;
+                row->life = 1; row->type = OOT_CORE_EFFECT_DODONGO_EMBER;
+                row->priority = 1; row->slot = i;
+            }
+        }
+    }
+    if (gOotCorePlay) {
+        for (unsigned cat = 0; cat < ACTORCAT_MAX; ++cat)
+        for (Actor* actor = gOotCorePlay->actorCtx.actorLists[cat].head; actor; actor = actor->next) {
+            if (actor->id != ACTOR_EN_ENCOUNT2 || !actor->update) continue;
+            const EnEncount2* weather = (const EnEncount2*)actor;
+            for (unsigned i = 0; i < EN_ENCOUNT2_EFFECT_COUNT; ++i) {
+                const EnEncount2Effect* effect = &weather->effects[i];
+                if (!effect->isAlive) continue;
+                if (count == capacity) { ++dropped; continue; }
+                OotCoreEffectView* row = &out[count++];
+                *row = {};
+                row->x = (int)effect->pos.x; row->y = (int)effect->pos.y; row->z = (int)effect->pos.z;
+                row->regs[0] = (int)(effect->scale * 1000);
+                row->regs[1] = 255; row->regs[2] = 155; row->regs[3] = 55; row->regs[4] = 255;
+                row->life = 1; row->type = OOT_CORE_EFFECT_MOUNTAIN_FRAGMENT;
+                row->priority = 2; row->slot = i;
+            }
         }
     }
     if (gOotCorePlay && sEffectSsInfo.table) {
@@ -100,6 +252,7 @@ int OotCore_EffectView(OotCoreEffectView* out, unsigned int capacity, unsigned i
             row->priority = effect->priority; row->slot = i;
         }
     }
+    count = ChildRoute_EffectViews(out, capacity, count, &dropped);
     if (omitted) *omitted = dropped;
     return count;
 }
@@ -278,6 +431,23 @@ int OotCore_NpcView(const OotCoreNpcView** out) {
         return 0;
     }
     s32 cat;
+    /* Original Player_Draw/GetItemImpl gates and hand reference. The full
+     * scene reward atlas is already resident; no N64 get-object DMA or
+     * runtime item mesh is needed during the chest/get-item CD cue. */
+    Player* player = GET_PLAYER(play);
+    if (player && player->actor.draw && !(player->stateFlags2 & PLAYER_STATE2_29) && player->unk_862 > 0) {
+        extern Vec3f sGetItemRefPos;
+        OotCoreNpcView* v = &sNpcView[n++];
+        *v = {};
+        v->id = ACTOR_PLAYER; v->object = 0xfff;
+        v->anim = player->unk_862;
+        v->x = (int)(sGetItemRefPos.x + FXL(3.3f) * Math_SinS(player->actor.shape.rot.y));
+        v->y = (int)sGetItemRefPos.y + (player->exchangeItemId != EXCH_ITEM_NONE ? 6 : 14);
+        v->z = (int)(sGetItemRefPos.z + FXL(3.3f) * Math_CosS(player->actor.shape.rot.y));
+        v->yaw = play->gameplayFrames * 1000;
+        v->alpha = 255; v->flags = OOT_CORE_VIEW_DRAWN;
+        v->scale_x = v->scale_y = 256; /* offline source scale 0.2 */
+    }
     for (cat = 0; cat < ACTORCAT_MAX; cat++)
     for (actor = play->actorCtx.actorLists[cat].head; actor != NULL && n < NPC_VIEW_MAX;
          actor = actor->next) {
@@ -290,6 +460,10 @@ int OotCore_NpcView(const OotCoreNpcView** out) {
         if (actor->update == NULL) {
             continue;
         }
+        if (gOotCoreFlags & OOT_CORE_FLAG_NPC_SPRITES) {
+            int rows=OotCore_PackNpcView(play,actor,v,NPC_VIEW_MAX-n,&gSaveContext);
+            if (rows) { if (rows>0) n+=rows; continue; }
+        }
         if (actor->id == ACTOR_EN_KO) {
             EnKo* ko = (EnKo*)actor;
             info = &ko->interactInfo;
@@ -300,93 +474,6 @@ int OotCore_NpcView(const OotCoreNpcView** out) {
             info = &md->interactInfo;
             skel = &md->skelAnime;
             alpha = md->alpha;
-        } else if ((gOotCoreFlags & OOT_CORE_FLAG_NPC_SPRITES) && actor->id == ACTOR_EN_NY) {
-            /* Skeleton-less Spikes: two object DLs key the baked sheet.
-             * Variant follows EnNy_Draw: rock, metal, metal + spikes out. */
-            const EnNy* ny = (const EnNy*)actor;
-            const ActorProfile* profile = gActorOverlayTable[ACTOR_EN_NY].profile;
-            unsigned variant = ny->unk_1E0 > 0.25f ? 2 : ny->unk_1D8 > ny->unk_1D4 ? 1 : 0;
-            v->tint = 0;
-            v->mats = NULL;
-            v->mat_count = 0;
-            v->skin = 0;
-            v->id = actor->id;
-            v->params = actor->params;
-            v->x = (s32)actor->world.pos.x;
-            v->y = (s32)actor->world.pos.y;
-            v->z = (s32)actor->world.pos.z;
-            v->yaw = (u16)actor->shape.rot.y;
-            v->head_x = v->head_y = v->torso_x = v->torso_y = 0;
-            v->frame = 0;
-            v->alpha = 255;
-            /* Death swaps Draw to the rock-fragment effect: no body sprite. */
-            v->flags = (actor->draw != NULL && profile && actor->draw == profile->draw) ? OOT_CORE_VIEW_DRAWN : 0;
-            v->object = (u16)play->objectCtx.slots[actor->objectSlot].id;
-            v->limbs = 0;
-            v->anim = (u32)(uintptr_t)gEnNySpikeDL | (variant << 20);
-            v->skeleton = (u32)(uintptr_t)gEnNyRockBodyDL;
-            v->scale_x = (u16)(int)(actor->scale.x * 25600);
-            v->scale_y = (u16)(int)(actor->scale.y * 25600);
-            if (actor->colorFilterTimer)
-                v->tint = (actor->colorFilterParams & 0x4000) ? 8 : 24;
-            n++;
-            continue;
-        } else if ((gOotCoreFlags & OOT_CORE_FLAG_NPC_SPRITES) && (skel = GenericNpc_Skel(actor)) != NULL) {
-            /* Generic NPC as a host sprite: object + animation + frame. */
-            v->scale_x = v->scale_y = 256;
-            v->tint = 0;
-            v->mats = NULL;
-            v->mat_count = 0;
-            v->skin = 0;
-            v->id = actor->id;
-            v->params = actor->params;
-            v->x = (s32)actor->world.pos.x;
-            v->y = (s32)actor->world.pos.y;
-            v->z = (s32)actor->world.pos.z;
-            v->yaw = (u16)actor->shape.rot.y;
-            v->head_x = v->head_y = v->torso_x = v->torso_y = 0;
-            v->frame = (u16)(s32)skel->curFrame;
-            v->alpha = 255;
-            v->flags = (actor->draw != NULL) ? OOT_CORE_VIEW_DRAWN : 0;
-            v->object = (u16)play->objectCtx.slots[actor->objectSlot].id;
-            v->limbs = skel->limbCount;
-            v->anim = (u32)(uintptr_t)skel->animation;
-            v->skeleton = (u32)(uintptr_t)skel->skeleton;
-            if (actor->id == ACTOR_EN_SKB || actor->id == ACTOR_EN_PEEHAT || actor->id == ACTOR_EN_PO_FIELD ||
-                actor->id == ACTOR_EN_SB || actor->id == ACTOR_EN_WEIYER ||
-                actor->id == ACTOR_EN_TITE || actor->id == ACTOR_EN_FIREFLY) {
-                v->scale_x = (u16)(int)(actor->scale.x * 25600);
-                v->scale_y = (u16)(int)(actor->scale.y * 25600);
-                v->y += (int)(actor->shape.yOffset * actor->scale.y);
-                if (actor->colorFilterTimer)
-                    v->tint = (actor->colorFilterParams & 0x4000) ? 8 : 24;
-                if (actor->id == ACTOR_EN_WEIYER) v->alpha = actor->shape.shadowAlpha;
-                /* Baked sheets: Tektite 1 = blue textures; Keese 0 = normal
-                 * body with eyes (ice Keese too), 1 = fire body without eyes. */
-                if (actor->id == ACTOR_EN_TITE && actor->params == TEKTITE_BLUE)
-                    v->anim |= 1u << 20;
-                if (actor->id == ACTOR_EN_FIREFLY) {
-                    if (((EnFirefly*)actor)->bodyElementalType != 0) /* source enum NORMAL */
-                        v->anim |= 1u << 20;
-                    /* Source DrawXlu drops every limb unless the Lens is on. */
-                    if ((actor->flags & ACTOR_FLAG_REACT_TO_LENS) && !play->actorCtx.lensActive)
-                        v->flags = 0;
-                }
-                if (actor->id == ACTOR_EN_SKB && (((EnSkb*)actor)->breakFlags & 2))
-                    v->anim |= 1u << 20; /* source headless state */
-                if (actor->id == ACTOR_EN_PO_FIELD) {
-                    EnPoField* poe = (EnPoField*)actor;
-                    unsigned variant = actor->params == 1 ? 1 : 0;
-                    v->alpha = poe->lightColor.a;
-                    if (actor->category == ACTORCAT_MISC) {
-                        variant = actor->gravity < 0 ? 2 : actor->params == 1 ? 4 : 3;
-                        if (variant == 2) v->alpha = 255;
-                    }
-                    v->anim |= variant << 20;
-                }
-            }
-            n++;
-            continue;
         } else {
             /* Generic skinned NPC: drawn only from captured matrices. */
             unsigned short model;

@@ -20,7 +20,8 @@
 #include "cdda_tracks.h"
 
 /* Driver API for music_songs.c. Gameplay uses music_play(NA_BGM_...), not tracks.
- * Any audio track on the disc; out-of-range requests are ignored. */
+ * Any audio track on the disc; out-of-range requests are ignored. A new
+ * cue waits for the current one to finish; duplicate requests never restart. */
 void    cdda_play(int track);
 /* Main thread: wait for pending music loads, then monitor actual CD status. */
 void    cdda_service(void);

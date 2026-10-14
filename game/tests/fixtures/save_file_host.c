@@ -150,6 +150,9 @@ int sf_world_matches(void)
         save_state.source_scene==99 && save_state.source_entrance==0x345;
 }
 
+void sf_set_memory_round(unsigned round) { save_state.ocarina_game_round=round; }
+unsigned sf_memory_round(void) { return save_state.ocarina_game_round; }
+
 int sf_check_bottle_rewards(void)
 {
     unsigned i;

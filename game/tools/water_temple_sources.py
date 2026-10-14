@@ -71,6 +71,8 @@ def adapt(rel, text):
         text = replace_body(text, 'EnWeiyer_Draw', '    /* Baked source clips; cylinder stays in Update. */')
         return replace_body(text, 'EnWeiyer_OverrideLimbDraw', '    return false;')
     if rel.endswith('z_en_firefly.c'):
+        # Source nearest-torch sentinel exceeds every route scene distance.
+        text = text.replace('35000.0f', '32767.0f')
         # Keep source elemental effects and freeze anchors; replace only the
         # limb matrix reads with offline point samples. Three semantic anchors
         # are updated explicitly, never a runtime skeleton/pose traversal.

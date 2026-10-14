@@ -7,6 +7,7 @@ import xml.etree.ElementTree as ET
 from build_dungeon_enemies import model
 import build_link_model as link
 import build_actor_model as actor
+from cutscene_animation import quantize_track
 
 CLIPS = ('Stand', 'Hang', 'Walk', 'PrepareEggs', 'Attack', 'RestAfterAttack',
          'RecoverAfterAttack', 'Crash', 'Land', 'Climb', 'Damage', 'Death',
@@ -30,6 +31,10 @@ def build(oot, rom_dir, out):
     offsets = {'gGohmaSkel':skeleton, 'gGohmaWalkCrouchedAnim':skeleton+8+int(walk.attrib['Offset'][2:],16)}
     ranges = model(oot,rom_dir,out,'GOHMA','object_goma',.01,
                    tuple('gGohma%sAnim'%c for c in CLIPS),offsets_extra=offsets)
+    # 1.36 MB of s16 poses needed one contiguous heap block. 8-bit per-pose
+    # ranges keep every source pose (error < 1 world unit) in 32-pose chunks.
+    if quantize_track(out/'GOHMA.ANM') >= 1.0:
+        raise ValueError('Gohma CVQ1 error exceeds one world unit')
     # Pose-derived source spheres: eye and limb hits must follow the artwork,
     # including ceiling rotation. No guessed large body cylinder.
     source_dir=oot/'src/overlays/actors/ovl_Boss_Goma'

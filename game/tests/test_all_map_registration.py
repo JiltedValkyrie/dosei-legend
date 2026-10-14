@@ -20,6 +20,15 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 GEN = ROOT / 'build/generated'
 CD = ROOT / 'build/cd'
+# Core-collision builds (OOT_CORE=1) ship <scene>.OOC and park the C .COL
+# bundles here; rollback builds (CORE_COLLISION=0) still stage them.
+RETIRED = ROOT / 'build/disc-retired'
+
+
+def col_blob(index):
+    name = asset_names.scene_asset(index, 'COL')
+    path = CD / name if (CD / name).exists() else RETIRED / name
+    return path.read_bytes()
 OOT = Path(os.environ.get('DOSEI_OOT') or 'D:/Workspace-Claude/game-decomps/n64/oot')
 sys.path[:0] = [str(ROOT / 'tools'), str(ROOT.parent / 'shared/tools')]
 import asset_names
@@ -111,7 +120,7 @@ class AllRetailMaps(unittest.TestCase):
                 self.assertEqual(record[20], row['spawns'])
                 self.assertEqual(record[21], row['save_scene'])
                 self.assertEqual(record[24], self.source_by_prefix[entry['prefix']]['id'])
-        capacity = int(re.search(r'#define JO_FS_MAX_FILES (\d+)',
+        capacity = int(re.search(r'#define DOSEI_FS_MAX_FILES (\d+)',
                                  (ROOT / 'src/fs_capacity.h').read_text())[1])
         check_disc_directory.check(CD, capacity)
 
@@ -184,7 +193,7 @@ class AllRetailMaps(unittest.TestCase):
             index_kib = int(re.search(r'SCENE_COLLISION_INDEX_BYTES\s+\((\d+) \* 1024\)', source_text)[1])
             for index, row in enumerate(self.rows):
                 with self.subTest(prefix=row['prefix']):
-                    blob = (CD / asset_names.scene_asset(index, 'COL')).read_bytes()
+                    blob = col_blob(index)
                     self.assertEqual(blob[:4], b'KBG2')
                     count, surfaces, water, cameras, vectors, reserved = struct.unpack_from('>6H', blob, 4)
                     if row['prefix'] != 'spot00':
@@ -225,14 +234,21 @@ class AllRetailMaps(unittest.TestCase):
         scene_header = (ROOT / 'oot-core/include/oot_scene_blob.h').read_text()
         room_limit = int(re.search(r'#define OOT_SCENE_MAX_ROOMS (\d+)', scene_header)[1])
         loader = (ROOT / 'oot-core/src/bridge_actor_pack.cpp').read_text()
-        object_limit = int(re.search(r'blob->num_objects > (\d+)', loader)[1])
-        self.assertEqual(object_limit, int(re.search(r'loaded_objects\[(\d+)\]', loader)[1]))
+        def limit(token):   # a literal or an oot_scene_blob.h macro
+            return int(token) if token.isdigit() else int(re.search(r'#define ' + token + r' (\d+)', scene_header)[1])
+        object_limit = limit(re.search(r'blob->num_objects > (\w+)', loader)[1])
+        self.assertEqual(object_limit, limit(re.search(r'loaded_objects\[(\w+)\]', loader)[1]))
         align16 = lambda n: (n + 15) & ~15
         for index, row in enumerate(self.rows):
             with self.subTest(prefix=row['prefix']):
                 data = (CD / asset_names.scene_asset(index, 'OOC')).read_bytes()
                 self.assertGreaterEqual(len(data), 32)
                 col, rooms, layers, lp, objects, nobj, paths, npaths = struct.unpack_from('>8I', data)
+                # Format 5: per-layer object masks (OotScene_LayerObjects).
+                fmt, = struct.unpack_from('>I', data, 32)
+                self.assertEqual(fmt, 0x4F4F4305)
+                mask_ptr, mask_count = struct.unpack_from('>2I', data, 60)
+                self.assertGreaterEqual(mask_count, 4)
 
                 def span(pointer, count, stride, alignment):
                     if not pointer:
@@ -251,6 +267,12 @@ class AllRetailMaps(unittest.TestCase):
                 self.assertLessEqual(layers, len(data) // 24)
                 self.assertLessEqual(nobj, object_limit)
                 object_at = span(objects, nobj, 2, 2)
+                masks = struct.unpack_from('>%dI' % mask_count, data, span(mask_ptr, mask_count, 4, 4))
+                union = 0
+                for m in masks:
+                    self.assertEqual(m >> nobj, 0)
+                    union |= m
+                self.assertEqual(union, (1 << nobj) - 1, 'every object is in some layer')
                 layer_at = span(lp, rooms * layers, 24, 4)
                 path_at = span(paths, npaths, 24, 4)
                 for i in range(rooms * layers):
@@ -272,8 +294,12 @@ class AllRetailMaps(unittest.TestCase):
                 poly_ptr, surface_ptr, camera_ptr = struct.unpack_from('>3I', data, co + 24)
                 waters = struct.unpack_from('>H', data, co + 36)[0]
                 water_ptr = struct.unpack_from('>I', data, co + 40)[0]
-                staged_col = (CD / asset_names.scene_asset(index, 'COL')).read_bytes()
-                self.assertEqual(polys, struct.unpack_from('>H', staged_col, 4)[0])
+                # The core's own collision: every source polygon (Field: the
+                # approved retopology, paired with its C bundle).
+                if row['prefix'] == 'spot00':
+                    self.assertEqual(polys, struct.unpack_from('>H', col_blob(index), 4)[0])
+                else:
+                    self.assertEqual(polys, row['triangles'])
                 span(vertex_ptr, vertices, 6, 2)
                 span(poly_ptr, polys, 16, 2)
                 span(water_ptr, waters, 16, 2)

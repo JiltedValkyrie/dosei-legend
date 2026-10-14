@@ -141,6 +141,19 @@ bool action_audio_set_opening(bool opening)
 #define ITEM_LOOP_HOLD 10
 static volatile unsigned char item_loop_frames;
 static unsigned short item_loop_id;
+static unsigned char source_pitch_ratio = 64;
+
+static unsigned source_pitch(unsigned pitch)
+{
+    int octave=(pitch>>11)&15;
+    unsigned fraction=((1024+(pitch&1023))*source_pitch_ratio)>>6;
+    if(octave>=8)octave-=16;
+    while(fraction<1024 && octave>-8){fraction<<=1;--octave;}
+    while(fraction>=2048 && octave<7){fraction>>=1;++octave;}
+    if(fraction<1024)fraction=1024;
+    if(fraction>2047)fraction=2047;
+    return ((octave&15)<<11)|(fraction-1024);
+}
 
 static void play_pcm(unsigned address, unsigned length, unsigned slot,
                      unsigned pitch, unsigned level, bool loop)
@@ -157,7 +170,7 @@ static void play_pcm(unsigned address, unsigned length, unsigned slot,
     SLOT(slot,8) = 31;
     SLOT(slot,10) = 31;
     SLOT(slot,14) = 0;
-    SLOT(slot,16) = pitch;
+    SLOT(slot,16) = source_pitch(pitch);
     SLOT(slot,18) = 0;
     SLOT(slot,20) = 0;
     SLOT(slot,22) = 7 << 13;
@@ -451,6 +464,7 @@ void action_audio_decomp_sfx(unsigned int sfx_id)
             bool loop = !(sfx_id & 0x800u);
             if (loop && item_loop_frames && item_loop_id == s->id) {
                 item_loop_frames = ITEM_LOOP_HOLD;
+                SLOT(26,16)=source_pitch(s->octave<<11);
                 return;
             }
             play_pcm(SFX_AREA_BASE + s->offset, s->length, 26, s->octave << 11, 12, loop);
@@ -468,10 +482,18 @@ void action_audio_decomp_sfx(unsigned int sfx_id)
                             (unsigned int)action_pcm_octave[entry->slot] << 11, 12, true);
                 item_loop_id = entry->slot;
             }
+            SLOT(entry->channel,16)=source_pitch((unsigned)action_pcm_octave[entry->slot]<<11);
             item_loop_frames = ITEM_LOOP_HOLD;
         }
         else if (entry->kind == 1) play_area(entry->slot, entry->channel);
         else play(entry->slot, entry->channel);
         return;
     }
+}
+
+void action_audio_decomp_sfx_pitch(unsigned int sfx_id, unsigned int ratio_q6)
+{
+    source_pitch_ratio=ratio_q6<1?1:ratio_q6>255?255:ratio_q6;
+    action_audio_decomp_sfx(sfx_id);
+    source_pitch_ratio=64;
 }

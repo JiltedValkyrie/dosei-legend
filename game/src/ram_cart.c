@@ -7,6 +7,7 @@
 #include <jo/jo.h>
 #include "ram_cart.h"
 #include "ram_low.h"
+#include "fs_range.h"
 
 /* Compile-time layout guard: every fixed carve in address order, no
 ** overlap, all inside RAM_CART_FIXED_BYTES. Add new carves here. */
@@ -36,12 +37,15 @@ typedef char carve_wall_skull_before_deku_baba[CARVE_END(RAM_CART_WALL_SKULL) <=
 typedef char carve_deku_baba_before_titlepth[CARVE_END(RAM_CART_DEKU_BABA) <= RAM_CART_TITLEPTH_OFFSET ? 1 : -1];
 typedef char carve_baba_before_hintnuts[CARVE_END(RAM_CART_DEKU_BABA) <= RAM_CART_HINTNUTS_OFFSET ? 1 : -1];
 typedef char carve_hintnuts_before_titlepth[CARVE_END(RAM_CART_HINTNUTS) <= RAM_CART_TITLEPTH_OFFSET ? 1 : -1];
-typedef char carve_dialogue_before_musictrg[CARVE_END(RAM_CART_DIALOGUE) <= RAM_CART_MUSICTRG_OFFSET ? 1 : -1];
+typedef char carve_dialogue_before_fskeys[CARVE_END(RAM_CART_DIALOGUE) <= RAM_CART_FSKEYS_OFFSET ? 1 : -1];
 typedef char carve_titlepth_before_dialogue[CARVE_END(RAM_CART_TITLEPTH) <= RAM_CART_DIALOGUE_OFFSET ? 1 : -1];
-typedef char carve_musictrg_before_linkmesh[CARVE_END(RAM_CART_MUSICTRG) <= RAM_CART_LINKMESH_OFFSET ? 1 : -1];
+typedef char carve_fskeys_before_linkmesh[CARVE_END(RAM_CART_FSKEYS) <= RAM_CART_LINKMESH_OFFSET ? 1 : -1];
 typedef char carve_linkmesh_inside[CARVE_END(RAM_CART_LINKMESH) <= RAM_CART_FIXED_BYTES ? 1 : -1];
+typedef char carve_linkmesh_before_hostcold[CARVE_END(RAM_CART_LINKMESH) <= RAM_CART_HOSTCOLD_OFFSET ? 1 : -1];
+typedef char carve_hostcold_inside[CARVE_END(RAM_CART_HOSTCOLD) <= RAM_CART_FIXED_BYTES ? 1 : -1];
+typedef char carve_hostcold_at_link_address[RAM_CART_FIXED_ADDRESS + RAM_CART_HOSTCOLD_OFFSET == (HOST_CART_ADDR | 0x20000000u) ? 1 : -1];
 #ifdef DOSEI_OOT_CORE
-typedef char carve_linkmesh_before_msgdata[CARVE_END(RAM_CART_LINKMESH) <= RAM_CART_MSGDATA_OFFSET ? 1 : -1];
+typedef char carve_hostcold_before_msgdata[CARVE_END(RAM_CART_HOSTCOLD) <= RAM_CART_MSGDATA_OFFSET ? 1 : -1];
 typedef char carve_msgdata_before_scenecol[CARVE_END(RAM_CART_MSGDATA) <= RAM_CART_SCENECOL_OFFSET ? 1 : -1];
 typedef char carve_scenecol_before_ootcore[CARVE_END(RAM_CART_SCENECOL) <= RAM_CART_OOTCORE_OFFSET ? 1 : -1];
 typedef char carve_scenecol_at_link_address[RAM_CART_FIXED_ADDRESS + RAM_CART_SCENECOL_OFFSET == (OOT_SCENECOL_ADDR | 0x20000000u) ? 1 : -1];
@@ -50,6 +54,25 @@ typedef char carve_ootcore_inside[CARVE_END(RAM_CART_OOTCORE) <= RAM_CART_FIXED_
 ** carve; the carve's cache-through address must be that plus 0x20000000. */
 typedef char carve_ootcore_at_link_address[RAM_CART_FIXED_ADDRESS + RAM_CART_OOTCORE_OFFSET == (OOT_CORE_LOAD_ADDR | 0x20000000u) ? 1 : -1];
 #endif
+
+/* Linker script (.cart): cold const tables at the HOSTCOLD cached alias. */
+extern const unsigned char cart_start[], cart_end[];
+
+bool            ram_cart_load_host_cold(void)
+{
+    unsigned int bytes = (unsigned int)(cart_end - cart_start);
+    void        *dest = (void *)(RAM_CART_FIXED_ADDRESS + RAM_CART_HOSTCOLD_OFFSET);
+
+    if (!bytes)
+        return (true);
+    if (!ram_cart_present() || bytes > RAM_CART_HOSTCOLD_BYTES ||
+        (unsigned int)cart_start != ((unsigned int)dest & ~0x20000000u) ||
+        fs_file_size("HOSTCOLD.BIN") != (int)bytes ||
+        !fs_read_sectors("HOSTCOLD.BIN", 0, dest, bytes))
+        return (false);
+    slCashPurge();   /* the cached alias must not keep pre-load lines */
+    return (true);
+}
 
 /* One-shot guard: jo_add_memory_zone() has no way to retract a zone, so adding
 ** the same bank twice would hand out the same addresses from two free lists. */

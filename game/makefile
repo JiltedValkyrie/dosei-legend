@@ -128,6 +128,14 @@ endif
 
 include $(COMPILER_DIR)/COMMON/jo_engine_makefile
 LDFILE = sgl.linker
+# Cold host tables (host_cold.h, linker section .cart) at the cart HOSTCOLD
+# carve's cached alias (ram_cart.h); objcopied to HOSTCOLD.BIN, never 0.BIN.
+ifeq ($(OOT_CORE),1)
+HOST_CART_ADDR = 0x026D2C00
+else
+HOST_CART_ADDR = 0x027FB000
+endif
+LDFLAGS += -Xlinker --defsym -Xlinker HOST_CART_ADDR=$(HOST_CART_ADDR)
 
 # Link our patched work area instead of the SDK's, so MaxPolygons covers the
 # scene's 2060-polygon list. The shared SDK object is only ever read.
@@ -136,6 +144,9 @@ SYSOBJS = build/generated/sglarea.o
 # The converter writes kokiri_scene.h into generated/.
 _CCFLAGS += -Ibuild/generated -Isrc -Ilevels/kokiri/assets/audio -Iassets/audio/cutscenes -I../shared/assets/audio/title -I../shared/lib/camera -I../shared/lib/collision -I../shared/lib/music
 _CCFLAGS += -include src/video_mode.h
+_CCFLAGS += -DHOST_CART_ADDR=$(HOST_CART_ADDR)u
+# GFS keeps an ID-only directory; names resolve through fs_low.c's exact keys.
+_CCFLAGS += '-DGFS_NameToId(name)=dosei_gfs_name_to_id(name)'
 # Link's per-frame clip tables come from LINKANIM.BIN (cart), not .rodata.
 _CCFLAGS += -DLINK_FRAMES_FROM_DISC
 ifeq ($(CLEAN_TEST),1)
@@ -250,8 +261,8 @@ OOT_CORE_LOW_BSS_ADDR = 0x0021D800
 OOT_CORE_LOW_BSS_BYTES = 0xA000
 # Scene collision blobs (RAM_CART_SCENECOL carve, cached alias). One per scene in
 # tools/oot_core_import.py SCENE_COLLISION; data only, nothing executes there.
-OOT_SCENECOL_ADDR = 0x02730000
-OOT_SCENECOL_MAX_BYTES = 0x30000
+OOT_SCENECOL_ADDR = 0x02710000
+OOT_SCENECOL_MAX_BYTES = 0x50000
 OOT_CORE_CXXFLAGS = -x c++ -std=gnu++17 -fno-exceptions -fno-rtti -fpermissive -funsigned-char -w \
 	-DOOT_CORE_LOAD_ADDR=$(OOT_CORE_LOAD_ADDR)u -DOOT_SCENECOL_ADDR=$(OOT_SCENECOL_ADDR)u \
 	-DOOT_SCENECOL_MAX_BYTES=$(OOT_SCENECOL_MAX_BYTES)u \
@@ -283,25 +294,35 @@ OOT_CORE_SRCS = $(OOT_CORE_DECOMP_SRCS) \
 	oot-core/src/oot_core_api.cpp oot-core/src/bridge_tables.cpp oot-core/src/bridge_libc.cpp \
 	oot-core/src/bridge_play.cpp oot-core/src/bridge_assets.cpp $(OOT_PLAYER_OWNER_SRCS) \
 	oot-core/src/bridge_message.cpp oot-core/src/oot_core_views.cpp \
+	oot-core/src/bridge_cutscene.cpp oot-core/src/bridge_cutscene_camera.cpp \
+	oot-core/src/bridge_child_route.cpp oot-core/src/bridge_ranch.cpp oot-core/src/bridge_route_audio.cpp \
 	oot-core/src/oot_core_draw.cpp build/oot-core/keep_ph.cpp oot-core/src/bridge_npc.cpp \
 	oot-core/src/bridge_items.cpp oot-core/src/bridge_actor_pack.cpp oot-core/src/oot_core_sprite.cpp oot-core/src/oot_core_bg.cpp
 OOT_CORE_OBJS = $(patsubst %.cpp,$(OOT_CORE_OBJDIR)/%.o,$(notdir $(OOT_CORE_SRCS)))
 OOT_FIELD_SRCS = $(OOT_FIELD_ENEMY_SRCS) oot-core/src/field_enemy_sprite.cpp oot-core/src/field_enemy_pack.cpp
 OOT_FIELD_OBJS = $(patsubst %.cpp,$(OOT_CORE_OBJDIR)/%.o,$(notdir $(OOT_FIELD_SRCS)))
+OOT_BOSS_EFFECT_ALL_SRCS = $(OOT_BOSS_EFFECT_SRCS) $(OOT_ROUTE_EFFECT_SRCS)
+OOT_BOSS_EFFECT_OBJS = $(patsubst %.cpp,$(OOT_CORE_OBJDIR)/%.o,$(notdir $(OOT_BOSS_EFFECT_ALL_SRCS)))
+OOT_BOSS_EFFECT_OBJS += $(filter %/z_eff_ss_dust.o %/z_eff_ss_hahen.o %/z_eff_ss_en_fire.o %/z_eff_ss_dead_db.o %/z_eff_ss_dead_sound.o %/z_eff_ss_hitmark.o,$(OOT_FIELD_OBJS))
 # Scene-owned NPC/prop actors (tools/scene_pack_actors.py): compiled once,
 # linked into each scene's OAP that can spawn them, never into the core.
 OOT_PACK_ACTOR_OBJS = $(patsubst %.cpp,$(OOT_CORE_OBJDIR)/%.o,$(notdir $(OOT_PACK_ACTOR_SRCS)))
+OOT_PACK_PROFILE_OBJS = $(patsubst %,$(OOT_CORE_OBJDIR)/%_profiles.o,$(OOT_SCENE_PACKS))
+OOT_PACK_HELPER_OBJS = $(OOT_CORE_OBJDIR)/dodongo_enemy_sprite.o
+OOT_RANCH_HELPER_OBJS = $(OOT_CORE_OBJDIR)/ranch_horse_sprite.o
+OOT_WATER_HELPER_OBJS = $(OOT_CORE_OBJDIR)/water_enemy_sprite.o $(OOT_CORE_OBJDIR)/field_enemy_sprite.o
 _CCFLAGS += -DDOSEI_OOT_CORE -DOOT_CORE_LOAD_ADDR=$(OOT_CORE_LOAD_ADDR)u \
 	-DOOT_SCENECOL_ADDR=$(OOT_SCENECOL_ADDR)u -Ioot-core/include
 vpath %.cpp $(sort $(dir $(OOT_CORE_SRCS)))
 vpath %.cpp $(sort $(dir $(OOT_FIELD_SRCS)))
+vpath %.cpp $(sort $(dir $(OOT_BOSS_EFFECT_ALL_SRCS)))
 vpath %.cpp $(sort $(dir $(OOT_PACK_ACTOR_SRCS))) build/oot-core/packs build/oot-core/player
 $(OOT_CORE_OBJDIR):
 	mkdir -p $@
 # Static ctors are fine: OotCoreEntry.init runs the blob's ctor table.
 $(OOT_CORE_OBJDIR)/%.o: %.cpp oot-core/include/fx.h oot-core/include/oot_prelude.h oot-core/include/oot_core_bench.h oot-core/include/oot_core_api.h oot-core/include/oot_core_host.h | $(OOT_CORE_OBJDIR)
 	$(OOT_CORE_CXX) $(OOT_CORE_CXXFLAGS) -c $< -o $@
-$(OOT_CORE_OBJDIR)/bridge_message.o: build/oot-core/ocarina_restrictions.inc
+$(OOT_CORE_OBJDIR)/bridge_message.o: build/oot-core/ocarina_restrictions.inc build/oot-core/ocarina_memory.inc build/generated/ocarina_sfx_duration.h
 $(OOT_CORE_OBJDIR)/oot_core_api.o: build/oot-core/environment_clock.inc build/oot-core/environment_player_gate.inc oot-core/include/oot_scene_blob.h
 $(OOT_CORE_OBJDIR)/z_bgcheck.o: oot-core/include/bgcheck_bounds.h
 $(OOT_CORE_OBJDIR)/bridge_player.o: oot-core/include/bgcheck_bounds.h
@@ -311,8 +332,18 @@ $(OOT_CORE_OBJDIR)/player_frame_decode.o: oot-core/tests/player_frame_decode.c
 $(OOT_CORE_OBJDIR)/oot_core_draw.o $(OOT_CORE_OBJDIR)/z_player_lib.o: oot-core/include/player_anchor_matrix.h
 $(OOT_FIELD_OBJS): oot-core/include/field_enemy_sprite.h
 $(OOT_CORE_OBJDIR)/field_enemy_sprite.o: build/oot-core/field_anchors.inc
-build/oot-core/field_exports.ld: $(OOT_FIELD_OBJS) $(OOT_PACK_ACTOR_OBJS) $(OOT_CORE_OBJS) tools/build_pack_exports.py
-	"$(PYTHON)" tools/build_pack_exports.py --nm $(patsubst %g++,%nm,$(patsubst %gcc,%nm,$(OOT_CORE_CXX))) --pack $(OOT_FIELD_OBJS) $(OOT_PACK_ACTOR_OBJS) --resident $(OOT_CORE_OBJS) --out $@
+$(OOT_CORE_OBJDIR)/dodongo_enemy_sprite.o: build/oot-core/dodongo_anchors.inc oot-core/include/dodongo_enemy_sprite.h
+$(OOT_CORE_OBJDIR)/ranch_horse_sprite.o: oot-core/include/ranch_horse_sprite.h oot-core/include/ranch_horse_anchors.inc
+$(OOT_CORE_OBJDIR)/bridge_play.o: oot-core/include/core_item_grant_mirror.inc
+$(OOT_CORE_OBJDIR)/oot_core_api.o $(OOT_CORE_OBJDIR)/oot_core_views.o: oot-core/include/oot_core_shop.h oot-core/include/oot_cutscene_camera.h oot-core/include/oot_core_effects.h oot-core/include/oot_core_api.h
+$(OBJDIR)/oot_core_host.o: src/core_item_grants.inc oot-core/include/oot_core_audio.h oot-core/include/oot_core_shop.h oot-core/include/oot_cutscene_camera.h oot-core/include/oot_core_api.h
+$(OOT_CORE_OBJDIR)/water_enemy_sprite.o: build/oot-core/water_anchors.inc oot-core/include/water_enemy_sprite.h
+build/oot-core/water_anchors.inc: tools/build_water_enemy_anchors.py tools/build_field_enemy_anchors.py
+	"$(PYTHON)" tools/build_water_enemy_anchors.py --oot "$(OOT_CORE_DECOMP)" --rom-dir "$(OOT_CORE_DECOMP)/baseroms/ntsc-1.2" --out $@
+build/oot-core/dodongo_anchors.inc: tools/build_dodongo_enemy_anchors.py
+	"$(PYTHON)" tools/build_dodongo_enemy_anchors.py --oot "$(OOT_CORE_DECOMP)" --rom-dir "$(OOT_CORE_DECOMP)/baseroms/ntsc-1.2" --out $@
+build/oot-core/field_exports.ld: $(OOT_FIELD_OBJS) $(OOT_PACK_ACTOR_OBJS) $(OOT_PACK_PROFILE_OBJS) $(OOT_PACK_HELPER_OBJS) $(OOT_RANCH_HELPER_OBJS) $(OOT_WATER_HELPER_OBJS) $(OOT_BOSS_EFFECT_OBJS) $(OOT_CORE_OBJS) tools/build_pack_exports.py
+	"$(PYTHON)" tools/build_pack_exports.py --nm $(patsubst %g++,%nm,$(patsubst %gcc,%nm,$(OOT_CORE_CXX))) --pack $(sort $(OOT_FIELD_OBJS) $(OOT_PACK_ACTOR_OBJS) $(OOT_PACK_PROFILE_OBJS) $(OOT_PACK_HELPER_OBJS) $(OOT_RANCH_HELPER_OBJS) $(OOT_WATER_HELPER_OBJS) $(OOT_BOSS_EFFECT_OBJS)) --resident $(OOT_CORE_OBJS) --out $@
 build/oot-core/oot-core.elf: $(OOT_CORE_OBJS) build/oot-core/sources.mk oot-core/oot-core.ld build/oot-core/obj_syms.ld build/oot-core/msg_syms.ld build/oot-core/field_exports.ld
 	$(OOT_CORE_CXX) -m2 -nostdlib -nostartfiles -T oot-core/oot-core.ld \
 		-Wl,--defsym,OOT_CORE_LOAD_ADDR=$(OOT_CORE_LOAD_ADDR) \
@@ -329,6 +360,10 @@ $(ASSETS_DIR)/OOTCORE.BIN: build/oot-core/oot-core.elf
 # each pack to the exact resident image; changing the core relinks them all.
 define SCENE_PACK_RULE
 OOT_PACK_$(1)_OBJS = $$(patsubst %,$$(OOT_CORE_OBJDIR)/%.o,$$(OOT_PACK_$(1)_ACTORS) $(1)_profiles) $$(if $$(filter SA,$(1)),$$(OOT_FIELD_OBJS))
+OOT_PACK_$(1)_OBJS += $$(if $$(filter z_en_dodojr z_en_dodongo z_en_am z_en_zf z_en_vm z_en_sw,$$(OOT_PACK_$(1)_ACTORS)),$$(OOT_PACK_HELPER_OBJS))
+OOT_PACK_$(1)_OBJS += $$(if $$(filter z_en_tite z_en_firefly,$$(OOT_PACK_$(1)_ACTORS)),$$(OOT_WATER_HELPER_OBJS))
+OOT_PACK_$(1)_OBJS += $$(if $$(filter z_en_horse_link_child z_en_horse_normal,$$(OOT_PACK_$(1)_ACTORS)),$$(OOT_RANCH_HELPER_OBJS))
+OOT_PACK_$(1)_OBJS += $$(patsubst %,$$(OOT_CORE_OBJDIR)/%.o,$$(OOT_PACK_$(1)_EFFECTS))
 OOT_PACK_$(1)_PAYLOADS = $(1).OOC $$(addsuffix .OOB,$$(OOT_PACK_$(1)_OBJECTS))
 build/oot-core/packs/$(1).OAP: build/oot-core/oot-core.elf $$(ASSETS_DIR)/OOTCORE.BIN $$(OOT_PACK_$(1)_OBJS) $$(addprefix $$(ASSETS_DIR)/,$$(OOT_PACK_$(1)_PAYLOADS)) tools/build_actor_packs.py oot-core/pack.ld
 	"$$(PYTHON)" tools/build_actor_packs.py --core build/oot-core/oot-core.elf --core-bin $$(ASSETS_DIR)/OOTCORE.BIN --obj-syms build/oot-core/obj_syms.ld --output $$@ --cxx $$(OOT_CORE_CXX) --scene $$(OOT_PACK_$(1)_SCENE) --objects $$(OOT_PACK_$(1)_OBJS) $$(foreach p,$$(OOT_PACK_$(1)_PAYLOADS),--payload $$(p)=$$(ASSETS_DIR)/$$(p)) --carve-base $$(OOT_SCENECOL_ADDR) --carve-bytes $$(OOT_SCENECOL_MAX_BYTES)
@@ -337,12 +372,21 @@ $$(ASSETS_DIR)/$(1).OAP: build/oot-core/packs/$(1).OAP
 $$(TARGET2): $$(ASSETS_DIR)/$(1).OAP
 endef
 $(foreach s,$(OOT_SCENE_PACKS),$(eval $(call SCENE_PACK_RULE,$(s))))
-# Real Player frames (PLAYER_SOURCE): the whole bank, resident for the
-# session. build.sh regenerates bank_full when its inputs change.
+.PHONY: check-dodongo-boss-budget
+check-dodongo-boss-budget:
+	"$(PYTHON)" tools/check_dodongo_boss_budget.py --oot "$(OOT_CORE_DECOMP)" --cd "$(ASSETS_DIR)" --room "$(ASSETS_DIR)/SGR1.MSH" --report build/oot-core/dodongo-render-budget.json
+# Real Player frames (PLAYER_SOURCE): build.sh regenerates bank_full when
+# its inputs change; split_player_bank.py cuts it into the resident common
+# set PLAYRES.PFB, demand groups PG*.PFB and scene cutscene packs PCS*.PFB
+# (byte-identical blocks) plus the host's group tables.
 ifeq ($(PLAYER_SOURCE),1)
-$(ASSETS_DIR)/PLAYANIM.PFB: build/player-migration/bank_full/ALL.PFB
-	cp $< $@
-$(TARGET2): $(ASSETS_DIR)/PLAYANIM.PFB
+$(ASSETS_DIR)/PLAYRES.PFB: build/player-migration/bank_full/ALL.PFB tools/split_player_bank.py oot-core/include/oot_core_api.h
+	rm -f $(ASSETS_DIR)/PLAYANIM.PFB $(ASSETS_DIR)/PLAYC.PFB
+	"$(PYTHON)" tools/split_player_bank.py --oot "$(OOT_CORE_DECOMP)" --cd $(ASSETS_DIR)
+build/generated/player_groups.h: $(ASSETS_DIR)/PLAYRES.PFB
+	@test -f $@
+$(OBJDIR)/oot_core_host.o: build/generated/player_groups.h
+$(TARGET2): $(ASSETS_DIR)/PLAYRES.PFB
 endif
 # Core + every scene pack without mastering a disc (link/fit check).
 .PHONY: oot-scene-packs
@@ -362,6 +406,9 @@ OOT_CORE_ADDR_STAMP = build/oot-core/addr.stamp
 OOT_CORE_ADDR_KEY = $(OOT_CORE_LOAD_ADDR) $(OOT_CORE_MAX_BYTES) $(OOT_SCENECOL_ADDR) $(OOT_SCENECOL_MAX_BYTES)
 $(shell mkdir -p build/oot-core; [ "$$(cat $(OOT_CORE_ADDR_STAMP) 2>/dev/null)" = "$(OOT_CORE_ADDR_KEY)" ] || echo "$(OOT_CORE_ADDR_KEY)" > $(OOT_CORE_ADDR_STAMP))
 build/oot-core/oot-core.elf: $(OOT_CORE_ADDR_STAMP)
+$(OOT_CORE_OBJS): $(OOT_CORE_ADDR_STAMP)
+$(OOT_CORE_OBJS) $(OOT_PACK_ACTOR_OBJS) $(OOT_FIELD_OBJS) $(OOT_PACK_HELPER_OBJS) $(OOT_RANCH_HELPER_OBJS) $(OOT_WATER_HELPER_OBJS) $(OOT_BOSS_EFFECT_OBJS): build/oot-core/import.stamp
+$(OBJDIR)/oot_core_host.o $(OBJDIR)/ram_cart.o: $(OOT_CORE_ADDR_STAMP) src/ram_cart.h
 build/oot-core/scenecol/%.elf: build/oot-core/scenecol/%.cpp oot-core/scenecol.ld oot-core/include/oot_scene_blob.h $(OOT_CORE_ADDR_STAMP)
 	$(OOT_CORE_CXX) $(OOT_CORE_CXXFLAGS) -c $< -o build/oot-core/scenecol/$*.o || \
 		{ rm -f build/oot-core/scenecol/$*.o; echo "scene blob $* compile failed"; }
@@ -407,7 +454,7 @@ $(foreach s,$(SRCS),$(eval $(s:.c=.o): $(OBJDIR)/$(notdir $(s:.c=.o))))
 
 %.o: %.c
 
-$(OBJDIR)/fs.o: src/fs_low.c $(JO_ENGINE_SRC_DIR)/fs.c src/fs_capacity.h src/ram_low.h | $(OBJDIR)
+$(OBJDIR)/fs.o: src/fs_low.c $(JO_ENGINE_SRC_DIR)/fs.c src/fs_capacity.h src/ram_low.h src/ram_cart.h | $(OBJDIR)
 	$(CC) src/fs_low.c $(DFLAGS) $(CCFLAGS) $(_CCFLAGS) -I$(JO_ENGINE_SRC_DIR) -MMD -MP -MF $(@:.o=.d) -MT $@ -o $@
 
 $(OBJDIR)/backup.o: src/backup_low.c $(JO_ENGINE_SRC_DIR)/backup.c src/ram_low.h | $(OBJDIR)
@@ -466,7 +513,7 @@ $(TARGET): $(SYSOBJS) $(MY_OBJS) $(MAKEFILE) $(LDFILE)
 	$(CC) $(LDFLAGS) $(SYSOBJS) $(MY_OBJS) $(LIBS) -o $@
 
 $(TARGET1): $(TARGET)
-	$(CONV) -O binary $(TARGET) $(TARGET1)
+	$(CONV) -O binary -R .cart $(TARGET) $(TARGET1)
 
 # The parent's ISO recipe ends in an undefined $(ENTRYPOINT), which reaches
 # mkisofs as a stray empty argument under make's shell and aborts with
@@ -483,9 +530,11 @@ $(ASSETS_DIR)/LINKTEX.BIN: build/generated/link_tex.c build/generated/link_scene
 	$(CONV) -O binary -j .rodata $(OBJDIR)/link_tex_blob.o $@
 
 $(TARGET2): $(TARGET1) $(ASSETS_DIR)/LINKMESH.BIN $(ASSETS_DIR)/LINKTEX.BIN
+	$(CONV) -O binary -j .cart $(TARGET) $(ASSETS_DIR)/HOSTCOLD.BIN
 	"$(PYTHON)" tools/check_disc_directory.py
-	$(CONV) -O binary $(TARGET) $(ASSETS_DIR)/0.bin
+	$(CONV) -O binary -R .cart $(TARGET) $(ASSETS_DIR)/0.bin
 	$(MKISOFS) -quiet -sysid "SEGA SATURN" -volid "KOKIRIJO" -volset "KOKIRIJO" 		-sectype 2352 -publisher "SEGA ENTERPRISES, LTD." 		-preparer "SEGA ENTERPRISES, LTD." -appid "KOKIRIJO" 		-abstract "$(ASSETS_DIR)/ABS.TXT" -copyright "$(ASSETS_DIR)/CPY.TXT" 		-biblio "$(ASSETS_DIR)/BIB.TXT" -generic-boot $(IPFILE) 		-full-iso9660-filenames -o $(TARGET2) $(ASSETS_DIR)
+	"$(PYTHON)" tools/check_disc_directory.py --iso $(TARGET2) || { rm -f $(TARGET2); exit 1; }
 
 $(TARGET3): $(TARGET2)
 	"$(PYTHON)" tools/write_cue.py $(TARGET2) $(TARGET3)

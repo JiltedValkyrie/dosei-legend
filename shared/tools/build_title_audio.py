@@ -301,6 +301,19 @@ def resample(pcm, ratio, loop_start):
     return result
 
 
+def sample_path(source, name):
+    _, bank, sample = name.split('_')
+    directory = source / f'samples/SampleBank_{int(bank)}'
+    # Extractor pads large banks to three digits, small banks to one. Resolve
+    # the original numeric identity rather than assuming bank zero's width.
+    matches = [p for p in directory.glob('Sample*.wav')
+               if p.stem.removeprefix('Sample').isdigit()
+               and int(p.stem.removeprefix('Sample')) == int(sample)]
+    if len(matches) != 1:
+        raise FileNotFoundError(f'{name}: expected one sample in {directory}, got {len(matches)}')
+    return matches[0]
+
+
 def load_font(source, font_id=6):
     font = ET.parse(source / f'soundfonts/Soundfont_{font_id}.xml').getroot()
     envelopes = {e.attrib['Name']: dict(release=int(e.attrib['Release']),
@@ -317,7 +330,7 @@ def load_font(source, font_id=6):
     original = []
     hashes = {}
     for name in names:
-        p = source / f'samples/SampleBank_0/Sample{int(name.split("_")[-1]):03}.wav'
+        p = sample_path(source, name)
         original.append(wav_source(p))
         hashes[p.name] = hashlib.sha256(p.read_bytes()).hexdigest()
     # 16-bit samples. Human approved +33% on 2026-09-28: 159600 samples.

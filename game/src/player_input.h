@@ -104,6 +104,7 @@ void    player_input_reset(void);
 void player_input_set_orbit(bool active);
 /* C-Up camera owns axes until an exit action; L no longer enables free look. */
 void player_input_set_view_look(bool active);
+void player_input_set_item_aim(bool active);
 /* Binding steals its original action only in gameplay; menu controls stay fixed. */
 void player_input_set_jump_button(uint16_t mask);
 /* Sample from VBlank: `held` is the normalized CAMERA_* snapshot. Maintains the

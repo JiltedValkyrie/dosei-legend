@@ -63,6 +63,9 @@ static int spawnCount, lastId, lastParams;
 Actor* Actor_Spawn(ActorContext*, PlayState*, s16 id, f32, f32, f32, s16, s16, s16, s16 params) {
     ++spawnCount; lastId=id; lastParams=params; return &spawned;
 }
+/* Scene-pack admission (bridge_actor_pack.cpp): no pack admits doors here; only
+ * the Water Temple (exempt) takes source transitions. */
+static int OotCore_PackAdmits(int) { return 0; }
 ''' + actor + '\n' + bind + r'''
 int main() {
     TransitionActorEntry entries[3]={};

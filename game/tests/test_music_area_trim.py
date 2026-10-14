@@ -26,7 +26,11 @@ class MusicAreaTrim(unittest.TestCase):
 #include <string.h>
 ''' + '#include "%s"\n' % (MUSIC.parent / 'music.h').as_posix() + phases + '\n' + storage + r'''
 static const music_bank_t *bank,*incoming;
+static const music_bank_t *once_bank,*once_resume;
 static unsigned char state;
+/* music.c: a bank the player still references (current, incoming, fanfare). */
+bool music_bank_referenced(const music_bank_t *candidate)
+{return candidate && (candidate==bank || candidate==incoming || candidate==once_bank || candidate==once_resume);}
 static music_bank_t static_bank;
 static unsigned char allocation[2][128];
 static bool live[2];

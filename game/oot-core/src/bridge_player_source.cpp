@@ -75,12 +75,16 @@ void OotCore_PlayerInput(PlayState* play, Input* input) {
             (item == ITEM_BOW || item == ITEM_SLINGSHOT || item == ITEM_HOOKSHOT ||
              item == ITEM_LONGSHOT || item == ITEM_BOW_FIRE || item == ITEM_BOW_ICE ||
              item == ITEM_BOW_LIGHT || item == ITEM_ARROW_FIRE || item == ITEM_ARROW_ICE ||
-             item == ITEM_ARROW_LIGHT)) requested = buttons[i];
+             item == ITEM_ARROW_LIGHT || item == ITEM_BOOMERANG)) requested = buttons[i];
     }
+    /* Boomerang (func_808358F0) throws on release without STATE1_9: its
+     * first-person aim is the ready state, and a thrown one is never rearmed. */
+    bool boomerang = player->heldItemAction == PLAYER_IA_BOOMERANG;
+    bool first_person = (player->stateFlags1 & PLAYER_STATE1_20) != 0;
     PlayerTapAim_Step(&sTapAim, &input->cur.button, &input->press.button, requested,
-        (player->stateFlags1 & PLAYER_STATE1_20) != 0,
-        (player->stateFlags1 & PLAYER_STATE1_9) != 0,
-        !Player_HoldsHookshot(player) || player->actor.child != NULL,
+        first_person,
+        boomerang ? first_person : (player->stateFlags1 & PLAYER_STATE1_9) != 0,
+        !boomerang && (!Player_HoldsHookshot(player) || player->actor.child != NULL),
         play->msgCtx.msgMode != MSGMODE_NONE || Player_InCsMode(play) ||
         (player->stateFlags1 & PLAYER_STATE1_DEAD));
     /* Digital Saturn directions arrive at +/-80. Source first-person aim
@@ -104,24 +108,9 @@ s16 Camera_GetInputDirYaw(Camera* camera) { /* HOST: C camera facing */
 s32 Camera_CheckValidMode(Camera* camera, s16 mode) { /* HOST: every mode the Saturn camera can show */
     return mode | 0x80000000;
 }
-s32 Camera_RequestSetting(Camera* camera, s16 setting) { /* STUB: Saturn camera keeps its own setting */
-    return setting | 0x80000000;
-}
-s32 Camera_SetViewParam(Camera* camera, s32 viewFlag, void* param) { /* STUB */
-    return true;
-}
 s32 Camera_ChangeDoorCam(Camera* camera, Actor* doorActor, s16 bgCamIndex, f32 arg3, s16 timer1, s16 timer2,
                          s16 timer3) { /* STUB: door cameras are the Saturn camera's */
     return 0;
-}
-void Camera_SetCameraData(Camera* camera, s16 setDataFlags, void* data0, void* data1, s16 data2, s16 data3,
-                          s32 data4) { /* STUB */
-}
-s16 Camera_SetFinishedFlag(Camera* camera) { /* STUB */
-    return 0;
-}
-s16 OnePointCutscene_EndCutscene(PlayState* play, s16 subCamId) { /* STUB: no one-point cameras */
-    return CAM_ID_MAIN;
 }
 /* Play_CamIsNotFixed: prerendered interiors are fixed (host flag). */
 int Play_CamIsNotFixed(PlayState* this) { /* HOST */
@@ -269,6 +258,20 @@ u32 Health_IsCritical(void) { /* REAL */
 void Inventory_ChangeAmmo(s16 item, s16 ammoChange) { /* HOST: C save owns ammo */
     if (gOotCoreHost != NULL && gOotCoreHost->ammo_change != NULL) {
         gOotCoreHost->ammo_change((unsigned char)item, ammoChange);
+        s16 slotItem = item == ITEM_DEKU_SEEDS ? ITEM_SLINGSHOT : item;
+        s32 capacity;
+        switch (slotItem) {
+            case ITEM_DEKU_STICK: capacity = CUR_CAPACITY(UPG_DEKU_STICKS); break;
+            case ITEM_DEKU_NUT: capacity = CUR_CAPACITY(UPG_DEKU_NUTS); break;
+            case ITEM_SLINGSHOT: capacity = CUR_CAPACITY(UPG_BULLET_BAG); break;
+            case ITEM_BOMB: capacity = CUR_CAPACITY(UPG_BOMB_BAG); break;
+            case ITEM_BOW: capacity = CUR_CAPACITY(UPG_QUIVER); break;
+            case ITEM_BOMBCHU: capacity = 50; break;
+            case ITEM_MAGIC_BEAN: capacity = 99; break;
+            default: return;
+        }
+        s32 value = AMMO(slotItem) + ammoChange;
+        AMMO(slotItem) = value < 0 ? 0 : value > capacity ? capacity : value;
     }
 }
 
@@ -462,6 +465,42 @@ extern "C" int PlayerFrameBank_Register(const unsigned char* bank, unsigned int 
 
 int OotCore_PlayerBank(const void* bank, unsigned int bytes) {
     return PlayerFrameBank_Register((const unsigned char*)bank, bytes) > 0;
+}
+
+/* ---- demand clip groups (tools/split_player_bank.py; host loads them at
+ * scene load and pause close, never mid-action) ---- */
+extern "C" void PlayerFrameBank_Unregister(const unsigned char* bank, unsigned int bytes);
+static u32 sPlayerGroups;
+
+void OotCore_PlayerBankRelease(const void* bank, unsigned int bytes) {
+    PlayerFrameBank_Unregister((const unsigned char*)bank, bytes);
+}
+
+void OotCore_PlayerGroups(unsigned int mask) {
+    sPlayerGroups = mask;
+}
+
+/* Player_UseItem gate: a cold item waits (no state change) until its group
+ * is registered. Every other item uses resident clips. */
+s32 OotCore_PlayerItemReady(s32 itemAction) {
+    s32 group;
+    if (itemAction >= PLAYER_IA_BOTTLE && itemAction <= PLAYER_IA_BOTTLE_FAIRY) {
+        group = OOT_CORE_PLAYER_GROUP_BOTTLE;
+    } else if (itemAction == PLAYER_IA_FARORES_WIND || itemAction == PLAYER_IA_NAYRUS_LOVE ||
+               itemAction == PLAYER_IA_DINS_FIRE) {
+        group = OOT_CORE_PLAYER_GROUP_MAGIC;
+    } else if (itemAction == PLAYER_IA_HAMMER) {
+        group = OOT_CORE_PLAYER_GROUP_HAMMER;
+    } else if (itemAction == PLAYER_IA_BOOMERANG) {
+        group = OOT_CORE_PLAYER_GROUP_BOOM;
+    } else if (itemAction == PLAYER_IA_HOOKSHOT || itemAction == PLAYER_IA_LONGSHOT) {
+        group = OOT_CORE_PLAYER_GROUP_HOOK;
+    } else if (itemAction == PLAYER_IA_FISHING_POLE) {
+        group = OOT_CORE_PLAYER_GROUP_FISH;
+    } else {
+        return 1;
+    }
+    return (s32)((sPlayerGroups >> group) & 1u);
 }
 
 static void vec_out(const Vec3f* v, int* out) {

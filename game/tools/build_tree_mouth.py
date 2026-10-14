@@ -16,5 +16,5 @@ def build(oot,rom_dir,out):
         groups=list(v)+[p['normal'],[min(q[k] for q in v) for k in range(3)], [max(q[k] for q in v) for k in range(3)]]
         vec=lambda q:'{'+','.join(map(str,q))+'}'
         rows.append('{{'+','.join(vec(q) for q in groups[:3])+'},'+','.join(vec(q) for q in groups[3:])+'}')
-    (out.parent/'generated/tree_mouth_data.h').write_text('/* Original gDekuTreeMouthCol. */\nstatic const collision_triangle_t tree_mouth_triangles[]={\n'+',\n'.join(rows)+'\n};\n')
+    (out.parent/'generated/tree_mouth_data.h').write_text('/* Original gDekuTreeMouthCol. */\n#include "host_cold.h"\nHOST_COLD static const collision_triangle_t tree_mouth_triangles[]={\n'+',\n'.join(rows)+'\n};\n')
     static_mesh(oot,rom_dir,'object_spot04_objects','gDekuTreeMouthDL',out/'TREEMTH.BIN',1.0)

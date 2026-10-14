@@ -25,6 +25,7 @@
 #include "oot_core_host.h"
 
 const OotCoreHost* gOotCoreHost;
+#include "core_item_grant_mirror.inc"
 
 /* ---- globals owned by code we do not import ---- */
 SaveContext gSaveContext;       /* z_sram/z_play own it on N64 */
@@ -173,22 +174,44 @@ void Player_ReleaseLockOn(Player* this) { /* STUB: C attention system owns lock-
 
 /* ---- z_parameter.c: save-owned state stays on the C side for now ---- */
 u8 Item_Give(PlayState* play, u8 item) { /* HOST */
+    Inventory* inv = &gSaveContext.save.info.inventory;
+    /* z_parameter.c Item_Give: quest status and non-Deku dungeon items
+     * belong to the source inventory; save_copy_out commits them to the
+     * host after this update (dungeon entry 0 stays with the C Deku Tree). */
+    if (item >= ITEM_MEDALLION_FOREST && item <= ITEM_MEDALLION_LIGHT) {
+        inv->questItems |= 1u << (item - ITEM_MEDALLION_FOREST + QUEST_MEDALLION_FOREST);
+        return ITEM_NONE;
+    }
     if (item >= ITEM_SONG_MINUET && item <= ITEM_SONG_STORMS) {
-        /* z_parameter.c Item_Give: song ownership belongs to the source
-         * inventory. save_copy_out commits it to the host after this update. */
-        gSaveContext.save.info.inventory.questItems |=
-            1u << (item - ITEM_SONG_MINUET + QUEST_SONG_MINUET);
+        inv->questItems |= 1u << (item - ITEM_SONG_MINUET + QUEST_SONG_MINUET);
+        return ITEM_NONE;
+    }
+    if (item >= ITEM_KOKIRI_EMERALD && item <= ITEM_ZORA_SAPPHIRE) {
+        inv->questItems |= 1u << (item - ITEM_KOKIRI_EMERALD + QUEST_KOKIRI_EMERALD);
+        return ITEM_NONE;
+    }
+    if (item == ITEM_STONE_OF_AGONY || item == ITEM_GERUDOS_CARD) {
+        inv->questItems |= 1u << (item - ITEM_STONE_OF_AGONY + QUEST_STONE_OF_AGONY);
+        return ITEM_NONE;
+    }
+    if (item == ITEM_SKULL_TOKEN) {
+        inv->questItems |= 1u << QUEST_SKULL_TOKEN;
+        inv->gsTokens++;
+        return ITEM_NONE;
+    }
+    if ((item == ITEM_DUNGEON_BOSS_KEY || item == ITEM_DUNGEON_COMPASS || item == ITEM_DUNGEON_MAP) &&
+        gSaveContext.mapIndex > 0 && gSaveContext.mapIndex < 20) {
+        inv->dungeonItems[gSaveContext.mapIndex] |= 1u << (item - ITEM_DUNGEON_BOSS_KEY);
+        return ITEM_NONE;
+    }
+    if (item == ITEM_SMALL_KEY && gSaveContext.mapIndex > 0 && gSaveContext.mapIndex < 19) {
+        if (inv->dungeonKeys[gSaveContext.mapIndex] < 0) inv->dungeonKeys[gSaveContext.mapIndex] = 1;
+        else inv->dungeonKeys[gSaveContext.mapIndex]++;
         return ITEM_NONE;
     }
     if (gOotCoreHost != NULL && gOotCoreHost->give_item != NULL) {
         u8 result = gOotCoreHost->give_item(item);
-        if (result == ITEM_NONE && (item == ITEM_BOTTLE_POE || item == ITEM_BOTTLE_BIG_POE)) {
-            for (u32 slot = SLOT_BOTTLE_1; slot <= SLOT_BOTTLE_4; ++slot)
-                if (gSaveContext.save.info.inventory.items[slot] == ITEM_BOTTLE_EMPTY) {
-                    gSaveContext.save.info.inventory.items[slot] = item;
-                    break;
-                }
-        }
+        if (result == ITEM_NONE) OotCore_MirrorItemGrant(item);
         return result;
     }
     return ITEM_NONE;
@@ -237,6 +260,8 @@ u32 Quake_SetDuration(s16 index, s16 duration) { /* STUB */
 }
 void Rumble_Request(FxSq distSq, u8 sourceStrength, u8 duration, u8 decreaseRate) { /* STUB */
 }
+void Rumble_Override(FxSq, u8, u8, u8) { /* Saturn pad: no rumble device, as Rumble_Request */
+}
 
 /* ---- z_camera.c / z_onepointdemo.c: the C camera owns the view ---- */
 #include "one_point_cutscene.h"
@@ -265,9 +290,7 @@ s32 OotCore_ActorInCameraView(PlayState* play, Actor* actor) {
         side = -side;
     return ahead > 0 && side * 3 < ahead * 4;
 }
-s32 OnePointCutscene_Attention(PlayState* play, Actor* actor) { /* STUB: no attention shots */
-    return CAM_ID_NONE;
-}
+/* Source attention camera/category/sfx queue is in bridge_cutscene_camera. */
 
 /* En_Elf (Navi, 2026-10-09) links these. Saturn: no light adjustment (no
  * N64 lighting), no Fixed-shop viewpoint camera, positional SFX plays plain. */
@@ -275,7 +298,7 @@ s32 OnePointCutscene_Attention(PlayState* play, Actor* actor) { /* STUB: no atte
 void Environment_AdjustLights(PlayState* play, f32 arg1, f32 arg2, f32 arg3, f32 arg4) {
 }
 s32 Play_CheckViewpoint(PlayState* play, s16 viewpoint) {
-    return false;
+    return play->viewpoint == viewpoint;
 }
 /* Source z_kankyo.c. */
 f32 Environment_LerpWeight(u16 max, u16 min, u16 val) {

@@ -32,7 +32,7 @@
 
 /* v8 appends visited Deku rooms; v7 added map/compass. Versions 2-7 migrate;
 ** v6 introduced source collectible flags without changing the v5 layout. */
-#define SAVE_FILE_VERSION       13
+#define SAVE_FILE_VERSION       14
 /* v2 (M2d): v3 appends Deku Stick slot/ammo/upgrade and naviTimer. A v2
 ** block still loads; the new fields start at their new-file values. */
 #define SAVE_FILE_V2_PAYLOAD_BYTES 290
@@ -51,7 +51,9 @@
 /* v12 appends the equipped boots. */
 #define SAVE_FILE_V12_PAYLOAD_BYTES (SAVE_FILE_V11_PAYLOAD_BYTES + 1)
 /* v13 appends source totalDays and bgsDayCount. */
-#define SAVE_FILE_PAYLOAD_BYTES (SAVE_FILE_V12_PAYLOAD_BYTES + 8)
+#define SAVE_FILE_V13_PAYLOAD_BYTES (SAVE_FILE_V12_PAYLOAD_BYTES + 8)
+/* v14 appends the source Skull Kid memory-game reward tier. */
+#define SAVE_FILE_PAYLOAD_BYTES (SAVE_FILE_V13_PAYLOAD_BYTES + 1)
 #define SAVE_FILE_BYTES         (8 + SAVE_FILE_PAYLOAD_BYTES + 2)
 
 /* Why a load was refused, so the file select can say something true rather

@@ -23,7 +23,7 @@ typedef uint8_t u8;
 typedef int16_t s16;
 typedef struct { u8 buttonItems[4], cButtonSlots[3]; unsigned equipment; } ItemEquips;
 typedef struct { unsigned char playerName[8];int health,healthCapacity,rupees,magicLevel,magic;
-    int isMagicAcquired,isDoubleMagicAcquired,isDoubleDefenseAcquired,bgsFlag;
+    int isMagicAcquired,isDoubleMagicAcquired,isDoubleDefenseAcquired,bgsFlag,ocarinaGameRoundNum;
 } SavePlayerData;
 typedef struct {
     unsigned char items[24];signed char ammo[16];unsigned short equipment;
@@ -34,14 +34,15 @@ static struct {
     struct { int linkAge,nightFlag,dayTime,cutsceneIndex,totalDays,bgsDayCount,entranceIndex;
         struct { SavePlayerData playerData;Inventory inventory;
             ItemEquips equips;
+            int32_t gsFlags[6];
             unsigned short eventChkInf[14],itemGetInf[4],infTable[30];
             SavedSceneFlags sceneFlags[124];
         } info;
     } save;
-    int language,skyboxTime,nextDayTime,sunsSongState,dogIsLost,seqId,natureAmbienceId,forcedSeqId,retainWeatherMode;
+    int mapIndex,language,skyboxTime,nextDayTime,nextCutsceneIndex,sunsSongState,dogIsLost,dogParams,seqId,natureAmbienceId,forcedSeqId,retainWeatherMode;
 } gSaveContext;
 static int gWeatherMode;
-enum {NEXT_TIME_NONE=0xffff,SUNSSONG_INACTIVE=0,NA_BGM_DISABLED=0xffff,
+enum {NEXT_TIME_NONE=0xffff,NEXT_CS_INDEX_NONE=0xffef,SUNSSONG_INACTIVE=0,NA_BGM_DISABLED=0xffff,
       NATURE_ID_DISABLED=0xff,NA_BGM_GENERAL_SFX=0,WEATHER_MODE_CLEAR=0};
 typedef struct {
     struct {struct {unsigned long chest,swch,clear,collect;} flags;} actorCtx;
@@ -63,7 +64,15 @@ enum {ITEM_SWORD_KOKIRI=0x3b,ITEM_SWORD_MASTER=0x3c,ITEM_SWORD_BIGGORON=0x3d,
       ITEM_BOTTLE_EMPTY=0x14,ITEM_BOTTLE_POE=0x20,ITEM_BOTTLE_BIG_POE=0x1e};
 enum {ITEM_DEKU_STICK=0,ITEM_DEKU_NUT=1,ITEM_SLINGSHOT=6,ITEM_OCARINA_FAIRY=7,ITEM_OCARINA_OF_TIME=8,ITEM_NONE=255};
 enum {ITEM_SONG_MINUET=0x5a,ITEM_SONG_STORMS=0x65,QUEST_SONG_MINUET=6};
+enum {ITEM_MEDALLION_FOREST=0x66,ITEM_MEDALLION_LIGHT=0x6b,QUEST_MEDALLION_FOREST=0,
+      ITEM_KOKIRI_EMERALD=0x6c,ITEM_GORON_RUBY=0x6d,ITEM_ZORA_SAPPHIRE=0x6e, /* QUEST_KOKIRI_EMERALD: save_state.h */
+      ITEM_STONE_OF_AGONY=0x6f,ITEM_GERUDOS_CARD=0x70,QUEST_STONE_OF_AGONY=21,
+      ITEM_SKULL_TOKEN=0x71,QUEST_SKULL_TOKEN=23,
+      ITEM_DUNGEON_BOSS_KEY=0x74,ITEM_DUNGEON_COMPASS=0x75,ITEM_DUNGEON_MAP=0x76,ITEM_SMALL_KEY=0x77};
 static struct { u8 (*give_item)(u8 item); } *gOotCoreHost;
+/* Source-only quest/dungeon paths below never invoke a host item grant.
+ * Shop grant mirror behavior has its own source purchase fixture. */
+static void OotCore_MirrorItemGrant(u8 item) { assert(false); }
 ''' + graphics.function(source, 'static void seed_scene_save(')
             + graphics.function(source, 'static void save_copy_out(PlayState* play) {')
             + graphics.function(source, 'static void oot_core_set_save(')
@@ -84,9 +93,18 @@ int main(void) {
     in.stick_owned=1;in.stick_ammo=8;in.stick_upgrade=2;
     in.nut_owned=1;in.nut_ammo=17;in.nut_upgrade=3;
     in.deku_dungeon_items=3;in.skull_tokens=7;
+    unsigned char skulls[32]={0},tokens=7;
+    unsigned char memory_round=1;
+    in.ocarina_game_round=&memory_round;
+    skulls[0]=0x81;skulls[1]=0x24;skulls[2]=0x48;skulls[3]=0x12;skulls[23]=0x80;skulls[31]=0x55;
+    in.skull_flags=skulls;in.skull_tokens_out=&tokens;
     in.quest_items=&quest;in.dungeon_items=dungeons;in.dungeon_keys=keys;in.bottle_items=bottles;
     memcpy(in.player_name,"Link    ",8);
+    gOotCorePlay=NULL; /* first scene: host chooses the initial source layer */
     oot_core_set_save(&in);
+    gOotCorePlay=&play;
+    in.cutscene_index=0;
+    oot_core_set_save(&in); /* live cutscene index is source-owned */
     Inventory *inv=&gSaveContext.save.info.inventory;
     assert(gSaveContext.save.linkAge==1 && gSaveContext.save.nightFlag==1);
     assert(gSaveContext.save.dayTime==0x1000 && gSaveContext.save.cutsceneIndex==0xfff2);
@@ -97,6 +115,8 @@ int main(void) {
     assert(inv->upgrades==((2u<<17)|(3u<<20)|(1u<<14)));
     assert(inv->ammo[SLOT_DEKU_STICK]==8 && inv->ammo[SLOT_DEKU_NUT]==17);
     assert(inv->ammo[SLOT_SLINGSHOT]==29 && inv->gsTokens==7);
+    assert((u32)gSaveContext.save.info.gsFlags[0]==0x12482481u);
+    assert((u32)gSaveContext.save.info.gsFlags[5]==0x80000000u);
     assert(inv->dungeonItems[0]==6 && inv->dungeonItems[3]==1);
     assert(inv->dungeonKeys[0]==-1 && inv->dungeonKeys[3]==2);
     assert(play.actorCtx.flags.swch==(1u<<31));
@@ -132,6 +152,28 @@ int main(void) {
     assert(quest==((1u<<18)|0x3ffc0));
     assert(Item_Give(&play,ITEM_SONG_MINUET)==ITEM_NONE);
     save_copy_out(&play);assert(quest==((1u<<18)|0x3ffc0));
+    /* King Dodongo's Ruby and Dodongo's Cavern (mapIndex 1) chests commit
+     * through the same copy; mapIndex 0 stays with the C Deku Tree. */
+    assert(Item_Give(&play,ITEM_GORON_RUBY)==ITEM_NONE);
+    save_copy_out(&play);assert(quest&(1u<<19));
+    gSaveContext.mapIndex=1;
+    assert(Item_Give(&play,ITEM_DUNGEON_MAP)==ITEM_NONE && inv->dungeonItems[1]==4);
+    assert(Item_Give(&play,ITEM_DUNGEON_COMPASS)==ITEM_NONE && inv->dungeonItems[1]==6);
+    inv->dungeonKeys[1]=-1;
+    assert(Item_Give(&play,ITEM_SMALL_KEY)==ITEM_NONE && inv->dungeonKeys[1]==1);
+    assert(Item_Give(&play,ITEM_SMALL_KEY)==ITEM_NONE && inv->dungeonKeys[1]==2);
+    save_copy_out(&play);assert(dungeons[1]==6 && keys[1]==2);
+    gSaveContext.mapIndex=0;
+    /* Source token collect increments immediately; group bits and count
+     * survive reload without endian aliasing or overwriting host groups. */
+    assert(Item_Give(&play,ITEM_SKULL_TOKEN)==ITEM_NONE && inv->gsTokens==8);
+    gSaveContext.save.info.gsFlags[5]|=0x08u;
+    save_copy_out(&play);
+    assert(tokens==8 && skulls[20]==8 && skulls[23]==0x80 && skulls[31]==0x55);
+    in.skull_tokens=tokens;
+    memset(&gSaveContext,0,sizeof(gSaveContext));oot_core_set_save(&in);
+    assert(inv->gsTokens==8 && (inv->questItems&(1u<<QUEST_SKULL_TOKEN)));
+    assert((u32)gSaveContext.save.info.gsFlags[5]==0x80000008u);
     /* Max Level Select loadout must reach source predicates, including the
      * stones/songs and slots that have no C action implementation yet. */
     save_new_game();save_test_max_gear();

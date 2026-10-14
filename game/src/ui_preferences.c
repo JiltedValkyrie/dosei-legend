@@ -2,7 +2,7 @@
 #include <string.h>
 #include "ui_preferences.h"
 #include "kokiri_camera.h"
-static uint8_t labels, jump_binding;
+static uint8_t labels, jump_binding, core_responsive;
 static const uint8_t jump_keys[UI_JUMP_COUNT] = {
     UI_KEY_Y, UI_KEY_A, UI_KEY_B, UI_KEY_X, UI_KEY_C, UI_KEY_Z, UI_KEY_L, UI_KEY_R
 };
@@ -13,7 +13,9 @@ unsigned ui_labels(void) { return labels; }
 unsigned ui_jump_binding(void) { return jump_binding; }
 unsigned ui_jump_key(void) { return jump_keys[jump_binding]; }
 uint16_t ui_jump_mask(void) { return jump_masks[jump_binding]; }
-void ui_preferences_reset(void) { labels = jump_binding = 0; }
+void ui_preferences_reset(void) { labels = jump_binding = core_responsive = 0; }
+bool ui_core_responsive(void) { return core_responsive != 0; }
+void ui_preferences_toggle_core(void) { core_responsive ^= 1; }
 void ui_preferences_cycle(bool jump)
 {
     if (jump) jump_binding = (jump_binding + 1) % UI_JUMP_COUNT;
@@ -23,7 +25,7 @@ void ui_preferences_pack(uint8_t out[UI_PREF_BYTES])
 {
     unsigned i;
     out[0]='D'; out[1]='U'; out[2]='I'; out[3]=1;
-    out[4]=labels; out[5]=jump_binding; out[6]=0; out[7]=0;
+    out[4]=labels; out[5]=jump_binding; out[6]=core_responsive; out[7]=0;
     for (i=0; i<7; ++i) out[7] ^= out[i];
 }
 bool ui_preferences_unpack(const uint8_t *data, unsigned bytes)
@@ -31,10 +33,10 @@ bool ui_preferences_unpack(const uint8_t *data, unsigned bytes)
     unsigned i, check=0;
     if (!data || bytes != UI_PREF_BYTES || data[0]!='D' || data[1]!='U' ||
         data[2]!='I' || data[3]!=1 || data[4]>=UI_LABEL_COUNT ||
-        data[5]>=UI_JUMP_COUNT || data[6]) return false;
+        data[5]>=UI_JUMP_COUNT || data[6] > 1) return false;
     for (i=0; i<8; ++i) check ^= data[i];
     if (check) return false;
-    labels=data[4]; jump_binding=data[5];
+    labels=data[4]; jump_binding=data[5]; core_responsive=data[6];
     return true;
 }
 const char *ui_label_name(void)

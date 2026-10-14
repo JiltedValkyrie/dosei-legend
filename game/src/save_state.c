@@ -629,6 +629,7 @@ void save_world_defaults(save_state_t *state)
     state->source_equipment=0;state->source_upgrades=0;
     state->source_magic_level=state->source_magic=state->source_double_defense=state->source_tokens=0;
     state->total_days=state->bgs_day_count=0;
+    state->ocarina_game_round=0;
 }
 
 void            save_new_game(void)

@@ -198,10 +198,26 @@ static uint16_t crawl_cam_yaw, crawl_cam_phase;
 
 /* EnOssan: PLAYER_STATE2_29 hides Link while the shop is browsed. */
 static bool shop_browsing;
-bool recomp_shop_browsing(void) { return shop_browsing; }
+bool recomp_shop_browsing(void) {
+#ifdef PLAYER_SOURCE
+    if (oot_core_player_valid && (oot_core_player.state2 & (1u << 29))) return true;
+#endif
+    return shop_browsing;
+}
+
+#ifdef PLAYER_SOURCE
+/* Source Player inside a crawlspace (PLAYER_STATE2_CRAWLING). */
+static bool source_crawling(void)
+{
+    return oot_core_player_valid && (oot_core_player.state2 & (1u << 18));
+}
+#endif
 
 bool recomp_first_person(void)
 {
+#ifdef PLAYER_SOURCE
+    if (crawl_cam_valid && source_crawling()) return true;
+#endif
     return view_first_person || (crawl_cam_valid && link_crawl.phase == PLAYER_CRAWL_IN);
 }
 
@@ -836,6 +852,7 @@ static bool __attribute__((optimize("Os"))) take_door(void)
     int scripted=oot_core_transition_request(false);
     unsigned target,spawn,keep_music,entrance,variant,layer;
     unsigned resident=scene_flow_scene(),resident_spawn=save_state.entrance;
+    unsigned resident_cutscene=save_state.cutscene_index;
     unsigned resident_entrance=save_state.source_entrance, resident_source=save_state.source_scene;
     /* A missing destination must not reopen its box every movement step.
      * Rearm only after leaving its neighbourhood (or changing scenes). */
@@ -892,6 +909,7 @@ static bool __attribute__((optimize("Os"))) take_door(void)
         oot_core_cancel_transition_time();
         save_state.source_entrance=(uint16_t)resident_entrance;
         save_state.source_scene=resident_source;
+        save_state.cutscene_index=(uint16_t)resident_cutscene;
         /* A failed load can already have replaced collision, pixels and NPCs.
          * Rebuild the source scene before resuming, at its saved entrance so
          * Link and the restored room bank agree even after room crossings. */
@@ -1908,12 +1926,23 @@ void recomp_update(void)
         else snap_camera_to_link();
     }
     player_input_set_view_look(view_first_person);
+    player_input_set_item_aim(item_aim != 0);
     player_input_set_orbit(player_camera_orbit_active() &&
         game_mode()==GAME_MODE_PLAY && !gameplay_blocks_world() &&
         !gameplay.dead && !scene_flow_is_interior() && !view_first_person &&
         !gohma_cinematic());
     player_input_set_jump_button(ui_jump_mask());
     player_input_step(in_gameplay, &input);
+    /* Source chest/get-item cues own the drive until its actual end. Consume
+     * pad edges without allowing pause art, doors or items to seek to data. */
+    if (cdda_busy()) {
+        memset(&input, 0, sizeof input);
+        start_pressed = false;
+        interact_pending = cancel_pending = pause_pending = jump_pending = c_up_pending = false;
+        c_assign = c_use = 0;
+        menu_step = menu_dx = menu_dy = menu_page = 0;
+        combat_input_cancel(&combat_input);
+    }
     if (input.camera_orbit_turn) {
         player_camera_orbit_turn(input.camera_orbit_turn);
         action_audio_decomp_sfx(0x4829); /* NA_SE_SY_CAMERA_ZOOM_DOWN_2. */
@@ -2260,8 +2289,10 @@ void recomp_update(void)
             }
             c_up_pending = false;
             input.c_pressed = input.c_released = PLAYER_C_NONE;
-            if (gameplay.events2 & (GP2_EVENT_LABELS | GP2_EVENT_JUMP_BINDING | GP2_EVENT_RESET_PREFS)) {
+            if (gameplay.events2 & (GP2_EVENT_LABELS | GP2_EVENT_JUMP_BINDING | GP2_EVENT_RESET_PREFS |
+                                   GP2_EVENT_CORE_MODE)) {
                 if (gameplay.events2 & GP2_EVENT_RESET_PREFS) ui_preferences_reset();
+                else if (gameplay.events2 & GP2_EVENT_CORE_MODE) ui_preferences_toggle_core();
                 else ui_preferences_cycle((gameplay.events2 & GP2_EVENT_JUMP_BINDING) != 0);
                 save_device_write_preferences();
                 player_input_set_jump_button(ui_jump_mask());
@@ -2355,8 +2386,16 @@ void recomp_update(void)
              * her from oot_core_player. No C Navi step. */
             PS_ADD(PS_NV);
             perf_t0 = frame_timer_ticks();
+            if (!source_crawling()) crawl_cam_valid = false;
+            else if (!crawl_cam_valid) crawl_camera_begin();
             if (view_first_person)
                 first_person_camera_step(&input);
+            else if (crawl_cam_valid) {
+                /* Async core: Link moves once per frame (at the join). */
+                static int32_t crawl_x, crawl_z;
+                crawl_camera(recomp_link.x != crawl_x || recomp_link.z != crawl_z);
+                crawl_x = recomp_link.x; crawl_z = recomp_link.z;
+            }
             else if (scene_flow_is_interior())
                 interior_camera();
             else
@@ -2632,8 +2671,10 @@ void recomp_update(void)
                     jump_pending = false;
                     combat_input_cancel(&combat_input);
                 }
-                if (gameplay.events2 & (GP2_EVENT_LABELS | GP2_EVENT_JUMP_BINDING | GP2_EVENT_RESET_PREFS)) {
+                if (gameplay.events2 & (GP2_EVENT_LABELS | GP2_EVENT_JUMP_BINDING | GP2_EVENT_RESET_PREFS |
+                                       GP2_EVENT_CORE_MODE)) {
                     if (gameplay.events2 & GP2_EVENT_RESET_PREFS) ui_preferences_reset();
+                    else if (gameplay.events2 & GP2_EVENT_CORE_MODE) ui_preferences_toggle_core();
                     else ui_preferences_cycle((gameplay.events2 & GP2_EVENT_JUMP_BINDING) != 0);
                     save_device_write_preferences();
                     player_input_set_jump_button(ui_jump_mask());
@@ -3704,6 +3745,15 @@ void recomp_update(void)
                                              false);
     }
     story_owl_camera();
+#ifdef PLAYER_SOURCE
+    if (oot_core_player_valid && scene_flow_is_interior()) {
+        bool browsing = (oot_core_player.state2 & (1u << 29)) != 0;
+        if (browsing != shop_browsing && !cdda_busy() &&
+            (scene_flow_shop_browse(browsing) || scene_flow_pivot() == browsing))
+            shop_browsing = browsing;
+    }
+#endif
+    oot_core_cutscene_camera_apply();
     patch.width = 84; patch.height = 14; patch.data = prompt;
     /* Only upload on a blink transition, not every rendered frame. */
     /* The blinking PRESS START prompt is uploaded into NBG1, the same layer a

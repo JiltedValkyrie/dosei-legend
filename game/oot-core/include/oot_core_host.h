@@ -44,8 +44,12 @@ typedef struct OotCoreHost {
     int (*bottle_update)(unsigned char item, unsigned char button);
     /* Unrecoverable core error (e.g. missing Player animation clip). */
     void (*fatal)(unsigned int code, unsigned int a, unsigned int b);
+    /* Queue on the slave; execute drive/SCSP work only after the master joins. */
+    void (*audio_request)(unsigned int command, unsigned int argument);
 } OotCoreHost;
 
 #define OOT_CORE_MAGIC_FILL 0x7F
+#define OOT_CORE_MAGIC_ACQUIRE 0x7E /* amount = source acquired capacity level */
+#define OOT_CORE_DEFENSE_ACQUIRE 0x7D /* source Great Fairy defense reward */
 
 #endif

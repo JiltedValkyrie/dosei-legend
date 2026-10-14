@@ -1337,6 +1337,7 @@ void __attribute__((optimize("Os"))) gameplay_reset(void)
     gameplay.page = gameplay.page_part = 0;
     gameplay.talking = false;
     gameplay.paused = false;
+    gameplay.pause_closing = false;
     gameplay.cursor = GP_SLOT_SWORD;
     gameplay.pause_window = (pause_window_state_t){ .page = PAUSE_EQUIPMENT, .cursor = {0, 2, 18, 1} };
     gameplay.pause_window.cursor[PAUSE_EQUIPMENT] =
@@ -2347,7 +2348,14 @@ bool                gameplay_blocks_world(void)
 ** Only real owned gear can be equipped. Save emits the existing device request. */
 static void __attribute__((optimize("Os"))) update_menu(const gameplay_input_t *in)
 {
-    if (in->pause) {
+    if (in->pause || gameplay.pause_closing) {
+        /* Closing first loads the Player clips of newly equipped C items
+        ** behind the menu; a CD-DA fanfare defers it (the menu stays). */
+        if (gameplay.paused && !oot_core_player_groups_prepare()) {
+            gameplay.pause_closing = true;
+            return;
+        }
+        gameplay.pause_closing = false;
         gameplay.paused = !gameplay.paused;
         gameplay.pause_window.save_prompt = false;
         gameplay.pause_window.system_confirm = 0;
@@ -2400,6 +2408,7 @@ static void __attribute__((optimize("Os"))) update_menu(const gameplay_input_t *
     case PAUSE_WRITE_SAVE: gameplay.events |= GP_EVENT_SAVE; break;
     case PAUSE_LABELS: gameplay.events2 |= GP2_EVENT_LABELS; break;
     case PAUSE_JUMP_BINDING: gameplay.events2 |= GP2_EVENT_JUMP_BINDING; break;
+    case PAUSE_CORE_MODE: gameplay.events2 |= GP2_EVENT_CORE_MODE; break;
     case PAUSE_RESET_PREFS: gameplay.events2 |= GP2_EVENT_RESET_PREFS; break;
     case PAUSE_LOAD_GAME: gameplay.events2 |= GP2_EVENT_LOAD_MENU; break;
     case PAUSE_RETURN_TITLE: gameplay.events2 |= GP2_EVENT_RETURN_TITLE; break;

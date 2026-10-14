@@ -69,6 +69,7 @@ unsigned kokiri_hit_gouraud(unsigned level){return level && level<=32 ? (texture
 #include "story_route.h"
 #include "oot_core_host.h"
 #include "environment_sky.h"
+#include "dodongo_lava.h"
 
 /* Original forest renderer: radius (4367) * 60%, halved for the room banks.
 ** The authored single-mesh scene spans the whole town in one list, so that
@@ -1358,6 +1359,21 @@ static bool __attribute__((optimize("Os"))) room_load_bank(unsigned int scene, u
     forest_vertex_count = kokiri_pdata.nbPoint = header[1];
     forest_polygon_count = kokiri_pdata.nbPolygon = header[2];
     forest_tile_count = header[3]; forest_object_count = header[5];
+    /* Reserved source-material metadata is consumed only after upload; these
+     * bits never reach the SGL gouraud table or the CD reader. Reloading the
+     * room restores its original colours and unmarked tile byte lengths. */
+    for (i=0;i<forest_polygon_count;++i) {
+        ATTR *attr = &kokiri_pdata.attbl[i];
+        if (attr->gstb == DODONGO_LAVA_ATTR) {
+            unsigned tile = (unsigned)attr->texno - forest_sprite_base;
+            if (scene != SCENE_DDAN_BOSS || room != 1 ||
+                tile >= forest_tile_count ||
+                (kokiri_tiles[tile].length & ~DODONGO_LAVA_TILE) > DODONGO_LAVA_LENGTH)
+                return false;
+            kokiri_tiles[tile].length |= DODONGO_LAVA_TILE;
+            attr->gstb = 0;
+        }
+    }
     for (i=0;i<forest_polygon_count;++i)
         forest_mesh[i] = forest_face_flags(i);
     for (i=0;i<forest_tile_count;++i) tile_fog[i] = 255;
@@ -1376,6 +1392,19 @@ static bool __attribute__((optimize("Os"))) room_load_bank(unsigned int scene, u
     return true;
 }
 #endif
+
+void kokiri_scene_dodongo_lava(unsigned phase)
+{
+#ifdef KOKIRI_STREAM_ROOMS
+    unsigned i;
+    if (forest_scene != SCENE_DDAN_BOSS || forest_room != 1) return;
+    for (i=0;i<forest_tile_count;++i)
+        if (dodongo_lava_cool(kokiri_cluts[i], &kokiri_tiles[i].length, phase))
+            tile_fog[i] = 255; /* force the next visible CLUT upload */
+#else
+    (void)phase;
+#endif
+}
 
 static unsigned link_vram_start,link_sprite_start;
 static bool link_model_ready;
@@ -3392,14 +3421,14 @@ void kokiri_rupees_draw(unsigned int tick)
     }
 }
 
-static void rupee_hud_sprite(unsigned int sprite, int x, int width)
+static void number_hud_sprite(unsigned int sprite, int x, int y, int width)
 {
     FIXED pos[5];
     SPR_ATTR attr = SPR_ATTRIBUTE(0, No_Palet, No_Gouraud, ECdis,
                                   sprNoflip | FUNC_Sprite);
     /* slDispSprite ignores the world matrix. Coordinates are screen-centred. */
     pos[0] = (x - JO_TV_WIDTH_2 + width/2) * 65536;
-    pos[1] = (206 - JO_TV_HEIGHT_2 + 8) * 65536;
+    pos[1] = (y - JO_TV_HEIGHT_2 + 8) * 65536;
     /* SGL SpriteEntry rejects z <= screen_distance >> display level; sit
      * just past it, ahead of every visible world polygon. */
     pos[2] = kokiri_hud_depth(1) * 65536;
@@ -3408,7 +3437,7 @@ static void rupee_hud_sprite(unsigned int sprite, int x, int width)
     attr.atrb |= (FAIRY_COLMODE_RGB & 7) << 3;
 #ifdef DOSEI_HIRES
     /* Screen-space sprites bypass the world's vertical scale. */
-    pos[1] = (206 * 2 - JO_TV_HEIGHT_2 + 16) * 65536;
+    pos[1] = (y * 2 - JO_TV_HEIGHT_2 + 16) * 65536;
     pos[4] = 2 * 65536;
     if (slDispSpriteHV(pos, &attr, 1) == FALSE) ++kokiri_rejected;
 #else
@@ -3420,13 +3449,43 @@ void kokiri_rupee_hud_draw(void)
 {
     unsigned int x = 42;
     if (gameplay_is_talking()) return; /* dialogue owns the lower screen */
-    rupee_hud_sprite(rupee_sprite[0], 26, 16);
+    number_hud_sprite(rupee_sprite[0], 26, 206, 16);
     if (gameplay.rupees >= 100) {
-        rupee_hud_sprite(digit_sprite[(gameplay.rupees / 100) % 10], x, 8);
+        number_hud_sprite(digit_sprite[(gameplay.rupees / 100) % 10], x, 206, 8);
         x += 8;
     }
-    rupee_hud_sprite(digit_sprite[(gameplay.rupees / 10) % 10], x, 8);
-    rupee_hud_sprite(digit_sprite[gameplay.rupees % 10], x + 8, 8);
+    number_hud_sprite(digit_sprite[(gameplay.rupees / 10) % 10], x, 206, 8);
+    number_hud_sprite(digit_sprite[gameplay.rupees % 10], x + 8, 206, 8);
+}
+
+void kokiri_minigame_score_draw(unsigned score)
+{
+    unsigned divisor=1000;
+    if(score>9999)score=9999;
+    for(unsigned i=0;i<4;++i,divisor/=10)
+        number_hud_sprite(digit_sprite[(score/divisor)%10],26+(int)i*8,184,8);
+}
+
+/* Extra's source position, scale and lifetime; resident digit tiles avoid a
+ * new per-scene texture bank. Typeface is the existing Saturn HUD font. */
+void kokiri_score_popup_draw(int x,int y,int z,unsigned score_index,unsigned scale)
+{
+    static const unsigned char digits[3][3]={{3,0,0},{6,0,0},{1,0,0}};
+    int32_t sn,cs;
+    unsigned count=score_index==2?3:2;
+    SPR_ATTR attr=SPR_ATTRIBUTE(0,No_Palet,No_Gouraud,ECdis,sprNoflip|FUNC_Sprite);
+    if(score_index>2 || !scale)return;
+    if(scale>20)scale=20;
+    attr.atrb|=(FAIRY_COLMODE_RGB&7)<<3;
+    kokiri_camera_sincos(recomp_yaw,&sn,&cs);
+    for(unsigned i=0;i<count;++i){
+        FIXED pos[5];
+        int side=((int)(2*i+1)-(int)count)*(int)scale*5/2;
+        pos[0]=x*65536+side*cs;pos[1]=-y*65536;pos[2]=z*65536-side*sn;
+        pos[3]=pos[4]=(int)scale*40960; /* 16px glyph -> source 10*scale height */
+        attr.texno=(Uint16)digit_sprite[digits[score_index][i]];
+        if(slPutSprite(pos,&attr,0)==FALSE)++kokiri_rejected;
+    }
 }
 
 void                kokiri_grass_draw(void)

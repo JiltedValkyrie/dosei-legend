@@ -90,6 +90,7 @@ enum { GP_SFX_SCRUB_UP, GP_SFX_SCRUB_DOWN, GP_SFX_SCRUB_THROW, GP_SFX_SCRUB_WALK
 #define GP2_EVENT_LABELS        (1u << 15)
 #define GP2_EVENT_JUMP_BINDING  (1u << 16)
 #define GP2_EVENT_RESET_PREFS   (1u << 17)
+#define GP2_EVENT_CORE_MODE     (1u << 23)  /* Pause: Core Fast/Responsive */
 #define GP2_EVENT_HP_RECOVER    (1u << 18)  /* NA_SE_SY_HP_RECOVER */
 #define GP2_EVENT_GET_ITEM      (1u << 19)  /* ordinary non-rupee collectible */
 #define GP2_EVENT_LOAD_MENU     (1u << 13)
@@ -406,6 +407,7 @@ typedef struct
     /* Pause inventory. */
     pause_window_state_t pause_window;
     bool        paused;
+    bool        pause_closing; /* close waits for C-item Player clips */
     uint8_t     cursor;         /* GP_SLOT_* under the D-pad */
 }               gameplay_t;
 

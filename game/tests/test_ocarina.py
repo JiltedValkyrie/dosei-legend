@@ -46,19 +46,32 @@ int main(void) {
         text = BRIDGE.read_text()
         code = text[text.index('static OcarinaStaff sOcarinaStaff;'):] if 'static OcarinaStaff sOcarinaStaff;' in text else text[text.index('static OcarinaStaff sOcarinaStaff,'):]
         code = code[:code.index('/* ---- graph.c:')]
+        code = code.replace('#include "../../build/oot-core/ocarina_memory.inc"',
+                            (ROOT/'build/oot-core/ocarina_memory.inc').read_text())
         code = code.replace(graphics.function(BRIDGE,'void OotCore_OcarinaScene('),'')
         for marker in ('unsigned int OotCore_NpcText(', 'void OotCore_NpcTextStep('):
             code = code.replace(graphics.function(BRIDGE,marker),'')
+        # Execute the real resident PCM completion clock together with the
+        # bridge, so the source game's waits cannot collapse to zero frames.
+        audio = text[text.index('static s8 sAudioCutsceneFlag;'):text.index('#include "oot_core_audio.h"')]
+        durations = (ROOT/'build/generated/ocarina_sfx_duration.h').read_text()
+        from ocarina_memory_fixture import source_fixture
         self.run_c(r'''
 #include <assert.h>
 #include <stddef.h>
 #include <stdint.h>
-typedef uint8_t u8; typedef uint16_t u16; typedef int8_t s8; typedef int s32;
+#include <stdbool.h>
+typedef uint8_t u8; typedef uint16_t u16; typedef uint32_t u32; typedef int8_t s8; typedef int s32;
 enum { OCARINA_SONG_MAX=14, OCARINA_BTN_INVALID=255, OCARINA_RECORD_OFF=0,
     OCARINA_RECORD_REJECTED=255, OCARINA_MODE_02=2, OCARINA_MODE_04=4,
     OCARINA_ACTION_FREE_PLAY=1, OCARINA_ACTION_FREE_PLAY_DONE=0x29,
     MSGMODE_NONE=0, TRANS_TRIGGER_START=1, ITEM_OCARINA_FAIRY=7, ITEM_OCARINA_OF_TIME=8,
-    SCENE_HYRULE_FIELD=81,SCENE_OUTSIDE_GANONS_CASTLE=100 };
+    SCENE_HYRULE_FIELD=81,SCENE_OUTSIDE_GANONS_CASTLE=100,OCARINA_SONG_MEMORY_GAME=13,
+    OCARINA_PITCH_D4=2,OCARINA_PITCH_F4=5,OCARINA_PITCH_A4=9,OCARINA_PITCH_B4=11,
+    OCARINA_PITCH_D5=14,OCARINA_PITCH_NONE=255 };
+#define FRAMERATE_CONST(a,b) (a)
+static u32 Rand_Next(void) { static u32 seed=2;return seed++; }
+s32 AudioOcarina_MemoryGameNextNote(void);
 #define PLAYER_STATE2_USING_OCARINA 0x8000000u
 #define PLAYER_STATE2_23 0x800000u
 #define PLAYER_STATE2_24 0x1000000u
@@ -71,17 +84,19 @@ enum { OCARINA_SONG_MAX=14, OCARINA_BTN_INVALID=255, OCARINA_RECORD_OFF=0,
 #define BTN_CUP 8
 typedef struct { u8 buttonIndex,state,pos; } OcarinaStaff;
 typedef struct { u8 numButtons,buttonsIndex[8]; } OcarinaSongButtons;
-typedef int OcarinaNote;
-typedef struct { unsigned stateFlags2; } Player;
+typedef struct {u8 pitch;u16 length;u8 volume,vibrato;s8 bend;u8 bFlat4Flag;} OcarinaNote;
+typedef struct { unsigned stateFlags2;void* unk_6A8; } Player;
+typedef struct { unsigned msgMode,ocarinaMode,ocarinaAction,lastPlayedSong,disableSunsSong,
+    stateTimer,textDrawPos,decodedTextLen;OcarinaStaff* ocarinaStaff; } MessageContext;
 typedef struct { struct { struct { struct { u16 button; } press; } input[1]; } state;
-    struct { unsigned msgMode,ocarinaMode,ocarinaAction,lastPlayedSong,disableSunsSong; } msgCtx;
+    MessageContext msgCtx;
     struct { struct { unsigned ocarina,warpSongs,sunsSong; } restrictions; } interfaceCtx;
     int nextEntranceIndex,transitionTrigger,sceneId; Player player; } PlayState;
 static unsigned inventory=8,opened;
 static int gTimeSpeed;
 enum { INGO_RACE_STATE_HORSE_RENTAL_PERIOD=1,SUNSSONG_INACTIVE=0 };
 #define GET_EVENTINF_INGO_RACE_STATE() 0
-static struct { unsigned sunsSongState; } gSaveContext;
+static struct { unsigned sunsSongState;struct {struct {struct {u8 ocarinaGameRoundNum;}playerData;}info;}save; } gSaveContext;
 static void OotCore_SunSongStart(PlayState *p) { (void)p;gSaveContext.sunsSongState=1; }
 static void Message_CloseTextbox(PlayState *p) { p->msgCtx.msgMode=0; }
 
@@ -91,7 +106,11 @@ PlayState* gOotCorePlay;
 static void Message_StartOcarina(PlayState *p,unsigned action) {
     ++opened;p->msgCtx.msgMode=1;p->msgCtx.ocarinaAction=action;p->msgCtx.ocarinaMode=1;
 }
-''' + code + r'''
+enum { NA_SE_SY_METRONOME=0x4836, NA_SE_SY_METRONOME_2=0x4842 };
+static unsigned sfxCalls;
+static void playSfx(unsigned short id,int x,int y,int z) { ++sfxCalls; }
+static const struct { void (*play_sfx)(unsigned short,int,int,int); } host={playSfx},*gOotCoreHost=&host;
+''' + durations + audio + code + source_fixture(SOURCE) + r'''
 static void note(PlayState *p,unsigned button) {
     const u16 bits[5]={BTN_A,BTN_CDOWN,BTN_CRIGHT,BTN_CLEFT,BTN_CUP};
     p->state.input[0].press.button=bits[button];OotCore_OcarinaStep(p);
@@ -101,6 +120,21 @@ static void note(PlayState *p,unsigned button) {
 int main(void) {
     PlayState play={0}; unsigned i,j;
     gOotCorePlay=&play;OotCore_OcarinaReset();inventory=255;
+    Audio_PlaySfxIfNotInCutscene(NA_SE_SY_METRONOME);
+    assert(sfxCalls==1 && Audio_IsSfxPlaying(NA_SE_SY_METRONOME));
+    for(i=1;i<OOT_SFX_METRONOME_TICKS;++i) {
+        OotCore_OcarinaStep(&play);assert(Audio_IsSfxPlaying(NA_SE_SY_METRONOME));
+    }
+    OotCore_OcarinaStep(&play);assert(!Audio_IsSfxPlaying(NA_SE_SY_METRONOME));
+    sAudioCutsceneFlag=1;Audio_PlaySfxIfNotInCutscene(NA_SE_SY_METRONOME);
+    assert(!Audio_IsSfxPlaying(NA_SE_SY_METRONOME) && sfxCalls==1);
+    sAudioCutsceneFlag=0;OotCore_OcarinaSfxStarted(NA_SE_SY_METRONOME_2);
+    for(i=1;i<OOT_SFX_METRONOME_2_TICKS;++i) {
+        OotCore_OcarinaStep(&play);assert(Audio_IsSfxPlaying(NA_SE_SY_METRONOME_2));
+    }
+    OotCore_OcarinaStep(&play);assert(!Audio_IsSfxPlaying(NA_SE_SY_METRONOME_2));
+    OotCore_OcarinaSfxStarted(NA_SE_SY_METRONOME);OotCore_OcarinaReset();
+    assert(!Audio_IsSfxPlaying(NA_SE_SY_METRONOME));
     assert(!OotCore_Ocarina(1));inventory=7;
     play.interfaceCtx.restrictions.ocarina=1;assert(!OotCore_Ocarina(1));
     play.interfaceCtx.restrictions.ocarina=0;
@@ -157,6 +191,45 @@ int main(void) {
     play.state.input[0].press.button=BTN_B;OotCore_OcarinaStep(&play);
     assert(!OotCore_Ocarina(0) && !OotCore_Ocarina(3) && !sPlaybackStaff.state);
     assert(!(play.player.stateFlags2&PLAYER_STATE2_USING_OCARINA));
+
+    /* Source memory-game round lengths, playback and strict acknowledgement. */
+    for(i=0;i<4;++i) {
+        const unsigned expected[4]={5,6,8,8};
+        AudioOcarina_MemoryGameInit(i);
+        assert(gOcarinaSongButtons[13].numButtons==3);
+        assert(sMemorySong[3].pitch==255 && !sMemorySong[3].length);
+        for(;;) {
+            unsigned length=gOcarinaSongButtons[13].numButtons;
+            for(j=1;j<length;++j) assert(sMemorySong[j].pitch!=sMemorySong[j-1].pitch);
+            AudioOcarina_SetInstrument(6);AudioOcarina_SetPlaybackSong(14,1);
+            for(j=0;j<(length+1)*15;++j)OotCore_OcarinaStep(&play);
+            assert(!sPlaybackStaff.state && sPlaybackStaff.pos==length);
+            AudioOcarina_SetInstrument(1);AudioOcarina_Start(0xa000);
+            for(j=0;j<length;++j)note(&play,gOcarinaSongButtons[13].buttonsIndex[j]);
+            assert(sOcarinaStaff.state==13 && !sListening);
+            if(AudioOcarina_MemoryGameNextNote())break;
+            assert(gOcarinaSongButtons[13].numButtons==length+1);
+        }
+        assert(gOcarinaSongButtons[13].numButtons==expected[i]);
+    }
+    AudioOcarina_Start(0xa000);
+    note(&play,(gOcarinaSongButtons[13].buttonsIndex[0]+1)%5);
+    assert(sOcarinaStaff.state==255 && !sListening);
+    for(i=6;i<=8;++i) { /* Saria/Epona/Lullaby teaching playback and retry. */
+        AudioOcarina_SetInstrument(1);AudioOcarina_Start(0x8000|(1<<i));
+        note(&play,(gOcarinaSongButtons[i].buttonsIndex[0]+1)%5);
+        assert(sOcarinaStaff.state==255);
+        AudioOcarina_Start(0x8000|(1<<i));
+        for(j=0;j<gOcarinaSongButtons[i].numButtons;++j)note(&play,gOcarinaSongButtons[i].buttonsIndex[j]);
+        assert(sOcarinaStaff.state==i);
+        AudioOcarina_SetPlaybackSong(i+1,2);
+        for(j=0;j<(gOcarinaSongButtons[i].numButtons+1)*8;++j)OotCore_OcarinaStep(&play);
+        assert(sPlaybackStaff.state==1 && !sPlaybackStaff.pos);
+        for(j=0;j<(gOcarinaSongButtons[i].numButtons+1)*8;++j)OotCore_OcarinaStep(&play);
+        assert(!sPlaybackStaff.state);
+    }
+    AudioOcarina_Start(0xffff);assert(!sListening);
+    test_source_memory_choreography();
 
     return 0;
 }

@@ -266,7 +266,7 @@ mkdir -p "$here/build/disc-retired"
 for f in "$here"/build/disc-retired/*; do [ -e "$f" ] && mv -f "$f" "$here/build/cd/"; done || true
 if [ "$oot_core" = 1 ]; then
     # Real Player frame bank (PLAYER_SOURCE): ids feed the importer's anim
-    # headers, ALL.PFB becomes PLAYANIM.PFB. Rebuilt when its tools change.
+    # headers; the makefile splits ALL.PFB (split_player_bank.py). Rebuilt when its tools change.
     bank="$here/build/player-migration/bank_full"
     if [ ! -f "$bank/ALL.PFB" ] || [ "$here/tools/build_player_frame_bank.py" -nt "$bank/ALL.PFB" ] ||
        [ "$here/tools/player_frame_pack.py" -nt "$bank/ALL.PFB" ] || [ "$here/tools/build_link_model.py" -nt "$bank/ALL.PFB" ]; then
@@ -288,6 +288,7 @@ if [ "$oot_core" = 1 ]; then
     "$python" "$here/tools/build_npc_sprites.py" --oot "$oot" --rom-dir "$roms" --generic-only --out "$here/build/generated/generic-sprites"
     # Link's tools (arrows, bombs, Bombchu, boomerang, hookshot, held gear, boots).
     "$python" "$here/tools/build_item_sprites.py" --oot "$oot" --rom-dir "$roms" --out "$here/build/cd"
+    "$python" "$here/tools/build_get_item_sprites.py" --oot "$oot" --cd "$here/build/cd"
 else
     rm -f "$here/build/cd/OOTCORE.BIN"
 fi

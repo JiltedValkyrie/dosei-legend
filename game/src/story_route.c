@@ -16,6 +16,7 @@
 #include "npc_pose.h"
 #include "collide.h"
 #include "action_audio.h"
+#include "oot_core_host.h"
 static unsigned char *saria[4], *owl[2];
 static npc_sprite_inst_t saria_inst[4], owl_inst[2];
 static unsigned generation, uploaded, owl_phase, owl_frame, clock_phase;
@@ -42,7 +43,7 @@ bool story_route_load(unsigned scene)
         static const char *const files[]={"NPC19.SPR","NPC20.SPR","NPC21.SPR","NPC22.SPR"};
         for(i=0;i<4;++i)if(!(saria[i]=npc_sprite_load(files[i])))goto failed;
     }
-    if(scene==SAVE_SCENE_HYRULE_FIELD && !save_get_switch(scene,12)) {
+    if(scene==SAVE_SCENE_HYRULE_FIELD && !oot_core_owns_owl() && !save_get_switch(scene,12)) {
         owl[0]=npc_sprite_load("OWLPERCH.SPR");
         owl[1]=npc_sprite_load("OWLFLY.SPR");
         if(!owl[0] || !owl[1])goto failed;
@@ -86,6 +87,13 @@ void story_route_step(void)
         if(a){owl_handle=actor_handle(a);a->attention=ATTN_POI;a->range=ATTN_RANGE_6;a->focus[1]=110;a->arrow_y=5;}
     }
     dx=recomp_link.x-owl_x/256;dz=recomp_link.z-owl_z/256;
+    /* EnOwl_WaitOutsideKokiri calls EnOwl_LookAtLink before offering talk.
+     * The 0x4343 camera shot uses this shape yaw too: leaving the spawn yaw
+     * at zero puts the camera on the far side of the perched owl. */
+    if(owl_phase==1) {
+        owl_yaw=collide_heading(dx,dz);
+        if(a)a->yaw=owl_yaw;
+    }
     if(owl_phase==1 && !gameplay_blocks_world() && !cutscene_is_playing() &&
        dx>-360 && dx<360 && dz>-360 && dz<360 && dx*dx+dz*dz<360*360) {
         if(gameplay_actor_message(0x2064)) {
@@ -143,27 +151,30 @@ void story_route_draw(unsigned tick)
     }
 }
 
-/* OnePoint 8700 left-hand path: first player-relative shot, then owl-relative
- * conversation shot (0x2222 / 0x4343). Integer 0.2 approach at source 20 Hz. */
+/* OnePoint 8700 left-hand conversation path: approach Link for 10 frames,
+ * hold for 20, approach the owl for 30, then hold until the text closes.
+ * Frame time is source 20 Hz, independent of the displayed frame rate. */
 void story_owl_camera(void)
 {
     int32_t eye[3],at[3],s,c,dx,dz;
     unsigned elapsed=(recomp_clock()-talk_started)/3,i;
     int ex,ez,ax,az;
     if(!story_owl_talking())return;
-    if(elapsed<30) {
-        ex=-30;ez=-20;ax=50;az=140;kokiri_camera_sincos(recomp_link_yaw,&s,&c);
-        eye[0]=at[0]=recomp_link.x;eye[2]=at[2]=recomp_link.z;
-        eye[1]=recomp_link.y-RECOMP_LINK_EYE_HEIGHT+10;at[1]=recomp_link.y-RECOMP_LINK_EYE_HEIGHT+100;
-    } else {
-        ex=20;ez=120;ax=-10;az=10;kokiri_camera_sincos(owl_yaw,&s,&c);
-        eye[0]=at[0]=owl_x/256;eye[2]=at[2]=owl_z/256;
-        eye[1]=owl_y/256+20;at[1]=owl_y/256+80;
-    }
-    eye[0]+=(ex*c+ez*s)/65536;eye[2]+=(ez*c-ex*s)/65536;
-    at[0]+=(ax*c+az*s)/65536;at[2]+=(az*c-ax*s)/65536;
-    if(elapsed!=talk_camera_step) {
-        talk_camera_step=elapsed;
+    if(elapsed>60)elapsed=60;
+    while(talk_camera_step!=elapsed) {
+        unsigned frame=++talk_camera_step;
+        if((frame>=10 && frame<30) || frame==60)continue;
+        if(frame<10) {
+            ex=-30;ez=-20;ax=50;az=140;kokiri_camera_sincos(recomp_link_yaw,&s,&c);
+            eye[0]=at[0]=recomp_link.x;eye[2]=at[2]=recomp_link.z;
+            eye[1]=recomp_link.y-RECOMP_LINK_EYE_HEIGHT+10;at[1]=recomp_link.y-RECOMP_LINK_EYE_HEIGHT+100;
+        } else {
+            ex=20;ez=120;ax=-10;az=10;kokiri_camera_sincos(owl_yaw,&s,&c);
+            eye[0]=at[0]=owl_x/256;eye[2]=at[2]=owl_z/256;
+            eye[1]=owl_y/256+20;at[1]=owl_y/256+80;
+        }
+        eye[0]+=(ex*c+ez*s)/65536;eye[2]+=(ez*c-ex*s)/65536;
+        at[0]+=(ax*c+az*s)/65536;at[2]+=(az*c-ax*s)/65536;
         for(i=0;i<3;++i){talk_eye[i]+=(eye[i]-talk_eye[i])/5;talk_at[i]+=(at[i]-talk_at[i])/5;}
     }
     recomp_camera.x=talk_eye[0];recomp_camera.y=talk_eye[1];recomp_camera.z=talk_eye[2];

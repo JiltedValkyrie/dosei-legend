@@ -8,7 +8,17 @@
 #define OOT_SCENE_BLOB_H
 
 #define OOT_SCENE_MAX_ROOMS 32
-#define OOT_SCENE_BLOB_FORMAT 0x4f4f4303u
+/* Objects any layer lists (32-bit layer masks). One layer's objects take
+ * ObjectContext slots: 32 minus gameplay_keep and the Player stub. */
+#define OOT_SCENE_MAX_OBJECTS 32
+#define OOT_SCENE_MAX_LAYER_OBJECTS 30
+#define OOT_SCENE_BLOB_FORMAT 0x4f4f4305u
+
+typedef struct OotSceneCutscene {
+    unsigned int id;
+    const void* script;
+    unsigned int bytes;
+} OotSceneCutscene;
 
 /* One room's actor list in one scene layer (0 = main header, L = room
  * AltHeaders[L - 1]). present 0: no header for that layer (NULL entry), the
@@ -45,6 +55,20 @@ typedef struct OotSceneBlob {
     unsigned int num_transition_layers;
     const OotSceneLayer* exits; /* original s16 exit lists, per scene layer */
     unsigned int num_exit_layers;
+    const OotSceneCutscene* cutscenes; /* complete scene-local source scripts */
+    unsigned int num_cutscenes;
+    /* Format 5: bit k of layer_objects[L] = objects[k] is in scene layer L
+     * (union of the room object lists that layer's headers name, with the
+     * room-layer fallback; keep/shop/boss-reward objects in every layer).
+     * At least layers 0-3; a higher layer the scene lacks uses [0]. */
+    const unsigned int* layer_objects;
+    unsigned int num_object_layers;
 } OotSceneBlob;
+
+#define OOT_SCENE_MAX_OBJECT_LAYERS 64
+
+/* Objects scene layer `layer` loads (OoT: the active header's object list).
+ * A macro: host headers take no new static inline bodies (BUILD.md 110). */
+#define OotScene_LayerObjects(blob, layer)     ((layer) < (blob)->num_object_layers ? (blob)->layer_objects[layer] : (blob)->layer_objects[0])
 
 #endif

@@ -108,7 +108,7 @@ def write_archives(rows, symbols, sheets, out):
     return libraries
 
 
-def scene_costs(libraries, folder):
+def scene_costs(libraries, folder, rewards=()):
     result = []
     for path in sorted(folder.glob('*.cpp')):
         text = path.read_text(encoding='utf-8')
@@ -117,9 +117,14 @@ def scene_costs(libraries, folder):
             continue
         objects = {int(n, 0) for n in re.findall(r'0x[\da-fA-F]+|\b\d+\b', match[1])}
         own = [lib for lib in libraries if lib['object'] in objects]
-        if own:
+        extra = next((row for row in rewards if row['scene'] == path.stem), None)
+        if own or extra:
             result.append({'scene': path.stem, 'libraries': [lib['file'] for lib in own],
-                           'heap_bytes': sum(lib['heap_bytes'] for lib in own)})
+                           'reward_library': extra['file'] if extra else None,
+                           'reward_heap_bytes': extra['heap_bytes'] if extra else 0,
+                           'preload_scratch_bytes': (len(libraries) + 1) * 4 + 20,
+                           'heap_bytes': sum(lib['heap_bytes'] for lib in own) +
+                               (extra['heap_bytes'] if extra else 0) + (len(libraries) + 1) * 4 + 20})
     return result
 
 
@@ -131,13 +136,15 @@ if __name__ == '__main__':
     ap.add_argument('--sheets', type=Path)
     ap.add_argument('--archives', type=Path)
     ap.add_argument('--scenes', type=Path)
+    ap.add_argument('--rewards', type=Path, default=Path(__file__).resolve().parents[1]/'build/get-item-sprites/budget.json')
     args = ap.parse_args()
     rows = json.loads(args.rows.read_text())
     symbols = args.symbols.read_text()
     if args.sheets:
         libraries = write_archives(rows, symbols, args.sheets, args.archives or args.sheets)
         if args.scenes:
-            scenes = scene_costs(libraries, args.scenes)
+            rewards = json.loads(args.rewards.read_text()) if args.rewards.exists() else ()
+            scenes = scene_costs(libraries, args.scenes, rewards)
             report = {'libraries': libraries, 'scenes': scenes,
                       'runtime_heap_guard_percent': 85, 'runtime_accepted': False}
             args.out.with_suffix('.budget.json').write_text(json.dumps(report, indent=2)+'\n')

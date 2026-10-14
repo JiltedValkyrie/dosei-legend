@@ -108,6 +108,15 @@ static bool load_sprite(unsigned int model)
     return spr[model] != 0;
 }
 
+static bool load_shop_cursor(void)
+{
+    int length = 0;
+    void *pixels = ram_cart_fixed(RAM_CART_CURSOR_OFFSET, RAM_CART_CURSOR_BYTES);
+    shop_cursor_loaded = pixels && jo_fs_read_file_ptr("CURSOR.RGB", pixels, &length) &&
+                         length == SHOP_CURSOR_PULSES * 32 * 32 * 2;
+    return shop_cursor_loaded;
+}
+
 bool __attribute__((optimize("Os"))) npc_draw_load(unsigned int scene)
 {
     unsigned int i;
@@ -116,6 +125,15 @@ bool __attribute__((optimize("Os"))) npc_draw_load(unsigned int scene)
         if (kokiri_npcs[i].scene == scene && !load_sprite(model_for(i))) {
             npc_draw_free(); return false;
         }
+#ifdef DOSEI_OOT_CORE
+    /* Source scene IDs from scene_table.h: Bazaar, Goron, two potions,
+     * Bombchu and Mask. Kokiri retains its existing counter owner. */
+    {
+        unsigned int source = scene_flow_entry()->oot_scene;
+        if ((source == 0x2c || source == 0x2e || (source >= 0x30 && source <= 0x33)) &&
+            !load_shop_cursor()) { npc_draw_free(); return false; }
+    }
+#endif
     if (scene == SAVE_SCENE_KOKIRI_SHOP) {
         if (!load_sprite(NPC_SHOPKEEPER)) { npc_draw_free(); return false; }
         if (!interior_mask_load(SCENE_KOKIRI_SHOP)) { npc_draw_free(); return false; }
@@ -124,13 +142,7 @@ bool __attribute__((optimize("Os"))) npc_draw_load(unsigned int scene)
         if (!shelves) { npc_draw_free(); return false; }
         counter = actor_mesh_load_static("COUNTER.BIN");
         if (!counter) { npc_draw_free(); return false; }
-        {
-            int length = 0;
-            void *pixels = ram_cart_fixed(RAM_CART_CURSOR_OFFSET, RAM_CART_CURSOR_BYTES);
-            shop_cursor_loaded = pixels && jo_fs_read_file_ptr("CURSOR.RGB", pixels, &length) &&
-                                 length == SHOP_CURSOR_PULSES * 32 * 32 * 2;
-            if (!shop_cursor_loaded) { npc_draw_free(); return false; }
-        }
+        if (!load_shop_cursor()) { npc_draw_free(); return false; }
         for (i = 0; i < 8; ++i) shop_spin[i] = 0;
         shop_tween = 0;
         for (i = 0; i < SHOP_ITEM_MESHES; ++i) {
@@ -266,6 +278,36 @@ static void shop_cursor_draw(int32_t x, int32_t y, int32_t z)
 #endif
 }
 
+#ifdef DOSEI_OOT_CORE
+/* Source enabled left/right prompts, drawn as cheap untextured arrows.
+ * Persistent PDATA points survive deferred SGL submission; no new textures. */
+static void source_shop_prompts(const OotCoreShopView *shop)
+{
+    static POINT points[2][3];
+    static POLYGON polygon = {{0,0,65536},{0,1,2,2}};
+    static ATTR attribute = ATTRIBUTE(Dual_Plane,SORT_CEN,0,C_RGB(31,25,5),No_Gouraud,
+                                     ECdis|SPdis,sprPolygon,No_Option);
+    static PDATA data[2];
+    int distance = recomp_screen_distance(), side, depth, unit;
+    if (!shop || !(shop->flags & (OOT_SHOP_LEFT | OOT_SHOP_RIGHT)) || !distance) return;
+    depth = (distance >> KOKIRI_ZDSP_LEVEL) + 1;
+    unit = depth * 65536 / distance;
+    for (side = 0; side < 2; ++side) {
+        int sign = side ? 1 : -1;
+        if (!(shop->flags & (side ? OOT_SHOP_RIGHT : OOT_SHOP_LEFT))) continue;
+        for (int i = 0; i < 3; ++i) {
+            points[side][i][0] = sign * (i == 0 ? 134 : 123) * unit;
+            points[side][i][1] = (-29 + (i == 0 ? 0 : i == 1 ? -7 : 7)) * unit * (JO_TV_HEIGHT / 240);
+            points[side][i][2] = depth * 65536;
+        }
+        data[side] = (PDATA){points[side],3,&polygon,1,&attribute};
+        slPushMatrix();slUnitMatrix(0);
+        kokiri_submit_pdata(&data[side]);
+        slPopMatrix();
+    }
+}
+#endif
+
 static void shop_items_draw(unsigned int steps)
 {
     unsigned int i, n, st = gameplay.shop_state, cursor = gameplay.shop_cursor & 7;
@@ -356,6 +398,16 @@ void npc_draw(unsigned int tick)
     if (shelves) {
         shop_items_draw(steps);
     }
+#ifdef DOSEI_OOT_CORE
+    {
+        const OotCoreShopView *shop = oot_core_shop_view();
+        if (shop && (shop->flags & OOT_SHOP_CURSOR)) {
+            shop_cursor_tween = shop->pulse;
+            shop_cursor_draw(shop->cursor[0], shop->cursor[1], shop->cursor[2]);
+        }
+        source_shop_prompts(shop);
+    }
+#endif
     {
     PS_T0();
     if (visible & (1u << NPC_SHOPKEEPER))

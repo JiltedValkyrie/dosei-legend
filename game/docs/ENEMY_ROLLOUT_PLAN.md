@@ -2,6 +2,14 @@
 
 ## Context
 
+Current order (2026-10-13): the human's owl-to-King-Dodongo route supersedes
+the historical Field/Water ordering below. Source cavern sprite enemies and
+the model-based boss are implemented with isolated source/target evidence;
+remaining mountain/city actors, final scene budgets and human acceptance stay
+open. See [current route](CHILD_ROUTE_DODONGO_PLAN.md) and
+[actor/boss evidence](DODONGO_ACTORS_2026-10-13.md). Full-game coverage remains
+the destination; this route does not narrow it.
+
 Current human ordering (2026-10-08): implement Hyrule Field, then Water Temple
 enemies, obstacles and puzzle actors. This supersedes the earlier W0b import
 ordering gate, not source gameplay or verification requirements. Field now has

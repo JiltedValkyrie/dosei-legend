@@ -36,7 +36,7 @@ BANKS = (
     ('stone_triggers', 'STONE', HERE / 'build/generated/stone_score.h'),
 
 )
-# Must match RAM_CART_MUSICTRG_BYTES / RAM_CART_TITLEPTH_BYTES (ram_cart.h).
+# Must match MUSICTRG_BYTES (music_banks.h) / RAM_CART_TITLEPTH_BYTES (ram_cart.h).
 MUSICTRG_LIMIT = 0x18000  # MUSICTRG_BYTES (music_banks.h, cart heap); loaded before music starts
 TITLEPTH_LIMIT = 0x1800
 
@@ -73,8 +73,10 @@ def main():
     blob = b'KTRG' + struct.pack('>H', len(tables))
     blob += b''.join(struct.pack('>H', len(t)) for t in tables)
     for t in tables:
-        for frame, slot, sample, pitch, pan in t:
-            blob += struct.pack('>HBBHBx', frame, slot, sample, pitch, pan)
+        # Former pad byte carries the source channel; older 5-field tables keep 0.
+        for row in t:
+            channel = row[5] if len(row) > 5 else 0
+            blob += struct.pack('>HBBHBB', *row[:5], channel)
     if len(blob) > MUSICTRG_LIMIT:
         raise ValueError('MUSICTRG.BIN %d B exceeds its cart carve' % len(blob))
     (args.cd / 'MUSICTRG.BIN').write_bytes(blob)

@@ -193,7 +193,13 @@ def build(oot, asset_root, sprite_rows=(), sprite_dir=None, registrations=(), ho
                 profiles[match[1].removesuffix('_Profile')] = (fields, rel, text)
         sources[rel] = text
     field_sources = set(imp.field_enemy_sources.SOURCES)
-    imported = set(imp.SOURCES) | field_sources
+    # Scene-pack actors (scene_pack_actors): PACK_ACTORS load wherever their
+    # scene lists them; SOURCE_ACTORS only in source-owned scenes.
+    spa = imp.scene_pack_actors
+    route_sources = {spa.source(n) for n in spa.SOURCE_ACTORS}
+    route_scope = sorted(int(m[1], 16) for m in SCENES.finditer(
+        (oot / 'include/tables/scene_table.h').read_text(encoding='utf-8')) if m[2] in spa.SOURCE_SCENES)
+    imported = set(imp.SOURCES) | field_sources | set(spa.SOURCES)
     generic = {actor for actor, _ in imp.GENERIC_NPC_SOURCES}
     generic.update('ACTOR_' + name.upper() for name in imp.field_enemy_sources.ACTORS[1:])
     actors = {}
@@ -240,7 +246,8 @@ def build(oot, asset_root, sprite_rows=(), sprite_dir=None, registrations=(), ho
                        'object': obj, 'object_id': oid, 'source': rel,
                        'source_sha256': hashlib.sha256(text.encode()).hexdigest(),
                        'visual_policy': policy, 'gameplay_owner': status,
-                       'scene_pack_scope': [81] if rel in field_sources else None,
+                       'scene_pack_scope': [81] if rel in field_sources else
+                                           route_scope if rel in route_sources else None,
                        'clip_candidates': anims, 'source_predicates': predicates,
                        'source_condition_sites': condition_sites(text),
                        'dialogue_reward_sites': [

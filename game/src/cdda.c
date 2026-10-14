@@ -16,6 +16,9 @@ void    cdda_play(int track)
 {
     /* Whatever the manifest put on the disc, not a fixed three. */
     if (track < CDDA_TRACK_FIRST || track > CDDA_TRACK_LAST) return;
+    /* Source Player and the save presentation can report the same reward.
+     * Never restart it, or let the item fanfare cut the chest cue short. */
+    if (track == active_track || track == requested_track) return;
     requested_track = track;
     cdda_service();
 }
@@ -24,7 +27,7 @@ void cdda_service(void)
 {
     CdcStat stat;
     unsigned int now = music_vblank_count(), status;
-    if (requested_track && !music_busy()) {
+    if (requested_track && !active_track && !music_busy()) {
         CdcPly ply = {0};
         int track = requested_track;
         requested_track = 0;
@@ -69,5 +72,6 @@ void cdda_service(void)
             return;
     }
     active_track = 0;
-    music_cdda_mute(false);
+    if (requested_track) cdda_service();
+    else music_cdda_mute(false);
 }

@@ -19,11 +19,11 @@ import unittest
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 GCC = pathlib.Path('C:/msys64/mingw64/bin/gcc.exe')
 
-SAVE_FILE_PAYLOAD_BYTES = 2432
+SAVE_FILE_PAYLOAD_BYTES = 2433
 SAVE_FILE_V4_PAYLOAD_BYTES = 298
 SAVE_FILE_V2_PAYLOAD_BYTES = 290
 SAVE_FILE_BYTES = 8 + SAVE_FILE_PAYLOAD_BYTES + 2
-SAVE_FILE_VERSION = 13
+SAVE_FILE_VERSION = 14
 
 SAVE_FILE_OK = 0
 SAVE_FILE_EMPTY = 1
@@ -114,6 +114,20 @@ class SaveFile(unittest.TestCase):
         self.assertEqual(self.lib.sf_ocarina(),1)
         self.assertFalse(self.lib.sf_tunic_equip(3))
 
+    def test_memory_game_reward_round_survives_reload_and_v13_defaults(self):
+        self.lib.sf_set_memory_round(2)
+        block=self.pack()
+        self.lib.save_new_game()
+        self.assertEqual(self.lib.sf_memory_round(),0)
+        self.assertEqual(self.lib.sf_unpack(bytes(block),len(block)),SAVE_FILE_OK)
+        self.assertEqual(self.lib.sf_memory_round(),2)
+        old=bytearray(block[:8+2432])
+        old[4:6]=(13).to_bytes(2,'big')
+        checksum=self.lib.save_file_checksum(bytes(old[8:]),2432)
+        old.extend(checksum.to_bytes(2,'big'))
+        self.assertEqual(self.lib.sf_unpack(bytes(old),len(old)),SAVE_FILE_OK)
+        self.assertEqual(self.lib.sf_memory_round(),0)
+
     def test_world_flags_keys_time_and_bottles_survive_reload(self):
         self.lib.sf_set_world()
         block = self.pack()
@@ -125,7 +139,7 @@ class SaveFile(unittest.TestCase):
     def test_saved_day_counters_round_trip_and_frontend_reset(self):
         self.lib.sf_set_days(0x76543210,0x87654321)
         block=self.pack()
-        self.assertEqual(block[-10:-2],bytes.fromhex('7654321087654321'))
+        self.assertEqual(block[-11:-3],bytes.fromhex('7654321087654321'))
         self.lib.save_new_game()
         self.assertEqual(self.lib.sf_total_days(),0)
         self.assertEqual(self.lib.sf_bgs_day_count(),0)

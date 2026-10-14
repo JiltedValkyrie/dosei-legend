@@ -159,7 +159,8 @@ def main():
     fixed_base = (constants['RAM_CART_BANK2_ADDRESS'] + constants['RAM_CART_BANK2_BYTES']
                   - constants['RAM_CART_OOTCORE_OFFSET'] - constants['RAM_CART_OOTCORE_BYTES'])
     retired = []
-    for name in ('RAM_CART_MUSICTRG', 'RAM_CART_FAIRY'):
+    # The old MUSICTRG gap holds CD directory keys (RAM_CART_FSKEYS) since 2026-10-13.
+    for name in ('RAM_CART_FAIRY',):
         consumers = [str(p) for p in (GAME / 'src').rglob('*')
                      if p.suffix in ('.c', '.h') and p.name not in ('ram_cart.c', 'ram_cart.h')
                      and name in p.read_text(encoding='utf-8')]

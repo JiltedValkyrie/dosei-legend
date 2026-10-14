@@ -17,9 +17,21 @@
 #include "oot_core_host.h"
 #include "oot_core_effects.h"
 #include "oot_core_bg.h"
+#include "oot_cutscene_camera.h"
+#include "oot_core_shop.h"
+#include "oot_core_timer.h"
 
 #define OOT_CORE_MAGIC 0x4F4F5443u /* 'OOTC' */
-#define OOT_CORE_VERSION 34u
+#define OOT_CORE_VERSION 36u
+/* Player clip groups: bit order of tools/split_player_bank.py GROUPS. */
+#define OOT_CORE_PLAYER_GROUP_HORSE 0
+#define OOT_CORE_PLAYER_GROUP_SWIM 1
+#define OOT_CORE_PLAYER_GROUP_FISH 2
+#define OOT_CORE_PLAYER_GROUP_BOTTLE 3
+#define OOT_CORE_PLAYER_GROUP_MAGIC 4
+#define OOT_CORE_PLAYER_GROUP_HAMMER 5
+#define OOT_CORE_PLAYER_GROUP_BOOM 6
+#define OOT_CORE_PLAYER_GROUP_HOOK 7
 #define OOT_CORE_TRANSITION_RELOAD 0x10000 /* debug scene has no source entrance */
 /* set_flags bits. NPC_SPRITES: generic NPCs are host sprites (NPC views carry
  * object/anim/frame; their Actor_Draw is skipped, no limb matrices). */
@@ -103,7 +115,7 @@ typedef struct OotCoreDrawItem {
     short actor;                 /* actor id */
     short yaw, pitch, roll;
     unsigned char xlu;           /* from the translucent list */
-    unsigned char pad;
+    unsigned char alpha;         /* source primitive alpha; 255 by default */
     int x, y, z;                 /* world units */
     int sx, sy, sz;              /* Q16 */
 } OotCoreDrawItem;
@@ -164,6 +176,10 @@ typedef struct OotCoreSave {
      * (PLAYER_TUNIC_*): the real Player's item buttons and equipment. */
     unsigned char c_slots[3];
     unsigned char tunic;
+    unsigned short* cutscene_index_out; /* current source index / pending destination */
+    unsigned char* skull_flags; /* source's 24 groups; host has 32 bytes */
+    unsigned char* skull_tokens_out; /* source token grants, committed after update */
+    unsigned char* ocarina_game_round; /* source playerData.ocarinaGameRoundNum */
 } OotCoreSave;
 
 /* Link's tools on the decomp actors (v19, bridge_items.cpp). io is int[6]. */
@@ -370,7 +386,8 @@ typedef struct OotCoreEntry {
     /* Cold scene-only sprite admission runs in the cart with the pack loader.
      * Return loaded libraries; missing counts failed required libraries. */
     unsigned int (*sprite_preload)(const void* scene, const OotCoreSpriteLibrary* rows,
-                                   unsigned int count, unsigned char** archives, unsigned int* missing);
+                                   unsigned int count, unsigned char** archives, unsigned int* missing,
+                                   unsigned int layer);
     /* UINT_MAX animation queries largest cel; other values select exact clip. */
     const unsigned char* (*sprite_clip)(const unsigned char* archive, unsigned int animation);
     /* Borrowed source WaterBox array (five s16 fields, u32 properties, 16-byte
@@ -396,6 +413,21 @@ typedef struct OotCoreEntry {
     /* The host moved Link (spawn placement, story events, C pushes): feet
      * position and facing; speed is kept. */
     void (*player_warp)(int x, int y, int z, short yaw);
+    /* v35: copy active source subcamera, after update/join. */
+    int (*cutscene_camera)(OotCoreCutsceneCameraView* out);
+    /* Joined source shop controls and world-space stock cursor. */
+    int (*shop_view)(OotCoreShopView* out);
+    /* Main host camera seeds actor cutscenes before source Update. */
+    void (*camera_seed)(const OotCoreCutsceneCameraView* view);
+    void (*timer_view)(OotCoreTimerView* out);
+    /* Cold scene admission: host copies retire only when source owns the id. */
+    int (*actor_admitted)(unsigned int id);
+    /* v36, real Player demand clips (tools/split_player_bank.py). Unregister
+     * a demand bank before its memory is freed (no Player consumer may run). */
+    void (*player_bank_release)(const void* bank, unsigned int bytes);
+    /* Groups (OOT_CORE_PLAYER_GROUP_* bits) registered now. Player_UseItem
+     * refuses an item whose group bit is clear: the action waits. */
+    void (*player_groups)(unsigned int mask);
 } OotCoreEntry;
 
 #endif

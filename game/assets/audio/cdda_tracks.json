@@ -6,8 +6,7 @@
       "name": "CHEST",
       "sequence": 43,
       "soundfont": 3,
-      "max_seconds": 2.5,
-      "note": "NA_BGM_OPEN_TRE_BOX, treasure chest"
+      "note": "NA_BGM_OPEN_TRE_BOX, complete treasure chest cue and release tail; never shorten"
     },
     {
       "track": 3,

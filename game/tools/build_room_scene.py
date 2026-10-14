@@ -121,6 +121,22 @@ def pack_room(vertices, faces, tiles, records, normal, lods=None, source_empty=F
     """Big-endian Saturn POINT/POLYGON/ATTR buffers, tile table and palettes."""
     if source_empty and any((vertices, faces, tiles, records, lods)):
         raise ValueError('source-empty room must contain no geometry or textures')
+    if len(faces) != len(records):
+        raise ValueError('room face/record count mismatch')
+    tile_tags = {}
+    for face, record in zip(faces, records):
+        tag = record.get('surface_tag', 0)
+        if tag not in (0, 0xDD01):
+            raise ValueError('unknown room material tag: %04X' % tag)
+        if 'colour' in face:
+            if tag:
+                raise ValueError('animated room material lost its palette')
+            continue
+        tile = face['tex_off']
+        if tile_tags.setdefault(tile, tag) != tag:
+            raise ValueError('animated room material shares a tile with another surface')
+        if tag and len(tiles[tile]['pixels']) > 65535:
+            raise ValueError('animated room tile length exceeds resident metadata bits')
     baked = [(x,-y,z) for x,y,z in vertices]
     objects = collections.defaultdict(list)
     for i, record in enumerate(records):
@@ -141,7 +157,7 @@ def pack_room(vertices, faces, tiles, records, normal, lods=None, source_empty=F
         data.extend(struct.pack('>3i',*(v*65536 for v in p)))
     for f in faces:
         data.extend(struct.pack('>3i4H',*normal(baked,f['idx']),*f['idx']))
-    for f in faces:
+    for f, record in zip(faces, records):
         # Preserve the same floor tag as the resident scene exporter.
         # Runtime switches tagged overhead planes back to centre sorting.
         sort = 0x66 if floor_uses_far_sort(baked, f['idx'], normal(baked, f['idx'])) else 0x67
@@ -152,7 +168,8 @@ def pack_room(vertices, faces, tiles, records, normal, lods=None, source_empty=F
         # SGL 3.02j ATTR: flag, sort, texno, atrb, colno, gstb, dir.
         # Matches ATTRIBUTE(... SORT_CEN|UsePalette|UseNearClip, sprNoflip).
         data.extend(struct.pack('>BB5H',0 if f['cull'] else 1,sort,
-                                tiles[f['tex_off']]['index'],0x88 | (0x100 if f['mesh'] else 0),0,0,2))
+                                tiles[f['tex_off']]['index'],0x88 | (0x100 if f['mesh'] else 0),
+                                0,record.get('surface_tag', 0),2))
     offset = 0
     for t in tiles.values():
         data.extend(struct.pack('>HHII',t['width'],t['height'],offset,len(t['pixels'])))
@@ -245,9 +262,7 @@ def emit_rooms(args, head, actor, normal):
                 _, vertices, faces, tiles = hybrid.convert(
                     args.oot, head, room_actor, folder, rom_dir=args.rom_dir,
                     quad_obj=args.quad_obj, source_path=args.scene, room=room,
-                    prefix=prefix,base_tile_limit=32 if prefix=='spot00' else None,
-                    source_tessellation=prefix=='spot00',
-                    wall_split_limit=3 if prefix=='spot00' else None)
+                    prefix=prefix, **hybrid.room_conversion_policy(prefix, room))
                 manifest = json.loads((folder / 'texture_manifest.json').read_text())
             if prefix == 'spot04':
                 forest_rooms.append((vertices, faces, tiles))

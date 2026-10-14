@@ -13,6 +13,7 @@
 #include "save.h"
 #include "seqcmd.h"
 #include "oot_core_host.h"
+#include "oot_core_audio.h"
 #include "sprite_actor.h"
 #include "segmented_address.h"
 
@@ -107,11 +108,13 @@ s32 Inventory_HasEmptyBottle(void) { /* REAL */
 void Rupees_ChangeBy(s16 rupeeChange) { /* HOST: the C save owns rupees */
     if (gOotCoreHost != NULL && gOotCoreHost->rupees_change != NULL) {
         gOotCoreHost->rupees_change(rupeeChange);
+        s32 value = gSaveContext.save.info.playerData.rupees + rupeeChange;
+        s32 capacity = CUR_CAPACITY(UPG_WALLET);
+        gSaveContext.save.info.playerData.rupees = value < 0 ? 0 : value > capacity ? capacity : value;
     }
 }
 
-void Interface_SetTimer(s16 seconds) { /* STUB: no minigame timer HUD yet */
-}
+/* Source Interface_SetTimer and its 20 Hz clock live in bridge_ranch.cpp. */
 
 /* ---- audio: music is the C side's; these change sequences ---- */
 void Audio_PlaySfxRandom(Vec3f* pos, u16 baseSfxId, u8 randLim) { /* HOST: base sfx */
@@ -119,35 +122,26 @@ void Audio_PlaySfxRandom(Vec3f* pos, u16 baseSfxId, u8 randLim) { /* HOST: base 
         gOotCoreHost->play_sfx(baseSfxId, pos ? (s32)pos->x : 0, pos ? (s32)pos->y : 0, pos ? (s32)pos->z : 0);
     }
 }
-void Audio_QueueSeqCmd(u32 cmd) { /* STUB: C music owns sequences */
+void Audio_QueueSeqCmd(u32 cmd) {
+    unsigned op = cmd >> 28, player = (cmd >> 24) & 15;
+    if (op == SEQCMD_OP_PLAY_SEQUENCE && player <= 1)
+        OotCore_AudioRequest(player ? OOT_CORE_AUDIO_FANFARE : OOT_CORE_AUDIO_SEQUENCE, cmd & 0xff);
+    else if (op == SEQCMD_OP_STOP_SEQUENCE && player == 0)
+        OotCore_AudioRequest(OOT_CORE_AUDIO_STOP, 0);
 }
-void Audio_SetFastTempoForTimedMinigame(void) { /* STUB */
+void Audio_SetFastTempoForTimedMinigame(void) {
+    OotCore_AudioRequest(OOT_CORE_AUDIO_MINIGAME_TEMPO, 0);
 }
-void Audio_ToggleMalonSinging(u8 malonSingingDisabled) { /* STUB: no Malon song channel */
+/* Malon/ambient channel services are in bridge_route_audio.cpp. */
+void func_800F5ACC(u16 seqId) {
+    OotCore_AudioRequest(OOT_CORE_AUDIO_PUSH_SEQUENCE, seqId & 0xff);
 }
-void Audio_UpdateMalonSinging(f32 dist, u16 seqId) { /* STUB */
+void func_800F5B58(void) {
+    OotCore_AudioRequest(OOT_CORE_AUDIO_POP_SEQUENCE, 0);
 }
-void func_800F5ACC(u16 seqId) { /* STUB: play sequence (C music) */
-}
-void func_800F5B58(void) { /* STUB: restore sequence */
-}
-void Environment_ForcePlaySequence(u16 seqId) { /* STUB */
+void Environment_ForcePlaySequence(u16 seqId) {
+    OotCore_AudioRequest(OOT_CORE_AUDIO_SEQUENCE, seqId & 0xff);
 }
 
-/* ---- camera / letterbox / one-point shots: the C camera owns the view ---- */
-void Letterbox_SetSizeTarget(s32 target) { /* STUB */
-}
-s16 OnePointCutscene_Init(PlayState* play, s16 csId, s16 timer, Actor* actor, s16 parentCamId) { /* STUB */
-    return CAM_ID_NONE;
-}
-s16 Play_CreateSubCamera(PlayState* this) { /* STUB: no sub cameras */
-    return CAM_ID_NONE;
-}
-s16 Play_ChangeCameraStatus(PlayState* this, s16 camId, s16 status) { /* STUB */
-    return 0;
-}
-void Play_ClearCamera(PlayState* this, s16 camId) { /* STUB */
-}
-s32 Play_SetCameraAtEye(PlayState* this, s16 camId, Vec3f* at, Vec3f* eye) { /* STUB */
-    return 0;
-}
+/* Subcamera/letterbox services are in bridge_cutscene_camera.cpp. */
+/* Source attention camera category services are in bridge_cutscene_camera. */

@@ -15,6 +15,7 @@
 #include "z_actor_dlftbls.h"
 #include "zelda_arena.h"
 #include "oot_core_bg.h"
+#include "oot_core_audio.h"
 #include "item.h"
 #include "save.h"
 #include "message.h"
@@ -38,6 +39,9 @@
 #include "sequence.h"
 #include "sfx.h"
 #include "skybox.h"
+#include "oot_core_cutscene.h"
+#include "oot_cutscene_camera.h"
+#include "oot_core_reward_sync.h"
 
 u16 gTimeSpeed = 0;
 u8 gWeatherMode = WEATHER_MODE_CLEAR;
@@ -86,6 +90,9 @@ u32 OotCore_GfxBytes(void);
 void OotCore_GfxInit(void* mem);
 const OotCoreMessageView* OotCore_MessageView(void);
 int OotCore_NpcView(const OotCoreNpcView** out);
+int OotCore_ShopView(OotCoreShopView* out);
+void OotCore_TimerView(OotCoreTimerView* out);
+void OotCore_UpdateRouteTimer(PlayState* play);
 unsigned int OotCore_TalkState(void);
 int OotCore_PropQuery(short actor_id, int x, int z);
 const char* OotCore_DebugText(void);
@@ -108,6 +115,14 @@ static void reset_input(void);
 extern s16 gOotCoreCamYaw;
 static void oot_core_set_camera(short yaw) {
     gOotCoreCamYaw = yaw;
+}
+static int oot_core_cutscene_camera(OotCoreCutsceneCameraView* out) {
+    extern PlayState* gOotCorePlay;
+    return OotCore_CutsceneCameraRead(gOotCorePlay, out);
+}
+static void oot_core_camera_seed(const OotCoreCutsceneCameraView* view) {
+    extern PlayState* gOotCorePlay;
+    if (gOotCorePlay) OotCore_CutsceneCameraSeed(gOotCorePlay, view);
 }
 
 /* Linker-script symbols: first address past the blob's .bss; ctor table. */
@@ -155,6 +170,7 @@ static void oot_core_play_destroy(void) {
     ZeldaArena_Cleanup();
     gOotCorePlay = NULL;
     sScene = NULL;
+    OotCore_CutsceneBind(NULL);
 }
 
 /* Room-list actor ids the blob owns; every other id stays with the C game
@@ -162,7 +178,7 @@ static void oot_core_play_destroy(void) {
 /* 2026-10-03: grass and drops only (NPCs/signs/wonder spots back to C until
  * the 32-bit Fx conversion; their imports stay compiled). */
 static const s16 sRoomActorIds[] = { ACTOR_EN_ITEM00, ACTOR_EN_KUSA };
-#define ROOM_ENTRIES_MAX 64
+#define ROOM_ENTRIES_MAX 96 /* Goron City cutscene layer room 0: 89 */
 static ActorEntry sRoomEntries[ROOM_ENTRIES_MAX];
 
 /* Scene_CommandActorEntryList for the room's main header, filtered to the
@@ -200,10 +216,11 @@ static const OotSceneLayer* room_layer(int room) {
  * Only admit the table when every profile is available, before source spawning
  * can mark an unavailable door as already spawned. Other scenes keep their
  * existing host doors until their own source integration is ready. */
+extern int OotCore_PackAdmits(int id); /* bridge_actor_pack.cpp */
 static void load_transition_actors(PlayState* play) {
     play->transitionActors.count = 0;
     play->transitionActors.list = NULL;
-    if (!sScene || play->sceneId != SCENE_WATER_TEMPLE || !sScene->num_transition_layers) return;
+    if (!sScene || !sScene->num_transition_layers) return;
     const OotSceneLayer* rows = sScene->transitions;
     s32 layer = gSaveContext.sceneLayer;
     const OotSceneLayer* use = &rows[0];
@@ -219,6 +236,8 @@ static void load_transition_actors(PlayState* play) {
         if (id < 0) id = -id; /* source destroy restores this on normal unload */
         id &= 0x1FFF;
         if (id >= ACTOR_ID_MAX || !gActorOverlayTable[id].profile) return;
+        /* Source-owned scenes: every door admitted by the scene pack. */
+        if (play->sceneId != SCENE_WATER_TEMPLE && !OotCore_PackAdmits(id)) return;
     }
     for (u32 i = 0; i < use->num_actors; ++i)
         if (entries[i].id < 0) entries[i].id = -entries[i].id;
@@ -283,6 +302,13 @@ static void load_room_actors(PlayState* play, int room) {
         /* Generic-draw actors: only where no C copy exists. */
         if (k == ARRAY_COUNT(sRoomActorIds) && sGenericScene && n < ROOM_ENTRIES_MAX &&
             (OotCore_IsGenericDraw(list[i].id & 0x1FFF) || IsGenericNpc(list[i].id & 0x1FFF))) {
+            sRoomEntries[n++] = list[i];
+        }
+        /* Source-owned scene (pack rows flagged OOT_ACTOR_PACK_ADMIT): the
+         * room list spawns these exactly as Actor_SpawnEntry would. */
+        else if (k == ARRAY_COUNT(sRoomActorIds) && n < ROOM_ENTRIES_MAX &&
+                 OotCore_PackAdmits(list[i].id & 0x1FFF) &&
+                 gActorOverlayTable[list[i].id & 0x1FFF].profile != NULL) {
             sRoomEntries[n++] = list[i];
         }
         /* Field's source-selected layer owns era/time placement. Dynamic
@@ -380,6 +406,30 @@ static int oot_core_play_init(void* block, unsigned int bytes, int scene_id, con
 
     play->sceneId = scene_id;
     play->spawn = spawn; /* source special return exits depend on entrance spawn */
+    /* Map_Init (z_map_exp.c): Item_Give's dungeon map/compass/boss key and
+     * key counts index the save by this. The minimap itself stays host. */
+    switch (scene_id) {
+        case SCENE_HYRULE_FIELD: case SCENE_KAKARIKO_VILLAGE: case SCENE_GRAVEYARD:
+        case SCENE_ZORAS_RIVER: case SCENE_KOKIRI_FOREST: case SCENE_SACRED_FOREST_MEADOW:
+        case SCENE_LAKE_HYLIA: case SCENE_ZORAS_DOMAIN: case SCENE_ZORAS_FOUNTAIN:
+        case SCENE_GERUDO_VALLEY: case SCENE_LOST_WOODS: case SCENE_DESERT_COLOSSUS:
+        case SCENE_GERUDOS_FORTRESS: case SCENE_HAUNTED_WASTELAND: case SCENE_HYRULE_CASTLE:
+        case SCENE_DEATH_MOUNTAIN_TRAIL: case SCENE_DEATH_MOUNTAIN_CRATER: case SCENE_GORON_CITY:
+        case SCENE_LON_LON_RANCH: case SCENE_OUTSIDE_GANONS_CASTLE:
+            gSaveContext.mapIndex = scene_id - SCENE_HYRULE_FIELD;
+            break;
+        case SCENE_DEKU_TREE: case SCENE_DODONGOS_CAVERN: case SCENE_JABU_JABU:
+        case SCENE_FOREST_TEMPLE: case SCENE_FIRE_TEMPLE: case SCENE_WATER_TEMPLE:
+        case SCENE_SPIRIT_TEMPLE: case SCENE_SHADOW_TEMPLE: case SCENE_BOTTOM_OF_THE_WELL:
+        case SCENE_ICE_CAVERN: case SCENE_GANONS_TOWER: case SCENE_GERUDO_TRAINING_GROUND:
+        case SCENE_THIEVES_HIDEOUT: case SCENE_INSIDE_GANONS_CASTLE:
+        case SCENE_GANONS_TOWER_COLLAPSE_INTERIOR: case SCENE_INSIDE_GANONS_CASTLE_COLLAPSE:
+        case SCENE_TREASURE_BOX_SHOP: case SCENE_DEKU_TREE_BOSS: case SCENE_DODONGOS_CAVERN_BOSS:
+        case SCENE_JABU_JABU_BOSS: case SCENE_FOREST_TEMPLE_BOSS: case SCENE_FIRE_TEMPLE_BOSS:
+        case SCENE_WATER_TEMPLE_BOSS: case SCENE_SPIRIT_TEMPLE_BOSS: case SCENE_SHADOW_TEMPLE_BOSS:
+            gSaveContext.mapIndex = scene_id >= SCENE_DEKU_TREE_BOSS ? scene_id - SCENE_DEKU_TREE_BOSS : scene_id;
+            break;
+    }
     play->state.gfxCtx = OotCore_GfxCtx();
     OotCore_GfxReset();
     /* Slot 0: gameplay_keep, resident (placeholder symbols in the blob).
@@ -404,6 +454,7 @@ static int oot_core_play_init(void* block, unsigned int bytes, int scene_id, con
     CollisionCheck_InitContext(play, &play->colChkCtx);
     AnimTaskQueue_Reset(&play->animTaskQueue);
     sScene = (const OotSceneBlob*)scene;
+    OotCore_CutsceneBind(sScene);
     if (sScene != NULL && sScene->col_header != NULL) {
         BgCheck_Allocate(&play->colCtx, play, (CollisionHeader*)sScene->col_header);
     }
@@ -462,6 +513,8 @@ static int oot_core_play_init(void* block, unsigned int bytes, int scene_id, con
     play->playerEntry = &sPlayerEntry;
     seed_scene_save(scene_id);
     Actor_InitContext(play, &play->actorCtx, play->playerEntry);
+    OotCore_CutsceneCameraReset(play);
+    OotCore_CutsceneInit(play);
 #ifdef PLAYER_SOURCE
     gSaveContext.respawnFlag = 0;
 #endif
@@ -489,9 +542,12 @@ static void oot_core_set_objects(const void* const* objects, unsigned int count)
     }
     objectCtx = &gOotCorePlay->objectCtx;
     objectCtx->numEntries = 1;
+    /* Only the active layer's objects (OoT: that header's object list); an
+     * actor whose object another layer lists fails Object_GetSlot. */
+    u32 layerObjects = OotScene_LayerObjects(sScene, (u32)gSaveContext.sceneLayer);
     for (i = 0; i < count && i < sScene->num_objects && objectCtx->numEntries < ARRAY_COUNT(objectCtx->slots);
          i++) {
-        if (objects[i] == NULL) {
+        if (objects[i] == NULL || !(layerObjects >> i & 1u)) {
             continue;
         }
         objectCtx->slots[objectCtx->numEntries].id = sScene->objects[i];
@@ -582,10 +638,21 @@ static void save_copy_out(PlayState* play) {
     if (in == NULL) {
         return;
     }
+    OotCore_CommitRewards(in, gOotCoreHost);
+    /* z_parameter Interface_Update: source score requests commit once. */
+    if (gSaveContext.minigameState == 1) {
+        gSaveContext.minigameScore += play->interfaceCtx.unk_23C;
+        play->interfaceCtx.unk_23C = 0;
+    }
     if (in->day_time_out) *in->day_time_out = gSaveContext.save.dayTime;
     if (in->skybox_time_out) *in->skybox_time_out = gSaveContext.skyboxTime;
     if (in->total_days) *in->total_days = gSaveContext.save.totalDays;
     if (in->bgs_day_count) *in->bgs_day_count = gSaveContext.save.bgsDayCount;
+    if (in->ocarina_game_round) *in->ocarina_game_round = gSaveContext.save.info.playerData.ocarinaGameRoundNum;
+    if (in->cutscene_index_out) *in->cutscene_index_out = gSaveContext.save.cutsceneIndex;
+    if (in->skull_tokens_out) *in->skull_tokens_out = gSaveContext.save.info.inventory.gsTokens;
+    for (i = 0; i < 24 && in->skull_flags; ++i)
+        in->skull_flags[i] = (u32)gSaveContext.save.info.gsFlags[i >> 2] >> ((i & 3) * 8);
     for (i = 0; i < OOT_CORE_EVENTCHKINF_WORDS && in->event_chk_inf; i++) {
         in->event_chk_inf[i] = gSaveContext.save.info.eventChkInf[i];
     }
@@ -627,19 +694,23 @@ static void oot_core_set_save(const OotCoreSave* in) {
     gSaveContext.save.dayTime = in->day_time;
     if (in->total_days) gSaveContext.save.totalDays = *in->total_days;
     if (in->bgs_day_count) gSaveContext.save.bgsDayCount = *in->bgs_day_count;
+    if (in->ocarina_game_round) gSaveContext.save.info.playerData.ocarinaGameRoundNum = *in->ocarina_game_round;
     gSaveContext.save.entranceIndex = in->entrance_index;
     if (in->reset_skybox_time) gSaveContext.skyboxTime = in->skybox_time;
     if (in->reset_skybox_time == 2) {
+        gSaveContext.nextCutsceneIndex = NEXT_CS_INDEX_NONE;
         gSaveContext.nextDayTime = NEXT_TIME_NONE;
         gSaveContext.sunsSongState = SUNSSONG_INACTIVE;
         gSaveContext.dogIsLost = true;
+        gSaveContext.dogParams = 0;
         gSaveContext.seqId = (u8)NA_BGM_DISABLED;
         gSaveContext.natureAmbienceId = NATURE_ID_DISABLED;
         gSaveContext.forcedSeqId = NA_BGM_GENERAL_SFX;
         gSaveContext.retainWeatherMode = false;
         gWeatherMode = WEATHER_MODE_CLEAR;
     }
-    gSaveContext.save.cutsceneIndex = in->cutscene_index;
+    /* The live source script owns cutsceneIndex until the next scene. */
+    if (!gOotCorePlay) gSaveContext.save.cutsceneIndex = in->cutscene_index;
     for (i = 0; i < OOT_CORE_EVENTCHKINF_WORDS && in->event_chk_inf; i++) {
         gSaveContext.save.info.eventChkInf[i] = in->event_chk_inf[i];
     }
@@ -706,6 +777,11 @@ static void oot_core_set_save(const OotCoreSave* in) {
         (in->equip_sword & 3) | ((in->equip_shield & 3) << 4);
     inv->questItems = in->quest_items ? *in->quest_items : 0;
     inv->gsTokens = in->skull_tokens;
+    for (i = 0; i < 6 && in->skull_flags; ++i) {
+        const u8* flags = &in->skull_flags[i * 4];
+        gSaveContext.save.info.gsFlags[i] = flags[0] | ((u32)flags[1] << 8) |
+                                          ((u32)flags[2] << 16) | ((u32)flags[3] << 24);
+    }
     inv->upgrades = (in->inventory_upgrades & ~0x007e0000u) |
         ((u32)(in->stick_upgrade & 3) << 17) | ((u32)(in->nut_upgrade & 3) << 20);
     if (in->slingshot_owned && !(inv->upgrades & 0x0001c000u)) inv->upgrades |= 1u << 14;
@@ -858,6 +934,7 @@ static void oot_core_update(void) {
     }
     consume_input(play);
     OotCore_OcarinaStep(play);
+    OotCore_CutsceneStep(play);
     /* Play_Update order. */
     AnimTaskQueue_Reset(&play->animTaskQueue);
     t0 = Phase_Now();
@@ -869,7 +946,10 @@ static void oot_core_update(void) {
     t0 = Phase_Now();
     OotCore_ProfileReset();
     OotCore_CullActors(play);
+    OotCore_RouteAudioBegin();
     Actor_UpdateAll(play, &play->actorCtx);
+    OotCore_RouteAudioEnd();
+    OotCore_CutsceneCameraStep(play);
     OotCore_ToolStep(play);
     Effect_UpdateAll(play);
     EffectSs_UpdateAll(play);
@@ -878,6 +958,7 @@ static void oot_core_update(void) {
     OotCore_NpcTextStep(play);
     Message_Update(play);
     OotCore_SunSongUpdate(play);
+    OotCore_UpdateRouteTimer(play);
     OotCore_EnvironmentEvents(play);
     if (!sHostSave || !sHostSave->time_blocked) OotCore_EnvironmentClock(play);
     AnimTaskQueue_Update(play, &play->animTaskQueue);
@@ -1041,6 +1122,9 @@ static void oot_core_cancel_transition_time(void) {
     /* The host may already have replaced the play arena on a failed load.
      * Touch only session globals, never the old PlayState. */
     gSaveContext.nextDayTime = NEXT_TIME_NONE;
+    gSaveContext.nextCutsceneIndex = NEXT_CS_INDEX_NONE;
+    if (sHostSave && sHostSave->cutscene_index_out)
+        *sHostSave->cutscene_index_out = gSaveContext.save.cutsceneIndex;
     gSaveContext.respawnFlag = 0;
     gSaveContext.sunsSongState = SUNSSONG_INACTIVE;
 }
@@ -1052,7 +1136,16 @@ static int oot_core_transition_request(unsigned int consume) {
     entrance = play->nextEntranceIndex;
     if (entrance == 0xffff && gSaveContext.respawnFlag == -2)
         entrance = OOT_CORE_TRANSITION_RELOAD; /* level select has no source entrance */
-    if (consume) play->transitionTrigger = TRANS_TRIGGER_OFF;
+    if (consume) {
+        /* Play_Init consumes the pending source index before selecting the
+         * destination's actors. Carry that same choice through the C loader. */
+        u16 index = gSaveContext.nextCutsceneIndex != NEXT_CS_INDEX_NONE ?
+            gSaveContext.nextCutsceneIndex : gSaveContext.save.cutsceneIndex;
+        if (index == CS_INDEX_D) index = CS_INDEX_NONE;
+        if (sHostSave && sHostSave->cutscene_index_out)
+            *sHostSave->cutscene_index_out = index;
+        play->transitionTrigger = TRANS_TRIGGER_OFF;
+    }
     return entrance;
 }
 
@@ -1068,6 +1161,8 @@ static unsigned int oot_core_water_boxes(const void** boxes) {
 }
 #ifdef PLAYER_SOURCE
 int OotCore_PlayerBank(const void* bank, unsigned int bytes);   /* bridge_player_source.cpp */
+void OotCore_PlayerBankRelease(const void* bank, unsigned int bytes);
+void OotCore_PlayerGroups(unsigned int mask);
 int OotCore_PlayerView(OotCorePlayerView* out);
 void OotCore_PlayerDamage(int damage);
 int OotCore_PlayerPose(unsigned int id, unsigned int frame, short* out);
@@ -1075,7 +1170,7 @@ int OotCore_PlayerJump(void);
 void OotCore_PlayerWarp(int x, int y, int z, short yaw);
 #endif
 unsigned int OotCore_SpritePreload(const void*, const OotCoreSpriteLibrary*, unsigned int,
-                                  unsigned char**, unsigned int*);
+                                  unsigned char**, unsigned int*, unsigned int);
 const unsigned char* OotCore_SpriteClip(const unsigned char*, unsigned int);
 
 /* First bytes of OOTCORE.BIN (oot-core.ld KEEPs .oot_entry at the load address). */
@@ -1143,6 +1238,20 @@ extern "C" const OotCoreEntry oot_core_entry __attribute__((section(".oot_entry"
     NULL,
     NULL,
     NULL,
+    NULL,
+    NULL,
+#endif
+    oot_core_cutscene_camera,
+    OotCore_ShopView,
+    oot_core_camera_seed,
+    OotCore_TimerView,
+    [](unsigned int id) -> int {
+        return id < ACTOR_ID_MAX && OotCore_PackAdmits(id) && gActorOverlayTable[id].profile != NULL;
+    },
+#ifdef PLAYER_SOURCE
+    OotCore_PlayerBankRelease,
+    OotCore_PlayerGroups,
+#else
     NULL,
     NULL,
 #endif

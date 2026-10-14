@@ -36,17 +36,22 @@
 ** linked at the cached alias OOT_SCENECOL_ADDR (makefile). One scene at a time. */
 /* ROM nes_message_data_static (NESMSG.BIN, 229,600 bytes): z_message text,
 ** resident because a CD read during play would stop CD-DA music. */
-#define RAM_CART_MSGDATA_OFFSET  0x82400u
+#define RAM_CART_MSGDATA_OFFSET  0x87400u
 #define RAM_CART_MSGDATA_BYTES   0x38400u
 /* Scene blob (<scene>.OOC) followed by the scene's object data blobs (.OOB). */
-#define RAM_CART_SCENECOL_OFFSET 0xBA800u
-#define RAM_CART_SCENECOL_BYTES  0x30000u   /* largest scene+objects+pack fits; 64 KB moved to the core 2026-10-09 */
-#define RAM_CART_OOTCORE_OFFSET 0xEA800u
+#define RAM_CART_SCENECOL_OFFSET 0xBF800u
+#define RAM_CART_SCENECOL_BYTES  0x50000u   /* child-route source packs: 128 KiB reclaimed from cart heap (DC pack 2026-10-13) */
+#define RAM_CART_OOTCORE_OFFSET 0x10F800u
 #define RAM_CART_OOTCORE_BYTES  0xA0000u
-#define RAM_CART_FIXED_BYTES    0x18A800u
+#define RAM_CART_FIXED_BYTES    0x1AF800u
 #else
-#define RAM_CART_FIXED_BYTES    0x82400u
+#define RAM_CART_FIXED_BYTES    0x87400u
 #endif
+/* Cold const host tables (host_cold.h, section .cartd), linked at this
+** carve's cached alias (makefile HOST_CART_ADDR) and loaded from HOSTCOLD.BIN
+** right after the cart is claimed (ram_cart_load_host_cold). 2026-10-13. */
+#define RAM_CART_HOSTCOLD_OFFSET 0x82400u
+#define RAM_CART_HOSTCOLD_BYTES  0x5000u
 #define RAM_CART_FIXED_ADDRESS  (RAM_CART_BANK2_ADDRESS + RAM_CART_BANK2_BYTES - RAM_CART_FIXED_BYTES)
 
 /* Fixed carve for the actor pool (actor_sys_bytes() must fit). */
@@ -150,10 +155,10 @@
 #define RAM_CART_HINTNUTS_BYTES     0x1000u
 
 /* Cold constant tables moved out of work RAM (BUG-043), from disc at boot:
-** title camera paths (TITLEPTH.BIN). MUSICTRG now uses RAM_LOW_MUSICTRG;
-** retain its old cart gap so later fixed carves keep their addresses. */
-#define RAM_CART_MUSICTRG_OFFSET    0x77000u
-#define RAM_CART_MUSICTRG_BYTES     0x5000u
+** title camera paths (TITLEPTH.BIN). MUSICTRG moved out; its old cart gap
+** now holds the CD directory's packed 8.3 keys (fs_low.c, 2026-10-13). */
+#define RAM_CART_FSKEYS_OFFSET      0x77000u
+#define RAM_CART_FSKEYS_BYTES       0x5000u
 #define RAM_CART_TITLEPTH_OFFSET    0x6F800u
 #define RAM_CART_TITLEPTH_BYTES     0x1800u
 
@@ -170,6 +175,10 @@ bool    ram_cart_present(void);
 ** is fitted, in which case nothing was added and the caller must not continue.
 ** Safe to call once only; calling twice would double-register the bank. */
 bool    ram_cart_claim_second_bank(void);
+
+/* Load HOSTCOLD.BIN into its carve after the cart is claimed and before any
+** host_cold.h table is read. False on size/address mismatch or read error. */
+bool    ram_cart_load_host_cold(void);
 
 /* Bytes of cart RAM this build expects to be usable, for diagnostics. */
 unsigned int    ram_cart_total_bytes(void);

@@ -196,6 +196,7 @@ typedef struct
     uint8_t             source_magic_level,source_magic,source_double_defense,source_tokens;
     uint8_t             boots;             /* v12: SAVE_BOOTS_* */
     uint32_t            total_days, bgs_day_count; /* v13: source saved day counters */
+    uint8_t             ocarina_game_round; /* v14: Skull Kid memory-game reward tier */
 }                       save_state_t;
 
 #if defined(__sh__)

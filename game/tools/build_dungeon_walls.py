@@ -19,7 +19,7 @@ def build(oot,rom_dir,out):
     segments=source.extract(oot,rom_dir,prefix='ydan')
     data=link.read_object(oot,'object_ydan_objects',rom_dir)
     col=source.collision_header_data(data,0x6050)
-    header='/* gDTWebWallCol; Actor YXZ rotation baked before Dyna registration. */\n'
+    header='/* gDTWebWallCol; Actor YXZ rotation baked before Dyna registration. */\n#include "host_cold.h"\n'
     spawns=[]
     for room in range(12):
         for a in room_records(segments['ydan_room_%d'%room],names,{})['actors']:
@@ -33,7 +33,7 @@ def build(oot,rom_dir,out):
                 values += [max(point[k] for point in v) for k in range(3)]
                 rows.append('{{{'+','.join(map(str,values[:3]))+'},{'+','.join(map(str,values[3:6]))+'},{'+','.join(map(str,values[6:9]))+'}},'+
                             '{'+','.join(map(str,values[9:12]))+'},{'+','.join(map(str,values[12:15]))+'},{'+','.join(map(str,values[15:]))+'}}')
-            header+='static const collision_triangle_t wall_tri_%d[]={\n'%index+','.join(rows)+'\n};\n'
+            header+='HOST_COLD static const collision_triangle_t wall_tri_%d[]={\n'%index+','.join(rows)+'\n};\n'
             spawns.append((room,*a['position'],a['rotation'][1],a['params']&63,(a['params']>>6)&63))
             static_mesh(oot,rom_dir,'object_ydan_objects','gDTWebWallDL',out/('DTWALL%d.BIN'%index),.1,cutout=True,matrix=matrix)
     header+='static const bg_mesh_t wall_meshes[]={\n'

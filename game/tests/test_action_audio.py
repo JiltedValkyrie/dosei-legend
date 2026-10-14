@@ -15,6 +15,37 @@ GCC = Path(shutil.which('gcc') or 'C:/msys64/mingw64/bin/gcc.exe')
 
 
 class AudioBank(unittest.TestCase):
+    def test_source_metronome_clips_and_completion_durations(self):
+        import math
+        import sys
+        import xml.etree.ElementTree as ET
+        sys.path.insert(0, str(ROOT/'tools'))
+        import build_action_audio as audio
+        oot = Path(os.environ.get('DOSEI_OOT', 'D:/Workspace-Claude/game-decomps/n64/oot'))
+        source = ROOT.parent/'shared/build/audio-source/extracted/assets/audio'
+        seq = (oot/'assets/audio/sequences/seq_0.prg.seq').read_text()
+        fonts = {0: ET.parse(source/'soundfonts/Soundfont_0.xml')}
+        manifest = json.loads((GEN/'action_audio.json').read_text())
+        samples = {row['name']:row for row in manifest['samples']}
+        bank = (GEN/'ACTIONS.PCM').read_bytes()
+        header = (GEN/'ocarina_sfx_duration.h').read_text()
+        dispatch = (GEN/'action_decomp_sfx.h').read_text()
+        for name, channel, loop in (('metronome','CHAN_5D57',False),
+                                    ('metronome_2','CHAN_5E31',False),
+                                    ('metronome_lv','CHAN_5D6B',True)):
+            expected = audio.render_channel(seq, channel, fonts, source, audio.RATE/2, once=loop)
+            row = samples[name]
+            self.assertEqual(bank[row['offset']:row['offset']+row['length']], expected)
+            self.assertIn('NA_SE_SY_'+name.upper(), dispatch)
+            if loop:
+                self.assertEqual(len(expected), round(72/96*audio.RATE/2))
+                self.assertEqual(expected[-100:], bytes(100))
+                self.assertIn('NA_SE_SY_METRONOME_LV - SFX_FLAG', dispatch)
+            else:
+                self.assertIn('#define OOT_SFX_%s_TICKS %d' %
+                              (name.upper(), math.ceil(len(expected)*20/row['rate'])), header)
+        self.assertGreater(samples['metronome']['length'], samples['metronome_2']['length'])
+
     def test_adult_bank_replaces_only_link_recordings_with_same_ram_layout(self):
         manifest = json.loads((GEN/'action_audio.json').read_text())
         child = (GEN/'ACTIONS.PCM').read_bytes()
@@ -186,6 +217,16 @@ void set_events2(unsigned int e) { gameplay.events2 = e; }
         self.assertTrue(self.keyed(26))
         for slot in range(24):
             self.assertEqual(self.lib.reg(slot, 0), 0)
+
+    def test_source_pitch_changes_held_sound_without_restarting_and_does_not_leak(self):
+        self.lib.use_field(1)
+        self.lib.action_audio_decomp_sfx_pitch(0x3155,128)
+        self.assertEqual(self.lib.reg(26,16),13<<11)
+        self.lib.action_audio_decomp_sfx_pitch(0x3155,32)
+        self.assertEqual(self.lib.reg(26,16),11<<11)
+        self.assertTrue(self.keyed(26))
+        self.lib.action_audio_decomp_sfx(0x3155)
+        self.assertEqual(self.lib.reg(26,16),12<<11)
 
     def test_item_shot_is_resident_and_held_tool_sound_loops_until_requests_stop(self):
         samples = {s['name']: s for s in json.loads((GEN/'action_audio.json').read_text())['samples']}

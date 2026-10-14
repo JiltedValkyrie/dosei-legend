@@ -25,14 +25,27 @@ enum { MUSIC_IDLE, MUSIC_FADE_OUT, MUSIC_SWAP, MUSIC_FADE_IN };
 
 static const music_bank_t *bank;
 static const music_bank_t *incoming;
-static unsigned char *levels, *pending_levels;
+/* Per-frame envelope tables in 32 KB chunks (whole CD sectors): a 302 KB
+ * Field table never needs one contiguous heap block. Byte b of a table is
+ * chunk[b >> LEVEL_SHIFT][b & (LEVEL_CHUNK - 1)]. levels_live gates the
+ * vblank reader while the main thread frees or installs a set. */
+#define LEVEL_SHIFT      15
+#define LEVEL_CHUNK      (1u << LEVEL_SHIFT)
+#define LEVEL_CHUNKS     16            /* largest table 512 KB */
+static unsigned char *levels[LEVEL_CHUNKS], *pending_levels[LEVEL_CHUNKS];
+static volatile bool levels_live;
 /* 0 none, 1 envelopes pending, 2 envelopes done and PCM to follow. */
 static volatile unsigned char swap_stage;
 static unsigned short frame, cursor, keys[MUSIC_MAX_VOICES];
 static bool active[MUSIC_MAX_VOICES];
 static unsigned char voice_levels[MUSIC_MAX_VOICES];
+static unsigned char voice_channels[MUSIC_MAX_VOICES], voice_pan[MUSIC_MAX_VOICES];
+static unsigned char singing_voice=127, singing_melody=127, spatial_volume=127, spatial_pan=64;
+static bool singing_alone;
+static unsigned char channel_attenuation[17];
 static volatile unsigned int ticks, vblanks;
 static unsigned int phase, refresh;
+static volatile unsigned short source_tempo = 256;
 static volatile bool playing;
 static volatile unsigned char state;
 static volatile unsigned char volume = VOLUME_MAX;
@@ -40,6 +53,9 @@ static volatile bool menu_duck;
 static volatile bool cdda_muted;
 static volatile unsigned char cdda_volume = VOLUME_MAX;
 static volatile unsigned int cdda_restore;
+static volatile unsigned char source_volume = VOLUME_MAX;
+static unsigned char source_start = VOLUME_MAX, source_target = VOLUME_MAX;
+static unsigned int source_fade, source_step;
 static unsigned int fade_step, fade_length = FADE_DEFAULT;
 static unsigned int transition_start, transition_frames;
 /* Switch measurements. audible_frames is request -> new bank actually playing;
@@ -148,8 +164,11 @@ static int stream_read(cd_stream_t *s, void *buf, unsigned int max)
 static bool swap_failed;
 static const music_bank_t *once_bank,*once_resume;
 static volatile bool once_done;
+bool music_fanfare_busy(void) { return once_bank != 0; }
 void music_once(const music_bank_t *one_shot,const music_bank_t *resume)
 {once_bank=one_shot;once_resume=resume;once_done=false;}
+bool music_bank_referenced(const music_bank_t *candidate)
+{return candidate && (candidate==bank || candidate==incoming || candidate==once_bank || candidate==once_resume);}
 static const music_bank_t *section_bank;
 static const unsigned short (*section_ranges)[2];
 static unsigned section_count,section_current;
@@ -166,9 +185,38 @@ static unsigned int faded_level(unsigned int level)
 {
     static const unsigned char attenuation[16] =
         {255,63,47,37,31,25,21,18,15,12,9,7,5,3,2,0};
-    unsigned int result = level + attenuation[volume] + attenuation[cdda_volume]
+    unsigned int result = level + attenuation[volume] + attenuation[cdda_volume] + attenuation[source_volume]
                           + (menu_duck ? 16u : 0u);
     return result > 255 ? 255 : result;
+}
+
+static void update_channel_gains(void)
+{
+    static const unsigned char attenuation[16]={255,63,47,37,31,25,21,18,15,12,9,7,5,3,2,0};
+    for(unsigned channel=0;channel<17;++channel){
+        unsigned gain=127;
+        if(channel==1 || channel==2)gain=singing_voice;
+        else if(channel==14)gain=singing_melody;
+        if(singing_alone && channel!=1 && channel!=2)gain=0;
+        if(channel!=10)gain=gain*spatial_volume/127;
+        channel_attenuation[channel]=attenuation[(gain*15+63)/127];
+    }
+}
+
+static unsigned int channel_level(unsigned int voice)
+{
+    unsigned int level=faded_level(voice_levels[voice])+channel_attenuation[voice_channels[voice]];
+    return level>255?255:level;
+}
+
+static unsigned int channel_pan(unsigned int voice)
+{
+    unsigned int pan=voice_pan[voice];
+    if(spatial_pan!=64 && voice_channels[voice]!=10){
+        /* Bounded approximation using the SCSP's 3 dB pan steps. */
+        pan=spatial_pan>64?(spatial_pan-64)*15/63:16+(64-spatial_pan)*15/64;
+    }
+    return (7<<13)|(pan<<8)|CD_SEND(voice);
 }
 
 static void set_volume(unsigned int level)
@@ -176,7 +224,32 @@ static void set_volume(unsigned int level)
     unsigned int i;
     volume = (unsigned char)level;
     for (i = 0; i < MUSIC_MAX_VOICES; ++i)
-        if (active[i]) SLOT(i,12) = faded_level(voice_levels[i]);
+        if (active[i]) SLOT(i,12) = channel_level(i);
+}
+
+void music_source_singing(unsigned int voice,unsigned int melody,bool alone)
+{
+    singing_voice=voice>127?127:voice;singing_melody=melody>127?127:melody;singing_alone=alone;
+    update_channel_gains();
+    set_volume(volume);
+}
+
+void music_source_spatial(unsigned int gain,unsigned int pan)
+{
+    spatial_volume=gain>127?127:gain;spatial_pan=pan>127?127:pan;
+    update_channel_gains();
+    set_volume(volume);
+    for(unsigned i=0;i<MUSIC_MAX_VOICES;++i)if(active[i])SLOT(i,22)=channel_pan(i);
+}
+
+void music_source_volume(unsigned int value, unsigned int frames)
+{
+    if (value > 127) value = 127;
+    source_start = source_volume;
+    source_target = (value * VOLUME_MAX + 63) / 127;
+    source_step = 0;
+    source_fade = frames * refresh / 20;
+    if (!source_fade) { source_volume = source_target; set_volume(volume); }
 }
 
 void music_cdda_mute(bool enabled)
@@ -198,7 +271,7 @@ void music_menu_duck(bool enabled)
     unsigned i;
     menu_duck = enabled;
     for (i=0; i<MUSIC_MAX_VOICES; ++i)
-        if (active[i]) SLOT(i,12)=faded_level(voice_levels[i]);
+        if (active[i]) SLOT(i,12)=channel_level(i);
     /* CD external sends use the same -6 dB step; preserve music direct sends. */
     SLOT(16,0x16) = (SLOT(16,0x16) & 0xFF00u) | CD_SEND(16);
     SLOT(17,0x16) = (SLOT(17,0x16) & 0xFF00u) | CD_SEND(17);
@@ -224,6 +297,7 @@ static void start_note(const music_trigger_t *event)
     unsigned int address = bank->sample_base + sample->offset;
     SLOT(s,12) = 255;
     voice_levels[s] = 255;
+    voice_channels[s]=event->channel<=16?event->channel:0;voice_pan[s]=event->pan;
     SLOT(s,0) = (keys[s] & ~0x0800) | 0x1000;
     keys[s] = 0x0020 | ((address>>16)&15);
     SLOT(s,0) = keys[s];
@@ -236,7 +310,7 @@ static void start_note(const music_trigger_t *event)
     SLOT(s,16) = event->pitch;
     SLOT(s,18) = 0;
     SLOT(s,20) = 0;
-    SLOT(s,22) = (7<<13) | (event->pan<<8) | CD_SEND(s);
+    SLOT(s,22) = channel_pan(s);
     keys[s] |= 0x0800;
     SLOT(s,0) = keys[s] | 0x1000;
     active[s] = true;
@@ -267,12 +341,15 @@ static void score_tick(void)
     /* Envelopes are released early during a switch so the incoming set can
     ** load while the outgoing bank is still fading. Voices then hold their
     ** last level, which the master-volume ramp is already taking down. */
-    if (levels)
+    if (levels_live) {
+        unsigned int at = (unsigned int)frame * bank->voices;
         for (i = 0; i < bank->voices; ++i)
             if (active[i]) {
-                voice_levels[i] = levels[frame * bank->voices + i];
-                SLOT(i,12) = faded_level(voice_levels[i]);
+                unsigned int b = at + i;
+                voice_levels[i] = levels[b >> LEVEL_SHIFT][b & (LEVEL_CHUNK - 1u)];
+                SLOT(i,12) = channel_level(i);
             }
+    }
     ++frame;
     ++ticks;
 }
@@ -280,6 +357,11 @@ static void score_tick(void)
 static void music_vblank(void)
 {
     ++vblanks;
+    if (source_step < source_fade) {
+        ++source_step;
+        source_volume = (int)source_start + ((int)source_target - source_start) * (int)source_step / (int)source_fade;
+        set_volume(volume);
+    }
     if (!cdda_muted && cdda_restore) {
         --cdda_restore;
         cdda_volume = ((refresh / 2) - cdda_restore) * VOLUME_MAX / (refresh / 2);
@@ -308,9 +390,9 @@ static void music_vblank(void)
         }
     }
     if (!playing) return;
-    phase += 60;
-    while (phase >= refresh) {
-        phase -= refresh;
+    phase += 60 * source_tempo;
+    while (phase >= refresh * 256) {
+        phase -= refresh * 256;
         score_tick();
     }
 }
@@ -325,17 +407,48 @@ static void upload(const unsigned short *source, unsigned int base,
         ram[(base + offset) / 2 + i] = source[i];
 }
 
-static unsigned char *read_levels(const music_bank_t *target)
+static unsigned int level_chunk_bytes(unsigned int bytes, unsigned int i)
 {
-    int length = 0;
-    unsigned char *loaded = (unsigned char *)jo_fs_read_file(target->level_file,
-                                                             &length);
-    if (!loaded) return JO_NULL;
-    if ((unsigned int)length != target->level_bytes) {
-        jo_free(loaded);
-        return JO_NULL;
+    unsigned int rest = bytes - (i << LEVEL_SHIFT);
+    return rest < LEVEL_CHUNK ? rest : LEVEL_CHUNK;
+}
+
+static void levels_free(unsigned char **set)
+{
+    unsigned int i;
+    for (i = 0; i < LEVEL_CHUNKS; ++i) {
+        if (set[i]) jo_free(set[i]);
+        set[i] = JO_NULL;
     }
-    return loaded;
+}
+
+static bool levels_alloc(unsigned char **set, unsigned int bytes)
+{
+    unsigned int i, n = (bytes + LEVEL_CHUNK - 1u) >> LEVEL_SHIFT;
+    if (!bytes || n > LEVEL_CHUNKS) return false;
+    for (i = 0; i < n; ++i)
+        if (!(set[i] = (unsigned char *)jo_malloc(level_chunk_bytes(bytes, i)))) {
+            levels_free(set);
+            return false;
+        }
+    return true;
+}
+
+static bool read_levels(const music_bank_t *target)
+{
+    jo_file file;
+    unsigned int i, n = (target->level_bytes + LEVEL_CHUNK - 1u) >> LEVEL_SHIFT;
+    bool ok;
+    if (!levels_alloc(levels, target->level_bytes)) return false;
+    if (!jo_fs_open(&file, target->level_file)) { levels_free(levels); return false; }
+    ok = (unsigned int)file.size == target->level_bytes;
+    for (i = 0; ok && i < n; ++i) {
+        unsigned int size = level_chunk_bytes(target->level_bytes, i);
+        ok = jo_fs_read_next_bytes(&file, (char *)levels[i], size) == (int)size;
+    }
+    jo_fs_close(&file);
+    if (!ok) levels_free(levels);
+    return ok;
 }
 
 /*
@@ -375,6 +488,7 @@ bool music_fade_to(const music_bank_t *target, unsigned int fade_frames)
         cdda_muted || state != MUSIC_IDLE || bank == target) return false;
     if(target!=once_bank){once_bank=once_resume=JO_NULL;once_done=false;}
     incoming = target;
+    source_tempo = 256;
     fade_length = fade_frames ? fade_frames : 1;
     transition_start = vblanks;
     transition_frames = 0;
@@ -415,10 +529,8 @@ void music_service(void)
     ** idle -- there is nothing to stream in. */
     if (swap_stage && !incoming) {
         if (state == MUSIC_SWAP) {
-            unsigned char *outgoing = levels;
-
-            levels = JO_NULL;         /* the vblank stops reading it here */
-            if (outgoing) jo_free(outgoing);
+            levels_live = false;      /* the vblank stops reading it here */
+            levels_free(levels);
             bank = JO_NULL;
             swap_stage = 0;
             state = MUSIC_IDLE;
@@ -438,26 +550,30 @@ void music_service(void)
         ** produce; the total is CD-bound either way, so spreading it is free. */
         int got;
         if (!level_file_open) {
-            unsigned char *outgoing = levels;
-            levels = JO_NULL;             /* the vblank stops reading it here */
-            if (outgoing) jo_free(outgoing);
-            pending_levels = jo_malloc(incoming->level_bytes);
-            if (!pending_levels) {
+            levels_live = false;          /* the vblank stops reading it here */
+            levels_free(levels);
+            if (!levels_alloc(pending_levels, incoming->level_bytes)) {
                 swap_failed = true; swap_stage = 0; set_volume(VOLUME_MAX);
                 state = MUSIC_IDLE; return;
             }
             if (!stream_open(&level_stream, incoming->level_file, incoming->level_bytes)) {
-                jo_free(pending_levels); pending_levels = JO_NULL;
+                levels_free(pending_levels);
                 swap_failed = true; swap_stage = 0; set_volume(VOLUME_MAX);
                 state = MUSIC_IDLE; return;
             }
             level_offset = 0;
             level_file_open = true;
         }
-        got = stream_read(&level_stream, (char *)pending_levels + level_offset, LOAD_CHUNK);
+        {
+            /* Sector multiples until the file's end, so a read never
+             * straddles two chunks (LOAD_CHUNK divides LEVEL_CHUNK). */
+            unsigned int within = level_offset & (LEVEL_CHUNK - 1u), room = LEVEL_CHUNK - within;
+            got = stream_read(&level_stream, (char *)pending_levels[level_offset >> LEVEL_SHIFT] + within,
+                              room < LOAD_CHUNK ? room : LOAD_CHUNK);
+        }
         if (got < 0) {
             stream_close(&level_stream); level_file_open = false;
-            jo_free(pending_levels); pending_levels = JO_NULL;
+            levels_free(pending_levels);
             swap_failed = true; swap_stage = 0; set_volume(VOLUME_MAX);
             state = MUSIC_IDLE; return;
         }
@@ -506,8 +622,14 @@ void music_service(void)
     swap_file_open = false;
 
     bank = incoming;
-    levels = pending_levels;
-    pending_levels = JO_NULL;
+    {
+        unsigned int i;
+        for (i = 0; i < LEVEL_CHUNKS; ++i) {
+            levels[i] = pending_levels[i];
+            pending_levels[i] = JO_NULL;
+        }
+    }
+    levels_live = true;
     swap_stage = 0;
     frame = cursor = 0;
     phase = 0;
@@ -535,21 +657,20 @@ bool music_init_with_scratch(const music_bank_t *first, void *scratch, unsigned 
         first->pcm_bytes > MUSIC_SAMPLE_LIMIT - first->sample_base ||
         first->voices > MUSIC_MAX_VOICES) return false;
     bank = first;
-    levels = read_levels(bank);
-    if (!levels) return false;
-    if (!jo_fs_open(&file, bank->pcm_file)) { jo_free(levels); return false; }
+    if (!read_levels(bank)) return false;
+    if (!jo_fs_open(&file, bank->pcm_file)) { levels_free(levels); return false; }
     if ((unsigned int)file.size != bank->pcm_bytes ||
         bank->sample_base + (unsigned int)file.size > MUSIC_SAMPLE_LIMIT) {
-        jo_fs_close(&file); jo_free(levels); return false;
+        jo_fs_close(&file); levels_free(levels); return false;
     }
     staging = scratch && capacity > bank->pcm_bytes ? scratch : jo_malloc(LOAD_CHUNK);
-    if (!staging) { jo_fs_close(&file); jo_free(levels); return false; }
+    if (!staging) { jo_fs_close(&file); levels_free(levels); return false; }
 
     if (staging == scratch) {
         jo_fs_close(&file);
         if (!jo_fs_read_file_ptr(bank->pcm_file, scratch, &got) ||
             (unsigned int)got != bank->pcm_bytes || (got & 1)) {
-            jo_free(levels); return false;
+            levels_free(levels); return false;
         }
     }
 
@@ -577,7 +698,7 @@ bool music_init_with_scratch(const music_bank_t *first, void *scratch, unsigned 
         if (want > LOAD_CHUNK) want = LOAD_CHUNK;
         got = GFS_Fread((GfsHn)file.handle, (want + 2047) / 2048, staging, want);
         if (got != (int)want || (got & 1)) {
-            jo_fs_close(&file); jo_free(staging); jo_free(levels); return false;
+            jo_fs_close(&file); jo_free(staging); levels_free(levels); return false;
         }
         upload(staging, bank->sample_base, offset, (unsigned int)got);
         offset += (unsigned int)got;
@@ -587,12 +708,16 @@ bool music_init_with_scratch(const music_bank_t *first, void *scratch, unsigned 
         jo_free(staging);
     }
     stop_all();
+    levels_live = true;
     frame = cursor = 0; ticks = phase = 0; vblanks = 0;
+    source_tempo = 256;
+    singing_voice=singing_melody=spatial_volume=127;spatial_pan=64;singing_alone=false;
+    for(i=0;i<17;++i)channel_attenuation[i]=0;
     state = MUSIC_IDLE;
     playing = true;
     refresh = (JO_VDP2_TVSTAT & 1) ? 50 : 60;
     if (!jo_core_add_vblank_callback(music_vblank)) {
-        jo_free(levels); return false;
+        levels_free(levels); return false;
     }
     REG(0x400) = 0x0200 | VOLUME_MAX;
     set_volume(VOLUME_MAX);
@@ -603,6 +728,10 @@ unsigned int music_audible_frames(void) { return audible_frames; }
 unsigned int music_worst_stall(void) { return worst_stall; }
 unsigned int music_swap_count(void) { return swap_count; }
 unsigned int music_ticks(void) { return ticks; }
+void music_source_tempo(unsigned int ratio_q8)
+{
+    source_tempo = ratio_q8 < 128 ? 128 : ratio_q8 > 512 ? 512 : ratio_q8;
+}
 unsigned int music_vblank_count(void) { return vblanks; }
 const music_bank_t *music_current(void) { return bank; }
 bool music_busy(void) { return state != MUSIC_IDLE; }

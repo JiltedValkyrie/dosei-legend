@@ -10,7 +10,7 @@ from pathlib import Path
 from test_core_bgcheck import compiler_env
 
 ROOT = Path(__file__).resolve().parents[1]
-BANK = ROOT / 'build/cd/PLAYANIM.PFB'
+BANK = ROOT / 'build/player-migration/bank_full/ALL.PFB'
 
 
 @unittest.skipUnless(BANK.exists(), 'staged Player frame bank required')

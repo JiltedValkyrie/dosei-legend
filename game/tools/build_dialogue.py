@@ -665,8 +665,9 @@ def main():
 
     args.cd.mkdir(parents=True, exist_ok=True)
     (args.cd / 'DIALOG.TXT').write_bytes(blob)
-    body = [banner, '', '#include "kokiri_dialogue.h"', '#include "kokiri_actors.h"', '',
-            'const dialogue_page_t dialogue_pages[DIALOGUE_PAGE_COUNT] = {']
+    body = [banner, '', '#include "kokiri_dialogue.h"', '#include "kokiri_actors.h"',
+            '#include "host_cold.h"', '',
+            'HOST_COLD const dialogue_page_t dialogue_pages[DIALOGUE_PAGE_COUNT] = {']
     body += ['    { %d, %d },' % page for page in pages_pool]
     body += ['};', '', 'const dialogue_cond_t dialogue_conds[DIALOGUE_COND_COUNT] = {']
     for kind, flag, value, expect in conds_pool:
@@ -674,7 +675,7 @@ def main():
                     % (COND_NAMES[kind], expect, flag, value))
     if not conds_pool:
         body.append('    { 0, 0, 0, 0 },')
-    body += ['};', '', 'const dialogue_rule_t dialogue_rules[DIALOGUE_RULE_COUNT] = {']
+    body += ['};', '', 'HOST_COLD const dialogue_rule_t dialogue_rules[DIALOGUE_RULE_COUNT] = {']
     for first_cond, conds, first_page, pages, text_id in rules_pool:
         body.append('    { %d, %d, %d, %d, 0x%04X },'
                     % (first_cond, conds, first_page, pages, text_id))

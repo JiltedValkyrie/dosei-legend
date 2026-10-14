@@ -15,15 +15,34 @@
 extern PlayState* gOotCorePlay;
 extern "C" char oot_core_text_start[], oot_core_text_end[];
 static const OotActorPackHeader* sPack;
+static OotActorPackOnePointSetup sOnePointSetup;
+static OotActorPackOnePointStep sOnePointStep;
+static OotActorPackNpcView sNpcView;
+extern void OotCore_SpriteSetScene(unsigned int scene);
+int OotCore_PackOnePointSetup(PlayState* play, short camera, short id, Actor* actor, short timer) {
+    return sOnePointSetup ? sOnePointSetup(play, camera, id, actor, timer) : 0;
+}
+int OotCore_PackOnePointStep(Camera* camera) {
+    return sOnePointStep ? sOnePointStep(camera) : 0;
+}
+int OotCore_PackNpcView(PlayState* play, Actor* actor, OotCoreNpcView* out,
+                      unsigned capacity, const SaveContext* save) {
+    return sNpcView ? sNpcView(play, actor, out, capacity, save) : 0;
+}
+/* OOT_ACTOR_PACK_ADMIT ids of the bound pack: room lists spawn them. */
+static u32 sPackAdmit[(ACTOR_ID_MAX + 31) / 32];
+int OotCore_PackAdmits(int id) {
+    return id >= 0 && id < ACTOR_ID_MAX && ((sPackAdmit[id >> 5] >> (id & 31)) & 1u);
+}
 extern const OotCoreHost* gOotCoreHost;
 #ifndef OOT_CORE_LOAD_ADDR
 #define OOT_CORE_LOAD_ADDR 0x02760000u
 #endif
 #ifndef OOT_SCENECOL_ADDR
-#define OOT_SCENECOL_ADDR 0x02730000u
+#define OOT_SCENECOL_ADDR 0x02710000u
 #endif
 #ifndef OOT_SCENECOL_MAX_BYTES
-#define OOT_SCENECOL_MAX_BYTES 0x40000u
+#define OOT_SCENECOL_MAX_BYTES 0x50000u
 #endif
 #ifndef OOT_PACK_UNCACHED_ALIAS
 #define OOT_PACK_UNCACHED_ALIAS 0x20000000u
@@ -45,12 +64,13 @@ static int pack_profiles(const OotActorPackHeader* h) {
             (base + (kind ? h->effects_offset : h->actors_offset));
         u32 count = kind ? h->effect_count : h->actor_count;
         for (u32 i = 0; i < count; ++i) {
-            u32 id = rows[i].id, pointer = rows[i].profile;
+            u32 id = kind ? rows[i].id : OOT_ACTOR_PACK_ID(rows[i].id), pointer = rows[i].profile;
             u32 size = kind ? sizeof(EffectSsProfile) : sizeof(ActorProfile);
             if (id >= (kind ? EFFECT_SS_TYPE_MAX : ACTOR_ID_MAX) || (pointer & 3u) ||
                 pointer < h->link_base + h->text_offset + h->text_bytes ||
                 !OotActorPack_Range(pointer - h->link_base, 1, size, h->ctors_offset)) return false;
-            for (u32 j = 0; j < i; ++j) if (rows[j].id == id) return false;
+            for (u32 j = 0; j < i; ++j)
+                if ((kind ? rows[j].id : OOT_ACTOR_PACK_ID(rows[j].id)) == id) return false;
             if (kind) {
                 const EffectSsProfile* profile = (const EffectSsProfile*)(uintptr_t)pointer;
                 if (gEffectSsOverlayTable[id].profile || profile->type != id || !profile->init ||
@@ -94,14 +114,19 @@ int OotCore_PackBind(void* image, unsigned int bytes, unsigned int core_crc) {
                 entry->vramStart = entry->vramEnd = entry->loadedRamAddr = NULL;
                 entry->profile = (EffectSsProfile*)(uintptr_t)rows[i].profile;
             } else {
-                ActorOverlay* entry = &gActorOverlayTable[rows[i].id];
+                u32 id = OOT_ACTOR_PACK_ID(rows[i].id);
+                ActorOverlay* entry = &gActorOverlayTable[id];
                 entry->vramStart = entry->vramEnd = entry->loadedRamAddr = NULL;
                 entry->profile = (ActorProfile*)(uintptr_t)rows[i].profile;
                 entry->numLoaded = 0;
+                if (rows[i].id & OOT_ACTOR_PACK_ADMIT) sPackAdmit[id >> 5] |= 1u << (id & 31);
             }
         }
     }
     sPack = h;
+    sOnePointSetup = (OotActorPackOnePointSetup)(uintptr_t)h->onepoint_setup;
+    sOnePointStep = (OotActorPackOnePointStep)(uintptr_t)h->onepoint_step;
+    sNpcView = (OotActorPackNpcView)(uintptr_t)h->npc_view;
     return true;
 }
 
@@ -114,9 +139,15 @@ int OotCore_PackRelease(void) {
     const OotActorPackProfile* actors = (const OotActorPackProfile*)(base + sPack->actors_offset);
     const OotActorPackProfile* effects = (const OotActorPackProfile*)(base + sPack->effects_offset);
     for (u32 i = 0; i < sPack->actor_count; ++i) {
-        if (gActorOverlayTable[actors[i].id].numLoaded) return false;
+        if (gActorOverlayTable[OOT_ACTOR_PACK_ID(actors[i].id)].numLoaded) return false;
     }
-    for (u32 i = 0; i < sPack->actor_count; ++i) gActorOverlayTable[actors[i].id].profile = NULL;
+    /* No code/table pointer survives reuse of the scene carve. */
+    sOnePointSetup = NULL;
+    sOnePointStep = NULL;
+    sNpcView = NULL;
+    for (u32 i = 0; i < sPack->actor_count; ++i)
+        gActorOverlayTable[OOT_ACTOR_PACK_ID(actors[i].id)].profile = NULL;
+    for (u32 i = 0; i < sizeof(sPackAdmit) / sizeof(sPackAdmit[0]); ++i) sPackAdmit[i] = 0;
     for (u32 i = 0; i < sPack->effect_count; ++i) gEffectSsOverlayTable[effects[i].id].profile = NULL;
     sPack = NULL;
     return true;
@@ -133,12 +164,23 @@ static int scene_range(const void* pointer, u32 count, u32 stride, u32 align, u3
 static int scene_valid(const OotSceneBlob* blob, u32 bytes) {
     if (blob->format != OOT_SCENE_BLOB_FORMAT || blob->num_rooms > OOT_SCENE_MAX_ROOMS ||
         blob->num_layers > bytes / sizeof(OotSceneLayer) ||
-        (blob->num_rooms && !blob->num_layers) || blob->num_objects > 16 ||
+        (blob->num_rooms && !blob->num_layers) || blob->num_objects > OOT_SCENE_MAX_OBJECTS ||
         !scene_range(blob->objects, blob->num_objects, 2, 2, bytes) ||
         !scene_range(blob->layers, blob->num_rooms * blob->num_layers, sizeof(OotSceneLayer), 4, bytes) ||
         !scene_range(blob->paths, blob->num_path_layers, sizeof(OotSceneLayer), 4, bytes) ||
         !scene_range(blob->transitions, blob->num_transition_layers, sizeof(OotSceneLayer), 4, bytes) ||
-        !scene_range(blob->exits, blob->num_exit_layers, sizeof(OotSceneLayer), 4, bytes)) return false;
+        !scene_range(blob->exits, blob->num_exit_layers, sizeof(OotSceneLayer), 4, bytes) ||
+        !scene_range(blob->cutscenes, blob->num_cutscenes, sizeof(OotSceneCutscene), 4, bytes) ||
+        blob->num_object_layers < 4 || blob->num_object_layers > OOT_SCENE_MAX_OBJECT_LAYERS ||
+        !scene_range(blob->layer_objects, blob->num_object_layers, 4, 4, bytes)) return false;
+    for (u32 i = 0; i < blob->num_object_layers; ++i)
+        if (blob->num_objects < 32 && (blob->layer_objects[i] >> blob->num_objects)) return false;
+    for (u32 i = 0; i < blob->num_cutscenes; ++i) {
+        const OotSceneCutscene* row = &blob->cutscenes[i];
+        if ((row->id & 0xff000000u) != 0xf1000000u || row->bytes < 12 || (row->bytes & 3u) ||
+            !scene_range(row->script, row->bytes, 1, 4, bytes)) return false;
+        for (u32 j = 0; j < i; ++j) if (blob->cutscenes[j].id == row->id) return false;
+    }
     for (u32 i = 0; i < blob->num_exit_layers; ++i) {
         const OotSceneLayer* row = &blob->exits[i];
         if (!scene_range(row->actors, row->num_actors, sizeof(s16), 2, bytes)) return false;
@@ -180,7 +222,7 @@ static int scene_valid(const OotSceneBlob* blob, u32 bytes) {
 int OotCore_SceneLoad(unsigned int scene, const char* name, unsigned int core_crc,
                       const void* const** objects, unsigned int* count) {
     static const char hex[] = "0123456789ABCDEF";
-    static const void* loaded_objects[16];
+    static const void* loaded_objects[OOT_SCENE_MAX_OBJECTS];
     u8* carve = (u8*)(OOT_SCENECOL_ADDR | OOT_PACK_UNCACHED_ALIAS);
     const OotSceneBlob* blob = (const OotSceneBlob*)OOT_SCENECOL_ADDR;
     OotActorPackHeader h;
@@ -227,5 +269,6 @@ int OotCore_SceneLoad(unsigned int scene, const char* name, unsigned int core_cr
             !OotCore_PackBind((void*)(uintptr_t)(OOT_SCENECOL_ADDR + limit), pack_bytes, core_crc)) return -1;
     }
     *objects = loaded_objects; *count = blob->num_objects;
+    OotCore_SpriteSetScene(scene);
     return 1;
 }

@@ -44,8 +44,19 @@ class PropLists(link.LimbLists):
 def static_mesh(oot, rom_dir, obj, symbol, dest, scale=1.0, setup=None, extra=(), flat=False, cutout=False, matrix=None, texture8=None, setup25=False):
     data = link.read_object(oot, obj, rom_dir)
     xml = ET.parse(oot / 'assets/xml/objects' / (obj + '.xml'))
-    offsets = {e.attrib['Name']: int(e.attrib['Offset'], 16) for e in xml.iter('DList')}
+    if obj == 'object_kingdodongo':
+        from build_dodongo_boss_meshes import source_offset
+        offsets = {e.attrib['Name']: source_offset(e) for e in xml.iter('DList')}
+    else:
+        offsets = {e.attrib['Name']: int(e.attrib['Offset'], 16) for e in xml.iter('DList')
+                   if 'Offset' in e.attrib and not e.attrib['Offset'].startswith('.')}
+    if obj == 'gameplay_keep':
+        from child_legend_keep import DLISTS, display_offset
+        if symbol in DLISTS: offsets[symbol]=display_offset(oot,data,symbol)
     lists = PropLists(b'', b'')
+    # Keep source near geometry for depth-conditional rock/prop display lists;
+    # Saturn already performs visibility culling on the baked prop instance.
+    lists.include_depth_branches = True
     if setup25:
         # EnDoor_Draw calls Gfx_SetupDL_25Opa before its leaf list. The leaf
         # inherits texture enable and lighting; its RGB bytes are normals.
@@ -54,8 +65,17 @@ def static_mesh(oot, rom_dir, obj, symbol, dest, scale=1.0, setup=None, extra=()
         lists.geom = 0x220405  # ZBUFFER | SHADE | CULL_BACK | LIGHTING | SHADING_SMOOTH
     segment = int(next(xml.iter("File")).attrib.get("Segment", "6"), 0)
     lists.segments = {segment: data, 8: struct.pack('>II', 0xDF000000, 0)}
+    if obj in ('object_efc_crystal_light', 'object_efc_fire_ball', 'object_efc_lgt_shower',
+               'object_god_lgt', 'object_light_ring', 'object_triforce_spot', 'object_gi_jewel'):
+        # Source reflection setup and scroll lists change materials only.
+        lists.segments.update({7: struct.pack('>II', 0xDF000000, 0),
+                               9: struct.pack('>II', 0xDF000000, 0)})
     if texture8:
-        offset = next(int(e.attrib['Offset'], 16) for e in xml.iter('Texture') if e.attrib['Name'] == texture8)
+        if obj == 'gameplay_keep' and texture8=='gDust5Tex':
+            from child_legend_keep import texture_offset
+            offset=texture_offset(oot,data,texture8)
+        else:
+            offset = next(int(e.attrib['Offset'], 16) for e in xml.iter('Texture') if e.attrib['Name'] == texture8)
         lists.segments[8] = data[offset:]
     if obj == 'object_syokudai':
         lists.segments[5] = link.read_object(oot, 'gameplay_dangeon_keep', rom_dir)

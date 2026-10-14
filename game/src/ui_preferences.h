@@ -9,6 +9,11 @@ enum { UI_KEY_L, UI_KEY_R, UI_KEY_A, UI_KEY_B, UI_KEY_X, UI_KEY_Y, UI_KEY_C, UI_
 unsigned ui_labels(void);
 unsigned ui_jump_binding(void);
 void ui_preferences_cycle(bool jump);
+/* Core timing (human 2026-10-12): Fast runs the decomp update on the second
+ * SH-2 during the draw (one frame later on screen); Responsive runs it in
+ * the game step like the single-CPU build. */
+bool ui_core_responsive(void);
+void ui_preferences_toggle_core(void);
 void ui_preferences_reset(void);
 void ui_preferences_pack(uint8_t out[UI_PREF_BYTES]);
 bool ui_preferences_unpack(const uint8_t *data, unsigned bytes);

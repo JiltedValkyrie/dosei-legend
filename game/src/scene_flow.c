@@ -94,6 +94,12 @@ bool            scene_flow_is_interior(void)
     return (loaded && scene_flow_entry()->image != 0);
 }
 
+static bool scene_is_shop(const scene_entry_t* entry)
+{
+    /* Source SCENE_BAZAAR through SCENE_HAPPY_MASK_SHOP. */
+    return entry->oot_scene >= 0x2c && entry->oot_scene <= 0x33;
+}
+
 /* Play_SetViewpoint: source house panoramas toggle against their locked JPEG.
  * The shop has FIXED_SHOP_VIEWPOINT and never accepts the toggle. */
 bool scene_flow_pivot(void)
@@ -104,7 +110,7 @@ bool scene_flow_pivot(void)
 bool scene_flow_toggle_view(void)
 {
     bool pivot = scene_flow_pivot(), ok;
-    if (!scene_flow_is_interior() || current_scene == SCENE_KOKIRI_SHOP ||
+    if (!scene_flow_is_interior() || scene_is_shop(scene_flow_entry()) ||
         scene_flow_entry()->panorama == 255)
         return false;
     if (!vdp1_wait_for_draw_end()) return false;
@@ -120,12 +126,13 @@ bool scene_flow_toggle_view(void)
     return true;
 }
 
-/* Play_SetShopBrowsingViewpoint: talking to EnOssan switches the Kokiri
- * Shop to its pivot view (SKYBOX_KOKIRI_SHOP, bank 4) and back afterwards. */
+/* Play_SetShopBrowsingViewpoint: EnOssan switches each shop's locked image
+ * to its source panorama while browsing, and back after the conversation. */
 bool scene_flow_shop_browse(bool on)
 {
     bool ok;
-    if (!scene_flow_is_interior() || current_scene != SCENE_KOKIRI_SHOP ||
+    if (!scene_flow_is_interior() || !scene_is_shop(scene_flow_entry()) ||
+        scene_flow_entry()->panorama == 255 ||
         on == scene_flow_pivot())
         return false;
     if (!vdp1_wait_for_draw_end()) return false;
@@ -238,13 +245,15 @@ bool __attribute__((optimize("Os"))) scene_flow_load(unsigned int scene, unsigne
     /* Old core archives must not overlap the next scene's native models and
      * animation banks (Ranch SPR2 + Gohma exceeds the existing heap). */
     oot_core_scene_unload();
+    if (!oot_core_player_resident())
+        return (false);
     music_area_trim();
     if (entry->image) {
         /* A prerendered interior: one backdrop on VDP2, no geometry at all. */
         /* Houses with source pivot cameras start on their panorama bank;
         ** fixed-view rooms and shops retain the original JPEG view. */
         unsigned int room = scene_flow_spawn(scene, spawn)->room;
-        if (!(scene == SCENE_KOKIRI_SHOP || entry->panorama == 255 ?
+        if (!(scene_is_shop(entry) || entry->panorama == 255 ?
               kokiri_scene_load_backdrop(scene, room) : kokiri_scene_load_bank(STORY_BANK_PANORAMA, entry->panorama)))
             return (false);
     } else {
@@ -262,7 +271,7 @@ bool __attribute__((optimize("Os"))) scene_flow_load(unsigned int scene, unsigne
     current_scene = scene;
     loaded = true;
     door_armed = false;
-    if (!story_route_load(entry->save_scene) || !npc_draw_load(entry->save_scene)) {
+    if (!npc_draw_load(entry->save_scene)) {
         jo_core_error("NPC model load failed: scene %u", entry->save_scene);
         return false;
     }
@@ -273,6 +282,12 @@ bool __attribute__((optimize("Os"))) scene_flow_load(unsigned int scene, unsigne
 #else
     oot_core_scene_restart();
 #endif
+    /* Source pack admission must be known before optional host owl assets
+     * and gameplay are created. */
+    if (!story_route_load(entry->save_scene)) {
+        jo_core_error("Story actor load failed: scene %u", entry->save_scene);
+        return false;
+    }
     return (true);
 }
 

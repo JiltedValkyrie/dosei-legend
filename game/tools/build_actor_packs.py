@@ -15,10 +15,11 @@ import tempfile
 import zlib
 
 ROOT = Path(__file__).resolve().parents[1]
-MAGIC, VERSION, HEADER_BYTES = 0x4F415031, 1, 80
+MAGIC, VERSION, HEADER_BYTES = 0x4F415031, 2, 96
 FIELDS = ('magic version header_bytes core_crc link_base file_bytes memory_bytes '
           'bss_offset bss_bytes ctors_offset ctor_count actors_offset actor_count '
-          'effects_offset effect_count crc text_offset text_bytes scene flags').split()
+          'effects_offset effect_count crc text_offset text_bytes scene flags '
+          'services_version onepoint_setup onepoint_step npc_view').split()
 
 
 class Elf32:
@@ -94,10 +95,10 @@ def audit_helper(path, allowed, core=None):
                     raise ValueError(f'{path}: helper touches resident state: {target["name"]}')
 
 
-def validate(data, core_crc, carve_base=0x02730000, carve_bytes=0x40000, used=0):
+def validate(data, core_crc, carve_base=0x02710000, carve_bytes=0x50000, used=0):
     if len(data) < HEADER_BYTES:
         raise ValueError('short actor pack')
-    h = dict(zip(FIELDS, struct.unpack_from('>20I', data)))
+    h = dict(zip(FIELDS, struct.unpack_from('>' + str(len(FIELDS)) + 'I', data)))
     def need(condition, message):
         if not condition:
             raise ValueError(message)
@@ -109,7 +110,8 @@ def validate(data, core_crc, carve_base=0x02730000, carve_bytes=0x40000, used=0)
     need(h['file_bytes'] == len(data), 'actor pack file size')
     need(len(data) <= h['memory_bytes'] <= carve_bytes and not h['memory_bytes'] % 16,
          'actor pack memory size')
-    need(used <= carve_bytes - h['memory_bytes'], 'OOC + OOB + OAP exceeds scene carve')
+    need(used <= carve_bytes - h['memory_bytes'],
+         f'OOC + OOB + OAP exceeds scene carve: {used} + {h["memory_bytes"]} > {carve_bytes}')
     need(h['link_base'] == carve_base + carve_bytes - h['memory_bytes'], 'actor pack link base')
     need(h['bss_offset'] == len(data) and h['bss_bytes'] <= h['memory_bytes'] - len(data), 'actor pack BSS')
     need(h['flags'] & ~1 == 0, 'actor pack flags')
@@ -127,6 +129,12 @@ def validate(data, core_crc, carve_base=0x02730000, carve_bytes=0x40000, used=0)
     copy[60:64] = b'\0' * 4
     need(zlib.crc32(copy) == h['crc'], 'actor pack checksum')
     text_start = h['link_base'] + h['text_offset']
+    need(h['services_version'] == (2 if h['onepoint_setup'] or h['npc_view'] else 0), 'actor pack services ABI')
+    need(bool(h['onepoint_setup']) == bool(h['onepoint_step']), 'actor pack incomplete services')
+    for service in ('onepoint_setup', 'onepoint_step', 'npc_view'):
+        if h[service]:
+            need(text_start <= h[service] < text_start + h['text_bytes'] and
+                 not h[service] % 2, 'actor pack service pointer')
     for i in range(h['ctor_count']):
         ptr, = struct.unpack_from('>I', data, h['ctors_offset'] + 4 * i)
         need(text_start <= ptr < text_start + h['text_bytes'] and not ptr % 2, 'actor pack ctor pointer')
@@ -135,6 +143,8 @@ def validate(data, core_crc, carve_base=0x02730000, carve_bytes=0x40000, used=0)
         count = h['actor_count' if key == 'actors' else 'effect_count']
         for i in range(count):
             ident, ptr = struct.unpack_from('>II', data, h[key + '_offset'] + i * 8)
+            if key == 'actors':
+                ident &= 0x7FFFFFFF  # OOT_ACTOR_PACK_ADMIT
             need(ident not in ids, 'duplicate actor pack profile')
             ids.add(ident)
             need(h['link_base'] + h['text_offset'] + h['text_bytes'] <= ptr <
@@ -245,8 +255,8 @@ def main():
     parser.add_argument('--allow-helper-symbol', action='append', default=[])
     parser.add_argument('--test-pack', action='store_true')
     parser.add_argument('--scene', type=lambda x: int(x, 0), default=0xffffffff)
-    parser.add_argument('--carve-base', type=lambda x: int(x, 0), default=0x02730000)
-    parser.add_argument('--carve-bytes', type=lambda x: int(x, 0), default=0x40000)
+    parser.add_argument('--carve-base', type=lambda x: int(x, 0), default=0x02710000)
+    parser.add_argument('--carve-bytes', type=lambda x: int(x, 0), default=0x50000)
     parser.add_argument('--used-bytes', type=lambda x: int(x, 0), default=0)
     parser.add_argument('--payload', action='append', default=[], help='named OOC/OOB cost NAME=FILE')
     args = parser.parse_args()

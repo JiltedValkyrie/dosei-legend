@@ -69,8 +69,8 @@ def dungeon_webs(oot,rom_dir,out):
             if a['name']=='Bg_Ydan_Sp' and a['params']>>12==0:
                 spawns.append((room,*a['position'],a['rotation'][1],a['params']&63))
     if not spawns: raise ValueError('Missing original floor webs')
-    header='/* Original gDTWebFloorCol and child-day placements; no drops. */\n'
-    header+='static const collision_triangle_t dungeon_web_triangles[] = {\n'+',\n'.join(rows)+'\n};\n'
+    header='/* Original gDTWebFloorCol and child-day placements; no drops. */\n#include "host_cold.h"\n'
+    header+='HOST_COLD static const collision_triangle_t dungeon_web_triangles[] = {\n'+',\n'.join(rows)+'\n};\n'
     header+='typedef struct {short room,x,y,z,yaw,flag;} dungeon_web_spawn;\n'
     header+='static const dungeon_web_spawn dungeon_webs[] = {\n'+',\n'.join('{'+','.join(map(str,row))+'}' for row in spawns)+'\n};\n'
     header+='#define DUNGEON_WEB_COUNT %d\n'%len(spawns)

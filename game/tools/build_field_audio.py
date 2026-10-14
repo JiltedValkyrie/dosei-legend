@@ -42,7 +42,7 @@ def build(oot,out):
     if frame>65535:raise ValueError('Field phrase bank exceeds frame format')
     for key,value in [('FRAMES',frame),('LOOP_FRAME',sections[1][0]),('LEVEL_BYTES',len(levels)),('TRIGGER_COUNT',len(triggers))]:
         header=re.sub(r'(#define FIELD_'+key+r' )\d+',lambda m:m[1]+str(value),header)
-    body='\n'.join('    { %d, %d, %d, %d, %d },'%t for t in triggers)
+    body='\n'.join('    { %d, %d, %d, %d, %d, %d },'%t for t in triggers)
     header=re.sub(r'(static const field_trigger_t field_triggers\[\] = \{).*?\n\};',
                   lambda m:m[1]+'\n'+body+'\n};',header,flags=re.S)
     (out/'field_score.h').write_text(header)

@@ -8,6 +8,8 @@
 */
 #include <stdbool.h>
 #include <stdint.h>
+#include "../oot-core/include/oot_cutscene_camera.h"
+#include "../oot-core/include/oot_core_shop.h"
 #ifndef OOT_CORE_TRANSITION_RELOAD
 #define OOT_CORE_TRANSITION_RELOAD 0x10000
 #endif
@@ -20,6 +22,13 @@ typedef struct {
 
 /* Boot: load + init the blob and run the gate bench. False if not loaded. */
 bool oot_core_boot(void);
+/* Joined snapshot only: safe during the slave's next update. */
+const OotCoreCutsceneCameraView* oot_core_cutscene_camera(void);
+const OotCoreShopView* oot_core_shop_view(void);
+void oot_core_timer_draw(bool visible);
+int oot_core_cutscene_screen_distance(void);
+void oot_core_cutscene_camera_apply(void);
+void oot_core_cutscene_letterbox_draw(void);
 /* Second-CPU core update (2026-10-09, PLAYER_SOURCE; stubs otherwise). The
  * host steps queue core updates; main.c kicks them onto the slave SH-2 at
  * the start of the draw and joins before the HUD. Between kick and join the
@@ -49,8 +58,15 @@ void oot_core_carry_cancel(void);
 void oot_core_player_resync(void);
 /* Debug overlay: the real Player's anchor draw pass, us. */
 unsigned int oot_core_player_draw_us(void);
+/* Pause menu close: load the clip groups of the C items now equipped,
+** behind the menu. False = wait (a CD-DA fanfare owns the drive). */
+bool oot_core_player_groups_prepare(void);
+/* scene_flow_load, after the old scene is gone: common clips (PLAYRES.PFB). */
+bool oot_core_player_resident(void);
 #else
 static inline unsigned int oot_core_player_draw_us(void) { return 0; }
+#define oot_core_player_groups_prepare() true
+#define oot_core_player_resident() true
 #endif
 /* Failed code-pack admission blocks gameplay until explicit scene restart. */
 bool oot_core_scene_failed(void);
@@ -112,6 +128,7 @@ void oot_core_meshes_draw(void);
 bool oot_core_is_loaded(void);
 /* Play state active for the current scene. */
 bool oot_core_is_playing(void);
+bool oot_core_owns_owl(void); /* cached cold scene admission, safe during slave update */
 const OotCoreBench *oot_core_bench_result(void);
 /* Time of the last decomp update step (Actor_UpdateAll, collision, effects), us. */
 unsigned int oot_core_update_us(void);
@@ -128,11 +145,19 @@ static inline bool oot_core_owns_kokiri_props(void) { return oot_core_is_playing
 ** C keeps them (fast) until the 32-bit Fx conversion lands. */
 static inline bool oot_core_owns_kokiri_npcs(void) { return false; }
 #else
+static inline const OotCoreCutsceneCameraView* oot_core_cutscene_camera(void) { return 0; }
+static inline const OotCoreShopView* oot_core_shop_view(void) { return 0; }
+static inline void oot_core_timer_draw(bool visible) { (void)visible; }
+static inline int oot_core_cutscene_screen_distance(void) { return 0; }
+static inline void oot_core_cutscene_camera_apply(void) {}
+static inline void oot_core_cutscene_letterbox_draw(void) {}
 static inline void oot_core_async_kick(void) {}
 static inline void oot_core_async_join(void) {}
 static inline bool oot_core_async_busy(void) { return false; }
 static inline unsigned int oot_core_async_violation_line(void) { return 0; }
 static inline bool oot_core_is_playing(void) { return false; }
+#define oot_core_player_groups_prepare() true
+#define oot_core_player_resident() true
 static inline bool oot_core_scene_failed(void) { return false; }
 #define oot_core_frame(in) ((void)0)
 #define oot_core_skybox_time() 0x8000u
@@ -140,6 +165,7 @@ static inline bool oot_core_scene_failed(void) { return false; }
 static inline void oot_core_clock_reset(unsigned int skybox_time) { (void)skybox_time; }
 static inline void oot_core_session_reset(unsigned int skybox_time) { (void)skybox_time; }
 static inline bool oot_core_owns_kokiri_props(void) { return false; }
+static inline bool oot_core_owns_owl(void) { return false; }
 static inline bool oot_core_owns_kokiri_npcs(void) { return false; }
 static inline unsigned int oot_core_talk(void) { return 0; }
 static inline unsigned int oot_core_update_us(void) { return 0; }

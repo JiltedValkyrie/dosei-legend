@@ -28,12 +28,14 @@
 #include "sys_math.h"
 #include "sys_matrix.h"
 #include "oot_core_api.h"
+#include "oot_core_host.h"
 #include "array_count.h"
 #include "z_math.h"
 #include "animation.h"
 #include "z_lib.h"
 #include "player_anchor_matrix.h"
 #include "bgcheck.h"
+extern const OotCoreHost* gOotCoreHost;
 
 /* Exported by sys_matrix.c, but absent from its public source header. */
 MtxF* Matrix_GetCurrent(void);
@@ -228,6 +230,7 @@ typedef struct Walker {
     s32 depth; /* stack[depth] = current modelview */
     s16 actorId;
     u8 xlu;
+    u8 primAlpha;
 } Walker;
 
 static uintptr_t Walk_Resolve(Walker* w, u32 addr) {
@@ -320,6 +323,7 @@ static void Draw_Emit(Walker* w, uintptr_t p) {
     it->index = index;
     it->actor = w->actorId;
     it->xlu = w->xlu;
+    it->alpha = w->primAlpha;
     it->x = (s32)m->mf[3][0];
     it->y = (s32)m->mf[3][1];
     it->z = (s32)m->mf[3][2];
@@ -415,6 +419,9 @@ static void Walk_List(Walker* w, const Gfx* g, s32 dlDepth) {
                         w->skinBase = w1;
                     }
                 }
+                break;
+            case G_SETPRIMCOLOR:
+                w->primAlpha = (u8)w1;
                 break;
             case G_TEXRECT:
             case G_TEXRECTFLIP:
@@ -686,8 +693,12 @@ s32 OotCore_DrawActors(PlayState* play) {
 #endif
     for (i = 0; i < ACTORCAT_MAX; i++) {
         Actor* actor;
+        /* Boss limb callbacks own live weak points and nineteen spheres.
+         * Give their source pose pass fresh Gfx space before decorative
+         * props; host screen culling happens only after these contacts exist. */
+        s32 category = i == 0 ? ACTORCAT_BOSS : i <= ACTORCAT_BOSS ? i - 1 : i;
 
-        for (actor = play->actorCtx.actorLists[i].head; actor != NULL; actor = actor->next) {
+        for (actor = play->actorCtx.actorLists[category].head; actor != NULL; actor = actor->next) {
             Gfx* opa0;
             Gfx* xlu0;
             u32 s;
@@ -727,6 +738,7 @@ s32 OotCore_DrawActors(PlayState* play) {
                 w.depth = 0;
                 w.actorId = actor->id;
                 w.xlu = 0;
+                w.primAlpha = 255;
                 Walk_Range(&w, opa0, gfx->polyOpa.p);
                 Walk_Range(&w, xlu0, gfx->polyXlu.p);
                 w.cap = NULL;
@@ -763,6 +775,7 @@ s32 OotCore_DrawActors(PlayState* play) {
                 w.depth = 0;
                 w.actorId = actor->id;
                 w.xlu = 0;
+                w.primAlpha = 255;
                 /* Walk only to find the matrix array; emits nothing (the
                  * limb DLs are not generic placeholders the C side knows). */
                 {
@@ -804,6 +817,8 @@ s32 OotCore_DrawActors(PlayState* play) {
             /* Leave room: one actor's lists plus its GRAPH_ALLOC matrices. */
             if ((u8*)gfx->polyOpa.d - (u8*)gfx->polyOpa.p < 0x1800 ||
                 (u8*)gfx->polyXlu.d - (u8*)gfx->polyXlu.p < 0x800) {
+                if (actor->id == ACTOR_BOSS_DODONGO && gOotCoreHost && gOotCoreHost->fatal)
+                    gOotCoreHost->fatal(0x424750u, gfx->polyOpa.size, gfx->polyXlu.size); /* BGP */
                 sDropped++;
                 return sItemCount;
             }
@@ -821,6 +836,7 @@ s32 OotCore_DrawActors(PlayState* play) {
             w.depth = 0;
             w.actorId = actor->id;
             w.xlu = 0;
+            w.primAlpha = 255;
             Walk_Range(&w, opa0, gfx->polyOpa.p);
             for (s = 0; s < 16; s++) {
                 w.segments[s] = gSegments[s];
@@ -829,6 +845,7 @@ s32 OotCore_DrawActors(PlayState* play) {
             SkinMatrix_SetTranslate(&w.stack[0], 0.0f, 0.0f, 0.0f);
             w.depth = 0;
             w.xlu = 1;
+            w.primAlpha = 255;
             Walk_Range(&w, xlu0, gfx->polyXlu.p);
         }
     }

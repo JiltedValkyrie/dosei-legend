@@ -23,8 +23,12 @@
 /* Layouts the generated score headers already use, so their tables can be
  * pointed at directly rather than copied. */
 typedef struct { uint32_t offset; uint16_t loop_start, loop_end; } music_pcm_t;
-typedef struct { uint16_t frame; uint8_t slot, sample; uint16_t pitch; uint8_t pan; }
+typedef struct { uint16_t frame; uint8_t slot, sample; uint16_t pitch; uint8_t pan, channel; }
     music_trigger_t;
+/* Source channel controls; no CD reads and no extra SCSP voices. */
+void music_source_singing(unsigned int voice, unsigned int melody, bool alone);
+void music_source_spatial(unsigned int volume, unsigned int pan);
+bool music_fanfare_busy(void);
 
 typedef struct {
     const char            *pcm_file;      /* sample bank, staged on the CD */
@@ -72,12 +76,17 @@ bool music_silence(unsigned int fade_frames);
 void music_service(void);
 /* One-shot score completion; resume is serviced on main thread, never VBlank. */
 void music_once(const music_bank_t *one_shot,const music_bank_t *resume);
+/* Dynamic tables remain pinned through one-shot playback and resumption. */
+bool music_bank_referenced(const music_bank_t *bank);
 /* Pause ducking: half amplitude (-6 dB), composed with fades; SFX unchanged. */
 void music_menu_duck(bool enabled);
 
 /* CD-DA owns the music mix: immediate mute, then a 0.5 s VBlank restore.
  * Composes with bank fades and menu ducking; does not touch SFX/CD sends. */
 void music_cdda_mute(bool enabled);
+/* Source main-BGM volume (0..127), fading over source 20 Hz frames. */
+void music_source_volume(unsigned int volume, unsigned int frames);
+void music_source_tempo(unsigned int ratio_q8); /* affects note/envelope clock, not PCM pitch */
 unsigned int music_vblank_count(void);
 
 /** @brief The bank currently playing, or NULL before music_init(). */

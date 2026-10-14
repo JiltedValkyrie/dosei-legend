@@ -17,6 +17,9 @@ class StoryMusic(unittest.TestCase):
     def setUpClass(cls):
         src = (ROOT/'shared/lib/music/music.c').read_text()
         src = src[:src.index('/* Upload one staged chunk')]
+        # The GFS streaming transport is outside this score fixture.
+        start = src.index('typedef struct {\n    GfsHn')
+        src = src[:start] + src[src.index('static bool swap_failed;', start):]
         src = src.replace('#include <jo/jo.h>', '#include <string.h>\ntypedef int jo_file;')
         src = re.sub(r'#define REG\(o\).*', 'static unsigned short registers[1024];\n#define REG(o) registers[(o)/2]', src)
         src += r'''
@@ -27,7 +30,7 @@ static unsigned char envelope[18];
 static const unsigned short ranges[][2]={{0,2},{2,4},{4,6}};
 static unsigned choose(unsigned previous){(void)previous;return 2;}
 void reset(void){memset(registers,0,sizeof(registers));memset(active,0,sizeof(active));
- memset(envelope,0,sizeof(envelope));bank=&test;levels=envelope;frame=cursor=ticks=phase=0;
+ memset(envelope,0,sizeof(envelope));bank=&test;levels[0]=envelope;levels_live=true;frame=cursor=ticks=phase=0;
  refresh=60;playing=true;state=MUSIC_IDLE;volume=cdda_volume=15;once_bank=once_resume=0;
  once_done=false;section_bank=0;section_count=0;}
 void one_shot(void){music_once(&test,0);}

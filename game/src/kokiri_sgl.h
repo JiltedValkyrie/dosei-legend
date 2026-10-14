@@ -19,6 +19,8 @@ bool            kokiri_link_set_age(bool adult);
 
 /* Load one (scene, room) VDP1 geometry bank: S<scene>R<room>.MSH/.TEX. */
 bool            kokiri_scene_load_bank(unsigned int scene, unsigned int room);
+/* Source King Dodongo cooling phase; resident room palettes only. */
+void            kokiri_scene_dodongo_lava(unsigned phase);
 
 /* Stage a prerendered interior's 320x240 backdrop on VDP2 (S<scene>R<room>.RGB)
 ** and put the sprite layer IN FRONT of it, so Link draws over the picture
@@ -159,6 +161,8 @@ unsigned int    kokiri_order_error(void);
 void kokiri_cutscene_effects_draw(void);
 void kokiri_flame_draw(int32_t x,int32_t y,int32_t z,unsigned tick);
 void kokiri_particle_draw(int x,int y,int z,unsigned radius,unsigned colour,unsigned dither);
+void kokiri_score_popup_draw(int x,int y,int z,unsigned score_index,unsigned scale);
+void kokiri_minigame_score_draw(unsigned score);
 /* Release only transient nightmare textures; resident Link/UI remain. */
 void kokiri_cutscene_tiles_reset(void);
 /* NPC tiles live after the current room, never over its texture bank. */

@@ -7,8 +7,9 @@ Mechanical C-vs-C++ fixups and explicit Saturn backend substitutions:
   * MtxF anonymous-struct fields (.xx etc.) -> .mf[col][row]; GCC forbids
     members with constructors (Fx) in anonymous aggregates.
   * xstdio.h `long double` printf slot -> long long (no long double type).
-  * `typedef union X { struct {...}; s32 _words[N]; } X;` -> plain struct
-    (_words is never read by game code; same anonymous-aggregate rule).
+  * Fx-containing `typedef union X { struct {...}; s32 _words[N]; } X;`
+    -> plain struct (same anonymous-aggregate rule). Integer cutscene command
+    unions retain their padding because source dispatch advances by sizeof.
   * CamParamData's anonymous door struct/union get names; the six
     `paramData.<member>` accesses are rewritten to match.
   * MIN/MAX/ABS/CLAMP* macro bodies -> OOT_SEL (mixed int/Fx ternary).
@@ -28,6 +29,27 @@ import sys
 import field_enemy_sources
 import scene_pack_actors
 import water_temple_sources
+import child_route_sources
+import child_route_npcs
+import child_castle_sources
+import child_route_shops
+import ranch_sources
+import child_common_npcs
+import child_reward_npcs
+import child_mask_sources
+import child_minigame_sources
+import courtyard_sources
+import dodongo_enemy_sources
+import dodongo_boss_sources
+import child_route_effects
+import child_route_props
+import child_legend_sources
+import child_fairy_sources
+import owl_sources
+import onepoint_sources
+import npc_view_sources
+import ocarina_memory_source
+import core_cutscene_sources
 from environment_source import (clock_source, room_clock_source, room_time,
                                 room_behavior, sun_song_source, destination_layer_source,
                                 transition_clock_source, clock_events_source, player_clock_gate_source)
@@ -84,6 +106,9 @@ SOURCES = [
     'src/code/gfxalloc.c',
     'src/code/z_memory_utils.c',
     'src/code/z_construct.c',  # Message_Init, Regs_InitData
+    'src/code/z_demo.c',
+    'src/code/z_cutscene_spline.c',
+    'src/code/z_env_flags.c',
     'src/code/z_collision_btltbls.c',  # DamageTable_Get
     # Route step 5, Kokiri Forest batch 1.
     'src/overlays/actors/ovl_En_Md/z_en_md.c',
@@ -205,6 +230,7 @@ COL_ARRAY = re.compile(r'^\w+ (\w+)\[\] = \{\n#include "[^"]+"\n\};\n', re.M)
 
 
 ROOM_ACTORS = re.compile(r'^ActorEntry (\w+)\[\w+\] = \{\n#include "[^"]+"\n\};\n', re.M)
+ROOM_OBJECTS = re.compile(r'^s16 (\w+_ObjectList)\[\w*\] = \{\n#include "([^"]+)"\n\};', re.M)
 ALT_TABLE = re.compile(r'^SceneCmd\* (\w+_AltHeaders)\[\] = \{\n#include "([^"]+)"\n\};', re.M)
 # Registered runtime scenes (build_scene_table.py): one blob per scene index.
 SCENE_TABLE_JSON = GAME / 'build' / 'generated' / 'scene_table.json'
@@ -248,6 +274,62 @@ def room_layers(room, rtext, asset_root):
                 found = [n for n in lists if n.startswith(cmds + '_')]
                 layers.append((found[0] if found else None, True))
     return layers
+
+
+def room_object_layers(room, rtext, asset_root):
+    """Per scene layer, ordered as room_layers: (object enums the header's
+    Scene_CommandObjectList names, present)."""
+    lists = {n: re.findall(r'\b(OBJECT_\w+)', (asset_root / inc).read_text(encoding='utf-8'))
+             for n, inc in ROOM_OBJECTS.findall(rtext)}
+    main = [v for n, v in lists.items() if 'AltHeaders' not in n]
+    if len(main) > 1:
+        raise SystemExit(f'{room}: {len(main)} main-header ObjectLists')
+    layers = [(main[0] if main else [], True)]
+    alt = ALT_TABLE.search(rtext)
+    if alt:
+        for cmds in re.findall(r'^\s*(\w+),', (asset_root / alt.group(2)).read_text(encoding='utf-8'), re.M):
+            found = [v for n, v in lists.items() if n.startswith(cmds + '_')]
+            layers.append(([], False) if cmds == 'NULL' else (found[0] if found else [], True))
+    return layers
+
+
+def scene_layer_object_masks(scene_c, asset_root, objects, enum_ids, always=()):
+    """Bit k of mask[L] = objects[k] is loaded in scene layer L. OoT loads a
+    room's object list from the header its layer runs (room_layer fallback in
+    oot_core_api.cpp: absent -> adult night tries adult day -> main header);
+    the union over rooms covers every room change. `always` (scene keep,
+    shop and boss-reward objects) stays in every layer. At least layers 0-3
+    are emitted; any higher layer the scene lacks runs every main header,
+    which is mask[0]."""
+    index = {o: i for i, o in enumerate(objects)}
+    if len(objects) > 32:
+        raise SystemExit(f'{scene_c}: {len(objects)} objects exceed a 32-bit layer mask')
+    per_room = [room_object_layers(r, r.read_text(encoding='utf-8'), asset_root) for r in room_files(scene_c)]
+    count = max([len(r) for r in per_room] + [4])
+    base = 0
+    for o in always:
+        base |= 1 << index[o]
+    masks = []
+    for layer in range(count):
+        mask = base
+        for rows in per_room:
+            if 0 < layer < len(rows) and rows[layer][1]:
+                enums = rows[layer][0]
+            elif layer == 3 and len(rows) > 2 and rows[2][1]:
+                enums = rows[2][0]
+            else:
+                enums = rows[0][0]
+            for e in enums:
+                if enum_ids.get(e) in index:
+                    mask |= 1 << index[enum_ids[e]]
+        masks.append(mask)
+    full = (1 << len(objects)) - 1
+    if any(m & ~full for m in masks):
+        raise SystemExit(f'{scene_c}: layer mask outside the object list')
+    worst = max(bin(m).count('1') for m in masks)
+    if worst > 30:     # oot_scene_blob.h OOT_SCENE_MAX_LAYER_OBJECTS
+        raise SystemExit(f'{scene_c}: a layer lists {worst} objects > 30 object slots')
+    return masks
 
 
 SCENE_PATH_DEF = re.compile(r'^(Path|Vec3s) (\w+)\[\w*\] = \{\n#include "[^"]+"\n\};\n', re.M)
@@ -334,7 +416,7 @@ def scene_exits(path, text, asset_root):
     return ''.join('\n' + body for name, body in definitions.items() if name in wanted), layers
 
 
-def scene_blob_source(path, asset_root, objects=()):
+def scene_blob_source(path, asset_root, objects=(), layer_masks=(0, 0, 0, 0)):
     """Cut a scene .c down to its collision (CollisionHeader + every array
     named with its prefix: BgCam, SurfaceTypes, PolyList, VtxList,
     WaterBoxes) and each room .c down to its ActorEntryLists for every scene
@@ -408,15 +490,24 @@ def scene_blob_source(path, asset_root, objects=()):
                  f'    {{ 0, 0, {int(p)} }},' for n, p in exit_layers]
     table += ('static const OotSceneLayer oot_scene_exits[] = {\n' +
               '\n'.join(exit_rows) + '\n};\n')
+    scripts, script_rows = core_cutscene_sources.scene_scripts(path, asset_root)
+    body += scripts
+    table += ('static const OotSceneCutscene oot_scene_cutscenes[] = {\n' +
+              ('\n'.join(f'    {{ 0x{key:08X}u, {name}, sizeof({name}) }},' for key, name in script_rows)
+               if script_rows else '    { 0, 0, 0 },') + '\n};\n')
     header = ('extern "C" const OotSceneBlob oot_scene_blob'
               ' __attribute__((section(".scene_header"), used)) = {\n'
               f'    &{prefix}_Col, {len(per_room)}, {num_layers}, oot_scene_layers,\n'
               f'    oot_scene_objects, {len(objects)},\n'
               f'    oot_scene_paths, {len(path_layers)},\n'
               f'    OOT_SCENE_BLOB_FORMAT, oot_scene_transitions, {len(transition_layers)},\n'
-              f'    oot_scene_exits, {len(exit_layers)},\n}};\n')
+              f'    oot_scene_exits, {len(exit_layers)},\n'
+              f'    oot_scene_cutscenes, {len(script_rows)},\n'
+              f'    oot_scene_layer_objects, {len(layer_masks)},\n}};\n')
     objs = ('static const unsigned short oot_scene_objects[] = { '
-            + (', '.join('0x%03X' % o for o in objects) if objects else '0') + ' };\n')
+            + (', '.join('0x%03X' % o for o in objects) if objects else '0') + ' };\n'
+            + 'static const unsigned int oot_scene_layer_objects[] = { '
+            + ', '.join('0x%08Xu' % m for m in layer_masks) + ' };\n')
     return ('// Generated by tools/oot_core_import.py from ' + path.name
             + ' (collision + room actor lists, all layers).\n'
             + '\n'.join(includes) + '\n#include "array_count.h"\n#include "oot_scene_blob.h"\n\n'
@@ -470,19 +561,24 @@ KEEP_PLACEHOLDERS = [
     'gOcarinaBtnIconCUpTex',
     'gOcarinaTrebleClefTex',
     'gSignRectangularDL',
-    # Phase 2 generic-draw batch 1
-    'gPotDL',
-    'gPotFragmentDL',
+    # Phase 2 generic-draw batch 1. Pots and small crates use the built
+    # gameplay_dangeon_keep object (child route), loaded as each scene's
+    # special keep file exactly where the source loads it.
     'gFieldKakeraDL',
     'gSilverRockDL',
     'gSilverRockFragmentsDL',
     'gEffFire1DL',
     'gHanaDL',
-    'gSmallWoodenBoxDL',
-    'gSmallWoodenBoxFragmentDL',
     # Field particle profiles retain opaque symbol identities, never meshes.
     'gEffEnemyDeathFlameDL', 'gEffFragments1DL', 'gEffFragments2DL', 'gEffDustDL',
     'gEffHitMarkDL',
+    # Bg_Hidan_Curtain fire (child route): opaque identity, no mesh.
+    'gEffFireCircleDL',
+    # Original magma Init stores this display-list identity; Saturn effects
+    # consume source regs and never dereference its N64 geometry.
+    'gEffMagmaBubbleDL',
+    # EnGoroiwa kakera effect: opaque fragment identity, never a mesh.
+    'gBoulderFragmentsDL',
 ]
 
 
@@ -501,9 +597,25 @@ OBJECTS = ['object_os_anime', 'object_km1', 'object_kw1', 'object_fa', 'object_m
            'object_tsubo', 'object_gs', 'object_wood02', 'object_syokudai',
            'object_in', 'object_ma1', 'object_ma2', 'object_ta', 'object_niw', 'object_cow',
            # Kakariko buildings (Bg_Spot01_Objects2): mesh + DynaPoly collision.
-           'object_spot01_matoya', 'object_spot01_matoyab']
+           'object_spot01_matoya', 'object_spot01_matoyab',
+           # Child route (CHILD_ROUTE_DODONGO_PLAN): chests, dungeon keep
+           # props (switches, push blocks), Dodongo's Cavern/Goron props.
+           'object_box', 'gameplay_dangeon_keep', 'object_bwall', 'object_ddan_objects',
+           'object_d_hsblock', 'object_bombf', 'object_trap', 'object_bombiwa',
+           # Bg_Breakwall boss-room wall type names its collision/DL.
+           'object_kingdodongo']
 OBJECTS += list(field_enemy_sources.OBJECTS)
 OBJECTS += list(water_temple_sources.SPRITE_OBJECTS)
+OBJECTS += list(owl_sources.OBJECTS) + ['object_warp1', 'object_gi_hearts']
+OBJECTS = list(dict.fromkeys(OBJECTS + list(child_route_npcs.OBJECTS) + list(child_route_npcs.GATE_OBJECTS) + list(dodongo_enemy_sources.SPRITE_OBJECTS)))
+OBJECTS = list(dict.fromkeys(OBJECTS + list(child_castle_sources.OBJECTS)))
+OBJECTS = list(dict.fromkeys(OBJECTS + list(child_route_shops.SPRITE_OBJECTS) + list(child_route_shops.STOCK_OBJECTS) + list(child_route_shops.GEOMETRY_OBJECTS)))
+OBJECTS = list(dict.fromkeys(OBJECTS + list(ranch_sources.OBJECTS)))
+OBJECTS = list(dict.fromkeys(OBJECTS + list(courtyard_sources.OBJECTS)))
+OBJECTS = list(dict.fromkeys(OBJECTS + list(child_common_npcs.OBJECTS) + list(child_reward_npcs.OBJECTS) + list(child_mask_sources.OBJECTS) + list(child_minigame_sources.OBJECTS)))
+OBJECTS = list(dict.fromkeys(OBJECTS + list(child_route_props.OBJECTS)))
+OBJECTS = list(dict.fromkeys(OBJECTS + list(child_legend_sources.OBJECTS)))
+OBJECTS = list(dict.fromkeys(OBJECTS + list(child_fairy_sources.OBJECTS)))
 # Definitions kept verbatim; everything else (Gfx, Vtx, textures, palettes)
 # becomes a one-element placeholder: the draw shim keys on its address.
 OBJECT_KEEP_TYPES = {'AnimationHeader', 'JointIndex', 's16', 'StandardLimb', 'LodLimb',
@@ -531,7 +643,31 @@ GENERIC_DRAW_SOURCES = [
     # visuals + DynaPoly collision only (human GO 2026-10-06). Its daytime
     # En_Daiku_Kakariko child is not imported, so that spawn simply fails.
     ('ACTOR_BG_SPOT01_OBJECTS2', 'src/overlays/actors/ovl_Bg_Spot01_Objects2/z_bg_spot01_objects2.c'),
+    # Child route (CHILD_ROUTE_DODONGO_PLAN C0): source chests, packed only
+    # for source-owned scenes (scene_pack_actors.SOURCE_ACTORS).
+    ('ACTOR_EN_BOX', 'src/overlays/actors/ovl_En_Box/z_en_box.c'),
+    ('ACTOR_BG_BREAKWALL', 'src/overlays/actors/ovl_Bg_Breakwall/z_bg_breakwall.c'),
+    ('ACTOR_BG_DDAN_JD', 'src/overlays/actors/ovl_Bg_Ddan_Jd/z_bg_ddan_jd.c'),
+    ('ACTOR_BG_DDAN_KD', 'src/overlays/actors/ovl_Bg_Ddan_Kd/z_bg_ddan_kd.c'),
+    ('ACTOR_BG_DODOAGO', 'src/overlays/actors/ovl_Bg_Dodoago/z_bg_dodoago.c'),
+    ('ACTOR_BG_HIDAN_CURTAIN', 'src/overlays/actors/ovl_Bg_Hidan_Curtain/z_bg_hidan_curtain.c'),
+    ('ACTOR_OBJ_HSBLOCK', 'src/overlays/actors/ovl_Obj_Hsblock/z_obj_hsblock.c'),
+    ('ACTOR_OBJ_SWITCH', 'src/overlays/actors/ovl_Obj_Switch/z_obj_switch.c'),
+    ('ACTOR_OBJ_OSHIHIKI', 'src/overlays/actors/ovl_Obj_Oshihiki/z_obj_oshihiki.c'),
+    ('ACTOR_EN_BOMBF', 'src/overlays/actors/ovl_En_Bombf/z_en_bombf.c'),
+    ('ACTOR_EN_TRAP', 'src/overlays/actors/ovl_En_Trap/z_en_trap.c'),
+    ('ACTOR_OBJ_BOMBIWA', 'src/overlays/actors/ovl_Obj_Bombiwa/z_obj_bombiwa.c'),
 ]
+GENERIC_DRAW_SOURCES += child_route_npcs.GATE_DRAW_SOURCES
+GENERIC_DRAW_SOURCES += child_castle_sources.DRAW_SOURCES
+GENERIC_DRAW_SOURCES += child_route_props.DRAW_SOURCES
+GENERIC_DRAW_SOURCES += child_legend_sources.DRAW_SOURCES
+GENERIC_DRAW_SOURCES += child_fairy_sources.DRAW_SOURCES
+GENERIC_DRAW_SOURCES += child_minigame_sources.DRAW_SOURCES
+GENERIC_DRAW_SOURCES += [('ACTOR_EN_TANA', child_route_shops.SHELF_SOURCE)]
+GENERIC_DRAW_SOURCES += [('ACTOR_BOSS_DODONGO', dodongo_boss_sources.BOSS_SOURCE),
+                        ('ACTOR_DOOR_WARP1', dodongo_boss_sources.SUPPORT_SOURCES[1]),
+                        ('ACTOR_ITEM_B_HEART', dodongo_boss_sources.SUPPORT_SOURCES[2])]
 GENERIC_DRAW = [a for a, _ in GENERIC_DRAW_SOURCES]
 # NPCs the decomp owns in generic scenes (no C copy there): spawned there,
 # drawn by the skinned NPC path (tools/build_core_skins.py).
@@ -543,6 +679,22 @@ GENERIC_NPC_SOURCES = [
     ('ACTOR_EN_NIW', 'src/overlays/actors/ovl_En_Niw/z_en_niw.c'),
     ('ACTOR_EN_COW', 'src/overlays/actors/ovl_En_Cow/z_en_cow.c'),
 ]
+GENERIC_NPC_SOURCES += child_route_npcs.NPC_SOURCES
+GENERIC_NPC_SOURCES += child_castle_sources.NPC_SOURCES
+GENERIC_NPC_SOURCES += owl_sources.NPC_SOURCES
+GENERIC_NPC_SOURCES += [('ACTOR_EN_OSSAN', child_route_shops.KEEPER_SOURCE), ('ACTOR_EN_GIRLA', child_route_shops.ITEM_SOURCE)]
+GENERIC_NPC_SOURCES += ranch_sources.NPC_SOURCES
+GENERIC_NPC_SOURCES += child_common_npcs.NPC_SOURCES
+GENERIC_NPC_SOURCES += child_reward_npcs.NPC_SOURCES
+GENERIC_NPC_SOURCES += child_mask_sources.NPC_SOURCES
+GENERIC_NPC_SOURCES += child_minigame_sources.NPC_SOURCES
+GENERIC_NPC_SOURCES += courtyard_sources.NPC_SOURCES
+GENERIC_NPC_SOURCES += list(zip(('ACTOR_' + name.upper() for name in dodongo_enemy_sources.SPRITE_ACTORS), dodongo_enemy_sources.SPRITE_SOURCES))
+GENERIC_NPC_SOURCES += [('ACTOR_EN_TITE', scene_pack_actors.source('En_Tite')),
+                        ('ACTOR_EN_FIREFLY', scene_pack_actors.source('En_Firefly'))]
+GENERIC_NPC_SOURCES += [('ACTOR_EN_BDFIRE', dodongo_boss_sources.SUPPORT_SOURCES[0])]
+GENERIC_NPC_SOURCES += child_route_props.NPC_SOURCES
+GENERIC_NPC_SOURCES += child_fairy_sources.NPC_SOURCES
 SOURCES += [s for _, s in GENERIC_NPC_SOURCES]
 SOURCES += [s for _, s in GENERIC_DRAW_SOURCES]
 # Player migration phase 1: scene NPC/prop actors live in per-scene OAP packs
@@ -560,6 +712,21 @@ def object_ids(oot):
 SPRITE_OBJECTS = {'object_in', 'object_ma1', 'object_ma2', 'object_ta', 'object_niw', 'object_cow'}
 SPRITE_OBJECTS.update(field_enemy_sources.OBJECTS)
 SPRITE_OBJECTS.update(water_temple_sources.SPRITE_OBJECTS)
+SPRITE_OBJECTS.update(child_route_npcs.OBJECTS)
+SPRITE_OBJECTS.update(child_castle_sources.SPRITE_OBJECTS)
+SPRITE_OBJECTS.update(child_route_props.SPRITE_OBJECTS)
+SPRITE_OBJECTS.update(child_legend_sources.SPRITE_OBJECTS)
+SPRITE_OBJECTS.update(child_fairy_sources.SPRITE_OBJECTS)
+SPRITE_OBJECTS.update(child_route_shops.SPRITE_OBJECTS)
+SPRITE_OBJECTS.update(child_route_shops.STOCK_OBJECTS)
+SPRITE_OBJECTS.update(ranch_sources.OBJECTS)
+SPRITE_OBJECTS.update(child_common_npcs.OBJECTS)
+SPRITE_OBJECTS.update(child_reward_npcs.OBJECTS)
+SPRITE_OBJECTS.update(child_mask_sources.OBJECTS)
+SPRITE_OBJECTS.update(child_minigame_sources.SPRITE_OBJECTS)
+SPRITE_OBJECTS.update(courtyard_sources.OBJECTS)
+SPRITE_OBJECTS.update(dodongo_enemy_sources.SPRITE_OBJECTS)
+SPRITE_OBJECTS.update(owl_sources.OBJECTS)
 
 
 def sprite_animation_header(sym, definition, asset_root):
@@ -598,6 +765,12 @@ def object_blob_sources(name, asset_root):
     for p, text, inc in parts:
         for m in OBJECT_DEF.finditer(text):
             typ, sym = m.group(1).replace('const ', ''), m.group(2)
+            # Field keep now supplies real Bombwall collision and Grotto
+            # geometry keys. Preserve existing resident keep identities:
+            # exporting duplicate absolute object symbols would silently
+            # redirect older actors to a scene object they do not own.
+            if name == 'gameplay_field_keep' and sym in KEEP_PLACEHOLDERS:
+                continue
             if name in SPRITE_OBJECTS and typ == 'AnimationHeader':
                 keep.append(sprite_animation_header(sym, m.group(0), asset_root))
             elif name not in SPRITE_OBJECTS and typ in OBJECT_KEEP_TYPES:
@@ -625,15 +798,43 @@ def object_blob_sources(name, asset_root):
     return data, ph, drop
 
 
-def scene_objects(scene_c, built_ids, enum_ids):
-    """Built objects any room/layer of the scene lists (Scene_CommandObjectList)."""
+def scene_objects(scene_c, built_ids, enum_ids, oot=None):
+    """Built objects any room/layer of the scene lists (Scene_CommandObjectList),
+    plus the scene's keep object (SCENE_CMD_SPECIAL_FILES). A built object
+    that is not loaded makes Object_GetSlot fail, so a dungeon-keep pot in a
+    scene without that keep stays unspawned, as on N64."""
     stem = scene_c.name[:-len('_scene.c')]
-    found = set()
+    found = set(scene_extra_objects(scene_c, built_ids, enum_ids, oot))
     for f in scene_c.parent.glob(stem + '_room_*ObjectList.inc.c'):
         for enum in re.findall(r'\b(OBJECT_\w+)', f.read_text(encoding='utf-8')):
             oid = enum_ids.get(enum)
             if oid in built_ids:
                 found.add(oid)
+    return sorted(found)
+
+
+def scene_extra_objects(scene_c, built_ids, enum_ids, oot=None):
+    """scene_objects outside the room lists (scene keep, boss reward and
+    shop objects): every scene layer keeps them."""
+    stem = scene_c.name[:-len('_scene.c')]
+    found = set()
+    if stem == 'ddan_boss':
+        for enum in dodongo_boss_sources.REWARD_OBJECTS:
+            oid = enum_ids.get(enum)
+            if oid not in built_ids:
+                raise ValueError(f'{scene_c}: missing boss reward object {enum}')
+            found.add(oid)
+    for f in [scene_c] + list(scene_c.parent.glob(stem + '_scene*.inc.c')):
+        for enum in re.findall(r'SCENE_CMD_SPECIAL_FILES\(\s*\w+,\s*(OBJECT_\w+)\)',
+                               f.read_text(encoding='utf-8')):
+            if enum_ids.get(enum) in built_ids:
+                found.add(enum_ids[enum])
+    for obj in child_route_shops.scene_objects(oot or OOT_DEFAULT, scene_c):
+        enum = 'OBJECT_' + obj[len('object_'):].upper()
+        oid = enum_ids.get(enum)
+        if oid not in built_ids:
+            raise ValueError(f'{scene_c}: missing shop object {obj}')
+        found.add(oid)
     return sorted(found)
 
 
@@ -679,7 +880,23 @@ CAM_DOOR_ACCESS = re.compile(r'\bparamData\.(doorParams|uniq0|uniq3|spec9)\b')
 
 
 def fix_anon_aggregates(rel, text, stats):
+    # Courtyard guard parameters overlay named fields with an eight-Fx array.
+    # Name the struct (GCC rejects anonymous aggregates with constructors),
+    # retaining the union and exact array/field aliasing used by the source.
+    if rel.endswith('z_en_heishi1.h'):
+        text, n = re.subn(r'\};\s*(f32 animParams\[8\];)', r'} motion;\n        \1', text)
+        if n != 1:
+            stats['problems'].append(f'{rel}: guard motion union moved')
+        stats['anon'] += n
+    if rel.endswith('z_en_heishi1.c'):
+        text = re.sub(r'->(animSpeed|animMorphFrames|moveSpeedTarget|moveSpeedMax|bodyTurnSpeedTarget|bodyTurnSpeedMax|headTurnSpeedScale|headTurnSpeedMax)\b', r'->motion.\1', text)
     def words(m):
+        # z_demo advances by sizeof(CsCmd*). Their integer-only anonymous
+        # structs are legal C++; preserve the source union's script stride.
+        # CutsceneCameraPoint contains Fx and still needs flattening (its
+        # natural 4-byte alignment already retains the full 16-byte stride).
+        if rel == 'include/cutscene.h' and m.group(1) != 'CutsceneCameraPoint':
+            return m.group(0)
         stats['anon'] += 1
         return f'typedef struct {m.group(1)} {{{m.group(2)}}} {m.group(1)};'
     text = WORDS_UNION.sub(words, text)
@@ -818,6 +1035,12 @@ MACRO_REWRITES = {
         ('void EnElf_SpawnSparkles(EnElf* this, PlayState* play, s32 sparkleLife) {\n',
          'void EnElf_SpawnSparkles(EnElf* this, PlayState* play, s32 sparkleLife) {\n'
          '    if (sparkleLife >= -0x7FFF) return; /* Saturn: no sparkle trail */\n'),
+    ],
+    # Whole-scene object loading (CHILD_ROUTE_DODONGO_PLAN C0): N64 swaps
+    # room objects through 19 slots; the Saturn carve keeps every scene
+    # object resident (Dodongo's Cavern lists 22). Same lookup semantics.
+    'include/object.h': [
+        ('ObjectEntry slots[19];', 'ObjectEntry slots[32];'),
     ],
     'include/z_math.h': [
         ('#define ABS(x) ((x) >= 0 ? (x) : -(x))', '#define ABS(x) OOT_SEL((x) >= 0, (x), -(x))'),
@@ -1184,8 +1407,23 @@ void BgCheck_ResetPolyCheckTbl(SSNodeList* nodeList, s32 numPolys) {
     # English only (gSaveContext.language = LANGUAGE_ENG): the Japanese
     # entry table would be 17 KB of blob for text that is never shown.
     'src/code/z_message.c': [
-        ('CHECK_BTN_ALL(input->press.button, BTN_B) && !msgCtx->textUnskippable',
-         'CHECK_BTN_ANY(input->press.button, BTN_A | BTN_B) /* fill current page only */'),
+        # B keeps source sTextboxSkipped: later BOX_BREAKs chain with no
+        # extra press. A only fills this page. The break then waits
+        # (MSGMODE_TEXT_AWAIT_NEXT) because the skip flag stays clear.
+        ('if (msgCtx->textBoxType != TEXTBOX_TYPE_NONE_BOTTOM && YREG(31) == 0 &&\n'
+         '                    CHECK_BTN_ALL(input->press.button, BTN_B) && !msgCtx->textUnskippable) {\n'
+         '                    sTextboxSkipped = true;\n'
+         '                    msgCtx->textDrawPos = msgCtx->decodedTextLen;\n'
+         '                }',
+         'if (msgCtx->textBoxType != TEXTBOX_TYPE_NONE_BOTTOM && YREG(31) == 0 &&\n'
+         '                    !msgCtx->textUnskippable) {\n'
+         '                    if (CHECK_BTN_ANY(input->press.button, BTN_B)) {\n'
+         '                        sTextboxSkipped = true;\n'
+         '                        msgCtx->textDrawPos = msgCtx->decodedTextLen;\n'
+         '                    } else if (CHECK_BTN_ANY(input->press.button, BTN_A)) {\n'
+         '                        msgCtx->textDrawPos = msgCtx->decodedTextLen; /* this page only */\n'
+         '                    }\n'
+         '                }'),
 
         ('player->naviActor->flags |= ACTOR_FLAG_TALK_OFFER_AUTO_ACCEPTED;',
          'if (player->naviActor != NULL) player->naviActor->flags |= ACTOR_FLAG_TALK_OFFER_AUTO_ACCEPTED; /* C Navi */'),
@@ -1635,6 +1873,17 @@ def fix_player_migration(rel, text, stats):
          'f32 distance = sqrtf(this->closestSecretDistSq) / 16;\n'
          '        f32 temp = 781.25f - (SQ(distance) * 5.0f);'),
         ('this->unk_6A0 > 4000000.0f', 'this->unk_6A0 > 15625.0f'),
+        # Demand Player clips (split_player_bank.py): an item whose clip group
+        # is not loaded waits before any action state changes; the host loads
+        # equipped items' groups at scene load and when the pause menu closes.
+        ('void Player_UseItem(PlayState* play, Player* this, s32 item) {\n'
+         '    s8 itemAction;\n    s32 temp;\n    s32 nextAnimType;\n\n'
+         '    itemAction = Player_ItemToItemAction(item);\n',
+         's32 OotCore_PlayerItemReady(s32 itemAction);\n\n'
+         'void Player_UseItem(PlayState* play, Player* this, s32 item) {\n'
+         '    s8 itemAction;\n    s32 temp;\n    s32 nextAnimType;\n\n'
+         '    itemAction = Player_ItemToItemAction(item);\n'
+         '    if (!OotCore_PlayerItemReady(itemAction)) {\n        return;\n    }\n'),
         ]
     else:
         return text
@@ -1649,6 +1898,27 @@ def fix_player_migration(rel, text, stats):
 def fixup(rel, text, stats):
     text = field_enemy_sources.adapt(rel, text)
     text = water_temple_sources.adapt(rel, text)
+    text = child_route_sources.adapt(rel, text)
+    text = child_route_npcs.adapt(rel, text)
+    text = child_castle_sources.adapt(rel, text)
+    text = child_route_shops.adapt(rel, text)
+    text = ranch_sources.adapt(rel, text)
+    text = child_common_npcs.adapt(rel, text)
+    text = child_reward_npcs.adapt(rel, text)
+    text = child_mask_sources.adapt(rel, text)
+    text = child_minigame_sources.adapt(rel, text)
+    text = dodongo_enemy_sources.adapt(rel, text)
+    text = dodongo_boss_sources.adapt(rel, text)
+    text = child_route_effects.adapt(rel, text)
+    text = child_route_props.adapt(rel, text)
+    text = child_legend_sources.adapt(rel, text)
+    text = child_fairy_sources.adapt(rel, text)
+    text = owl_sources.adapt(rel, text)
+    text = courtyard_sources.adapt(rel, text)
+    if rel == 'src/code/z_demo.c' or (rel.startswith('src/overlays/actors/') and rel.endswith('.c')):
+        if not hasattr(fixup, 'cutscene_names'):
+            fixup.cutscene_names = core_cutscene_sources.scene_symbols(OOT_DEFAULT)
+        text = core_cutscene_sources.adapt(rel, text, fixup.cutscene_names)
     if rel == 'include/ultra64/ultratypes.h':
         text, n = MTXF_DECL.subn('typedef union MtxF {\n    MtxF_t mf;\n} MtxF;', text)
         if n != 1:
@@ -1744,6 +2014,9 @@ def main():
     ap.add_argument('--oot', type=pathlib.Path, default=OOT_DEFAULT)
     ap.add_argument('--out', type=pathlib.Path, default=OUT_DEFAULT)
     args = ap.parse_args()
+    camera_stats = {'fxl': 0}
+    write_if_changed(args.out / 'owl_camera_source.inc',
+                     fix_float_literals(owl_sources.camera_source(args.oot), camera_stats, 'owl_camera_source.inc'))
     write_if_changed(args.out / 'environment_clock.inc',
                      clock_source(args.oot) + room_clock_source(args.oot) +
                      sun_song_source(args.oot) + destination_layer_source(args.oot) +
@@ -1751,6 +2024,7 @@ def main():
                      sequence_source(args.oot) + clock_events_source(args.oot))
     write_if_changed(args.out / 'environment_player_gate.inc', player_clock_gate_source(args.oot))
     write_if_changed(args.out / 'ocarina_restrictions.inc', ocarina_restrictions_source(args.oot))
+    write_if_changed(args.out / 'ocarina_memory.inc', ocarina_memory_source.source(args.oot))
 
     stats = {'macros': 0, 'fxl': 0, 'anon': 0, 'mtxf': 0, 'files': 0, 'written': 0, 'problems': []}
     files = set()
@@ -1760,9 +2034,15 @@ def main():
     files.update(args.oot / s for s in SOURCES)
     files.update(args.oot / s for s in field_enemy_sources.SOURCES)
     files.update(args.oot / s for s in scene_pack_actors.SOURCES)
+    # Boss source is staged for compilation while its visual/reward closure
+    # is verified; it is not admitted by a pack until that work is complete.
+    files.add(args.oot / 'src/overlays/actors/ovl_Boss_Dodongo/z_boss_dodongo.c')
     files.update(args.oot / s for s in PLAYER_SOURCES)
     files.update(args.oot / s for s in field_enemy_sources.EFFECT_SOURCES)
     files.update(args.oot / s for s in water_temple_sources.SPRITE_SOURCES)
+    files.update(args.oot / s for s in dodongo_boss_sources.SUPPORT_SOURCES)
+    files.update(args.oot / s for s in dodongo_boss_sources.EFFECT_SOURCES)
+    files.update(args.oot / s for s in child_route_effects.SOURCES)
     asset_root = args.oot / 'extracted' / VERSION
     for f in sorted(files):
         rel = f.relative_to(args.oot).as_posix()
@@ -1837,18 +2117,34 @@ def main():
                   for row in json.loads(SCENE_TABLE_JSON.read_text())['scenes']}
     for name, scene_c in registered_scenes(asset_root):
         actors = scene_pack_actors.scene_pack(scene_c, pack_children)
+        child_route_props.check_okarina_pack(scene_c, actors)
         if actors or name == FIELD_PACK_STEM:
+            effects = (child_route_effects.scene_effects(args.oot, actors)
+                       if scene_pack_actors.source_owned(scene_c) else [])
             pack_names.append(name)
             pack_mk.append(f'OOT_PACK_{name}_SCENE = {pack_scene[name]}')
             pack_mk.append(f'OOT_PACK_{name}_ACTORS = ' + ' '.join(
                 pathlib.PurePosixPath(scene_pack_actors.source(a)).stem for a in actors))
             pack_mk.append(f'OOT_PACK_{name}_OBJECTS = ' + ' '.join(
-                object_stem(o) for o in scene_objects(scene_c, built, enum_ids)))
+                object_stem(o) for o in scene_objects(scene_c, built, enum_ids, args.oot)))
+            pack_mk.append(f'OOT_PACK_{name}_EFFECTS = ' + ' '.join('z_eff_ss_' + n.lower() for n in effects))
             write_if_changed(args.out / 'packs' / (name + '_profiles.cpp'),
-                             scene_pack_actors.profile_source(actors, f'pack_{name}_profiles'))
+                             scene_pack_actors.profile_source(
+                                 actors, f'pack_{name}_profiles',
+                                 scene_pack_actors.source_owned(scene_c)) +
+                             fix_float_literals(onepoint_sources.pack_source(args.oot, actors),
+                                                {'fxl': 0}, name + '_onepoint') +
+                             fix_float_literals(npc_view_sources.pack_source(
+                                 actors + (list(field_enemy_sources.ACTORS) if name == FIELD_PACK_STEM else [])),
+                                                {'fxl': 0}, name + '_npc_views') +
+                             (child_route_effects.profiles(args.oot, effects, f'pack_{name}_effects') if effects else ''))
         src = args.out / 'scenecol' / (name + '.cpp')
-        objs = scene_objects(scene_c, built, enum_ids)
-        text = scene_blob_source(scene_c, asset_root, objs)
+        objs = scene_objects(scene_c, built, enum_ids, args.oot)
+        masks = scene_layer_object_masks(scene_c, asset_root, objs, enum_ids,
+                                         scene_extra_objects(scene_c, built, enum_ids, args.oot))
+        if any(not any(m >> i & 1 for m in masks) for i in range(len(objs))):
+            raise SystemExit(f'{scene_c}: an object is in no layer mask')
+        text = scene_blob_source(scene_c, asset_root, objs, masks)
         if scene_c.stem == 'spot00_scene':
             # Local Field retopology: PolyList/VtxList match SA.COL exactly.
             sys.path.insert(0, str(GAME / 'tools'))
@@ -1881,7 +2177,18 @@ def main():
     mk += ['', 'OOT_FIELD_ENEMY_SRCS = ' + ' '.join(
         '$(OOT_CORE_D)/' + str(pathlib.PurePosixPath(s).with_suffix('.cpp'))
         for s in field_enemy_sources.SOURCES + field_enemy_sources.EFFECT_SOURCES)]
+    mk += ['', 'OOT_BOSS_EFFECT_SRCS = ' + ' '.join(
+        '$(OOT_CORE_D)/' + str(pathlib.PurePosixPath(s).with_suffix('.cpp'))
+        for s in dodongo_boss_sources.EFFECT_SOURCES)]
+    mk += ['', 'OOT_ROUTE_EFFECT_SRCS = ' + ' '.join(
+        '$(OOT_CORE_D)/' + str(pathlib.PurePosixPath(s).with_suffix('.cpp'))
+        for s in child_route_effects.SOURCES)]
     write_if_changed(args.out / 'sources.mk', '\n'.join(mk) + '\n\n')
+    # Imported header layout changes must rebuild every consumer, even when
+    # the mechanically rewritten .cpp body itself did not change.
+    import_stamp = args.out / 'import.stamp'
+    if stats['written'] or not import_stamp.exists():
+        import_stamp.touch()
     print('\n'.join(report))
     return 1 if stats['problems'] else 0
 

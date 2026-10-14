@@ -1,12 +1,23 @@
 # Plan: bulk decomp pipeline ("oot-core" on Saturn)
 
-Current work order (2026-10-12):
+Current work order (2026-10-13): Field owl through King Dodongo implementation
+is **stopped by human instruction**, including Ranch/Kakariko/Goron content, source shops/cutscenes and
+complete chest audio. See [route status](CHILD_ROUTE_DODONGO_PLAN.md) and
+[current verification](RECOMP_PLAN.md#current-task-and-verification-2026-10-13).
+New API35/scene-format4 sources require matched host/core/assets; the preserved
+Clean14 image predates this batch. Source tests and individual target/pack
+checks are not a full-image or runtime claim.
+Latest core link passes, combined packs fail, generic sprite bake was stopped
+with stale manifests. Resume only on new instruction; start from the
+[exact stop handoff](CHILD_ROUTE_STOP_HANDOFF_2026-10-13.md).
+
+Ownership work order:
 [RECOMP_PLAN R0-R7](RECOMP_PLAN.md#full-core-ownership-and-c-retirement) plans
 completion of handwritten C gameplay retirement and full core ownership.
 Source Player/core collision are already live. Keep Saturn rendering, controls,
 UI/audio/storage, both SH-2 jobs and all preserved features; transfer remaining
-gameplay owners in bounded, verified waves. No code/build/runtime change is
-claimed by this planning update.
+gameplay owners in bounded, verified waves. The roadmap governs the active
+implementation; retirement acceptance remains open.
 
 R0 is the active Claude repair task: rock carry, held/burning stick and coarse
 aim/repeated shots. Candidate-10 Clean `b54638cd` is the accepted performance
@@ -167,6 +178,12 @@ R1/R2. Do not restart the already-live source Player/collision cutover. Demand
 cache/start gates, save authority, camera/story hooks and host actor retirement
 remain unfinished. Keep changes separate from active repairs by file ownership.
 No automated emulator runs; no broad C-file deletion before acceptance.
+
+2026-10-13 (Claude, child route part 3): demand Player clips are now live at
+safe points (PLAYC/PLAYRES split, scene/age/C-item groups, scene cutscene
+packs, `Player_UseItem` cold-item wait); per-layer scene objects (format 5,
+API 36); heap model FITS. Finer per-action start gates remain future work.
+Debug md5 11244013 awaits human runtime checks (stop handoff part 3).
 
 ### Historical review checkpoints (superseded work order)
 

@@ -20,15 +20,16 @@ function = graphics.function
 
 
 def image(**changes):
-    fields = dict(magic=packs.MAGIC, version=1, header_bytes=80, core_crc=123,
-                  link_base=0x02770000 - 128, file_bytes=124, memory_bytes=128,
+    fields = dict(magic=packs.MAGIC, version=packs.VERSION, header_bytes=packs.HEADER_BYTES, core_crc=123,
+                  link_base=0x02760000 - 128, file_bytes=124, memory_bytes=128,
                   bss_offset=124, bss_bytes=4, ctors_offset=120, ctor_count=1,
                   actors_offset=124, actor_count=0, effects_offset=124, effect_count=0,
-                  crc=0, text_offset=80, text_bytes=36, scene=1, flags=0)
+                  crc=0, text_offset=96, text_bytes=20, scene=1, flags=0,
+                  services_version=0, onepoint_setup=0, onepoint_step=0, npc_view=0)
     fields.update(changes)
     data = bytearray(124)
-    struct.pack_into('>20I', data, 0, *(fields[n] for n in packs.FIELDS))
-    struct.pack_into('>I', data, 120, fields['link_base'] + 80)
+    struct.pack_into('>' + str(len(packs.FIELDS)) + 'I', data, 0, *(fields[n] for n in packs.FIELDS))
+    struct.pack_into('>I', data, 120, fields['link_base'] + 96)
     struct.pack_into('>I', data, 60, zlib.crc32(data))
     return data
 
@@ -65,6 +66,7 @@ static void OotCore_ToolReset(void) { assert(stage==4); stage=5; }
 static void OotCore_OcarinaReset(void) { assert(stage==5); stage=6; }
 static void OotCore_GfxReset(void) { assert(stage==6); stage=7; }
 static void ZeldaArena_Cleanup(void) { assert(stage==7); stage=8; }
+static void OotCore_CutsceneBind(void* blob) { assert(stage==8 && !blob); }
 static void save_copy_out(PlayState* play) { assert(0); } /* forbidden stale global copy */
 ''' + function(ROOT / 'oot-core/src/oot_core_api.cpp', 'static void oot_core_play_destroy(') + r'''
 int main(void) {
@@ -90,7 +92,7 @@ int main(void) {
 #include <assert.h>
 #include <stddef.h>
 #include <stdbool.h>
-static bool loaded=true,playing=true,scene_load_failed=true;
+static bool loaded=true,playing=true,scene_load_failed=true,source_owl=true;
 static unsigned int play_scene=1;
 static unsigned short core_skybox_time;
 static unsigned char core_skybox_reset;
@@ -127,19 +129,22 @@ int main(void) {
 ''')
 
     def test_top_alignment_and_named_scene_budget(self):
-        h = packs.validate(image(), 123, used=0x40000 - 128)
-        self.assertEqual(h['link_base'], 0x0276ff80)
+        h = packs.validate(image(), 123, used=0x50000 - 128)
+        self.assertEqual(h['link_base'], 0x0275ff80)
         with self.assertRaisesRegex(ValueError, 'OOC.*OOB.*OAP'):
-            packs.validate(image(), 123, used=0x40000 - 127)
+            packs.validate(image(), 123, used=0x50000 - 127)
 
     def test_malformed_sizes_tables_and_core_binding(self):
-        cases = [dict(magic=0), dict(version=2), dict(header_bytes=76), dict(core_crc=122),
+        cases = [dict(magic=0), dict(version=3), dict(header_bytes=76), dict(core_crc=122),
                  dict(file_bytes=123), dict(memory_bytes=0xffffffff), dict(memory_bytes=112),
-                 dict(link_base=0x02730000), dict(bss_offset=120), dict(bss_bytes=5),
+                 dict(link_base=0x02710000), dict(bss_offset=120), dict(bss_bytes=5),
                  dict(ctors_offset=0xfffffffc), dict(ctor_count=0xffffffff),
                  dict(ctors_offset=81), dict(actor_count=1), dict(effects_offset=0),
                  dict(ctors_offset=84), dict(actors_offset=120),
-                 dict(text_bytes=0), dict(flags=2)]
+                 dict(text_bytes=0), dict(flags=2), dict(services_version=1),
+                 dict(services_version=2, onepoint_setup=0x0275ffd8),
+                 dict(services_version=1, onepoint_setup=0x0275ff81),
+                 dict(services_version=1, onepoint_setup=0x02760000)]
         for case in cases:
             with self.subTest(case=case), self.assertRaises(ValueError):
                 packs.validate(image(**case), 123)
@@ -149,12 +154,23 @@ int main(void) {
         bad[84] ^= 1
         with self.assertRaisesRegex(ValueError, 'checksum'):
             packs.validate(bad, 123)
+
+    def test_optional_camera_service_is_scene_text_only(self):
+        h = packs.validate(image(services_version=2, onepoint_setup=0x0275ffe0, onepoint_step=0x0275ffe4), 123)
+        self.assertEqual(h['onepoint_setup'], h['link_base'] + h['text_offset'])
         bad = image()
-        struct.pack_into('>I', bad, 120, 0x02770000)
+        struct.pack_into('>I', bad, 120, 0x02760000)
         struct.pack_into('>I', bad, 60, 0)
         struct.pack_into('>I', bad, 60, zlib.crc32(bad))
         with self.assertRaisesRegex(ValueError, 'ctor pointer'):
             packs.validate(bad, 123)
+
+    def test_optional_npc_service_requires_v2_and_scene_text(self):
+        h = packs.validate(image(services_version=2, npc_view=0x0275ffe0), 123)
+        self.assertEqual(h['npc_view'], h['link_base'] + h['text_offset'])
+        for version, pointer in ((1,0x0275ffe0),(2,0x0275ffdf),(2,0x02760000),(0,0x0275ffe0)):
+            with self.subTest(version=version,pointer=pointer), self.assertRaises(ValueError):
+                packs.validate(image(services_version=version,npc_view=pointer),123)
 
     def test_real_sh2_fixture_when_built(self):
         path = ROOT / 'build/oot-core/pack-test/TEST.OAP'
@@ -168,7 +184,7 @@ int main(void) {
         elf = packs.Elf32(path.with_suffix('.elf'))
         self.assertGreaterEqual(elf.value('_oot_pack_ctor_result'), h['link_base'] + h['bss_offset'])
         report = json.loads(path.with_suffix('.json').read_text())
-        self.assertEqual(report['total'] + report['free'], 0x40000)
+        self.assertEqual(report['total'] + report['free'], 0x50000)
 
     @unittest.skipUnless(sys.platform.startswith('linux'), 'SH-2 compilation uses Linux only')
     def test_helper_mutable_and_unresolved_state_rejected(self):
@@ -259,9 +275,12 @@ EffectSsOverlay gEffectSsOverlayTable[8];
 PlayState* gOotCorePlay;
 extern "C" { char oot_core_text_start[1], oot_core_text_end[1]; }
 const OotCoreHost* gOotCoreHost;
+static unsigned spriteScene=~0u;
+void OotCore_SpriteSetScene(unsigned scene) {spriteScene=scene;}
 ''' + source + r'''
 static unsigned char valid_pack[224];
-static unsigned char valid_ooc[sizeof(OotSceneBlob)];
+/* Format 5: four layer object masks follow the header. */
+static unsigned char valid_ooc[sizeof(OotSceneBlob)+16];
 static int mode, reads;
 static int fake_read(const char* name, void* data, unsigned int bytes) {
     const void* source = NULL; int length=0;
@@ -277,30 +296,36 @@ static int fake_read(const char* name, void* data, unsigned int bytes) {
 static void fill(unsigned char* base) {
     memset(base,0,256);
     OotActorPackHeader* h=(OotActorPackHeader*)base;
-    *h={OOT_ACTOR_PACK_MAGIC,1,80,123,0x0276ff00,224,256,224,32,
-        200,1,204,1,212,1,0,80,16,1,0};
+    *h={OOT_ACTOR_PACK_MAGIC,OOT_ACTOR_PACK_VERSION,OOT_ACTOR_PACK_HEADER_BYTES,123,0x0275ff00,224,256,224,32,
+        200,1,204,1,212,1,0,96,32,1,0,OOT_ACTOR_PACK_SERVICES_VERSION,0x0275ff70,0x0275ff70,0x0275ff70};
     /* Native host ctor writes a marker into BSS. No decomp actor imported. */
     unsigned char op[]={0xc7,0x04,0x25,0,0,0,0,0x83,0,0,0,0xc3};
-    uint32_t address=h->link_base+224; memcpy(op+3,&address,4); memcpy(base+80,op,sizeof(op));
-    *(u32*)(base+200)=h->link_base+80;
+    uint32_t address=h->link_base+224; memcpy(op+3,&address,4); memcpy(base+96,op,sizeof(op));
+    const unsigned char service[]={0xb8,7,0,0,0,0xc3}; memcpy(base+112,service,sizeof(service));
+    *(u32*)(base+200)=h->link_base+96;
     *(OotActorPackProfile*)(base+204)={2,h->link_base+128};
     *(OotActorPackProfile*)(base+212)={3,h->link_base+184};
     ActorProfile* actor=(ActorProfile*)(base+128);
     actor->id=2; actor->category=5; actor->instanceSize=sizeof(Actor);
-    actor->init=(ActorFunc)(uintptr_t)(h->link_base+80);
+    actor->init=(ActorFunc)(uintptr_t)(h->link_base+96);
     EffectSsProfile* effect=(EffectSsProfile*)(base+184);
     effect->type=3; effect->init=actor->init;
     h->crc=OotActorPack_Crc(base,h->file_bytes,1);
 }
 int main() {
     ((OotSceneBlob*)valid_ooc)->format=OOT_SCENE_BLOB_FORMAT;
-    void* region=mmap((void*)0x02730000,0x40000,PROT_READ|PROT_WRITE|PROT_EXEC,
+    ((OotSceneBlob*)valid_ooc)->layer_objects=(const unsigned int*)(uintptr_t)(0x02710000+sizeof(OotSceneBlob));
+    ((OotSceneBlob*)valid_ooc)->num_object_layers=4;
+    void* region=mmap((void*)0x02710000,0x50000,PROT_READ|PROT_WRITE|PROT_EXEC,
                      MAP_PRIVATE|MAP_ANONYMOUS|MAP_FIXED,-1,0);
-    check(region==(void*)0x02730000);
-    unsigned char* base=(unsigned char*)0x0276ff00;
+    check(region==(void*)0x02710000);
+    unsigned char* base=(unsigned char*)0x0275ff00;
     fill(base); memcpy(valid_pack,base,sizeof(valid_pack));
     memset(base+224,0xa5,32);
     check(OotCore_PackBind(base,224,123));
+    check(OotCore_PackOnePointSetup(NULL,0,8700,NULL,0)==7);
+    check(OotCore_PackOnePointStep(NULL)==7);
+    check(OotCore_PackNpcView(NULL,NULL,NULL,32,NULL)==7);
     check(*(u32*)(base+224)==0x83 && base[255]==0);
     check(gActorOverlayTable[2].profile && !gActorOverlayTable[2].vramStart);
     check(gEffectSsOverlayTable[3].profile && !gEffectSsOverlayTable[3].loadedRamAddr);
@@ -308,6 +333,9 @@ int main() {
     PlayState play={}; gOotCorePlay=&play; check(!OotCore_PackRelease());
     gOotCorePlay=NULL; gActorOverlayTable[2].numLoaded=1; check(!OotCore_PackRelease());
     gActorOverlayTable[2].numLoaded=0; check(OotCore_PackRelease());
+    check(!OotCore_PackOnePointSetup(NULL,0,8700,NULL,0));
+    check(!OotCore_PackOnePointStep(NULL));
+    check(!OotCore_PackNpcView(NULL,NULL,NULL,32,NULL));
     check(!gActorOverlayTable[2].profile && !gEffectSsOverlayTable[3].profile);
     check(OotCore_PackRelease());
     fill(base); base[90]^=1; check(!OotCore_PackBind(base,224,123));
@@ -316,7 +344,14 @@ int main() {
     fill(base); gActorOverlayTable[2].profile=(ActorProfile*)base;
     check(!OotCore_PackBind(base,224,123)); /* never replace resident profile */
     gActorOverlayTable[2].profile=NULL;
-    fill(base); check(OotCore_PackBind(base,224,123)); check(OotCore_PackRelease());
+    fill(base); check(OotCore_PackBind(base,224,123));
+    check(!OotCore_PackAdmits(2)); check(OotCore_PackRelease());
+    /* Source-owned scene row: same profile slot, room lists may spawn it. */
+    fill(base); ((OotActorPackProfile*)(base+204))->id=2|OOT_ACTOR_PACK_ADMIT;
+    ((OotActorPackHeader*)base)->crc=OotActorPack_Crc(base,224,1);
+    check(OotCore_PackBind(base,224,123));
+    check(gActorOverlayTable[2].profile && OotCore_PackAdmits(2) && !OotCore_PackAdmits(3));
+    check(OotCore_PackRelease() && !OotCore_PackAdmits(2) && !gActorOverlayTable[2].profile);
     /* Actual loader: absent optional OOC, partial OAP, success, safe failure,
      * then a reloaded previous image. Callbacks never see a published partial. */
     OotCoreHost host={}; host.scene_file=fake_read; gOotCoreHost=&host;
@@ -326,6 +361,7 @@ int main() {
     mode=2; check(OotCore_SceneLoad(1,"S1.OOC",123,&objects,&count)==-1);
     check(!objects && !count && !gActorOverlayTable[2].profile);
     mode=0; check(OotCore_SceneLoad(1,"S1.OOC",123,&objects,&count)==1);
+    check(spriteScene==1 && OotCore_PackOnePointSetup(NULL,0,8700,NULL,0)==7);
     check(objects && !count && gActorOverlayTable[2].profile && *(u32*)(base+224)==0x83);
     mode=2; check(OotCore_SceneLoad(1,"S1.OOC",123,&objects,&count)==-1);
     check(!objects && !gActorOverlayTable[2].profile && !gEffectSsOverlayTable[3].profile);
@@ -335,12 +371,18 @@ int main() {
     malformed->format=0;
     check(OotCore_SceneLoad(1,"S1.OOC",123,&objects,&count)==-1);
     malformed->format=OOT_SCENE_BLOB_FORMAT;
+    malformed->num_object_layers=3;             /* format 5 needs layers 0-3 */
+    check(OotCore_SceneLoad(1,"S1.OOC",123,&objects,&count)==-1);
+    malformed->num_object_layers=4;
+    ((unsigned int*)(valid_ooc+sizeof(OotSceneBlob)))[2]=1; /* bit past num_objects */
+    check(OotCore_SceneLoad(1,"S1.OOC",123,&objects,&count)==-1);
+    ((unsigned int*)(valid_ooc+sizeof(OotSceneBlob)))[2]=0;
     malformed->num_transition_layers=1;
-    malformed->transitions=(OotSceneLayer*)0x02730001;
+    malformed->transitions=(OotSceneLayer*)0x02720001;
     check(OotCore_SceneLoad(1,"S1.OOC",123,&objects,&count)==-1);
     malformed->num_transition_layers=0; malformed->transitions=NULL;
     malformed->num_exit_layers=1;
-    malformed->exits=(OotSceneLayer*)0x02730001;
+    malformed->exits=(OotSceneLayer*)0x02720001;
     check(OotCore_SceneLoad(1,"S1.OOC",123,&objects,&count)==-1);
     malformed->num_exit_layers=0; malformed->exits=NULL;
     malformed->num_rooms=1; malformed->num_layers=0xffffffff;
@@ -348,9 +390,9 @@ int main() {
     check(!objects && !gActorOverlayTable[2].profile);
     memset(valid_ooc,0,sizeof(valid_ooc));
     malformed->format=OOT_SCENE_BLOB_FORMAT;
-    malformed->num_objects=1; malformed->objects=(unsigned short*)0x02730001;
+    malformed->num_objects=1; malformed->objects=(unsigned short*)0x02720001;
     check(OotCore_SceneLoad(1,"S1.OOC",123,&objects,&count)==-1);
-    munmap(region,0x40000);
+    munmap(region,0x50000);
     return 0;
 }
 '''

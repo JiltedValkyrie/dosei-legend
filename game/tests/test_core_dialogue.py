@@ -35,6 +35,8 @@ static OotCoreSave captured;
 static void set_save(const OotCoreSave *s) { captured=*s; }
 static OotCoreEntry entry={.set_save=set_save};
 #define ENTRY (&entry)
+static int loaded; /* oot_core_session_reset: no blob in this harness */
+void oot_core_scene_unload(void) {}
 ''' + clock
             + function(HOST, 'static void mirror_save(')
             + function(ROOT / 'src/oot_core_host.c', 'static unsigned char host_give_item(')
@@ -100,6 +102,19 @@ int main(void) {
     assert(host_give_item(0x82)==0x82); /* no empty bottle: no false success */
     save_state.bottle_items[0]=0x14;
     assert(host_give_item(0x82)==0xff && save_state.bottle_items[0]==0x1a);
+    /* Child route grants (z_parameter.c Item_Give branches). */
+    assert(host_give_item(0x21)==0xff && save_state.source_items[23]==0x21);
+    assert(host_give_item(0x23)==0xff && save_state.source_items[23]==0x23);
+    save_state.source_upgrades=0; save_state.source_ammo[2]=0;
+    assert(host_give_item(0x8E)==0xff && save_state.source_ammo[2]==0); /* no bag: cap 0 */
+    assert(host_give_item(0x4D)==0xff && ((save_state.source_upgrades>>3)&7)==1);
+    assert(save_state.source_items[2]==0x02 && save_state.source_ammo[2]==20);
+    save_state.source_ammo[2]=12;
+    assert(host_give_item(0x8F)==0xff && save_state.source_ammo[2]==20); /* clamps */
+    assert(host_give_item(0x50)==0xff && ((save_state.source_upgrades>>6)&7)==1);
+    assert(((save_state.source_upgrades>>3)&7)==1);
+    save_state.rupees=0;
+    assert(host_give_item(0x87)==0xff && save_state.rupees==50 && gameplay.rupees==50);
     save_test_max_gear(); mirror_save();
     assert(*captured.quest_items==0x00ffffff); /* includes ALL three stones */
     assert(captured.inventory_items[7]==8 && captured.inventory_items[9]==11);

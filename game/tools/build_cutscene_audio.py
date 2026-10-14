@@ -95,6 +95,10 @@ def build_one(source, output, name, sequence, stem, preserve_intro=False,pitch_a
     frames, levels, triggers, cooked = audio.bake(
         notes, times, volumes, gain, envelopes, instruments, samples, end,
         limit_one_shots=True, steal_releasing=True)
+    # Source channel survives SCSP voice reuse in the trigger's padding byte.
+    # Zero remains legacy/unknown; source channels use 1..16.
+    channels = {(n['frame'], n['slot']): n['channel'] + 1 for n in cooked}
+    triggers = [(*t, 0 if t[2] == 255 else channels[(t[0], t[1])]) for t in triggers]
     if not (0 < frames <= 65535):
         raise SystemExit('%s: score exceeds the player frame format' % name)
 
@@ -116,13 +120,13 @@ def build_one(source, output, name, sequence, stem, preserve_intro=False,pitch_a
               'typedef struct { uint32_t offset; uint16_t loop_start, loop_end; }'
               ' %s_pcm_t;' % lower,
               'typedef struct { uint16_t frame; uint8_t slot, sample;'
-              ' uint16_t pitch; uint8_t pan; } %s_trigger_t;' % lower,
+              ' uint16_t pitch; uint8_t pan, channel; } %s_trigger_t;' % lower,
               'static const %s_pcm_t %s_pcm[] = {' % (lower, lower)]
     header += ['    { %d, %d, %d },' % (s['offset'], s['loop_start'],
                                         s['loop_end']) for s in samples]
     header += ['};',
                'static const %s_trigger_t %s_triggers[] = {' % (lower, lower)]
-    header += ['    { %d, %d, %d, %d, %d },' % t for t in triggers]
+    header += ['    { %d, %d, %d, %d, %d, %d },' % t for t in triggers]
     header += ['};', '#endif', '']
     (output / ('%s_score.h' % lower)).write_text('\n'.join(header))
 

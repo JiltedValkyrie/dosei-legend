@@ -15,6 +15,8 @@
 #include "npc_pose.h"
 #include "npc_sprite.h"
 #include "vdp1_draw_wait.h"
+#include "fs_range.h"
+#include "host_cold.h"
 
 /* KFR1 v2, as tools/build_link_model.py writes it:
 **
@@ -50,6 +52,9 @@ typedef struct actor_mesh
     unsigned int scroll_frame;
     unsigned int ticks;
     unsigned int poses;
+    /* CVQ1 only: pose chunks, each its own block (no contiguous MB). */
+    unsigned char **chunks;
+    unsigned int chunk_count, chunk_shift, pose_bytes;
     PDATA    pdata;
     POINT   *points;
     POLYGON *polygons;
@@ -76,6 +81,14 @@ static uint16_t read_be16(const unsigned char *p)
 
 static void free_actor(cutscene_actor_t *actor)
 {
+    if (actor->chunks) {
+        unsigned int i;
+        for (i = 0; i < actor->chunk_count; ++i)
+            if (actor->chunks[i]) jo_free(actor->chunks[i]);
+        jo_free(actor->chunks);
+    }
+    actor->chunks = 0;
+    actor->chunk_count = 0;
     if (actor->tracking) jo_free(actor->tracking);
     if (actor->scroll) jo_free(actor->scroll);
     actor->scroll = 0;
@@ -94,13 +107,64 @@ static void free_actor(cutscene_actor_t *actor)
 }
 
 /*
+** CVQ1 (tools/cutscene_animation.py quantize_track): Gohma's 564 source
+** poses were 1.36 MB of s16 in one block, more than any free hole. Each pose
+** keeps its own per-axis range at 8 bits; chunks of 2^n poses start on CD
+** sectors and are read straight into separate blocks behind the loading
+** screen. The tick table stays in actor->animation.
+*/
+#define CVQ1_MAGIC  0x43565131u
+#define CVQ1_HEADER 32u
+#define CVQ1_SECTOR 2048u
+static bool HOST_COLD_CODE __attribute__((optimize("Os"))) load_quantized(cutscene_actor_t *actor, const char *name, unsigned int vertices)
+{
+    unsigned char head[CVQ1_HEADER];
+    unsigned int poses, ticks, chunk_poses, pose_bytes, chunk_sectors, first, n, shift;
+    int size = fs_file_size(name);
+    if (size < (int)CVQ1_HEADER || !fs_read_sectors(name, 0, head, CVQ1_HEADER) ||
+        read_be32(head) != CVQ1_MAGIC || read_be32(head + 4) != vertices)
+        return false;
+    poses = read_be32(head + 8); ticks = read_be32(head + 12);
+    chunk_poses = read_be32(head + 16); pose_bytes = read_be32(head + 20);
+    chunk_sectors = read_be32(head + 24); first = read_be32(head + 28);
+    for (shift = 0; shift < 9 && (1u << shift) != chunk_poses; ++shift) {}
+    if (!poses || poses > 1024 || !ticks || ticks > 1024 || shift > 8 ||
+        pose_bytes != ((24u + vertices * 3u + 3u) & ~3u) || !chunk_sectors || chunk_sectors > 1024 ||
+        chunk_sectors * CVQ1_SECTOR < chunk_poses * pose_bytes || first > 64 ||
+        first * CVQ1_SECTOR < CVQ1_HEADER + ticks * 2u)
+        return false;
+    actor->chunk_count = (poses + chunk_poses - 1) >> shift;
+    if ((unsigned int)size != (first + actor->chunk_count * chunk_sectors) * CVQ1_SECTOR)
+        return false;
+    if (!(actor->animation = (unsigned char *)jo_malloc(CVQ1_HEADER + ticks * 2u)) ||
+        !fs_read_sectors(name, 0, actor->animation, CVQ1_HEADER + ticks * 2u))
+        return false;
+    for (n = 0; n < ticks; ++n)
+        if (read_be16(actor->animation + CVQ1_HEADER + n * 2) >= poses) return false;
+    if (!(actor->chunks = (unsigned char **)jo_malloc(actor->chunk_count * sizeof(*actor->chunks))))
+        return false;
+    for (n = 0; n < actor->chunk_count; ++n) actor->chunks[n] = 0;
+    for (n = 0; n < actor->chunk_count; ++n) {
+        unsigned int count = poses - (n << shift) < chunk_poses ? poses - (n << shift) : chunk_poses;
+        if (!(actor->chunks[n] = (unsigned char *)jo_malloc(count * pose_bytes)) ||
+            !fs_read_sectors(name, first + n * chunk_sectors, actor->chunks[n], count * pose_bytes))
+            return false;
+    }
+    actor->poses = poses;
+    actor->ticks = ticks;
+    actor->chunk_shift = shift;
+    actor->pose_bytes = pose_bytes;
+    return true;
+}
+
+/*
 ** One rider: geometry into the cart, tiles into the bank's VDP1 space.
 **
 ** Everything here is jo_malloc'd rather than static. Three riders are about
 ** 63 KB of tables, which does not fit below the SGL work area but is nothing
 ** against the 4 MB cart that src/ram_cart.c registers.
 */
-static bool __attribute__((optimize("Os"))) load_actor(cutscene_actor_t *actor, const char *file, bool animated)
+static bool HOST_COLD_CODE __attribute__((optimize("Os"))) load_actor(cutscene_actor_t *actor, const char *file, bool animated)
 {
     unsigned char *data;
     const unsigned char *records;
@@ -216,6 +280,14 @@ static bool __attribute__((optimize("Os"))) load_actor(cutscene_actor_t *actor, 
         animation_file[n++] = '.'; animation_file[n++] = 'A';
         animation_file[n++] = 'N'; animation_file[n++] = 'M'; animation_file[n] = 0;
         asset_loading(animation_file);
+        {
+            unsigned char magic[4];
+            if (fs_read_sectors(animation_file, 0, magic, 4) && read_be32(magic) == CVQ1_MAGIC) {
+                if (!load_quantized(actor, animation_file, vertices)) { free_actor(actor); return false; }
+                actor->loaded = true;
+                return (true);
+            }
+        }
         actor->animation = (unsigned char *)jo_fs_read_file(animation_file, &length);
         if (!actor->animation || length < 16 || read_be32(actor->animation) != 0x43564131u ||
             read_be32(actor->animation + 4) != vertices) {
@@ -414,7 +486,7 @@ bool __attribute__((optimize("Os"))) actor_mesh_swap_clip(actor_mesh_t *mesh, co
     unsigned int vertices, poses, ticks, flags, n, stem_len = 0;
     int length = 0, anim_length;
 
-    if (!mesh || !mesh->loaded || !mesh->animation) return false;
+    if (!mesh || !mesh->loaded || !mesh->animation || mesh->chunks) return false;
     vertices = (unsigned int)mesh->pdata.nbPoint;
     while (stem[stem_len] && stem_len < 8) { name[stem_len] = stem[stem_len]; ++stem_len; }
     name[stem_len] = '.'; name[stem_len+1] = 'A';
@@ -665,6 +737,22 @@ void actor_mesh_draw(actor_mesh_t *mesh, unsigned int frame,
     if (head_rot) npc_limb_transform(focus, basis, origin, pivot, head_rot);
     if (torso_rot) npc_limb_transform(focus, torso_basis, torso_origin, 0, torso_rot);
     }
+    if (mesh->chunks) {
+        /* CVQ1: no head/torso tracking (boss tracks only). */
+        int32_t base[3], step[3];
+        pose = read_be16(mesh->animation + CVQ1_HEADER + frame * 2);
+        p = mesh->chunks[pose >> mesh->chunk_shift] +
+            (pose & ((1u << mesh->chunk_shift) - 1u)) * mesh->pose_bytes;
+        for (i = 0; i < 3; ++i) {
+            base[i] = (int32_t)read_be32(p + i * 4);
+            step[i] = (int32_t)read_be32(p + 12 + i * 4);
+        }
+        for (p += 24, i = 0; i < (unsigned int)mesh->pdata.nbPoint; ++i, p += 3) {
+            mesh->points[i][X] = base[0] + (int32_t)p[0] * step[0];
+            mesh->points[i][Y] = base[1] + (int32_t)p[1] * step[1];
+            mesh->points[i][Z] = base[2] + (int32_t)p[2] * step[2];
+        }
+    } else {
     pose = read_be16(mesh->animation + 16 + frame * 2);
     p = mesh->animation + 16 + mesh->ticks * 2 + pose * mesh->pdata.nbPoint * 6;
     for (i = 0; i < (unsigned int)mesh->pdata.nbPoint; ++i, p += 6) {
@@ -676,6 +764,7 @@ void actor_mesh_draw(actor_mesh_t *mesh, unsigned int frame,
         mesh->points[i][X] = v[0] * 1024;
         mesh->points[i][Y] = -v[1] * 1024;
         mesh->points[i][Z] = v[2] * 1024;
+    }
     }
     jo_3d_push_matrix();
     jo_3d_translate_matrix(x, -y, z);

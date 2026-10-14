@@ -14,6 +14,13 @@ static unsigned char *area_blob[2];
 static unsigned int area_seq[2] = { 0xFFFFu, 0xFFFFu };
 static unsigned int area_slot;
 
+unsigned int music_area_current_sequence(void)
+{
+    for(unsigned k=0;k<2;++k)
+        if(music_current()==&area_bank[k])return area_seq[k];
+    return 0xffffu;
+}
+
 static unsigned int be32(const unsigned char *p)
 {
     return ((unsigned int)p[0] << 24) | ((unsigned int)p[1] << 16) | ((unsigned int)p[2] << 8) | p[3];
@@ -32,7 +39,7 @@ void music_area_trim(void)
     /* A fading or pending bank can still own either slot's tables. */
     if (music_busy()) return;
     for (k = 0; k < 2; ++k) {
-        if (music_current() == &area_bank[k]) continue;
+        if (music_bank_referenced(&area_bank[k])) continue;
         if (area_blob[k]) jo_free(area_blob[k]);
         area_blob[k] = NULL;
         area_seq[k] = 0xFFFFu;
@@ -52,7 +59,7 @@ bool music_area_play(unsigned int seq, unsigned int fade_frames)
     ** banks build_area_music.py actually baked. */
     if (seq >= 128u || !(area_music_baked[seq >> 3] & (1u << (seq & 7)))) return false;
     if (area_seq[area_slot] == seq && music_current() == &area_bank[area_slot]) return true;
-    if (music_current() == bank || music_busy()) return false; /* slot still audible */
+    if (music_bank_referenced(bank) || music_busy()) return false; /* audible or pending resume */
     area_name(hdr, seq, "HDR");
     blob = (unsigned char *)jo_fs_read_file(hdr, &length);
     if (!blob) return false;
@@ -80,4 +87,12 @@ bool music_area_play(unsigned int seq, unsigned int fade_frames)
     bank->trigger_count = trigger_count;
     area_slot = k;
     return music_fade_to(bank, fade_frames);
+}
+
+bool music_area_fanfare(unsigned int seq)
+{
+    const music_bank_t *resume = music_current();
+    if (!music_area_play(seq, 0)) return false;
+    music_once(&area_bank[area_slot], resume);
+    return true;
 }

@@ -68,10 +68,13 @@ static void tick(Message *msgCtx,Input *input) {
     }
 }
 int main(void) {
-    Message m={0,1,2,40};Input i={{0}};
+    Message m={0,0,2,40};Input i={{0}};
     tick(&m,&i);assert(m.textDrawPos==2);
-    i.press.button=BTN_A;tick(&m,&i);assert(m.textDrawPos==40 && sTextboxSkipped);
-    m.textDrawPos=3;i.press.button=BTN_B;tick(&m,&i);assert(m.textDrawPos==40);
+    i.press.button=BTN_A;tick(&m,&i);assert(m.textDrawPos==40 && !sTextboxSkipped);
+    m.textDrawPos=3;sTextboxSkipped=false;i.press.button=BTN_B;tick(&m,&i);
+    assert(m.textDrawPos==40 && sTextboxSkipped);
+    m.textUnskippable=1;m.textDrawPos=3;sTextboxSkipped=false;i.press.button=BTN_A;
+    tick(&m,&i);assert(m.textDrawPos==3 && !sTextboxSkipped);
     m.textBoxType=TEXTBOX_TYPE_NONE_BOTTOM;m.textDrawPos=3;
     tick(&m,&i);assert(m.textDrawPos==3); /* preserve automatic cinematic text */
     return 0;
